@@ -1443,8 +1443,29 @@ impl ViewportRenderer {
                 if item.settings.hidden || item.positions.is_empty() {
                     continue;
                 }
-                let gpu_data = resources.upload_point_cloud(device, queue, item);
+                let gpu_data = resources.upload_point_cloud_per_frame(device, queue, item);
                 self.point_cloud_gpu_data.push(gpu_data);
+            }
+        }
+
+        // Pre-uploaded point cloud references. Model matrix lives at offset 0
+        // of PointCloudUniform.
+        if !frame.scene.point_cloud_refs.is_empty() {
+            resources.ensure_point_cloud_pipeline(device);
+            for ref_item in &frame.scene.point_cloud_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.point_cloud_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                queue.write_buffer(
+                    &entry._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&ref_item.model),
+                );
+                self.point_cloud_gpu_data.push(entry);
             }
         }
 
@@ -1456,7 +1477,32 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data = resources.upload_glyph_set(device, queue, item, wireframe);
+                let gpu_data = resources.upload_glyph_set_per_frame(device, queue, item, wireframe);
+                self.glyph_gpu_data.push(gpu_data);
+            }
+        }
+
+        // Pre-uploaded glyph set references. Model matrix lives at offset 0
+        // of GlyphUniform and is composed on top of per-instance positions
+        // in the vertex shader.
+        if !frame.scene.glyph_set_refs.is_empty() {
+            resources.ensure_glyph_pipeline(device);
+            for ref_item in &frame.scene.glyph_set_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.glyph_set_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                queue.write_buffer(
+                    &entry._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&ref_item.model),
+                );
+                let mut gpu_data = entry;
+                gpu_data.wireframe =
+                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 self.glyph_gpu_data.push(gpu_data);
             }
         }
@@ -1505,8 +1551,33 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gd = resources.upload_tensor_glyph_set(device, queue, item, wireframe);
+                let gd = resources.upload_tensor_glyph_set_per_frame(device, queue, item, wireframe);
                 self.tensor_glyph_gpu_data.push(gd);
+            }
+        }
+
+        // Pre-uploaded tensor glyph set references. Model matrix lives at
+        // offset 0 of TensorGlyphUniform and is composed on top of the
+        // per-instance ellipsoid model in the vertex shader.
+        if !frame.scene.tensor_glyph_set_refs.is_empty() {
+            resources.ensure_tensor_glyph_pipeline(device);
+            for ref_item in &frame.scene.tensor_glyph_set_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.tensor_glyph_set_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                queue.write_buffer(
+                    &entry._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&ref_item.model),
+                );
+                let mut gpu_data = entry;
+                gpu_data.wireframe =
+                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                self.tensor_glyph_gpu_data.push(gpu_data);
             }
         }
 
@@ -1536,7 +1607,7 @@ impl ViewportRenderer {
                     let g = crate::quantities::polyline_node_vectors_to_glyphs(item);
                     if !g.positions.is_empty() {
                         let wf = frame.viewport.wireframe_mode || item.settings.wireframe;
-                        let gd = resources.upload_glyph_set(device, queue, &g, wf);
+                        let gd = resources.upload_glyph_set_per_frame(device, queue, &g, wf);
                         self.glyph_gpu_data.push(gd);
                     }
                 }
@@ -1545,7 +1616,7 @@ impl ViewportRenderer {
                     let g = crate::quantities::polyline_edge_vectors_to_glyphs(item);
                     if !g.positions.is_empty() {
                         let wf = frame.viewport.wireframe_mode || item.settings.wireframe;
-                        let gd = resources.upload_glyph_set(device, queue, &g, wf);
+                        let gd = resources.upload_glyph_set_per_frame(device, queue, &g, wf);
                         self.glyph_gpu_data.push(gd);
                     }
                 }
@@ -1557,6 +1628,13 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         if !frame.scene.polyline_refs.is_empty() {
             resources.ensure_polyline_pipeline(device);
+            // viewport_width/height live at offset 96 of PolylineUniform;
+            // they drive the screen-space miter expansion and must reflect
+            // the current viewport size, not the placeholder used at upload.
+            let vp = [
+                frame.camera.viewport_size[0].max(1.0),
+                frame.camera.viewport_size[1].max(1.0),
+            ];
             for ref_item in &frame.scene.polyline_refs {
                 if ref_item.settings.hidden {
                     continue;
@@ -1565,12 +1643,13 @@ impl ViewportRenderer {
                     Some(e) => e.clone(),
                     None => continue,
                 };
-                // Model matrix lives at offset 0 of PolylineUniform.
+                // Model matrix at offset 0.
                 queue.write_buffer(
                     &entry._uniform_buf,
                     0,
                     bytemuck::bytes_of(&ref_item.model),
                 );
+                queue.write_buffer(&entry._uniform_buf, 96, bytemuck::bytes_of(&vp));
                 let mut gpu_data = entry;
                 gpu_data.wireframe =
                     frame.viewport.wireframe_mode || ref_item.settings.wireframe;

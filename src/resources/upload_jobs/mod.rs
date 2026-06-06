@@ -15,7 +15,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::error::ViewportError;
 
@@ -183,10 +183,16 @@ impl JobProduct {
 }
 
 /// Outcome the worker sends through its channel.
+///
+/// The `Duration` captures the wall-clock time the worker spent on the
+/// background thread, measured from the rayon::spawn closure entry to its
+/// return. It excludes both the time the job spent in the rayon queue and
+/// any later GPU/apply-step work; the runner adds the apply-step duration
+/// on top.
 #[allow(dead_code)]
 enum WorkerOutcome {
-    Done(JobProduct),
-    Failed(ViewportError),
+    Done(JobProduct, Duration),
+    Failed(ViewportError, Duration),
 }
 
 type CompletionCallback = Box<dyn FnOnce(&UploadStatus) + Send>;
@@ -195,6 +201,9 @@ type CompletionCallback = Box<dyn FnOnce(&UploadStatus) + Send>;
 /// responsible for running `apply` (if present and the status is `Ready`)
 /// against the live `ViewportGpuResources`, then invoking `callback`.
 pub struct Completion {
+    /// Id of the completed job; the caller uses it to record the apply
+    /// duration back on the runner.
+    pub id: JobId,
     /// Final status the runner observed.
     pub status: UploadStatus,
     /// Apply closure produced by the worker. Run only when `status` is
@@ -227,6 +236,12 @@ pub struct JobRunner {
     /// Recently finished jobs, kept for one drain cycle so callers can still
     /// see `Ready` or `Failed` after the completion frame.
     finished: HashMap<u64, UploadStatus>,
+    /// Time the actual work took. Worker thread time is recorded when the
+    /// worker reports back; apply-step time is added by the caller via
+    /// `add_apply_duration` after running the apply closure. Retained
+    /// until `drop_duration` is called so consumers have at least one frame
+    /// to read the result.
+    durations: HashMap<u64, Duration>,
 }
 
 impl Default for JobRunner {
@@ -244,7 +259,29 @@ impl JobRunner {
             next_id: 1,
             slots: HashMap::new(),
             finished: HashMap::new(),
+            durations: HashMap::new(),
         }
+    }
+
+    /// Total work duration recorded for a job, or `None` if the job is
+    /// still in flight (or its duration record has aged out).
+    pub fn duration(&self, id: JobId) -> Option<Duration> {
+        self.durations.get(&id.0).copied()
+    }
+
+    /// Add the apply-step elapsed time to a job's running total. Called by
+    /// the caller of `process` immediately after running the apply closure
+    /// on the main thread.
+    pub fn add_apply_duration(&mut self, id: JobId, apply: Duration) {
+        let entry = self.durations.entry(id.0).or_insert(Duration::ZERO);
+        *entry = entry.saturating_add(apply);
+    }
+
+    /// Drop the recorded duration for a job. Consumers call this after they
+    /// have read the duration via `duration`; otherwise the runner keeps it
+    /// across drain cycles so a single-frame retention is not enough.
+    pub fn drop_duration(&mut self, id: JobId) {
+        self.durations.remove(&id.0);
     }
 
     fn issue_id(&mut self) -> JobId {
@@ -270,12 +307,16 @@ impl JobRunner {
         let (tx, rx) = mpsc::channel();
 
         rayon::spawn(move || {
+            let t0 = Instant::now();
             let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
-                Ok(Ok(product)) => WorkerOutcome::Done(product),
-                Ok(Err(e)) => WorkerOutcome::Failed(e),
-                Err(_) => WorkerOutcome::Failed(ViewportError::JobWorkerLost {
-                    reason: "worker panicked",
-                }),
+                Ok(Ok(product)) => WorkerOutcome::Done(product, t0.elapsed()),
+                Ok(Err(e)) => WorkerOutcome::Failed(e, t0.elapsed()),
+                Err(_) => WorkerOutcome::Failed(
+                    ViewportError::JobWorkerLost {
+                        reason: "worker panicked",
+                    },
+                    t0.elapsed(),
+                ),
             };
             // Receiver going away is fine; the runner was probably dropped.
             let _ = tx.send(outcome);
@@ -322,13 +363,17 @@ impl JobRunner {
         let queue = queue.clone();
 
         rayon::spawn(move || {
+            let t0 = Instant::now();
             let outcome =
                 match catch_unwind(AssertUnwindSafe(|| work(&device, &queue, &worker_progress))) {
-                    Ok(Ok(product)) => WorkerOutcome::Done(product),
-                    Ok(Err(e)) => WorkerOutcome::Failed(e),
-                    Err(_) => WorkerOutcome::Failed(ViewportError::JobWorkerLost {
-                        reason: "worker panicked",
-                    }),
+                    Ok(Ok(product)) => WorkerOutcome::Done(product, t0.elapsed()),
+                    Ok(Err(e)) => WorkerOutcome::Failed(e, t0.elapsed()),
+                    Err(_) => WorkerOutcome::Failed(
+                        ViewportError::JobWorkerLost {
+                            reason: "worker panicked",
+                        },
+                        t0.elapsed(),
+                    ),
                 };
             let _ = tx.send(outcome);
         });
@@ -422,7 +467,8 @@ impl JobRunner {
                     .map(|s| s.rx.try_recv())
                     .expect("slot existed");
                 match outcome {
-                    Ok(WorkerOutcome::Done(product)) => {
+                    Ok(WorkerOutcome::Done(product, worker_dur)) => {
+                        self.durations.insert(id, worker_dur);
                         let JobProduct { gpu, apply } = product;
                         match gpu {
                             None => {
@@ -441,7 +487,8 @@ impl JobRunner {
                             }
                         }
                     }
-                    Ok(WorkerOutcome::Failed(e)) => {
+                    Ok(WorkerOutcome::Failed(e, worker_dur)) => {
+                        self.durations.insert(id, worker_dur);
                         self.finish(
                             id,
                             UploadStatus::Failed(e),
@@ -513,6 +560,7 @@ impl JobRunner {
             return;
         };
         completions.push(Completion {
+            id: JobId(id),
             status: status.clone(),
             apply,
             callback: slot.callback.take(),
@@ -536,6 +584,7 @@ impl super::ViewportGpuResources {
             runner.process(device, queue)
         };
         for Completion {
+            id,
             status,
             apply,
             callback,
@@ -543,13 +592,44 @@ impl super::ViewportGpuResources {
         {
             if matches!(status, UploadStatus::Ready) {
                 if let Some(apply) = apply {
+                    let t = Instant::now();
                     apply(self);
+                    let apply_d = t.elapsed();
+                    self.jobs
+                        .lock()
+                        .expect("upload job runner poisoned")
+                        .add_apply_duration(id, apply_d);
                 }
             }
             if let Some(cb) = callback {
                 cb(&status);
             }
         }
+    }
+
+    /// Total wall-clock work duration for a completed job.
+    ///
+    /// The value is the sum of the worker thread's elapsed time and the
+    /// main-thread apply-step elapsed time. It excludes frame-pacing
+    /// delays (the time the apply step sat waiting for `process_uploads`
+    /// to be called). For sync uploads this method returns `None`; sync
+    /// callers measure their own wall-clock around the call.
+    ///
+    /// Returns `None` for jobs that are still in flight, were never issued,
+    /// or whose duration record has already been dropped via
+    /// `drop_job_duration`. The runner retains durations until the consumer
+    /// drops them so single-frame retention is not enough.
+    pub fn job_duration(&self, id: JobId) -> Option<Duration> {
+        let runner = self.jobs.lock().expect("upload job runner poisoned");
+        runner.duration(id)
+    }
+
+    /// Drop the recorded duration for `id`. Call this after reading the
+    /// value via `job_duration`; otherwise the duration table grows over
+    /// time.
+    pub fn drop_job_duration(&mut self, id: JobId) {
+        let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+        runner.drop_duration(id);
     }
 
     /// Look up the current state of a submitted upload job.

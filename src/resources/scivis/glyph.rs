@@ -173,7 +173,7 @@ impl ViewportGpuResources {
     ///
     /// Called from `prepare()` for each non-empty item in `frame.scene.glyphs`.
     /// The glyph base mesh is cached in `glyph_arrow_mesh` / `glyph_sphere_mesh` / `glyph_cube_mesh`.
-    pub(crate) fn upload_glyph_set(
+    pub(crate) fn upload_glyph_set_per_frame(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -260,6 +260,7 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct GlyphUniform {
+            model: [[f32; 4]; 4],
             global_scale: f32,
             scale_by_magnitude: u32,
             has_scalars: u32,
@@ -275,6 +276,7 @@ impl ViewportGpuResources {
             wireframe: u32,
         }
         let uniform_data = GlyphUniform {
+            model: item.model,
             global_scale: item.scale,
             scale_by_magnitude: if item.scale_by_magnitude { 1 } else { 0 },
             has_scalars: if !item.scalars.is_empty() { 1 } else { 0 },
@@ -604,7 +606,7 @@ impl ViewportGpuResources {
     ///
     /// Called from `prepare()` for each non-empty item in `frame.scene.tensor_glyphs`.
     /// Reuses the sphere base mesh cached by the glyph pipeline.
-    pub(crate) fn upload_tensor_glyph_set(
+    pub(crate) fn upload_tensor_glyph_set_per_frame(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -643,7 +645,10 @@ impl ViewportGpuResources {
             _pad: [f32; 3],
         }
 
-        let outer_model = glam::Mat4::from_cols_array_2d(&item.model);
+        // `item.model` is uploaded into `TensorGlyphUniform.model`; the
+        // shader composes it on top of the per-instance ellipsoid model so
+        // pre-uploaded sets can be moved per frame without rebuilding the
+        // instance buffer.
 
         // Determine scalars for LUT lookup.
         let has_scalars = item.colour_attribute.is_some();
@@ -687,9 +692,8 @@ impl ViewportGpuResources {
 
                 // 4x4 model matrix.
                 let local_model = glam::Mat4::from_mat3(rs) * glam::Mat4::IDENTITY;
-                let mut m4 = local_model;
-                m4.w_axis = glam::Vec4::new(pos.x, pos.y, pos.z, 1.0);
-                let world_model = outer_model * m4;
+                let mut world_model = local_model;
+                world_model.w_axis = glam::Vec4::new(pos.x, pos.y, pos.z, 1.0);
 
                 // Normal matrix: R * diag(1/s0, 1/s1, 1/s2).
                 let nm = glam::Mat3::from_cols(col0 / s0, col1 / s1, col2 / s2);
@@ -736,6 +740,7 @@ impl ViewportGpuResources {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct TensorGlyphUniform {
+            model: [[f32; 4]; 4],
             has_scalars: u32,
             scalar_min: f32,
             scalar_max: f32,
@@ -747,6 +752,7 @@ impl ViewportGpuResources {
             _pad2: [[f32; 4]; 2],
         }
         let uniform_data = TensorGlyphUniform {
+            model: item.model,
             has_scalars: if has_scalars { 1 } else { 0 },
             scalar_min,
             scalar_max,
@@ -978,5 +984,302 @@ impl ViewportGpuResources {
                 cache: None,
             },
         ));
+    }
+
+    /// Pre-upload a glyph set and return a typed handle.
+    pub fn upload_glyph_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::GlyphItem,
+    ) -> crate::resources::GlyphSetId {
+        self.ensure_glyph_pipeline(device);
+        let gpu = self.upload_glyph_set_per_frame(device, queue, item, false);
+        self.glyph_set_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded glyph set.
+    pub fn drop_glyph_set(&mut self, id: crate::resources::GlyphSetId) -> bool {
+        self.glyph_set_store.remove(id)
+    }
+
+    /// Replace the geometry of a pre-uploaded glyph set, keeping the same id.
+    pub fn replace_glyph_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::GlyphSetId,
+        item: &crate::renderer::GlyphItem,
+    ) -> bool {
+        if !self.glyph_set_store.contains(id) {
+            return false;
+        }
+        self.ensure_glyph_pipeline(device);
+        let gpu = self.upload_glyph_set_per_frame(device, queue, item, false);
+        self.glyph_set_store.replace(id, gpu)
+    }
+
+    /// Start an asynchronous glyph set upload.
+    pub fn begin_upload_glyph_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::GlyphItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::GlyphSetId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let gid = resources.upload_glyph_set(
+                            &device_for_apply,
+                            &queue_for_apply,
+                            &item,
+                        );
+                        slot_for_apply.set(gid);
+                    }),
+                ))
+            })
+        };
+        self.job_glyph_set_results
+            .lock()
+            .expect("glyph set result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`GlyphSetId`](crate::resources::GlyphSetId) produced by a
+    /// completed [`begin_upload_glyph_set`](Self::begin_upload_glyph_set) job.
+    pub fn upload_result_glyph_set(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::GlyphSetId> {
+        let mut map = self
+            .job_glyph_set_results
+            .lock()
+            .expect("glyph set result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(gid) => {
+                map.remove(&id);
+                Ok(gid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
+    /// Pre-upload a tensor glyph set and return a typed handle.
+    pub fn upload_tensor_glyph_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::TensorGlyphItem,
+    ) -> crate::resources::TensorGlyphSetId {
+        self.ensure_tensor_glyph_pipeline(device);
+        let gpu = self.upload_tensor_glyph_set_per_frame(device, queue, item, false);
+        self.tensor_glyph_set_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded tensor glyph set.
+    pub fn drop_tensor_glyph_set(&mut self, id: crate::resources::TensorGlyphSetId) -> bool {
+        self.tensor_glyph_set_store.remove(id)
+    }
+
+    /// Replace the geometry of a pre-uploaded tensor glyph set, keeping the same id.
+    pub fn replace_tensor_glyph_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::TensorGlyphSetId,
+        item: &crate::renderer::TensorGlyphItem,
+    ) -> bool {
+        if !self.tensor_glyph_set_store.contains(id) {
+            return false;
+        }
+        self.ensure_tensor_glyph_pipeline(device);
+        let gpu = self.upload_tensor_glyph_set_per_frame(device, queue, item, false);
+        self.tensor_glyph_set_store.replace(id, gpu)
+    }
+
+    /// Start an asynchronous tensor glyph set upload.
+    pub fn begin_upload_tensor_glyph_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::TensorGlyphItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::TensorGlyphSetId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let tid = resources.upload_tensor_glyph_set(
+                            &device_for_apply,
+                            &queue_for_apply,
+                            &item,
+                        );
+                        slot_for_apply.set(tid);
+                    }),
+                ))
+            })
+        };
+        self.job_tensor_glyph_set_results
+            .lock()
+            .expect("tensor glyph set result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`TensorGlyphSetId`](crate::resources::TensorGlyphSetId) produced by a
+    /// completed [`begin_upload_tensor_glyph_set`](Self::begin_upload_tensor_glyph_set) job.
+    pub fn upload_result_tensor_glyph_set(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::TensorGlyphSetId> {
+        let mut map = self
+            .job_tensor_glyph_set_results
+            .lock()
+            .expect("tensor glyph set result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(tid) => {
+                map.remove(&id);
+                Ok(tid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::ViewportGpuResources;
+    use crate::renderer::{GlyphItem, TensorGlyphItem};
+    use crate::resources::UploadStatus;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn sample_glyph_set() -> GlyphItem {
+        let mut item = GlyphItem::default();
+        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        item.vectors = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        item
+    }
+
+    fn sample_tensor_glyph_set() -> TensorGlyphItem {
+        let mut item = TensorGlyphItem::default();
+        item.positions = vec![[0.0, 0.0, 0.0]];
+        item.eigenvalues = vec![[1.0, 0.5, 0.25]];
+        item.eigenvectors = vec![[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]];
+        item
+    }
+
+    fn drive_until_ready(
+        resources: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::JobId,
+        label: &str,
+    ) {
+        for _ in 0..200 {
+            resources.process_uploads(device, queue);
+            match resources.upload_status(id) {
+                UploadStatus::Ready => return,
+                UploadStatus::Failed(e) => panic!("{label} upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("{label} job id disappeared"),
+            }
+        }
+        panic!("{label} upload did not complete in time");
+    }
+
+    #[test]
+    fn upload_glyph_set_returns_valid_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_glyph_set(&device, &queue, &sample_glyph_set());
+        assert!(resources.glyph_set_store.contains(id));
+        assert!(resources.drop_glyph_set(id));
+    }
+
+    #[test]
+    fn upload_tensor_glyph_set_returns_valid_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_tensor_glyph_set(&device, &queue, &sample_tensor_glyph_set());
+        assert!(resources.tensor_glyph_set_store.contains(id));
+        assert!(resources.drop_tensor_glyph_set(id));
+    }
+
+    #[test]
+    fn begin_upload_glyph_set_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_glyph_set(&device, &queue, sample_glyph_set());
+        drive_until_ready(&mut resources, &device, &queue, job, "glyph_set");
+        let id = resources.upload_result_glyph_set(job).expect("ready");
+        assert!(resources.glyph_set_store.contains(id));
+    }
+
+    #[test]
+    fn begin_upload_tensor_glyph_set_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_tensor_glyph_set(&device, &queue, sample_tensor_glyph_set());
+        drive_until_ready(&mut resources, &device, &queue, job, "tensor_glyph_set");
+        let id = resources.upload_result_tensor_glyph_set(job).expect("ready");
+        assert!(resources.tensor_glyph_set_store.contains(id));
     }
 }

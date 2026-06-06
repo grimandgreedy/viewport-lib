@@ -953,6 +953,85 @@ impl RibbonRefItem {
     }
 }
 
+/// Per-frame reference to a pre-uploaded point cloud. See [`PolylineRefItem`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PointCloudRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_point_cloud`](crate::resources::ViewportGpuResources::upload_point_cloud)
+    /// or `begin_upload_point_cloud`.
+    pub id: crate::resources::PointCloudId,
+    /// Per-frame model matrix. Composes on top of the model baked into the
+    /// upload, so identity here renders the points at their original
+    /// transform.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl PointCloudRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::PointCloudId) -> Self {
+        Self {
+            id,
+            model: IDENTITY_MAT4,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+/// Per-frame reference to a pre-uploaded glyph set. See [`PolylineRefItem`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct GlyphSetRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_glyph_set`](crate::resources::ViewportGpuResources::upload_glyph_set)
+    /// or `begin_upload_glyph_set`.
+    pub id: crate::resources::GlyphSetId,
+    /// Per-frame model matrix. Composes on top of the per-instance
+    /// transforms baked at upload time.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl GlyphSetRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::GlyphSetId) -> Self {
+        Self {
+            id,
+            model: IDENTITY_MAT4,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+/// Per-frame reference to a pre-uploaded tensor glyph set. See [`PolylineRefItem`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct TensorGlyphSetRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_tensor_glyph_set`](crate::resources::ViewportGpuResources::upload_tensor_glyph_set)
+    /// or `begin_upload_tensor_glyph_set`.
+    pub id: crate::resources::TensorGlyphSetId,
+    /// Per-frame model matrix. Composes on top of the per-instance
+    /// transforms baked at upload time.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl TensorGlyphSetRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::TensorGlyphSetId) -> Self {
+        Self {
+            id,
+            model: IDENTITY_MAT4,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 2D Image Slice representation
 // ---------------------------------------------------------------------------

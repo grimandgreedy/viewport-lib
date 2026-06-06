@@ -80,9 +80,12 @@ pub use self::types::{
     PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
     SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
-pub use self::scivis::curve_store::{PolylineId, RibbonId, StreamtubeId, TubeId};
+pub use self::scivis::curve_store::{
+    GlyphSetId, PointCloudId, PolylineId, RibbonId, StreamtubeId, TensorGlyphSetId, TubeId,
+};
 pub(crate) use self::scivis::curve_store::{
-    PolylineStore, RibbonStore, StreamtubeStore, TubeStore,
+    GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, StreamtubeStore,
+    TensorGlyphSetStore, TubeStore,
 };
 pub use self::upload_jobs::{JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
 #[allow(deprecated)]

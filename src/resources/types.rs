@@ -1726,6 +1726,7 @@ pub(crate) struct GlyphBaseMesh {
 }
 
 /// Per-frame GPU data for one point cloud item, created in `prepare()`.
+#[derive(Clone)]
 pub struct PointCloudGpuData {
     /// Vertex buffer: one entry per point, packed as `[position: vec3, _pad: f32]` (16 bytes).
     /// The shader reads colour/scalar from storage buffers indexed by `vertex_index`.
@@ -1928,6 +1929,7 @@ pub struct ScreenImageGpuData {
 }
 
 /// Per-frame GPU data for one glyph item, created in `prepare()`.
+#[derive(Clone)]
 pub struct GlyphGpuData {
     /// Vertex buffer for the glyph base mesh (borrowed from cached `GlyphBaseMesh`).
     /// We keep a reference via raw pointer : `ViewportGpuResources` owns the mesh.
@@ -1957,6 +1959,7 @@ pub struct GlyphGpuData {
 /// Per-frame GPU data for one tensor glyph item, created in `prepare()`.
 ///
 /// The sphere base mesh is borrowed from `glyph_sphere_mesh` (owned by `ViewportGpuResources`).
+#[derive(Clone)]
 pub struct TensorGlyphGpuData {
     /// Vertex buffer for the sphere base mesh (borrowed).
     pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
@@ -2559,6 +2562,12 @@ pub struct ViewportGpuResources {
     pub(crate) tube_store: super::TubeStore,
     /// Pre-uploaded ribbon storage.
     pub(crate) ribbon_store: super::RibbonStore,
+    /// Pre-uploaded point cloud storage.
+    pub(crate) point_cloud_store: super::PointCloudStore,
+    /// Pre-uploaded glyph set storage.
+    pub(crate) glyph_set_store: super::GlyphSetStore,
+    /// Pre-uploaded tensor glyph set storage.
+    pub(crate) tensor_glyph_set_store: super::TensorGlyphSetStore,
     /// Typed result slots for async polyline uploads, keyed by job id.
     pub(crate) job_polyline_results: std::sync::Mutex<
         std::collections::HashMap<
@@ -2585,6 +2594,27 @@ pub struct ViewportGpuResources {
         std::collections::HashMap<
             super::upload_jobs::JobId,
             super::upload_jobs::ResultSlot<super::RibbonId>,
+        >,
+    >,
+    /// Typed result slots for async point cloud uploads, keyed by job id.
+    pub(crate) job_point_cloud_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::PointCloudId>,
+        >,
+    >,
+    /// Typed result slots for async glyph set uploads, keyed by job id.
+    pub(crate) job_glyph_set_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::GlyphSetId>,
+        >,
+    >,
+    /// Typed result slots for async tensor glyph set uploads, keyed by job id.
+    pub(crate) job_tensor_glyph_set_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::TensorGlyphSetId>,
         >,
     >,
     /// Bytes allocated on the GPU for user-uploaded textures.

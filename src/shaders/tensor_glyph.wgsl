@@ -56,8 +56,11 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-// TensorGlyphUniform : 64 bytes.
+// TensorGlyphUniform : 128 bytes.
 struct TensorGlyphUniform {
+    // offset 0 : per-frame world-space transform composed on top of the
+    //             per-instance ellipsoid model. Identity = no-op.
+    model:       mat4x4<f32>, // 64 bytes
     has_scalars: u32,     //  4 bytes (1 = use per-instance scalar field)
     scalar_min:  f32,     //  4 bytes
     scalar_max:  f32,     //  4 bytes
@@ -65,8 +68,8 @@ struct TensorGlyphUniform {
     opacity:     f32,     //  4 bytes (global opacity multiplier, 0.0-1.0)
     wireframe:   u32,     //  4 bytes (1 = return flat gray, no lighting)
     _pad1b:      f32,     //  4 bytes
-    _pad1c:      f32,     //  4 bytes -- end of first 32 bytes
-    _pad2:       array<vec4<f32>, 2>, // 32 bytes padding -- total 64 bytes
+    _pad1c:      f32,     //  4 bytes -- end of second 32 bytes
+    _pad2:       array<vec4<f32>, 2>, // 32 bytes padding -- total 128 bytes
 };
 
 // Per-instance data : 128 bytes.
@@ -151,16 +154,24 @@ fn vs_main(in: VertexIn) -> VertexOut {
     let inst = instances[in.instance_index];
 
     // Reconstruct mat4x4 from column vectors.
-    let model = mat4x4<f32>(inst.model_col0, inst.model_col1, inst.model_col2, inst.model_col3);
+    let inst_model = mat4x4<f32>(
+        inst.model_col0,
+        inst.model_col1,
+        inst.model_col2,
+        inst.model_col3,
+    );
 
     // Reconstruct normal matrix (mat3x3) from packed column vectors.
     let normal_mat = mat3x3<f32>(inst.normal_col0.xyz, inst.normal_col1.xyz, inst.normal_col2.xyz);
 
-    let world_pos = model * vec4<f32>(in.position, 1.0);
-    let world_nrm = normalize(normal_mat * in.normal);
+    // Apply the per-frame model on top of the per-instance ellipsoid model.
+    let instance_pos = (inst_model * vec4<f32>(in.position, 1.0)).xyz;
+    let instance_nrm = normalize(normal_mat * in.normal);
+    let world_pos4 = tg_uniform.model * vec4<f32>(instance_pos, 1.0);
+    let world_nrm = normalize((tg_uniform.model * vec4<f32>(instance_nrm, 0.0)).xyz);
 
-    out.clip_pos  = camera.view_proj * world_pos;
-    out.world_pos = world_pos.xyz;
+    out.clip_pos  = camera.view_proj * world_pos4;
+    out.world_pos = world_pos4.xyz;
     out.world_nrm = world_nrm;
 
     // LUT lookup.

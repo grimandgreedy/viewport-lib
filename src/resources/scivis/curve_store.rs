@@ -5,7 +5,9 @@
 //! a store entry by handle and supply per-frame overrides (model matrix, etc.)
 //! instead of resubmitting the geometry every frame.
 
-use crate::resources::{PolylineGpuData, StreamtubeGpuData};
+use crate::resources::{
+    GlyphGpuData, PointCloudGpuData, PolylineGpuData, StreamtubeGpuData, TensorGlyphGpuData,
+};
 
 macro_rules! curve_store {
     ($(#[$id_doc:meta])* $id:ident, $store:ident, $data:ty) => {
@@ -104,4 +106,28 @@ curve_store!(
     RibbonId,
     RibbonStore,
     StreamtubeGpuData
+);
+
+curve_store!(
+    /// Handle to a pre-uploaded point cloud produced by
+    /// [`ViewportGpuResources::upload_point_cloud`](crate::resources::ViewportGpuResources::upload_point_cloud).
+    PointCloudId,
+    PointCloudStore,
+    PointCloudGpuData
+);
+
+curve_store!(
+    /// Handle to a pre-uploaded glyph set produced by
+    /// [`ViewportGpuResources::upload_glyph_set`](crate::resources::ViewportGpuResources::upload_glyph_set).
+    GlyphSetId,
+    GlyphSetStore,
+    GlyphGpuData
+);
+
+curve_store!(
+    /// Handle to a pre-uploaded tensor glyph set produced by
+    /// [`ViewportGpuResources::upload_tensor_glyph_set`](crate::resources::ViewportGpuResources::upload_tensor_glyph_set).
+    TensorGlyphSetId,
+    TensorGlyphSetStore,
+    TensorGlyphGpuData
 );

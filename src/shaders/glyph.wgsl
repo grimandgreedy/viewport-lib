@@ -31,8 +31,11 @@ struct ClipPlanes {
     viewport_height: f32,
 };
 
-// Glyph uniform : 64 bytes.
+// Glyph uniform : 128 bytes.
 struct GlyphUniform {
+    // offset   0 : per-frame world-space transform composed on top of the
+    //               per-instance position + direction.
+    model:               mat4x4<f32>,  // 64 bytes
     global_scale:       f32,    //  4 bytes
     scale_by_magnitude: u32,    //  4 bytes (1 = scale with magnitude)
     has_scalars:        u32,    //  4 bytes (1 = use per-instance scalar field)
@@ -41,7 +44,7 @@ struct GlyphUniform {
     mag_clamp_min:      f32,    //  4 bytes
     mag_clamp_max:      f32,    //  4 bytes
     has_mag_clamp:      u32,    //  4 bytes (1 = clamp magnitude to [min, max])
-    // offset 32 : 16-byte aligned, safe for vec4.
+    // offset 96 : 16-byte aligned, safe for vec4.
     default_colour:      vec4<f32>,  // 16 bytes
     use_default_colour:  u32,        //  4 bytes (1 = colour by default_colour instead of LUT)
     unlit:              u32,        //  4 bytes (1 = skip lighting, return raw colour)
@@ -193,9 +196,14 @@ fn vs_main(in: VertexIn) -> VertexOut {
         rot = rotation_to_align_y(dir / mag);
     }
 
-    let local_pos   = rot * (in.position * scale);
-    let world_pos   = local_pos + inst.position;
-    let world_nrm   = normalize(rot * in.normal);
+    let local_pos      = rot * (in.position * scale);
+    let instance_pos   = local_pos + inst.position;
+    let instance_nrm   = normalize(rot * in.normal);
+    // Apply the per-item model matrix on top of the per-instance transform
+    // so consumers can move a pre-uploaded glyph set without rebuilding
+    // its instance buffer. Identity (the default) keeps existing behaviour.
+    let world_pos = (glyph_uniform.model * vec4<f32>(instance_pos, 1.0)).xyz;
+    let world_nrm = normalize((glyph_uniform.model * vec4<f32>(instance_nrm, 0.0)).xyz);
 
     out.clip_pos  = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;

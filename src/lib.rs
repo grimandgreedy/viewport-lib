@@ -202,19 +202,21 @@ pub use renderer::{
     AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape, ComputeFilterItem,
     ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation,
     DecalBlendMode, DecalItem, DecalProjection, EffectsFrame, EnvironmentMap, FilterMode,
-    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
+    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem,
+    GlyphType,
     GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
     LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
     LoadingBarItem, MeshInstanceItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
     OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, PassPath, PassView, PickId,
-    PickRectResult, PointCloudItem, PointRenderMode, PolylineItem, PolylineRefItem,
-    PostProcessSettings,
+    PickRectResult, PointCloudItem, PointCloudRefItem, PointRenderMode, PolylineItem,
+    PolylineRefItem, PostProcessSettings,
     RenderCamera, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation,
     ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
     ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpriteBlend, SpriteItem, SpriteSizeMode,
     StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem,
-    ToneMapping, TransparentVolumeMeshItem, TriangleDirection, TubeItem, TubeRefItem,
+    TensorGlyphSetRefItem, ToneMapping, TransparentVolumeMeshItem, TriangleDirection, TubeItem,
+    TubeRefItem,
     ViewportEffects, ViewportFrame,
     ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
     aabb_wireframe_polyline, sphere_wireframe_polyline,
@@ -230,7 +232,9 @@ pub use resources::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
 pub use resources::mesh_store::MeshId;
-pub use resources::{PolylineId, RibbonId, StreamtubeId, TubeId};
+pub use resources::{
+    GlyphSetId, PointCloudId, PolylineId, RibbonId, StreamtubeId, TensorGlyphSetId, TubeId,
+};
 pub use resources::sparse_volume::SparseVolumeGridData;
 pub use resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};
 pub use resources::{

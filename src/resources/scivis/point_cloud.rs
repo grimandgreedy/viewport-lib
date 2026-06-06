@@ -155,7 +155,7 @@ impl ViewportGpuResources {
     /// Upload one [`PointCloudItem`] to the GPU and return draw data.
     ///
     /// Called from `prepare()` for each non-empty item in `frame.scene.point_clouds`.
-    pub(crate) fn upload_point_cloud(
+    pub(crate) fn upload_point_cloud_per_frame(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -399,5 +399,172 @@ impl ViewportGpuResources {
             _radius_buf: radius_buf,
             _transparency_buf: transparency_buf,
         }
+    }
+
+    /// Pre-upload a point cloud and return a typed handle.
+    pub fn upload_point_cloud(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::PointCloudItem,
+    ) -> crate::resources::PointCloudId {
+        self.ensure_point_cloud_pipeline(device);
+        let gpu = self.upload_point_cloud_per_frame(device, queue, item);
+        self.point_cloud_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded point cloud.
+    pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
+        self.point_cloud_store.remove(id)
+    }
+
+    /// Replace the geometry of a pre-uploaded point cloud, keeping the same id.
+    pub fn replace_point_cloud(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::PointCloudId,
+        item: &crate::renderer::PointCloudItem,
+    ) -> bool {
+        if !self.point_cloud_store.contains(id) {
+            return false;
+        }
+        self.ensure_point_cloud_pipeline(device);
+        let gpu = self.upload_point_cloud_per_frame(device, queue, item);
+        self.point_cloud_store.replace(id, gpu)
+    }
+
+    /// Start an asynchronous point cloud upload.
+    pub fn begin_upload_point_cloud(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::PointCloudItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::PointCloudId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let pid = resources.upload_point_cloud(
+                            &device_for_apply,
+                            &queue_for_apply,
+                            &item,
+                        );
+                        slot_for_apply.set(pid);
+                    }),
+                ))
+            })
+        };
+        self.job_point_cloud_results
+            .lock()
+            .expect("point cloud result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`PointCloudId`](crate::resources::PointCloudId) produced by a
+    /// completed [`begin_upload_point_cloud`](Self::begin_upload_point_cloud) job.
+    pub fn upload_result_point_cloud(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::PointCloudId> {
+        let mut map = self
+            .job_point_cloud_results
+            .lock()
+            .expect("point cloud result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(pid) => {
+                map.remove(&id);
+                Ok(pid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ViewportGpuResources;
+    use crate::renderer::PointCloudItem;
+    use crate::resources::UploadStatus;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn sample_point_cloud() -> PointCloudItem {
+        let mut item = PointCloudItem::default();
+        item.positions = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        item.point_size = 6.0;
+        item
+    }
+
+    #[test]
+    fn upload_point_cloud_returns_valid_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_point_cloud(&device, &queue, &sample_point_cloud());
+        assert!(resources.point_cloud_store.contains(id));
+        assert!(resources.drop_point_cloud(id));
+        assert!(!resources.point_cloud_store.contains(id));
+    }
+
+    #[test]
+    fn begin_upload_point_cloud_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_point_cloud(&device, &queue, sample_point_cloud());
+        for _ in 0..200 {
+            resources.process_uploads(&device, &queue);
+            match resources.upload_status(job) {
+                UploadStatus::Ready => break,
+                UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("job id disappeared"),
+            }
+        }
+        let id = resources.upload_result_point_cloud(job).expect("ready");
+        assert!(resources.point_cloud_store.contains(id));
+        let err = resources.upload_result_point_cloud(job).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::JobResultMissing { .. }
+        ));
     }
 }

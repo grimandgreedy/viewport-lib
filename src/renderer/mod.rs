@@ -31,6 +31,7 @@ pub use self::types::{
     LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
     LoadingBarItem, MeshInstanceItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
     OverlayShape, OverlayShapeItem, OverlayTextureId, PickId, PointCloudItem, PointRenderMode,
+    PointCloudRefItem, GlyphSetRefItem, TensorGlyphSetRefItem,
     PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RibbonItem, RibbonRefItem,
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
     ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
@@ -1160,6 +1161,21 @@ impl ViewportRenderer {
     /// Count of upload jobs still in flight.
     pub fn uploads_pending(&self) -> usize {
         self.resources.uploads_pending()
+    }
+
+    /// Wall-clock work duration recorded for an async upload job. See
+    /// [`ViewportGpuResources::job_duration`].
+    pub fn job_duration(
+        &self,
+        id: crate::resources::JobId,
+    ) -> Option<std::time::Duration> {
+        self.resources.job_duration(id)
+    }
+
+    /// Drop the recorded duration for `id` after reading it. See
+    /// [`ViewportGpuResources::drop_job_duration`].
+    pub fn drop_job_duration(&mut self, id: crate::resources::JobId) {
+        self.resources.drop_job_duration(id);
     }
 
     /// True when no upload jobs are in flight.

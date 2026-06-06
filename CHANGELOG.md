@@ -20,6 +20,14 @@ Texture uploads consolidate on the same shape. `begin_upload_texture` and `begin
 
 The earlier async-texture path is removed. `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the internal `submit_pending_texture_uploads` drain are gone, along with the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
 
+#### Pre-uploaded point cluster types
+
+`PointCloudId`, `GlyphSetId`, and `TensorGlyphSetId` handles plus matching `upload_*` / `drop_*` / `replace_*` / `begin_upload_*` / `upload_result_*` methods extend the pre-upload pattern to the three point-cluster scivis types. `SceneFrame` gains `point_cloud_refs`, `glyph_set_refs`, and `tensor_glyph_set_refs`.
+
+All three ref item types honour the per-frame `model` matrix: the renderer rewrites the model field of the stored uniform at offset 0 each frame. `GlyphUniform` and `TensorGlyphUniform` gained a `model: mat4x4<f32>` field at offset 0 and the vertex shaders compose it on top of the per-instance transform. `GlyphItem.model` is now applied at upload (previously silently ignored) and `TensorGlyphItem.model` no longer bakes into per-instance world transforms — both feed the new uniform instead. Existing per-frame consumers see identical output because the default identity matrix is a no-op.
+
+Showcase 51 lights three new buttons (point cloud, glyph set, tensor glyph set). The "Load a level" button now fires all eleven assets.
+
 #### Pre-uploaded curve types
 
 The four curve types (polyline, streamtube, tube, ribbon) now support a pre-upload + per-frame reference workflow on top of the existing per-frame upload.

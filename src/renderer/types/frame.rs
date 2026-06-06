@@ -323,8 +323,12 @@ pub struct SceneFrame {
     pub surfaces: SurfaceSubmission,
     /// Point cloud items to render this frame.
     pub point_clouds: Vec<PointCloudItem>,
+    /// References to pre-uploaded point clouds.
+    pub point_cloud_refs: Vec<PointCloudRefItem>,
     /// Instanced glyph items to render this frame.
     pub glyphs: Vec<GlyphItem>,
+    /// References to pre-uploaded glyph sets.
+    pub glyph_set_refs: Vec<GlyphSetRefItem>,
     /// Polyline (streamline) items to render this frame.
     pub polylines: Vec<PolylineItem>,
     /// References to pre-uploaded polylines (one entry per draw). Each
@@ -365,6 +369,8 @@ pub struct SceneFrame {
     pub image_slices: Vec<ImageSliceItem>,
     /// Tensor glyph items to render this frame.
     pub tensor_glyphs: Vec<TensorGlyphItem>,
+    /// References to pre-uploaded tensor glyph sets.
+    pub tensor_glyph_set_refs: Vec<TensorGlyphSetRefItem>,
     /// Ribbon items to render this frame.
     pub ribbon_items: Vec<RibbonItem>,
     /// References to pre-uploaded ribbons.
@@ -427,7 +433,9 @@ impl Default for SceneFrame {
             generation: 0,
             surfaces: SurfaceSubmission::default(),
             point_clouds: Vec::new(),
+            point_cloud_refs: Vec::new(),
             glyphs: Vec::new(),
+            glyph_set_refs: Vec::new(),
             polylines: Vec::new(),
             polyline_refs: Vec::new(),
             volumes: Vec::new(),
@@ -443,6 +451,7 @@ impl Default for SceneFrame {
             tube_refs: Vec::new(),
             image_slices: Vec::new(),
             tensor_glyphs: Vec::new(),
+            tensor_glyph_set_refs: Vec::new(),
             ribbon_items: Vec::new(),
             ribbon_refs: Vec::new(),
             volume_surface_slices: Vec::new(),
