@@ -206,29 +206,34 @@ impl ViewportGpuResources {
     }
 
     // -----------------------------------------------------------------------
-    // Async texture upload
+    // Async texture upload (routed through the upload-job runner)
     // -----------------------------------------------------------------------
 
-    /// Non-blocking texture upload.
+    /// Start an asynchronous albedo texture upload.
     ///
-    /// Writes RGBA data into a staging buffer on the calling thread. The GPU
-    /// copy is submitted on the next `prepare_scene` call. The texture is
-    /// invisible for exactly one frame.
+    /// Returns a `JobId` immediately. The texture and bind group are built
+    /// on a worker thread; `queue.write_texture` queues the pixel copy and
+    /// the runner gates the job on a fresh submission that flushes those
+    /// writes. Once the status is `Ready`, take the resulting texture id
+    /// with `upload_result_texture` and store it in `Material::texture_id`.
     ///
-    /// ```text
-    /// Frame N:   upload_texture_async(...) -> PendingTextureId
-    /// Frame N+1: is_upload_ready(id) -> true
-    ///            promote_texture(id) -> Some(texture_id)
-    /// ```
+    /// `rgba` transfers into the worker; clone at the call site to retain
+    /// it. Format and binding match the synchronous `upload_texture`.
     ///
-    /// `rgba` must be exactly `width * height * 4` bytes in RGBA8 format.
-    pub fn upload_texture_async(
+    /// # Errors
+    ///
+    /// Returns
+    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// when `rgba.len() != width * height * 4`, reported before any job is
+    /// submitted.
+    pub fn begin_upload_texture(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         width: u32,
         height: u32,
-        rgba: &[u8],
-    ) -> crate::error::ViewportResult<PendingTextureId> {
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
         let expected = (width * height * 4) as usize;
         if rgba.len() != expected {
             return Err(crate::error::ViewportError::InvalidTextureData {
@@ -236,147 +241,222 @@ impl ViewportGpuResources {
                 actual: rgba.len(),
             });
         }
+        let label = TextureAsyncLabel::Albedo;
+        Ok(self.spawn_texture_upload(device, queue, width, height, rgba, label))
+    }
 
-        // Compute the row stride aligned to the GPU copy requirement.
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let raw_bpr = width * 4;
-        let aligned_bytes_per_row = (raw_bpr + align - 1) / align * align;
-        let staging_size = aligned_bytes_per_row as u64 * height as u64;
-
-        // Acquire a staging buffer from the pool (or allocate fresh on first use).
-        // The returned buffer is already mapped for writing.
-        let (staging_buf, pool_band) = self.staging_pool.acquire(device, staging_size);
-        {
-            let mut mapped = staging_buf.slice(..).get_mapped_range_mut();
-            if aligned_bytes_per_row == raw_bpr {
-                // No padding needed -- copy in one shot.
-                mapped[..rgba.len()].copy_from_slice(rgba);
-            } else {
-                // Write each row, leaving padding bytes uninitialised.
-                for row in 0..height as usize {
-                    let src = row * raw_bpr as usize..(row + 1) * raw_bpr as usize;
-                    let dst_start = row * aligned_bytes_per_row as usize;
-                    mapped[dst_start..dst_start + raw_bpr as usize].copy_from_slice(&rgba[src]);
-                }
-            }
+    /// Start an asynchronous normal-map upload.
+    ///
+    /// Same shape as `begin_upload_texture`, but the texture is created
+    /// with the linear `Rgba8Unorm` format and bound into the normal-map
+    /// slot. Take the result with `upload_result_texture` once `Ready`.
+    ///
+    /// # Errors
+    ///
+    /// Same as `begin_upload_texture`.
+    pub fn begin_upload_normal_map(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        let expected = (width * height * 4) as usize;
+        if rgba.len() != expected {
+            return Err(crate::error::ViewportError::InvalidTextureData {
+                expected,
+                actual: rgba.len(),
+            });
         }
-        staging_buf.unmap();
-
-        // Create the GPU texture. It will be filled by a copy_buffer_to_texture
-        // command issued at the start of the next prepare_scene call.
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("async_user_texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("async_user_texture_sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("async_user_texture_bg"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.fallback_normal_map_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&self.fallback_ao_map_view),
-                },
-            ],
-        });
-
-        let pending_id = self.next_pending_texture_id;
-        self.next_pending_texture_id += 1;
-
-        self.pending_texture_uploads.push(PendingUploadEntry {
-            pending_id,
-            gpu_texture: GpuTexture {
-                texture,
-                view,
-                sampler,
-                bind_group,
-            },
-            staging_buf,
-            pool_band,
-            width,
-            height,
-            aligned_bytes_per_row,
-            data_bytes: expected as u64,
-            copy_submitted: false,
-            ready: false,
-        });
-
-        tracing::debug!(pending_id, width, height, "async texture upload queued");
-        Ok(PendingTextureId(pending_id))
+        let label = TextureAsyncLabel::NormalMap;
+        Ok(self.spawn_texture_upload(device, queue, width, height, rgba, label))
     }
 
-    /// Check whether the GPU copy for `id` has completed.
+    /// Take the texture id produced by a completed `begin_upload_texture`
+    /// or `begin_upload_normal_map` job.
     ///
-    /// Returns `false` on the frame the upload was submitted (the frame
-    /// containing the `prepare_scene` call following `upload_texture_async`).
-    /// Returns `true` on all subsequent frames. Stays `true` until
-    /// `promote_texture` consumes the entry.
-    pub fn is_upload_ready(&self, id: PendingTextureId) -> bool {
-        self.pending_texture_uploads
-            .iter()
-            .find(|e| e.pending_id == id.0)
-            .map_or(false, |e| e.ready)
+    /// Returns `JobNotReady` while the upload is still in flight, and
+    /// `JobResultMissing` for ids that have already been taken, were
+    /// issued by a different upload type, or never existed.
+    pub fn upload_result_texture(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<u64> {
+        let mut map = self
+            .job_texture_results
+            .lock()
+            .expect("texture result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(tex_id) => {
+                map.remove(&id);
+                Ok(tex_id)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
     }
 
-    /// Promote a completed async upload to a live texture ID.
-    ///
-    /// Returns the `u64` ID to store in `Material::texture_id`.
-    /// Returns `None` if `id` is unknown or `is_upload_ready` is still false.
-    pub fn promote_texture(&mut self, id: PendingTextureId) -> Option<u64> {
-        let pos = self
-            .pending_texture_uploads
-            .iter()
-            .position(|e| e.pending_id == id.0 && e.ready)?;
+    /// Shared spawn path for `begin_upload_texture` and
+    /// `begin_upload_normal_map`. The label decides texture format and
+    /// which bind-group slot the texture occupies.
+    fn spawn_texture_upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        label: TextureAsyncLabel,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<u64>::new();
+        let slot_for_apply = slot.clone();
 
-        // swap_remove is O(1) and preserves correctness since entries are
-        // identified by pending_id, not position.
-        let entry = self.pending_texture_uploads.swap_remove(pos);
-        // Return the staging buffer to the pool; the GPU copy completed one frame ago.
-        self.staging_pool
-            .release(entry.staging_buf, entry.pool_band);
+        // Clone the fallback views and the bind-group layout into the
+        // worker so it can build the GpuTexture and bind group without
+        // touching `self` from the worker thread.
+        let bgl = self.texture_bind_group_layout.clone();
+        let fallback_albedo_view = self.fallback_texture.view.clone();
+        let fallback_normal_view = self.fallback_normal_map_view.clone();
+        let fallback_ao_view = self.fallback_ao_map_view.clone();
+        let data_bytes = rgba.len() as u64;
 
-        let texture_id = self.textures.len() as u64;
-        self.texture_allocated_bytes += entry.data_bytes;
-        self.textures.push(entry.gpu_texture);
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_with_gpu(device, queue, move |dev, q, progress| {
+                progress.set(0.2);
+                let format = match label {
+                    TextureAsyncLabel::Albedo => wgpu::TextureFormat::Rgba8UnormSrgb,
+                    TextureAsyncLabel::NormalMap => wgpu::TextureFormat::Rgba8Unorm,
+                };
+                let tex_label = match label {
+                    TextureAsyncLabel::Albedo => "async_user_texture",
+                    TextureAsyncLabel::NormalMap => "async_normal_map_texture",
+                };
+                let texture = dev.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(tex_label),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                q.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(width * 4),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                progress.set(0.7);
 
-        tracing::debug!(
-            texture_id,
-            width = entry.width,
-            height = entry.height,
-            "async texture promoted"
-        );
-        Some(texture_id)
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let sampler_label = match label {
+                    TextureAsyncLabel::Albedo => "async_user_texture_sampler",
+                    TextureAsyncLabel::NormalMap => "async_normal_map_sampler",
+                };
+                let sampler = dev.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some(sampler_label),
+                    address_mode_u: wgpu::AddressMode::Repeat,
+                    address_mode_v: wgpu::AddressMode::Repeat,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::FilterMode::Nearest,
+                    ..Default::default()
+                });
+                // Bind-group entries differ between albedo and normal map:
+                // albedo binds the new view to slot 0 and the fallback
+                // normal to slot 2; normal map binds the fallback albedo
+                // to slot 0 and the new view to slot 2.
+                let bg_label = match label {
+                    TextureAsyncLabel::Albedo => "async_user_texture_bg",
+                    TextureAsyncLabel::NormalMap => "async_normal_map_bg",
+                };
+                let (slot0_view, slot2_view) = match label {
+                    TextureAsyncLabel::Albedo => (&view, &fallback_normal_view),
+                    TextureAsyncLabel::NormalMap => (&fallback_albedo_view, &view),
+                };
+                let bind_group = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(bg_label),
+                    layout: &bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(slot0_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(slot2_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(&fallback_ao_view),
+                        },
+                    ],
+                });
+                progress.set(0.9);
+
+                // Flush so the runner has a submission to gate on. Implicit
+                // writes queued above are folded into this submit by wgpu.
+                let encoder = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("async_texture_flush"),
+                });
+                let submission = q.submit(std::iter::once(encoder.finish()));
+                progress.set(1.0);
+
+                let gpu_texture = GpuTexture {
+                    texture,
+                    view,
+                    sampler,
+                    bind_group,
+                };
+                Ok(crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
+                    submission,
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let tex_id = resources.textures.len() as u64;
+                        resources.textures.push(gpu_texture);
+                        resources.texture_allocated_bytes += data_bytes;
+                        slot_for_apply.set(tex_id);
+                    }),
+                ))
+            })
+        };
+
+        self.job_texture_results
+            .lock()
+            .expect("texture result map poisoned")
+            .insert(id, slot);
+        id
     }
 
     // -----------------------------------------------------------------------
@@ -385,8 +465,8 @@ impl ViewportGpuResources {
 
     /// Current GPU memory usage for user-uploaded textures.
     ///
-    /// Counts bytes from `upload_texture`, `upload_normal_map`, and
-    /// `promote_texture`. Internal resources (shadow maps, colourmaps,
+    /// Counts bytes from `upload_texture`, `upload_normal_map`, and the
+    /// async upload entries. Internal resources (shadow maps, colourmaps,
     /// IBL, post-processing targets) are not included.
     pub fn texture_memory_stats(&self) -> TextureMemoryStats {
         TextureMemoryStats {
@@ -394,76 +474,17 @@ impl ViewportGpuResources {
             texture_count: self.textures.len() as u32,
         }
     }
+}
 
-    // -----------------------------------------------------------------------
-    // Per-frame async upload processing (called from prepare_scene_internal)
-    // -----------------------------------------------------------------------
+/// Discriminator used by `spawn_texture_upload` to switch between the
+/// albedo and normal-map paths without duplicating the worker body.
+#[derive(Clone, Copy)]
+enum TextureAsyncLabel {
+    Albedo,
+    NormalMap,
+}
 
-    /// Advance the async texture upload state machine.
-    ///
-    /// Called at the start of each `prepare_scene_internal`:
-    /// 1. Marks entries whose copy was submitted on the previous frame as ready.
-    /// 2. Submits `copy_buffer_to_texture` commands for newly queued entries.
-    pub(crate) fn submit_pending_texture_uploads(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) {
-        if self.pending_texture_uploads.is_empty() {
-            return;
-        }
-
-        // Step 1: entries submitted last frame are now safe to promote.
-        for entry in &mut self.pending_texture_uploads {
-            if entry.copy_submitted && !entry.ready {
-                entry.ready = true;
-            }
-        }
-
-        // Step 2: submit copy commands for entries not yet issued.
-        let has_new = self
-            .pending_texture_uploads
-            .iter()
-            .any(|e| !e.copy_submitted);
-        if !has_new {
-            return;
-        }
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("async_texture_copy"),
-        });
-
-        for entry in &mut self.pending_texture_uploads {
-            if entry.copy_submitted {
-                continue;
-            }
-            encoder.copy_buffer_to_texture(
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &entry.staging_buf,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(entry.aligned_bytes_per_row),
-                        rows_per_image: Some(entry.height),
-                    },
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &entry.gpu_texture.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: entry.width,
-                    height: entry.height,
-                    depth_or_array_layers: 1,
-                },
-            );
-            entry.copy_submitted = true;
-        }
-
-        queue.submit(std::iter::once(encoder.finish()));
-    }
-
+impl ViewportGpuResources {
     /// Get or create a cached material bind group for (albedo, normal_map, ao_map) texture combo.
     ///
     /// `u64::MAX` sentinel means "use fallback texture for that slot".
@@ -1012,5 +1033,131 @@ impl ViewportGpuResources {
             .unwrap();
         self.builtin_matcap_ids = Some([clay, wax, candy, flat, ceramic, jade, mud, normal]);
         self.matcaps_initialized = true;
+    }
+}
+
+#[cfg(test)]
+mod async_texture_tests {
+    use crate::ViewportGpuResources;
+    use crate::resources::UploadStatus;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn drive_until_ready(
+        resources: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::JobId,
+    ) {
+        for _ in 0..200 {
+            resources.process_uploads(device, queue);
+            match resources.upload_status(id) {
+                UploadStatus::Ready => return,
+                UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("job id disappeared"),
+            }
+        }
+        panic!("texture upload did not complete in time");
+    }
+
+    #[test]
+    fn invalid_size_errors_synchronously() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // 2x2 image requires 16 bytes. Pass 12 and confirm the error fires
+        // before any job is submitted.
+        let rgba = vec![0u8; 12];
+        let err = resources
+            .begin_upload_texture(&device, &queue, 2, 2, rgba)
+            .expect_err("invalid size should error");
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::InvalidTextureData { expected: 16, actual: 12 }
+        ));
+        assert_eq!(resources.uploads_pending(), 0);
+    }
+
+    #[test]
+    fn begin_upload_texture_completes_and_yields_id() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let rgba = vec![128u8; 4 * 4 * 4];
+        let id = resources
+            .begin_upload_texture(&device, &queue, 4, 4, rgba)
+            .unwrap();
+        assert_eq!(resources.uploads_pending(), 1);
+
+        // Result is not available until the worker finishes.
+        let err = resources.upload_result_texture(id).unwrap_err();
+        assert!(matches!(err, crate::error::ViewportError::JobNotReady));
+
+        drive_until_ready(&mut resources, &device, &queue, id);
+
+        let tex_id = resources.upload_result_texture(id).expect("ready result");
+        // The first uploaded texture lands at index 0.
+        assert_eq!(tex_id, 0);
+
+        // Taking the result again reports missing.
+        let err = resources.upload_result_texture(id).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::JobResultMissing { .. }
+        ));
+    }
+
+    #[test]
+    fn begin_upload_normal_map_routes_to_same_result_accessor() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let rgba = vec![64u8; 8 * 8 * 4];
+        let id = resources
+            .begin_upload_normal_map(&device, &queue, 8, 8, rgba)
+            .unwrap();
+        drive_until_ready(&mut resources, &device, &queue, id);
+        let tex_id = resources.upload_result_texture(id).expect("ready result");
+        assert_eq!(tex_id, 0);
+    }
+
+    #[test]
+    fn sync_upload_still_works() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let rgba = vec![200u8; 4 * 4 * 4];
+        let tex_id = resources
+            .upload_texture(&device, &queue, 4, 4, &rgba)
+            .unwrap();
+        assert_eq!(tex_id, 0);
     }
 }

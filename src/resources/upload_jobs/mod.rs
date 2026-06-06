@@ -641,22 +641,28 @@ mod tests {
             Ok(JobProduct::empty())
         });
 
-        // Give the worker time to publish 0.25 before we observe.
-        std::thread::sleep(Duration::from_millis(20));
-        match runner.status(id) {
-            UploadStatus::Pending { progress } => {
-                assert!(
-                    (0.2..=0.3).contains(&progress),
-                    "expected ~0.25, got {progress}"
-                );
+        // Poll until the worker publishes its first progress sample. Under
+        // contention with other tests, the worker may not start for some
+        // time.
+        let mut observed = None;
+        for _ in 0..200 {
+            if let UploadStatus::Pending { progress } = runner.status(id) {
+                if progress > 0.0 {
+                    observed = Some(progress);
+                    break;
+                }
             }
-            other => panic!("expected Pending, got {other:?}"),
+            std::thread::sleep(Duration::from_millis(5));
         }
+        let progress = observed.expect("worker never published progress");
+        assert!(
+            (0.2..=0.3).contains(&progress),
+            "expected ~0.25, got {progress}"
+        );
 
         gate.store(true, Ordering::Relaxed);
-        std::thread::sleep(Duration::from_millis(20));
         with_test_gpu(|device, queue| {
-            let _ = runner.process(device, queue);
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
         });
         assert!(matches!(runner.status(id), UploadStatus::Ready));
     }
@@ -805,12 +811,12 @@ mod tests {
                 Ok(JobProduct::with_gpu(sub))
             });
 
-            // Poll until the GPU submission completes. The runner may need
-            // several iterations: one to receive the worker outcome, one or
-            // more to observe the submission completion.
-            for _ in 0..50 {
+            // Poll until the GPU submission completes. Generous budget so
+            // the test stays robust under load when other tests are also
+            // hammering the rayon pool and the GPU.
+            for _ in 0..400 {
                 std::thread::sleep(Duration::from_millis(5));
-                runner.process(device, queue);
+                let _ = runner.process(device, queue);
                 if matches!(runner.status(id), UploadStatus::Ready) {
                     return;
                 }

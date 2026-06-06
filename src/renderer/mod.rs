@@ -1144,6 +1144,44 @@ impl ViewportRenderer {
         Ok(())
     }
 
+    /// Start an asynchronous albedo texture upload. See
+    /// [`ViewportGpuResources::begin_upload_texture`] for the semantics.
+    pub fn begin_upload_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.resources
+            .begin_upload_texture(device, queue, width, height, rgba)
+    }
+
+    /// Start an asynchronous normal-map upload. See
+    /// [`ViewportGpuResources::begin_upload_normal_map`] for the semantics.
+    pub fn begin_upload_normal_map(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.resources
+            .begin_upload_normal_map(device, queue, width, height, rgba)
+    }
+
+    /// Take the texture id from a completed async texture upload. See
+    /// [`ViewportGpuResources::upload_result_texture`] for the error
+    /// semantics.
+    pub fn upload_result_texture(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<u64> {
+        self.resources.upload_result_texture(id)
+    }
+
     /// Start an asynchronous mesh upload.
     ///
     /// Returns a `JobId` immediately. The CPU prep (tangent computation,

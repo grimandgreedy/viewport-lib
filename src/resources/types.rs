@@ -1614,15 +1614,6 @@ pub struct GpuTexture {
 // Async texture upload types
 // ---------------------------------------------------------------------------
 
-/// Handle to a texture being uploaded asynchronously.
-///
-/// Returned by [`ViewportGpuResources::upload_texture_async`]. Poll
-/// [`ViewportGpuResources::is_upload_ready`] each frame until it returns
-/// true, then call [`ViewportGpuResources::promote_texture`] to get the
-/// live texture ID.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PendingTextureId(pub u64);
-
 /// Texture memory usage reported by [`ViewportGpuResources::texture_memory_stats`].
 ///
 /// Counts bytes and textures uploaded via both the sync and async paths.
@@ -1634,126 +1625,6 @@ pub struct TextureMemoryStats {
     pub used_bytes: u64,
     /// Number of live user-uploaded textures.
     pub texture_count: u32,
-}
-
-// ---------------------------------------------------------------------------
-// Staging buffer pool
-// ---------------------------------------------------------------------------
-
-/// Band capacities for the async texture staging buffer pool (bytes).
-pub(crate) const STAGING_BAND_SIZES: [u64; 5] = [
-    64 * 1024,
-    512 * 1024,
-    4 * 1024 * 1024,
-    16 * 1024 * 1024,
-    64 * 1024 * 1024,
-];
-
-/// Pool of reusable `MAP_WRITE | COPY_SRC` staging buffers for async texture uploads.
-///
-/// Buffers are organised by size band; `acquire` picks the smallest band that
-/// fits the requested staging size. Oversized uploads (> 64 MB) bypass the pool
-/// and allocate exactly sized buffers that are dropped after use.
-pub(crate) struct StagingBufferPool {
-    bands: [Vec<wgpu::Buffer>; 5],
-}
-
-impl StagingBufferPool {
-    pub(crate) fn new() -> Self {
-        Self {
-            bands: Default::default(),
-        }
-    }
-
-    fn band_for(staging_size: u64) -> Option<usize> {
-        STAGING_BAND_SIZES
-            .iter()
-            .position(|&cap| staging_size <= cap)
-    }
-
-    /// Return a mapped, writable staging buffer large enough for `staging_size` bytes.
-    ///
-    /// Pops a recycled buffer from the appropriate band when one is available,
-    /// otherwise allocates a fresh one. The returned buffer is already mapped
-    /// and ready to write. `band` is the band index to pass back to `release`.
-    /// A returned band of `usize::MAX` means the buffer is oversized and should
-    /// not be returned to the pool.
-    pub(crate) fn acquire(
-        &mut self,
-        device: &wgpu::Device,
-        staging_size: u64,
-    ) -> (wgpu::Buffer, usize) {
-        if let Some(band) = Self::band_for(staging_size) {
-            let band_capacity = STAGING_BAND_SIZES[band];
-            if let Some(buf) = self.bands[band].pop() {
-                // Remap the recycled buffer. Its last GPU copy completed at
-                // least one frame before promote_texture returned it here, so
-                // poll returns as soon as the callback fires (negligible stall).
-                buf.slice(..).map_async(wgpu::MapMode::Write, |_| {});
-                let _ = device.poll(wgpu::PollType::Wait {
-                    submission_index: None,
-                    timeout: Some(std::time::Duration::from_secs(5)),
-                });
-                return (buf, band);
-            }
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("staging_pool_buf"),
-                size: band_capacity,
-                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
-                mapped_at_creation: true,
-            });
-            return (buf, band);
-        }
-        // Oversized: allocate exact size, not pooled.
-        let buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("staging_buf_oversized"),
-            size: staging_size,
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
-            mapped_at_creation: true,
-        });
-        (buf, usize::MAX)
-    }
-
-    /// Return `buf` to the pool after its GPU copy has completed.
-    ///
-    /// `band` must be the value returned by the corresponding `acquire` call.
-    /// Oversized buffers (`band == usize::MAX`) are dropped rather than pooled.
-    pub(crate) fn release(&mut self, buf: wgpu::Buffer, band: usize) {
-        if band < self.bands.len() {
-            self.bands[band].push(buf);
-        }
-        // band == usize::MAX: oversized buffer, drop it here.
-    }
-}
-
-// ---------------------------------------------------------------------------
-
-/// An in-flight async texture upload.
-///
-/// Held in `ViewportGpuResources::pending_texture_uploads` from the call to
-/// `upload_texture_async` until `promote_texture` moves it to the live
-/// texture list.
-pub(crate) struct PendingUploadEntry {
-    pub pending_id: u64,
-    pub gpu_texture: GpuTexture,
-    /// Staging buffer with RGBA data written and unmapped.
-    /// Returned to `staging_pool` by `promote_texture` once the GPU copy is done.
-    pub staging_buf: wgpu::Buffer,
-    /// Band index from `StagingBufferPool::acquire`. Passed back to `release`
-    /// in `promote_texture`. `usize::MAX` means the buffer is oversized and
-    /// should be dropped rather than returned to the pool.
-    pub pool_band: usize,
-    pub width: u32,
-    pub height: u32,
-    /// Row stride used in the staging buffer (>= width * 4, aligned to 256).
-    pub aligned_bytes_per_row: u32,
-    /// Actual texture bytes (width * height * 4). Used for memory accounting.
-    pub data_bytes: u64,
-    /// True once `copy_buffer_to_texture` has been issued in a command buffer.
-    pub copy_submitted: bool,
-    /// True once `copy_submitted` has been true for a full frame.
-    /// When true, the GPU copy is complete and `promote_texture` is valid.
-    pub ready: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -2660,15 +2531,17 @@ pub struct ViewportGpuResources {
             super::upload_jobs::ResultSlot<crate::resources::mesh_store::MeshId>,
         >,
     >,
-    /// In-flight async texture uploads not yet promoted to the live texture list.
-    pub(crate) pending_texture_uploads: Vec<PendingUploadEntry>,
-    /// Counter for assigning unique PendingTextureId values.
-    pub(crate) next_pending_texture_id: u64,
+    /// Typed result slots for async texture uploads (albedo + normal map),
+    /// keyed by job id. Filled by the apply closure of
+    /// `begin_upload_texture` / `begin_upload_normal_map`; drained by
+    /// `upload_result_texture`.
+    pub(crate) job_texture_results: std::sync::Mutex<
+        std::collections::HashMap<super::upload_jobs::JobId, super::upload_jobs::ResultSlot<u64>>,
+    >,
     /// Bytes allocated on the GPU for user-uploaded textures.
-    /// Incremented by `upload_texture`, `upload_normal_map`, and `promote_texture`.
+    /// Incremented by `upload_texture`, `upload_normal_map`, and the async
+    /// upload paths once a texture's apply step lands.
     pub(crate) texture_allocated_bytes: u64,
-    /// Reusable staging buffers for `upload_texture_async`.
-    pub(crate) staging_pool: StagingBufferPool,
 
     // --- Matcap texture system ---
     /// Matcap textures (256×256 RGBA), indexed by `MatcapId::index`.

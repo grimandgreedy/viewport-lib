@@ -161,9 +161,55 @@ impl ViewportGpuResources {
         weights: &SkinWeights,
     ) {
         let packed = SkinningState::pack(weights);
+        self.install_skin_weights(device, mesh_id, &packed);
+    }
+
+    /// Start an asynchronous skin-weights upload.
+    ///
+    /// Returns a `JobId` immediately. The packed weight stream (joint
+    /// indices and blend weights, four per vertex) is computed on a worker
+    /// thread; buffer creation and the `mesh.skinning` insert run on the
+    /// main thread during the next `process_uploads` call after the worker
+    /// finishes.
+    ///
+    /// `weights` transfers into the worker; clone at the call site to
+    /// retain ownership.
+    ///
+    /// As with the synchronous `set_skin_weights`, this replaces any prior
+    /// weights for the same `mesh_id` and invalidates active per-instance
+    /// bind groups. Re-upload palettes via `set_skin_palette` afterwards.
+    pub fn begin_upload_skin_weights(
+        &mut self,
+        device: &wgpu::Device,
+        mesh_id: MeshId,
+        weights: SkinWeights,
+    ) -> crate::resources::JobId {
+        let device_for_apply = device.clone();
+        let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+        runner.submit_cpu(move |progress| {
+            progress.set(0.2);
+            let packed = SkinningState::pack(&weights);
+            progress.set(0.9);
+            Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                Box::new(move |resources: &mut ViewportGpuResources| {
+                    resources.install_skin_weights(&device_for_apply, mesh_id, &packed);
+                }),
+            ))
+        })
+    }
+
+    /// Shared apply step for both `set_skin_weights` and
+    /// `begin_upload_skin_weights`: build the storage buffer and register
+    /// the mesh as skinnable.
+    fn install_skin_weights(
+        &mut self,
+        device: &wgpu::Device,
+        mesh_id: MeshId,
+        packed: &[PackedSkinVertex],
+    ) {
         let weights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("skin_weights_buffer"),
-            contents: bytemuck::cast_slice(&packed),
+            contents: bytemuck::cast_slice(packed),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         self.skinning.meshes.insert(
@@ -264,5 +310,79 @@ impl ViewportGpuResources {
             .instances
             .get(&instance_id)
             .map(|p| &p.bind_group)
+    }
+}
+
+#[cfg(test)]
+mod async_skin_tests {
+    use crate::ViewportGpuResources;
+    use crate::geometry::primitives;
+    use crate::resources::{SkinWeights, UploadStatus};
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn unit_weights(vertex_count: usize) -> SkinWeights {
+        SkinWeights {
+            joint_indices: vec![[0u8; 4]; vertex_count],
+            joint_weights: vec![[1.0, 0.0, 0.0, 0.0]; vertex_count],
+        }
+    }
+
+    #[test]
+    fn sync_set_skin_weights_marks_mesh_skinnable() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        let weights = unit_weights(plane.positions.len());
+
+        resources.set_skin_weights(&device, mesh_id, &weights);
+        assert!(resources.is_skinned_mesh(mesh_id));
+    }
+
+    #[test]
+    fn begin_upload_skin_weights_completes() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        let weights = unit_weights(plane.positions.len());
+
+        assert!(!resources.is_skinned_mesh(mesh_id));
+        let id = resources.begin_upload_skin_weights(&device, mesh_id, weights);
+
+        for _ in 0..200 {
+            resources.process_uploads(&device, &queue);
+            match resources.upload_status(id) {
+                UploadStatus::Ready => break,
+                UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("job disappeared"),
+            }
+        }
+
+        assert!(
+            resources.is_skinned_mesh(mesh_id),
+            "skin weights did not install"
+        );
     }
 }

@@ -58,7 +58,6 @@ pub use self::plugin_builders::{
 pub use self::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::types::ClipVolumeUniform;
-pub(crate) use self::types::PendingUploadEntry;
 pub(crate) use self::types::ScatterViewportState;
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BatchMeta, BloomUniform, ClipPlanesUniform,
@@ -78,9 +77,8 @@ pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
     LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
-    PendingTextureId, PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData,
-    SingleLightUniform, SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources,
-    VolumeGpuData, VolumeId,
+    PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
+    SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 pub use self::upload_jobs::{JobId, ProgressHandle, ResultSlot, UploadStatus};
 #[allow(deprecated)]

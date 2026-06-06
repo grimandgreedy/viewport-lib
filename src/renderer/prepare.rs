@@ -28,10 +28,6 @@ impl ViewportRenderer {
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
     ) {
-        // Submit copy commands for async texture uploads queued since last frame,
-        // and advance ready state for uploads submitted on the previous frame.
-        self.resources.submit_pending_texture_uploads(device, queue);
-
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
         // any registered completion callbacks fire on this thread.

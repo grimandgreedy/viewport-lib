@@ -12,6 +12,14 @@ Environment-map upload is the first consumer. `ViewportRenderer::begin_upload_en
 
 Mesh uploads gain the same shape. `ViewportRenderer::begin_upload_mesh_data` returns a `JobId`; tangent computation, vertex repack, and normal-line generation run on a worker thread. The main-thread apply step creates buffers and bind groups, inserts the mesh into the store, and publishes the new `MeshId` into a typed result slot. The consumer takes the id with `upload_result_mesh(JobId)`, which returns `JobNotReady` while the worker is still running and `JobResultMissing` for ids that have been taken, were never issued, or belong to a different upload type. The synchronous `upload_mesh_data` keeps its signature and is unchanged for callers who do not need async behaviour.
 
+Skin weights have an async entry too. `begin_upload_skin_weights` on `ViewportGpuResources` returns a `JobId`; the per-vertex pack (joint indices and blend weights into the GPU layout) runs on a worker thread, with buffer creation and the per-mesh skinning install applied on the main thread. The function has no return value, so no `upload_result_*` is needed: once the job reports `Ready`, the mesh is marked skinnable. The synchronous `set_skin_weights` keeps its signature and now shares its install path with the async route.
+
+Texture uploads consolidate on the same shape. `begin_upload_texture` and `begin_upload_normal_map` on both `ViewportRenderer` and `ViewportGpuResources` return a `JobId`; the worker creates the GPU texture, sampler, and bind group on cloned device/queue handles and queues `write_texture` with the pixel data, then submits a flush that the runner gates the job on. Take the resulting texture id with `upload_result_texture`. The synchronous `upload_texture` and `upload_normal_map` keep their signatures and behaviour.
+
+### Removed: legacy async texture API
+
+The earlier async-texture path is removed. `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the internal `submit_pending_texture_uploads` drain are gone, along with the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
+
 ### Item-type plugins
 
 Plugins can ship a new kind of scene item without forking the lib. The set of renderable categories used to be fixed; new ones now register through an `ItemTypePlugin` trait and submit their per-frame data via `SceneFrame::submit_plugin_items`. The lib handles picking, selection outline, frustum cull, clip volumes, shadow casting, and OIT transparency for plugin items the same way it handles built-ins. Plugin shaders include published WGSL helpers for lighting, transparency, and clipping so they stay in sync with the rest of the renderer.

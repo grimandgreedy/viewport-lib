@@ -234,8 +234,8 @@ pub use resources::{
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult,
     FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob,
     ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform, MatcapId, MeshData,
-    PendingTextureId, ProgressHandle, ProjectedTetId, SingleLightUniform, SkinWeights,
-    TextureMemoryStats, UploadStatus, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
+    ProgressHandle, ProjectedTetId, SingleLightUniform, SkinWeights, TextureMemoryStats,
+    UploadStatus, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
 };
 
 pub use runtime::{
