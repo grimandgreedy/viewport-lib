@@ -836,7 +836,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
             dbg_ambient_lum  = dbg_ibl_diff_lum + dbg_ibl_spec_lum;
         } else {
-            let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
+            let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
             let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
             let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
             ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
@@ -900,7 +900,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         }
 
         let ambient_contrib = object.ambient;
-        let hemi_t = clamp(in.world_normal.y * 0.5 + 0.5, 0.0, 1.0);
+        let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
         let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
         let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
 

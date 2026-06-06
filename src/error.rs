@@ -40,6 +40,17 @@ pub enum ViewportError {
         vertex_count: usize,
     },
 
+    /// Volume scalar data length does not match the declared grid dimensions.
+    #[error("volume data length {actual} does not match dims {dims:?} (expected {expected})")]
+    VolumeDataLengthMismatch {
+        /// Number of scalar values provided.
+        actual: usize,
+        /// Expected length, equal to `dims[0] * dims[1] * dims[2]`.
+        expected: usize,
+        /// Grid dimensions `[nx, ny, nz]`.
+        dims: [u32; 3],
+    },
+
     /// Texture RGBA data has an unexpected size.
     #[error("invalid texture data: expected {expected} bytes, got {actual}")]
     InvalidTextureData {

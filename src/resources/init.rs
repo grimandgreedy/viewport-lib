@@ -2694,6 +2694,8 @@ impl ViewportGpuResources {
             job_point_cloud_results: std::sync::Mutex::new(std::collections::HashMap::new()),
             job_glyph_set_results: std::sync::Mutex::new(std::collections::HashMap::new()),
             job_tensor_glyph_set_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            job_volume_results: std::sync::Mutex::new(std::collections::HashMap::new()),
+            job_volume_mc_results: std::sync::Mutex::new(std::collections::HashMap::new()),
             texture_allocated_bytes: 0,
             matcap_textures: Vec::new(),
             matcap_views: Vec::new(),

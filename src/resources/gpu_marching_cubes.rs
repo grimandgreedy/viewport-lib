@@ -515,6 +515,32 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         vol: &VolumeData,
     ) -> crate::ViewportResult<VolumeGpuId> {
+        let gpu_data = build_mc_volume_gpu_data(device, queue, vol)?;
+        let idx = self.insert_mc_volume_gpu_data(gpu_data);
+        Ok(VolumeGpuId(idx))
+    }
+
+    /// Main-thread half of an async marching-cubes volume upload: insert
+    /// pre-built GPU data into the store and return its slot index.
+    pub(crate) fn insert_mc_volume_gpu_data(&mut self, gpu_data: McVolumeGpuData) -> usize {
+        if let Some(free_idx) = self.mc_volumes.iter().position(|v| !v.alive) {
+            self.mc_volumes[free_idx] = gpu_data;
+            free_idx
+        } else {
+            self.mc_volumes.push(gpu_data);
+            self.mc_volumes.len() - 1
+        }
+    }
+}
+
+/// CPU + GPU-buffer work for an MC volume upload, factored out so the same
+/// code can run on a worker thread for the async path.
+pub(crate) fn build_mc_volume_gpu_data(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    vol: &VolumeData,
+) -> crate::ViewportResult<McVolumeGpuData> {
+    {
         let [nx, ny, nz] = vol.dims;
         // The vertex buffer is bound as both STORAGE (compute) and VERTEX (render).
         // The binding limit for compute shaders is max_storage_buffer_binding_size, which
@@ -642,18 +668,88 @@ impl ViewportGpuResources {
 
         let _ = queue; // retained for potential future use (e.g. scalar updates)
 
-        let gpu_data = McVolumeGpuData { slabs, alive: true };
+        Ok(McVolumeGpuData { slabs, alive: true })
+    }
+}
 
-        // Find a free slot (from a previous remove_mc_volume call) or push a new one.
-        let idx = if let Some(free_idx) = self.mc_volumes.iter().position(|v| !v.alive) {
-            self.mc_volumes[free_idx] = gpu_data;
-            free_idx
-        } else {
-            self.mc_volumes.push(gpu_data);
-            self.mc_volumes.len() - 1
+impl ViewportGpuResources {
+    /// Start an asynchronous marching-cubes-ready volume upload.
+    ///
+    /// Returns a [`JobId`](crate::resources::JobId) immediately. Slab
+    /// sizing, scalar buffer allocation, and intermediate / output buffer
+    /// allocation run on a worker thread on cloned `Device` and `Queue`
+    /// handles. The apply step inserts the resulting GPU buffers into the
+    /// MC volume store; once `UploadStatus::Ready`, call
+    /// [`upload_result_volume_mc`](Self::upload_result_volume_mc) to take
+    /// the [`VolumeGpuId`].
+    ///
+    /// Ownership of `vol` transfers into the worker.
+    ///
+    /// # Errors
+    ///
+    /// The worker surfaces
+    /// [`ViewportError::McBufferTooLarge`](crate::error::ViewportError::McBufferTooLarge)
+    /// through [`UploadStatus::Failed`] when the device's
+    /// `max_storage_buffer_binding_size` cannot fit a single Z-cell layer.
+    pub fn begin_upload_volume_for_mc(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vol: VolumeData,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<VolumeGpuId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_worker = device.clone();
+        let queue_for_worker = queue.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let gpu_data =
+                    build_mc_volume_gpu_data(&device_for_worker, &queue_for_worker, &vol)?;
+                progress.set(0.95);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let idx = resources.insert_mc_volume_gpu_data(gpu_data);
+                        slot_for_apply.set(VolumeGpuId(idx));
+                    }),
+                ))
+            })
         };
 
-        Ok(VolumeGpuId(idx))
+        self.job_volume_mc_results
+            .lock()
+            .expect("volume mc result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`VolumeGpuId`] produced by a completed
+    /// [`begin_upload_volume_for_mc`](Self::begin_upload_volume_for_mc) job.
+    pub fn upload_result_volume_mc(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<VolumeGpuId> {
+        let mut map = self
+            .job_volume_mc_results
+            .lock()
+            .expect("volume mc result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(vid) => {
+                map.remove(&id);
+                Ok(vid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
     }
 
     /// Mark a MC volume slot as free. The GPU buffers are dropped immediately.

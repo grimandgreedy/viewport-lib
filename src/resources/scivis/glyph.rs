@@ -240,7 +240,7 @@ impl ViewportGpuResources {
             .map(|i| GlyphInstance {
                 position: item.positions[i],
                 _pad0: 0.0,
-                direction: item.vectors.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
+                direction: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 1.0]),
                 scalar: item
                     .scalars
                     .get(i)

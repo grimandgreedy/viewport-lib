@@ -121,14 +121,14 @@ pub(super) fn build_unit_cube() -> (Vec<Vertex>, Vec<u32>) {
 }
 
 // ---------------------------------------------------------------------------
-// Procedural glyph arrow mesh (cone tip + cylinder shaft, local +Y axis)
+// Procedural glyph arrow mesh (cone tip + cylinder shaft, local +Z axis)
 // ---------------------------------------------------------------------------
 
-/// Generate a unit arrow mesh aligned to local +Y.
+/// Generate a unit arrow mesh aligned to local +Z.
 ///
 /// The arrow consists of:
-/// - A cylinder shaft from Y=0 to Y=0.7, radius 0.05.
-/// - A cone tip from Y=0.7 to Y=1.0, base radius 0.12.
+/// - A cylinder shaft from Z=0 to Z=0.7, radius 0.05.
+/// - A cone tip from Z=0.7 to Z=1.0, base radius 0.12.
 ///
 /// 16 segments around the circumference gives ~300 vertices.
 pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
@@ -144,17 +144,17 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     let cone_bot = shaft_top;
     let cone_tip = 1.0f32;
 
-    // Helper: append ring vertices at a given Y and radius with outward normals.
-    let ring_verts = |verts: &mut Vec<Vertex>, y: f32, r: f32, normal_y: f32| {
+    // Helper: append ring vertices at a given Z and radius with outward normals.
+    let ring_verts = |verts: &mut Vec<Vertex>, z: f32, r: f32, normal_z: f32| {
         for i in 0..segments {
             let angle = 2.0 * std::f32::consts::PI * (i as f32) / (segments as f32);
             let (s, c) = angle.sin_cos();
             let nx = if r > 0.0 { c } else { 0.0 };
-            let nz = if r > 0.0 { s } else { 0.0 };
-            let len = (nx * nx + normal_y * normal_y + nz * nz).sqrt();
+            let ny = if r > 0.0 { s } else { 0.0 };
+            let len = (nx * nx + ny * ny + normal_z * normal_z).sqrt();
             verts.push(Vertex {
-                position: [c * r, y, s * r],
-                normal: [nx / len, normal_y / len, nz / len],
+                position: [c * r, s * r, z],
+                normal: [nx / len, ny / len, normal_z / len],
                 colour: white,
                 uv: [0.0, 0.0],
                 tangent: [0.0, 0.0, 0.0, 1.0],
@@ -170,8 +170,8 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     // Bottom cap center.
     let shaft_bot_center = verts.len() as u32;
     verts.push(Vertex {
-        position: [0.0, shaft_bot, 0.0],
-        normal: [0.0, -1.0, 0.0],
+        position: [0.0, 0.0, shaft_bot],
+        normal: [0.0, 0.0, -1.0],
         colour: white,
         uv: [0.0, 0.0],
         tangent: [0.0, 0.0, 0.0, 1.0],
@@ -200,7 +200,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     // --- Cone ---
     // Slanted normal angle for cone surface: rise=(cone_tip-cone_bot), run=cone_r.
     let cone_len = ((cone_tip - cone_bot).powi(2) + cone_r * cone_r).sqrt();
-    let normal_y_cone = cone_r / cone_len; // outward Y component of slanted normal
+    let normal_z_cone = cone_r / cone_len; // outward Z component of slanted normal
     let normal_r_cone = (cone_tip - cone_bot) / cone_len;
 
     let cone_base_ring = verts.len() as u32;
@@ -208,8 +208,8 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
         let angle = 2.0 * std::f32::consts::PI * (i as f32) / (segments as f32);
         let (s, c) = angle.sin_cos();
         verts.push(Vertex {
-            position: [c * cone_r, cone_bot, s * cone_r],
-            normal: [c * normal_r_cone, normal_y_cone, s * normal_r_cone],
+            position: [c * cone_r, s * cone_r, cone_bot],
+            normal: [c * normal_r_cone, s * normal_r_cone, normal_z_cone],
             colour: white,
             uv: [0.0, 0.0],
             tangent: [0.0, 0.0, 0.0, 1.0],
@@ -219,8 +219,8 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     // Cone tip vertex (normals averaged around tip : just point up).
     let cone_tip_v = verts.len() as u32;
     verts.push(Vertex {
-        position: [0.0, cone_tip, 0.0],
-        normal: [0.0, 1.0, 0.0],
+        position: [0.0, 0.0, cone_tip],
+        normal: [0.0, 0.0, 1.0],
         colour: white,
         uv: [0.0, 0.0],
         tangent: [0.0, 0.0, 0.0, 1.0],
@@ -232,14 +232,14 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
         idx.extend_from_slice(&[a, b, cone_tip_v]);
     }
 
-    // Cone base cap (flat, faces -Y).
+    // Cone base cap (flat, faces -Z).
     let cone_cap_base = verts.len() as u32;
     for i in 0..segments {
         let angle = 2.0 * std::f32::consts::PI * (i as f32) / (segments as f32);
         let (s, c) = angle.sin_cos();
         verts.push(Vertex {
-            position: [c * cone_r, cone_bot, s * cone_r],
-            normal: [0.0, -1.0, 0.0],
+            position: [c * cone_r, s * cone_r, cone_bot],
+            normal: [0.0, 0.0, -1.0],
             colour: white,
             uv: [0.0, 0.0],
             tangent: [0.0, 0.0, 0.0, 1.0],
@@ -247,8 +247,8 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
     }
     let cone_cap_center = verts.len() as u32;
     verts.push(Vertex {
-        position: [0.0, cone_bot, 0.0],
-        normal: [0.0, -1.0, 0.0],
+        position: [0.0, 0.0, cone_bot],
+        normal: [0.0, 0.0, -1.0],
         colour: white,
         uv: [0.0, 0.0],
         tangent: [0.0, 0.0, 0.0, 1.0],

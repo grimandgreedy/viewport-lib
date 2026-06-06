@@ -645,7 +645,7 @@ mod tests {
     fn default_plane() -> ClipObject {
         ClipObject {
             shape: ClipShape::Plane {
-                normal: [0.0, 1.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
                 distance: 0.0,
                 cap_colour: None,
                 display_center: None,

@@ -82,7 +82,7 @@ impl ViewportRenderer {
                 LightKind::Directional { direction } => {
                     let dir = glam::Vec3::from(*direction).normalize();
                     let light_up = if dir.z.abs() > 0.99 {
-                        glam::Vec3::Y
+                        glam::Vec3::X
                     } else {
                         glam::Vec3::Z
                     };
@@ -102,7 +102,7 @@ impl ViewportRenderer {
                     let pos = glam::Vec3::from(*position);
                     let to_center = (shadow_center - pos).normalize();
                     let light_up = if to_center.z.abs() > 0.99 {
-                        glam::Vec3::Y
+                        glam::Vec3::X
                     } else {
                         glam::Vec3::Z
                     };
@@ -121,7 +121,7 @@ impl ViewportRenderer {
                     let dir = glam::Vec3::from(*direction).normalize();
                     let look_target = pos + dir;
                     let up = if dir.z.abs() > 0.99 {
-                        glam::Vec3::Y
+                        glam::Vec3::X
                     } else {
                         glam::Vec3::Z
                     };

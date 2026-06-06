@@ -2,6 +2,15 @@
 
 ## [Unreleased Changes]
 
+### Residual Y-up fixes
+
+Several leftover Y-up assumptions are corrected to match the library's Z-up convention.
+
+- Hemisphere ambient now uses `world_normal.z` in `mesh.wgsl`, `mesh_oit.wgsl`, `mesh_instanced.wgsl`, and `mesh_instanced_oit.wgsl` (8 sites). Sky-facing surfaces now receive `sky_colour` and ground-facing surfaces receive `ground_colour`; previously the gradient was rotated 90 degrees.
+- Shadow up-vector fallbacks in `renderer/prepare.rs` (directional, point, spot) and `scene/light_glyphs.rs` use `Vec3::X` instead of `Vec3::Y` when the light direction is collinear with Z. `Vec3::Y` happened to be perpendicular to a +Z light but produced unstable `look_at_rh` bases under small rotations.
+- `build_glyph_arrow` is rebuilt along +Z (positions, cone-tip and cone-cap normals, side-ring normal axis). `GlyphItem` arrows and the directional/spot light glyphs now point along the supplied vector instead of being rotated into the Y axis. The `GlyphItem` per-instance vector fallback is now `[0, 0, 1]`.
+- Placeholder pick-hit normals for curve types (polyline, tube, ribbon, streamtube) are `Vec3::Z`, and the clip-plane test helper default matches the production default.
+
 ### Async upload jobs
 
 Long-running uploads can run on a background thread without freezing the viewport. The renderer owns a job runner that workers report to via a channel; the main thread drains completions once per frame from inside the prepare path. Each job carries an optional GPU submission to gate on and an optional apply step that mutates renderer state once the worker (and any GPU work) has finished. Callers query progress via a per-job `UploadStatus` or attach a completion callback.
@@ -19,6 +28,16 @@ Texture uploads consolidate on the same shape. `begin_upload_texture` and `begin
 ### Removed: legacy async texture API
 
 The earlier async-texture path is removed. `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the internal `submit_pending_texture_uploads` drain are gone, along with the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
+
+#### Async volume uploads
+
+`begin_upload_volume(&Device, &Queue, Vec<f32>, [u32; 3]) -> ViewportResult<JobId>` and `upload_result_volume(JobId) -> ViewportResult<VolumeId>` move the 3D-texture creation and `queue.write_texture` for `upload_volume` onto the worker thread. The synchronous `upload_volume` keeps its signature.
+
+`begin_upload_volume_for_mc(&Device, &Queue, VolumeData) -> JobId` and `upload_result_volume_mc(JobId) -> ViewportResult<VolumeGpuId>` do the same for `upload_volume_for_mc`: slab sizing, scalar buffer allocation, and the intermediate/output buffer allocations all run on the worker. The apply step inserts the prepared `McVolumeGpuData` into the store. `McBufferTooLarge` errors come back through `UploadStatus::Failed`. A new helper `build_mc_volume_gpu_data` is factored out of the existing sync path so sync and async share the same body.
+
+A new `ViewportError::VolumeDataLengthMismatch` variant is returned synchronously from `begin_upload_volume` when `data.len() != dims[0] * dims[1] * dims[2]`.
+
+Showcase 51 lights up the "Volume" button, which uploads a 32^3 radial-falloff scalar field and submits a `VolumeItem` rendered with the default colour LUT. The button is removed from the J5-greyed section.
 
 #### Pre-uploaded point cluster types
 

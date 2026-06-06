@@ -206,7 +206,7 @@ fn spot_cone_polyline(
         glam::Vec3::NEG_Z
     };
     let up_ref = if dir.z.abs() > 0.95 {
-        glam::Vec3::Y
+        glam::Vec3::X
     } else {
         glam::Vec3::Z
     };

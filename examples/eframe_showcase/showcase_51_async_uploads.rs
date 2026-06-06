@@ -19,12 +19,12 @@ use std::time::Instant;
 
 use eframe::egui;
 use viewport_lib::{
-    GlyphItem, GlyphSetId, GlyphSetRefItem, JobId, LightKind, LightSource, LightingSettings,
-    Material, MeshData, MeshId, PointCloudId, PointCloudItem, PointCloudRefItem, PolylineId,
-    PolylineItem, PolylineRefItem, RibbonId, RibbonItem, RibbonRefItem, SceneRenderItem,
-    SkinWeights, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
-    TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem, UploadStatus,
-    ViewportRenderer,
+    ColourmapId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId, LightKind, LightSource,
+    LightingSettings, Material, MeshData, MeshId, PointCloudId, PointCloudItem, PointCloudRefItem,
+    PolylineId, PolylineItem, PolylineRefItem, RibbonId, RibbonItem, RibbonRefItem,
+    SceneRenderItem, SkinWeights, StreamtubeId, StreamtubeItem, StreamtubeRefItem,
+    TensorGlyphItem, TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem,
+    UploadStatus, ViewportRenderer, VolumeId, VolumeItem,
 };
 
 use crate::App;
@@ -81,6 +81,7 @@ pub(crate) struct AsyncUploadsState {
     pub point_cloud_state: AssetState,
     pub glyph_set_state: AssetState,
     pub tensor_glyph_set_state: AssetState,
+    pub volume_state: AssetState,
 
     pub loaded_mesh_id: Option<MeshId>,
     pub loaded_texture_id: Option<u64>,
@@ -91,6 +92,7 @@ pub(crate) struct AsyncUploadsState {
     pub loaded_point_cloud_id: Option<PointCloudId>,
     pub loaded_glyph_set_id: Option<GlyphSetId>,
     pub loaded_tensor_glyph_set_id: Option<TensorGlyphSetId>,
+    pub loaded_volume_id: Option<VolumeId>,
     pub skin_installed: bool,
     pub built: bool,
 
@@ -121,6 +123,7 @@ impl Default for AsyncUploadsState {
             point_cloud_state: AssetState::Idle,
             glyph_set_state: AssetState::Idle,
             tensor_glyph_set_state: AssetState::Idle,
+            volume_state: AssetState::Idle,
             loaded_mesh_id: None,
             loaded_texture_id: None,
             loaded_polyline_id: None,
@@ -130,6 +133,7 @@ impl Default for AsyncUploadsState {
             loaded_point_cloud_id: None,
             loaded_glyph_set_id: None,
             loaded_tensor_glyph_set_id: None,
+            loaded_volume_id: None,
             skin_installed: false,
             built: false,
             load_all_started: None,
@@ -172,6 +176,7 @@ impl App {
         self.async_uploads_state.point_cloud_state = AssetState::Idle;
         self.async_uploads_state.glyph_set_state = AssetState::Idle;
         self.async_uploads_state.tensor_glyph_set_state = AssetState::Idle;
+        self.async_uploads_state.volume_state = AssetState::Idle;
         self.async_uploads_state.loaded_mesh_id = None;
         self.async_uploads_state.loaded_texture_id = None;
         self.async_uploads_state.loaded_polyline_id = None;
@@ -181,6 +186,7 @@ impl App {
         self.async_uploads_state.loaded_point_cloud_id = None;
         self.async_uploads_state.loaded_glyph_set_id = None;
         self.async_uploads_state.loaded_tensor_glyph_set_id = None;
+        self.async_uploads_state.loaded_volume_id = None;
         self.async_uploads_state.skin_installed = false;
         self.async_uploads_state.built = true;
     }
@@ -589,6 +595,47 @@ impl App {
             }
         }
 
+        // Volume: when Ready, take the VolumeId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.volume_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.upload_result_volume(job) {
+                    Ok(id) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.loaded_volume_id = Some(id);
+                        self.async_uploads_state.volume_state =
+                            AssetState::Loaded { duration_ms };
+                    }
+                    Err(e) => {
+                        let duration_ms = take_job_duration_ms(renderer, job, &started);
+                        self.async_uploads_state.volume_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    let duration_ms = take_job_duration_ms(renderer, job, &started);
+                    self.async_uploads_state.volume_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.volume_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    renderer.drop_job_duration(job);
+                    self.async_uploads_state.volume_state = AssetState::Idle;
+                }
+            }
+        }
+
         // Once a "Load a level" run has every asset in a terminal state,
         // stamp the total wall-clock duration so the controls panel can
         // show it next frame.
@@ -618,6 +665,7 @@ fn all_assets_terminal(state: &AsyncUploadsState) -> bool {
         && is_terminal(&state.point_cloud_state)
         && is_terminal(&state.glyph_set_state)
         && is_terminal(&state.tensor_glyph_set_state)
+        && is_terminal(&state.volume_state)
 }
 
 /// Advance an asset that has no typed result to take. Returns `true` if
@@ -895,6 +943,28 @@ fn demo_glyph_set() -> GlyphItem {
     item.default_colour = [0.9, 0.7, 0.3, 1.0];
     item.use_default_colour = true;
     item
+}
+
+fn demo_volume() -> (Vec<f32>, [u32; 3]) {
+    // 32^3 radial-falloff field; the iso-volume reads as a soft sphere via
+    // the colour LUT in `VolumeItem`.
+    let dim = 32u32;
+    let n = dim as usize;
+    let centre = (n as f32 - 1.0) * 0.5;
+    let mut data = Vec::with_capacity(n * n * n);
+    for z in 0..n {
+        for y in 0..n {
+            for x in 0..n {
+                let dx = x as f32 - centre;
+                let dy = y as f32 - centre;
+                let dz = z as f32 - centre;
+                let r = (dx * dx + dy * dy + dz * dz).sqrt();
+                let v = (1.0 - (r / centre)).clamp(0.0, 1.0);
+                data.push(v);
+            }
+        }
+    }
+    (data, [dim, dim, dim])
 }
 
 fn demo_tensor_glyph_set() -> TensorGlyphItem {
@@ -1234,6 +1304,37 @@ impl App {
         }
     }
 
+    fn launch_volume(&mut self, renderer: &mut ViewportRenderer) {
+        let (data, dims) = demo_volume();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            let id =
+                renderer
+                    .resources_mut()
+                    .upload_volume(&self.device, &self.queue, &data, dims);
+            self.async_uploads_state.loaded_volume_id = Some(id);
+            self.async_uploads_state.volume_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            match renderer.begin_upload_volume(&self.device, &self.queue, data, dims) {
+                Ok(job) => {
+                    self.async_uploads_state.volume_state = AssetState::InFlight {
+                        job,
+                        progress: 0.0,
+                        started,
+                    };
+                }
+                Err(e) => {
+                    self.async_uploads_state.volume_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+            }
+        }
+    }
+
     fn launch_all(&mut self, renderer: &mut ViewportRenderer) {
         self.async_uploads_state.load_all_started = Some(Instant::now());
         self.async_uploads_state.load_all_duration_ms = None;
@@ -1248,6 +1349,7 @@ impl App {
         self.launch_point_cloud(renderer);
         self.launch_glyph_set(renderer);
         self.launch_tensor_glyph_set(renderer);
+        self.launch_volume(renderer);
     }
 }
 
@@ -1300,6 +1402,18 @@ pub(crate) fn submit_async_uploads_items(
         ref_item.model = translate(-2.4, 4.8);
         fd.scene.tensor_glyph_set_refs.push(ref_item);
     }
+    if let Some(id) = app.async_uploads_state.loaded_volume_id {
+        let mut item = VolumeItem::default();
+        item.volume_id = id;
+        item.colour_lut = Some(ColourmapId(0));
+        item.scalar_range = (0.0, 1.0);
+        item.opacity_scale = 0.6;
+        item.step_scale = 1.0;
+        // Sit the volume to the far right of the showcase grid.
+        item.bbox_min = [4.0, -1.5, -1.5];
+        item.bbox_max = [7.0, 1.5, 1.5];
+        fd.scene.volumes.push(item);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1344,6 +1458,7 @@ pub(crate) fn controls_async_uploads(
         app.async_uploads_state.point_cloud_state = AssetState::Idle;
         app.async_uploads_state.glyph_set_state = AssetState::Idle;
         app.async_uploads_state.tensor_glyph_set_state = AssetState::Idle;
+        app.async_uploads_state.volume_state = AssetState::Idle;
         app.async_uploads_state.loaded_mesh_id = None;
         app.async_uploads_state.loaded_texture_id = None;
         app.async_uploads_state.loaded_polyline_id = None;
@@ -1353,6 +1468,7 @@ pub(crate) fn controls_async_uploads(
         app.async_uploads_state.loaded_point_cloud_id = None;
         app.async_uploads_state.loaded_glyph_set_id = None;
         app.async_uploads_state.loaded_tensor_glyph_set_id = None;
+        app.async_uploads_state.loaded_volume_id = None;
         app.async_uploads_state.skin_installed = false;
         app.async_uploads_state.load_all_started = None;
         app.async_uploads_state.load_all_duration_ms = None;
@@ -1389,6 +1505,7 @@ pub(crate) fn controls_async_uploads(
     let mut clicked_point_cloud = false;
     let mut clicked_glyph_set = false;
     let mut clicked_tensor_glyph_set = false;
+    let mut clicked_volume = false;
     let mut clicked_all = false;
 
     ui.heading("Assets");
@@ -1462,10 +1579,16 @@ pub(crate) fn controls_async_uploads(
                 &app.async_uploads_state.tensor_glyph_set_state,
                 &mut clicked_tensor_glyph_set,
             );
+            asset_row(
+                ui,
+                "Volume (32^3)",
+                &app.async_uploads_state.volume_state,
+                &mut clicked_volume,
+            );
         });
 
     ui.add_space(6.0);
-    if ui.button("Load a level (fire all eleven)").clicked() {
+    if ui.button("Load a level (fire all twelve)").clicked() {
         clicked_all = true;
     }
     // Total wall-clock for the most recent "fire all" run. While the run
@@ -1485,7 +1608,6 @@ pub(crate) fn controls_async_uploads(
     ui.separator();
     ui.heading("J5 (greyed out, lands later)");
     ui.add_enabled_ui(false, |ui| {
-        let _ = ui.button("Volume");
         let _ = ui.button("Gaussian splats");
         let _ = ui.button("Sprite set");
         let _ = ui.button("Overlay texture");
@@ -1502,6 +1624,7 @@ pub(crate) fn controls_async_uploads(
         || clicked_point_cloud
         || clicked_glyph_set
         || clicked_tensor_glyph_set
+        || clicked_volume
         || clicked_all)
     {
         return;
@@ -1545,6 +1668,9 @@ pub(crate) fn controls_async_uploads(
     }
     if clicked_tensor_glyph_set {
         app.launch_tensor_glyph_set(renderer);
+    }
+    if clicked_volume {
+        app.launch_volume(renderer);
     }
     if clicked_all {
         app.launch_all(renderer);

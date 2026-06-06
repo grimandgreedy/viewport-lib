@@ -1178,6 +1178,47 @@ impl ViewportRenderer {
         self.resources.drop_job_duration(id);
     }
 
+    /// Start an asynchronous 3D volume texture upload. See
+    /// [`ViewportGpuResources::begin_upload_volume`].
+    pub fn begin_upload_volume(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: Vec<f32>,
+        dims: [u32; 3],
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.resources.begin_upload_volume(device, queue, data, dims)
+    }
+
+    /// Take the volume id produced by a completed
+    /// [`begin_upload_volume`](Self::begin_upload_volume) job.
+    pub fn upload_result_volume(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::VolumeId> {
+        self.resources.upload_result_volume(id)
+    }
+
+    /// Start an asynchronous marching-cubes-ready volume upload. See
+    /// [`ViewportGpuResources::begin_upload_volume_for_mc`].
+    pub fn begin_upload_volume_for_mc(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vol: crate::geometry::marching_cubes::VolumeData,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_volume_for_mc(device, queue, vol)
+    }
+
+    /// Take the [`VolumeGpuId`](crate::resources::VolumeGpuId) produced by a
+    /// completed [`begin_upload_volume_for_mc`](Self::begin_upload_volume_for_mc) job.
+    pub fn upload_result_volume_mc(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::VolumeGpuId> {
+        self.resources.upload_result_volume_mc(id)
+    }
+
     /// True when no upload jobs are in flight.
     pub fn all_uploads_complete(&self) -> bool {
         self.resources.all_uploads_complete()

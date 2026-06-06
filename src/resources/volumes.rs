@@ -66,6 +66,131 @@ impl ViewportGpuResources {
         id
     }
 
+    /// Start an asynchronous volume upload.
+    ///
+    /// Returns a [`JobId`](crate::resources::JobId) immediately. The 3D
+    /// texture creation and `queue.write_texture` run on a worker thread on
+    /// cloned `Device` and `Queue` handles; once the job reports
+    /// `UploadStatus::Ready`, call
+    /// [`upload_result_volume`](Self::upload_result_volume) to take the
+    /// resulting [`VolumeId`](crate::resources::VolumeId).
+    ///
+    /// Ownership of `data` transfers into the worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::VolumeDataLengthMismatch`](crate::error::ViewportError::VolumeDataLengthMismatch)
+    /// if `data.len() != dims[0] * dims[1] * dims[2]` before any job is
+    /// submitted.
+    pub fn begin_upload_volume(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: Vec<f32>,
+        dims: [u32; 3],
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        let expected = (dims[0] as usize) * (dims[1] as usize) * (dims[2] as usize);
+        if data.len() != expected {
+            return Err(crate::error::ViewportError::VolumeDataLengthMismatch {
+                actual: data.len(),
+                expected,
+                dims,
+            });
+        }
+
+        let slot = crate::resources::ResultSlot::<VolumeId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_worker = device.clone();
+        let queue_for_worker = queue.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.1);
+                let texture = device_for_worker.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("volume_3d_texture"),
+                    size: wgpu::Extent3d {
+                        width: dims[0],
+                        height: dims[1],
+                        depth_or_array_layers: dims[2],
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D3,
+                    format: wgpu::TextureFormat::R32Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let bytes: &[u8] = bytemuck::cast_slice(&data);
+                queue_for_worker.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    bytes,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(dims[0] * 4),
+                        rows_per_image: Some(dims[1]),
+                    },
+                    wgpu::Extent3d {
+                        width: dims[0],
+                        height: dims[1],
+                        depth_or_array_layers: dims[2],
+                    },
+                );
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                progress.set(0.95);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let id = VolumeId(resources.volume_textures.len());
+                        resources.volume_textures.push((texture, view));
+                        slot_for_apply.set(id);
+                    }),
+                ))
+            })
+        };
+
+        self.job_volume_results
+            .lock()
+            .expect("volume result map poisoned")
+            .insert(id, slot);
+        Ok(id)
+    }
+
+    /// Take the [`VolumeId`](crate::resources::VolumeId) produced by a
+    /// completed [`begin_upload_volume`](Self::begin_upload_volume) job.
+    ///
+    /// Returns `JobNotReady` while the upload is still in flight, and
+    /// `JobResultMissing` for ids that have already been taken, were
+    /// issued by a different upload type, or never existed.
+    pub fn upload_result_volume(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<VolumeId> {
+        let mut map = self
+            .job_volume_results
+            .lock()
+            .expect("volume result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(vid) => {
+                map.remove(&id);
+                Ok(vid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
     /// Create the volume render pipeline and bind group layout (lazy init).
     pub(crate) fn ensure_volume_pipeline(&mut self, device: &wgpu::Device) {
         if self.volume_pipeline.is_some() {
@@ -647,5 +772,142 @@ impl ViewportGpuResources {
             _uniform_buf: uniform_buf,
             wireframe: false,
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::ViewportGpuResources;
+    use crate::geometry::marching_cubes::VolumeData;
+    use crate::resources::UploadStatus;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn sample_volume_data() -> Vec<f32> {
+        let n: usize = 8;
+        let mut data = Vec::with_capacity(n * n * n);
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    let v = (x + y + z) as f32 / (3.0 * n as f32);
+                    data.push(v);
+                }
+            }
+        }
+        data
+    }
+
+    fn sample_volume_struct() -> VolumeData {
+        VolumeData {
+            data: sample_volume_data(),
+            dims: [8, 8, 8],
+            origin: [0.0, 0.0, 0.0],
+            spacing: [1.0, 1.0, 1.0],
+        }
+    }
+
+    fn drive_until_ready(
+        resources: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::JobId,
+        label: &str,
+    ) {
+        for _ in 0..200 {
+            resources.process_uploads(device, queue);
+            match resources.upload_status(id) {
+                UploadStatus::Ready => return,
+                UploadStatus::Failed(e) => panic!("{label} upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("{label} job id disappeared"),
+            }
+        }
+        panic!("{label} upload did not complete in time");
+    }
+
+    #[test]
+    fn sync_upload_volume_still_works() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let data = sample_volume_data();
+        let _id = resources.upload_volume(&device, &queue, &data, [8, 8, 8]);
+    }
+
+    #[test]
+    fn begin_upload_volume_validates_dims() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let err = resources
+            .begin_upload_volume(&device, &queue, vec![0.0_f32; 7], [8, 8, 8])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::VolumeDataLengthMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn begin_upload_volume_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources
+            .begin_upload_volume(&device, &queue, sample_volume_data(), [8, 8, 8])
+            .expect("job submitted");
+        drive_until_ready(&mut resources, &device, &queue, job, "volume");
+        let _id = resources.upload_result_volume(job).expect("ready");
+        let err = resources.upload_result_volume(job).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::JobResultMissing { .. }
+        ));
+    }
+
+    #[test]
+    fn begin_upload_volume_for_mc_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_volume_for_mc(&device, &queue, sample_volume_struct());
+        drive_until_ready(&mut resources, &device, &queue, job, "volume_mc");
+        let _id = resources.upload_result_volume_mc(job).expect("ready");
+    }
+
+    #[test]
+    fn sync_upload_volume_for_mc_still_works() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let vol = sample_volume_struct();
+        let _id = resources.upload_volume_for_mc(&device, &queue, &vol).expect("upload ok");
     }
 }

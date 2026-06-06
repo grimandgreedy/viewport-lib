@@ -2617,6 +2617,21 @@ pub struct ViewportGpuResources {
             super::upload_jobs::ResultSlot<super::TensorGlyphSetId>,
         >,
     >,
+    /// Typed result slots for async volume texture uploads, keyed by job id.
+    pub(crate) job_volume_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::VolumeId>,
+        >,
+    >,
+    /// Typed result slots for async marching-cubes-ready volume uploads,
+    /// keyed by job id.
+    pub(crate) job_volume_mc_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::VolumeGpuId>,
+        >,
+    >,
     /// Bytes allocated on the GPU for user-uploaded textures.
     /// Incremented by `upload_texture`, `upload_normal_map`, and the async
     /// upload paths once a texture's apply step lands.
