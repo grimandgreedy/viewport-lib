@@ -358,6 +358,14 @@ pub struct ViewportRenderer {
     last_cascade0_shadow_mat: glam::Mat4,
     /// Current runtime mode controlling internal default behavior.
     runtime_mode: crate::renderer::stats::RuntimeMode,
+    /// Optional cap on how much main-thread time `prepare` is allowed to
+    /// spend running apply closures for completed upload jobs.
+    ///
+    /// `None` means unbounded (apply work runs to completion in one
+    /// frame). `Some(d)` spreads the cost across frames so heavy
+    /// completions do not produce one fat frame; the deferred applies
+    /// run on the next call to `prepare`.
+    upload_budget: Option<std::time::Duration>,
     /// Active performance policy: target FPS, render scale bounds, and permitted reductions.
     performance_policy: crate::renderer::stats::PerformancePolicy,
     /// Current render scale tracked by the adaptation controller (or set manually).
@@ -554,6 +562,7 @@ impl ViewportRenderer {
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
+            upload_budget: None,
             current_render_scale: 1.0,
             start_instant: std::time::Instant::now(),
             last_prepare_instant: None,
@@ -640,6 +649,24 @@ impl ViewportRenderer {
         if self.gpu_culling_supported {
             self.gpu_culling_enabled = true;
         }
+    }
+
+    /// Cap the per-frame cost of running upload-job apply closures.
+    ///
+    /// `None` is the default and matches the historical behaviour:
+    /// `prepare` drains every completed upload's apply step in one
+    /// shot. `Some(d)` switches `prepare` over to
+    /// `process_uploads_with_budget` so applies that overflow the
+    /// budget spill to the next frame. Useful when a stress load lands
+    /// many heavy completions on the same frame and the bunched apply
+    /// work shows up as one fat frame at the end of the load.
+    pub fn set_upload_budget(&mut self, budget: Option<std::time::Duration>) {
+        self.upload_budget = budget;
+    }
+
+    /// Currently configured upload budget. See `set_upload_budget`.
+    pub fn upload_budget(&self) -> Option<std::time::Duration> {
+        self.upload_budget
     }
 
     /// Set the runtime mode controlling internal default behavior.

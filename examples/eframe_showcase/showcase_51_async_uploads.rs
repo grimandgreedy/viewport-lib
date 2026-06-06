@@ -15,7 +15,8 @@
 //! Other asset buttons (volume, sprite set, gaussian splat, overlay
 //! texture) are greyed out and land in J5.
 
-use std::time::Instant;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use viewport_lib::{
@@ -58,10 +59,70 @@ pub(crate) enum AssetState {
     },
 }
 
+/// Payload size class. Light is the original tiny-asset scene; Heavy
+/// scales meshes, textures, volumes, point clouds, and splats up to
+/// sizes that actually exercise the upload pipeline. The whole point of
+/// the showcase is to compare sync vs async under load, so Heavy is the
+/// default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PayloadSize {
+    Light,
+    Heavy,
+}
+
 pub(crate) struct AsyncUploadsState {
     /// When true, button clicks call the synchronous upload path. Useful
     /// for showing the difference in frame pacing.
     pub use_sync: bool,
+    /// Selects the per-asset payload size class. Heavy puts enough work
+    /// on the upload path that the sync vs async comparison is visible
+    /// in frame timings and stress totals.
+    pub payload_size: PayloadSize,
+
+    // -- Auto-orbit + frame-time telemetry -------------------------
+    /// Wall-clock instant of the previous `async_uploads_update` call.
+    /// Used to compute dt for the auto-orbit camera and to feed the
+    /// frame-time rolling window.
+    pub last_frame_at: Option<Instant>,
+    /// Recent inter-frame durations. Capped to roughly one second's
+    /// worth of frames at 60 fps; the controls panel reports min, max,
+    /// average, and effective fps from this window.
+    pub frame_times: VecDeque<Duration>,
+    /// Cumulative wall-clock since the showcase opened. Drives both the
+    /// auto-orbit angle and the "target rotation" readout that sync
+    /// loads visibly fall behind on.
+    pub auto_orbit_started: Option<Instant>,
+
+    // -- Stress-button timing --------------------------------------
+    /// Individual asset durations recorded during the most recent
+    /// "Load a level" run. Drained on the next stress click.
+    pub stress_individual_ms: Vec<u64>,
+    /// Wall-clock time the main thread spent inside `launch_all` itself.
+    /// In sync mode this is the full stress total (every upload blocks
+    /// the call). In async mode it is the cost of queueing sixteen
+    /// `begin_upload_*` calls plus the tiny accounting around them. The
+    /// gap between this and `load_all_duration_ms` is the value the
+    /// async path actually delivers: time the main thread got back for
+    /// rendering, input, and animation.
+    pub launch_all_main_thread_ms: Option<u64>,
+    /// Peak inter-frame interval observed during the most recent stress
+    /// run, captured between the click and the moment every asset
+    /// reaches a terminal state. Frozen on completion so the controls
+    /// panel can show "worst stall: N ms" alongside the total.
+    pub stress_max_frame_ms: f32,
+    /// True while a stress run is in flight. Used to gate the
+    /// stress_max_frame_ms accumulator so it only reflects the load
+    /// window, not the steady-state idle pacing.
+    pub stress_in_progress: bool,
+    /// Per-frame cap on apply-step work, in milliseconds. `None`
+    /// matches the historical behaviour: every completed apply runs
+    /// the same frame the job finished. The radio in the controls
+    /// panel writes this on each repaint into the renderer's
+    /// `set_upload_budget`. Useful for taming the end-of-batch fat
+    /// frame when many heavy completions land together.
+    pub upload_budget_ms: Option<u32>,
+
+
     /// Base mesh uploaded synchronously on first build so the viewport is
     /// never empty.
     pub base_mesh_id: Option<MeshId>,
@@ -118,6 +179,15 @@ impl Default for AsyncUploadsState {
     fn default() -> Self {
         Self {
             use_sync: false,
+            payload_size: PayloadSize::Heavy,
+            last_frame_at: None,
+            frame_times: VecDeque::with_capacity(120),
+            auto_orbit_started: None,
+            stress_individual_ms: Vec::new(),
+            launch_all_main_thread_ms: None,
+            stress_max_frame_ms: 0.0,
+            stress_in_progress: false,
+            upload_budget_ms: None,
             base_mesh_id: None,
             skin_target_mesh_id: None,
             skin_target_vertex_count: 0,
@@ -223,6 +293,44 @@ impl App {
 
 impl App {
     pub(crate) fn async_uploads_update(&mut self, renderer: &mut ViewportRenderer) {
+        // Frame-time bookkeeping and auto-orbit. The whole point of the
+        // showcase is to compare frame pacing across sync vs async uploads,
+        // so we time every async_uploads_update call (one per repaint)
+        // and continuously rotate the camera by `dt * rate`. Under sync
+        // load the next call comes far later than the target frame
+        // interval, the dt jumps to the full upload duration, and the
+        // camera lurches; under async load dt stays near 16 ms and the
+        // orbit reads as smooth.
+        let now = Instant::now();
+        if self.async_uploads_state.auto_orbit_started.is_none() {
+            self.async_uploads_state.auto_orbit_started = Some(now);
+        }
+        let dt = match self.async_uploads_state.last_frame_at {
+            Some(prev) => now.saturating_duration_since(prev),
+            None => Duration::from_millis(16),
+        };
+        self.async_uploads_state.last_frame_at = Some(now);
+        // 30 degrees per second around the world up axis.
+        let rate_rad_per_s: f32 = 30.0_f32.to_radians();
+        let yaw = rate_rad_per_s * dt.as_secs_f32();
+        self.camera.orbit(yaw, 0.0);
+        // Rolling window of recent frame times, capped at ~2 seconds at
+        // 60 fps so the stats reflect what the user can actually see.
+        self.async_uploads_state.frame_times.push_back(dt);
+        while self.async_uploads_state.frame_times.len() > 120 {
+            self.async_uploads_state.frame_times.pop_front();
+        }
+        // While a stress run is in flight, track the worst inter-frame
+        // interval. This is the headline number: in sync mode it ends
+        // up equal to the upload total (the main thread was blocked);
+        // in async mode it stays near the vsync interval.
+        if self.async_uploads_state.stress_in_progress {
+            let dt_ms = dt.as_secs_f32() * 1000.0;
+            if dt_ms > self.async_uploads_state.stress_max_frame_ms {
+                self.async_uploads_state.stress_max_frame_ms = dt_ms;
+            }
+        }
+
         // Env map: status only, no typed result to take.
         let env_just_loaded = advance_status_only(
             &mut self.async_uploads_state.env_state,
@@ -839,9 +947,46 @@ impl App {
             {
                 self.async_uploads_state.load_all_duration_ms =
                     Some(started.elapsed().as_millis() as u64);
+                self.async_uploads_state.stress_individual_ms =
+                    collect_terminal_durations_ms(&self.async_uploads_state);
+                self.async_uploads_state.stress_in_progress = false;
             }
         }
     }
+}
+
+/// Collect each asset's recorded duration_ms once it has reached a
+/// terminal state. Used to compute the "serial baseline" (sum) and
+/// "longest single upload" (max) shown after a stress run.
+fn collect_terminal_durations_ms(state: &AsyncUploadsState) -> Vec<u64> {
+    let read = |s: &AssetState| -> Option<u64> {
+        match s {
+            AssetState::Loaded { duration_ms } => Some(*duration_ms),
+            AssetState::Failed { duration_ms, .. } => Some(*duration_ms),
+            _ => None,
+        }
+    };
+    [
+        read(&state.env_state),
+        read(&state.mesh_state),
+        read(&state.texture_state),
+        read(&state.skin_state),
+        read(&state.polyline_state),
+        read(&state.streamtube_state),
+        read(&state.tube_state),
+        read(&state.ribbon_state),
+        read(&state.point_cloud_state),
+        read(&state.glyph_set_state),
+        read(&state.tensor_glyph_set_state),
+        read(&state.volume_state),
+        read(&state.gaussian_splat_state),
+        read(&state.overlay_texture_state),
+        read(&state.sprite_set_state),
+        read(&state.sprite_instance_set_state),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn all_assets_terminal(state: &AsyncUploadsState) -> bool {
@@ -1029,10 +1174,16 @@ fn checker_rgba(width: u32, height: u32) -> Vec<u8> {
     out
 }
 
-fn demo_mesh() -> MeshData {
-    // A small icosphere keeps the upload work nontrivial without freezing
-    // the showcase if the user picks Sync mode.
-    viewport_lib::primitives::icosphere(0.6, 3)
+fn demo_mesh(size: PayloadSize) -> MeshData {
+    // Subdivision N gives 20 * 4^N tris. Light stays small for smoke
+    // testing; Heavy goes to subdiv 8 (~1.3M tris, ~655k verts) so the
+    // worker-side tangent compute and vertex repack take real time and
+    // the sync stall is plainly visible.
+    let subdivisions = match size {
+        PayloadSize::Light => 3,
+        PayloadSize::Heavy => 8,
+    };
+    viewport_lib::primitives::icosphere(0.6, subdivisions)
 }
 
 fn unit_skin_weights(vertex_count: usize) -> SkinWeights {
@@ -1043,9 +1194,14 @@ fn unit_skin_weights(vertex_count: usize) -> SkinWeights {
 }
 
 // A short helix in the XZ plane, used by all four curve types so each
-// pre-uploaded asset has visibly the same source geometry.
-fn demo_curve_positions() -> (Vec<[f32; 3]>, Vec<u32>) {
-    let n: usize = 48;
+// pre-uploaded asset has visibly the same source geometry. Heavy mode
+// runs the helix at higher sample density so tube / streamtube /
+// ribbon generation has nontrivial CPU prep on the worker.
+fn demo_curve_positions(size: PayloadSize) -> (Vec<[f32; 3]>, Vec<u32>) {
+    let n: usize = match size {
+        PayloadSize::Light => 48,
+        PayloadSize::Heavy => 50_000,
+    };
     let mut positions = Vec::with_capacity(n);
     for i in 0..n {
         let t = i as f32 / (n - 1) as f32;
@@ -1059,8 +1215,8 @@ fn demo_curve_positions() -> (Vec<[f32; 3]>, Vec<u32>) {
     (positions, strip)
 }
 
-fn demo_polyline() -> PolylineItem {
-    let (positions, strip_lengths) = demo_curve_positions();
+fn demo_polyline(size: PayloadSize) -> PolylineItem {
+    let (positions, strip_lengths) = demo_curve_positions(size);
     let mut item = PolylineItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
@@ -1069,8 +1225,8 @@ fn demo_polyline() -> PolylineItem {
     item
 }
 
-fn demo_streamtube() -> StreamtubeItem {
-    let (positions, strip_lengths) = demo_curve_positions();
+fn demo_streamtube(size: PayloadSize) -> StreamtubeItem {
+    let (positions, strip_lengths) = demo_curve_positions(size);
     let mut item = StreamtubeItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
@@ -1079,8 +1235,8 @@ fn demo_streamtube() -> StreamtubeItem {
     item
 }
 
-fn demo_tube() -> TubeItem {
-    let (positions, strip_lengths) = demo_curve_positions();
+fn demo_tube(size: PayloadSize) -> TubeItem {
+    let (positions, strip_lengths) = demo_curve_positions(size);
     let mut item = TubeItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
@@ -1090,8 +1246,8 @@ fn demo_tube() -> TubeItem {
     item
 }
 
-fn demo_ribbon() -> RibbonItem {
-    let (positions, strip_lengths) = demo_curve_positions();
+fn demo_ribbon(size: PayloadSize) -> RibbonItem {
+    let (positions, strip_lengths) = demo_curve_positions(size);
     let mut item = RibbonItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
@@ -1100,11 +1256,15 @@ fn demo_ribbon() -> RibbonItem {
     item
 }
 
-fn demo_point_cloud() -> PointCloudItem {
-    // A flat 16x16 grid of points so the cloud is visible regardless of
-    // camera direction.
+fn demo_point_cloud(size: PayloadSize) -> PointCloudItem {
+    // Heavy uses a 1000x1000 grid (1M points) so the position + colour
+    // buffer writes take real time. The layout stays a flat plane so
+    // the cloud is visible regardless of camera direction.
     let mut item = PointCloudItem::default();
-    let n: i32 = 16;
+    let n: i32 = match size {
+        PayloadSize::Light => 16,
+        PayloadSize::Heavy => 1000,
+    };
     let mut positions = Vec::with_capacity((n * n) as usize);
     for i in 0..n {
         for j in 0..n {
@@ -1143,10 +1303,17 @@ fn demo_glyph_set() -> GlyphItem {
     item
 }
 
-fn demo_gaussian_splats() -> GaussianSplatData {
-    let n = 256;
+fn demo_gaussian_splats(size: PayloadSize) -> GaussianSplatData {
+    let n = match size {
+        PayloadSize::Light => 256,
+        PayloadSize::Heavy => 1_000_000,
+    };
+    let splat_scale = match size {
+        PayloadSize::Light => 0.05,
+        PayloadSize::Heavy => 0.005,
+    };
     let mut positions = Vec::with_capacity(n);
-    let scales = vec![[0.05_f32, 0.05, 0.05]; n];
+    let scales = vec![[splat_scale; 3]; n];
     let rotations = vec![[0.0_f32, 0.0, 0.0, 1.0]; n];
     let opacities = vec![0.7_f32; n];
     for i in 0..n {
@@ -1207,10 +1374,14 @@ fn demo_sprite_instance_set() -> SpriteItem {
     item
 }
 
-fn demo_volume() -> (Vec<f32>, [u32; 3]) {
-    // 32^3 radial-falloff field; the iso-volume reads as a soft sphere via
-    // the colour LUT in `VolumeItem`.
-    let dim = 32u32;
+fn demo_volume(size: PayloadSize) -> (Vec<f32>, [u32; 3]) {
+    // Radial-falloff field; the iso-volume reads as a soft sphere via
+    // the colour LUT in `VolumeItem`. Heavy is 256^3 (~64 MB of f32
+    // voxels) so the worker has real fill + queue.write work to do.
+    let dim = match size {
+        PayloadSize::Light => 32u32,
+        PayloadSize::Heavy => 256u32,
+    };
     let n = dim as usize;
     let centre = (n as f32 - 1.0) * 0.5;
     let mut data = Vec::with_capacity(n * n * n);
@@ -1291,7 +1462,7 @@ impl App {
     }
 
     fn launch_mesh(&mut self, renderer: &mut ViewportRenderer) {
-        let data = demo_mesh();
+        let data = demo_mesh(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             match renderer.resources_mut().upload_mesh_data(&self.device, &data) {
@@ -1328,12 +1499,20 @@ impl App {
     }
 
     fn launch_texture(&mut self, renderer: &mut ViewportRenderer) {
-        let rgba = checker_rgba(256, 256);
+        // 256x256 (Light, 256 KB) vs 4096x4096 (Heavy, 64 MB). The Heavy
+        // texture forces a 64 MB pixel-buffer generation up front plus a
+        // matching queue.write_texture; the sync path stalls visibly
+        // while async pushes the queue work onto its worker thread.
+        let dim = match self.async_uploads_state.payload_size {
+            PayloadSize::Light => 256u32,
+            PayloadSize::Heavy => 4096u32,
+        };
+        let rgba = checker_rgba(dim, dim);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             match renderer
                 .resources_mut()
-                .upload_texture(&self.device, &self.queue, 256, 256, &rgba)
+                .upload_texture(&self.device, &self.queue, dim, dim, &rgba)
             {
                 Ok(tex_id) => {
                     self.async_uploads_state.loaded_texture_id = Some(tex_id);
@@ -1349,7 +1528,7 @@ impl App {
                 }
             }
         } else {
-            match renderer.begin_upload_texture(&self.device, &self.queue, 256, 256, rgba) {
+            match renderer.begin_upload_texture(&self.device, &self.queue, dim, dim, rgba) {
                 Ok(job) => {
                     self.async_uploads_state.texture_state = AssetState::InFlight {
                         job,
@@ -1398,7 +1577,7 @@ impl App {
     }
 
     fn launch_polyline(&mut self, renderer: &mut ViewportRenderer) {
-        let item = demo_polyline();
+        let item = demo_polyline(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             let id = renderer
@@ -1422,7 +1601,7 @@ impl App {
     }
 
     fn launch_streamtube(&mut self, renderer: &mut ViewportRenderer) {
-        let item = demo_streamtube();
+        let item = demo_streamtube(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             let id = renderer
@@ -1446,7 +1625,7 @@ impl App {
     }
 
     fn launch_tube(&mut self, renderer: &mut ViewportRenderer) {
-        let item = demo_tube();
+        let item = demo_tube(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             let id = renderer
@@ -1469,7 +1648,7 @@ impl App {
     }
 
     fn launch_ribbon(&mut self, renderer: &mut ViewportRenderer) {
-        let item = demo_ribbon();
+        let item = demo_ribbon(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             let id = renderer
@@ -1492,7 +1671,7 @@ impl App {
     }
 
     fn launch_point_cloud(&mut self, renderer: &mut ViewportRenderer) {
-        let item = demo_point_cloud();
+        let item = demo_point_cloud(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             let id = renderer
@@ -1567,7 +1746,7 @@ impl App {
     }
 
     fn launch_volume(&mut self, renderer: &mut ViewportRenderer) {
-        let (data, dims) = demo_volume();
+        let (data, dims) = demo_volume(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             let id =
@@ -1598,7 +1777,7 @@ impl App {
     }
 
     fn launch_gaussian_splats(&mut self, renderer: &mut ViewportRenderer) {
-        let data = demo_gaussian_splats();
+        let data = demo_gaussian_splats(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             match renderer
@@ -1720,8 +1899,13 @@ impl App {
     }
 
     fn launch_all(&mut self, renderer: &mut ViewportRenderer) {
-        self.async_uploads_state.load_all_started = Some(Instant::now());
+        let main_t = Instant::now();
+        self.async_uploads_state.load_all_started = Some(main_t);
         self.async_uploads_state.load_all_duration_ms = None;
+        self.async_uploads_state.stress_individual_ms.clear();
+        self.async_uploads_state.launch_all_main_thread_ms = None;
+        self.async_uploads_state.stress_max_frame_ms = 0.0;
+        self.async_uploads_state.stress_in_progress = true;
         self.launch_env_map(renderer);
         self.launch_mesh(renderer);
         self.launch_texture(renderer);
@@ -1738,6 +1922,12 @@ impl App {
         self.launch_overlay_texture(renderer);
         self.launch_sprite_set(renderer);
         self.launch_sprite_instance_set(renderer);
+        // Stamp the main-thread cost of the stress kickoff. In sync
+        // mode this includes every upload (the launches blocked); in
+        // async mode it covers only the begin_upload calls plus a tiny
+        // amount of accounting.
+        self.async_uploads_state.launch_all_main_thread_ms =
+            Some(main_t.elapsed().as_millis() as u64);
     }
 }
 
@@ -1875,10 +2065,86 @@ pub(crate) fn controls_async_uploads(
         "Async calls return immediately. Orbit stays smooth while workers run."
     });
     ui.add_space(6.0);
+
+    // -- Payload size toggle --------------------------------------
+    ui.heading("Payload size");
+    let mut new_size = app.async_uploads_state.payload_size;
+    ui.horizontal(|ui| {
+        if ui
+            .radio(matches!(new_size, PayloadSize::Heavy), "Heavy")
+            .clicked()
+        {
+            new_size = PayloadSize::Heavy;
+        }
+        if ui
+            .radio(matches!(new_size, PayloadSize::Light), "Light")
+            .clicked()
+        {
+            new_size = PayloadSize::Light;
+        }
+    });
+    if new_size != app.async_uploads_state.payload_size {
+        app.async_uploads_state.payload_size = new_size;
+    }
+    ui.label(match app.async_uploads_state.payload_size {
+        PayloadSize::Heavy => {
+            "Heavy: 1.3M-tri mesh, 4K texture (64 MB), 256^3 volume (64 MB), 1M splats, 1M-pt cloud, 50k-sample curves. Sync will block for seconds."
+        }
+        PayloadSize::Light => "Light: tiny assets, useful for smoke testing the controls.",
+    });
+    ui.add_space(6.0);
+
+    // -- Frame budget for apply step ------------------------------
+    ui.heading("Frame budget");
+    let mut new_budget = app.async_uploads_state.upload_budget_ms;
+    ui.horizontal(|ui| {
+        if ui.radio(new_budget.is_none(), "Off").clicked() {
+            new_budget = None;
+        }
+        if ui.radio(new_budget == Some(2), "2 ms").clicked() {
+            new_budget = Some(2);
+        }
+        if ui.radio(new_budget == Some(5), "5 ms").clicked() {
+            new_budget = Some(5);
+        }
+        if ui.radio(new_budget == Some(10), "10 ms").clicked() {
+            new_budget = Some(10);
+        }
+    });
+    if new_budget != app.async_uploads_state.upload_budget_ms {
+        app.async_uploads_state.upload_budget_ms = new_budget;
+    }
+    ui.label(
+        "Caps the main-thread cost of running apply closures (buffer + bind-group creation) per frame. When sixteen heavy uploads complete around the same moment, applying them all in one frame produces a fat stutter; spreading them spills the cost across the next few frames at the cost of one-frame-late visibility for some assets.",
+    );
+    ui.add_space(6.0);
     ui.separator();
 
-    // Pending count at a glance.
+    // -- Frame-time telemetry -------------------------------------
+    let stats = frame_time_stats(&app.async_uploads_state.frame_times);
+    ui.heading("Frame timing");
+    ui.label(format!(
+        "fps: {:.1}   |   frame ms: avg {:.1}   max {:.1}   min {:.1}",
+        stats.fps, stats.avg_ms, stats.max_ms, stats.min_ms,
+    ));
+    ui.label("Auto-orbit at 30 deg/s. Under sync load, max climbs into the hundreds of ms while async stays near the vsync interval.");
+    ui.add_space(6.0);
+    ui.separator();
+
+    // Pending count at a glance, plus push the upload budget into the
+    // renderer each repaint so live changes take effect on the next
+    // prepare. Cheap; just a couple of stores.
     let rs = frame.wgpu_render_state().expect("wgpu");
+    {
+        let mut guard = rs.renderer.write();
+        if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+            renderer.set_upload_budget(
+                app.async_uploads_state
+                    .upload_budget_ms
+                    .map(|ms| std::time::Duration::from_millis(ms as u64)),
+            );
+        }
+    }
     let pending = {
         let guard = rs.renderer.read();
         let r = guard
@@ -2019,9 +2285,43 @@ pub(crate) fn controls_async_uploads(
     // is still in flight, show a live elapsed clock; once every asset has
     // landed, freeze on the recorded duration.
     if let Some(total_ms) = app.async_uploads_state.load_all_duration_ms {
+        // The real story isn't wall-clock parity, it's where the time
+        // was spent. Sync uploads block the main thread for the full
+        // duration; async pushes the CPU prep onto rayon workers and
+        // returns immediately. Total wall-clock for the whole batch is
+        // similar either way (the workers share the rayon pool with
+        // what the sync path would have used internally), but the
+        // main-thread cost and the worst-frame-time differ sharply.
+        let main_ms = app
+            .async_uploads_state
+            .launch_all_main_thread_ms
+            .unwrap_or(0);
+        let max_frame = app.async_uploads_state.stress_max_frame_ms;
         ui.label(
-            egui::RichText::new(format!("Total: {total_ms} ms"))
+            egui::RichText::new(format!("Wall-clock total: {total_ms} ms"))
                 .color(egui::Color32::from_rgb(120, 220, 120)),
+        );
+        ui.label(
+            egui::RichText::new(format!("Main thread blocked: {main_ms} ms"))
+                .color(if main_ms < total_ms / 2 {
+                    egui::Color32::from_rgb(120, 220, 120)
+                } else {
+                    egui::Color32::from_rgb(220, 140, 120)
+                }),
+        );
+        ui.label(
+            egui::RichText::new(format!("Worst frame during load: {max_frame:.1} ms"))
+                .color(if max_frame < 50.0 {
+                    egui::Color32::from_rgb(120, 220, 120)
+                } else {
+                    egui::Color32::from_rgb(220, 140, 120)
+                }),
+        );
+        ui.label(
+            egui::RichText::new(
+                "Compare sync vs async on those two lines. Total wall-clock is similar (rayon-parallel work is rayon-parallel either way); the gap shows up in main-thread blocking and frame pacing.",
+            )
+            .weak(),
         );
     } else if let Some(started) = app.async_uploads_state.load_all_started {
         let elapsed = started.elapsed().as_millis() as u64;
@@ -2109,6 +2409,49 @@ pub(crate) fn controls_async_uploads(
     }
     if clicked_all {
         app.launch_all(renderer);
+    }
+}
+
+/// Aggregate frame-time stats over the rolling window. Used by the
+/// controls panel to expose the sync vs async pacing difference at a
+/// glance.
+struct FrameTimeStats {
+    fps: f32,
+    avg_ms: f32,
+    min_ms: f32,
+    max_ms: f32,
+}
+
+fn frame_time_stats(window: &VecDeque<Duration>) -> FrameTimeStats {
+    if window.is_empty() {
+        return FrameTimeStats {
+            fps: 0.0,
+            avg_ms: 0.0,
+            min_ms: 0.0,
+            max_ms: 0.0,
+        };
+    }
+    let mut sum = 0.0_f64;
+    let mut mn = f32::INFINITY;
+    let mut mx = 0.0_f32;
+    for d in window {
+        let ms = d.as_secs_f64() * 1000.0;
+        sum += ms;
+        let ms_f = ms as f32;
+        if ms_f < mn {
+            mn = ms_f;
+        }
+        if ms_f > mx {
+            mx = ms_f;
+        }
+    }
+    let avg = (sum / window.len() as f64) as f32;
+    let fps = if avg > 0.0 { 1000.0 / avg } else { 0.0 };
+    FrameTimeStats {
+        fps,
+        avg_ms: avg,
+        min_ms: mn,
+        max_ms: mx,
     }
 }
 
