@@ -24,6 +24,7 @@ Built-in light glyphs and picking. `scene::build_light_glyphs(&scene, &selection
 
 - OIT instanced pipeline: fix init-order trap where the pipeline was never created when the first frame had an empty scene. Instanced transparent geometry added on later frames is now drawn correctly.
 - Equirectangular IBL convention switched from Y-up to Z-up to match the conventions of viewport-lib.
+- `OverlayImageItem.alpha` now actually fades the image. Previously the pre-multiplied alpha blending left RGB at full intensity and only attenuated `a`, so `u.alpha` was discarded by the blend equation. Same fix incidentally corrects soft-edge PNGs.
 
 
 ## [0.16.0]

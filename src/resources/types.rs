@@ -1376,8 +1376,12 @@ pub(crate) struct OverlayShapeTexVertex {
     pub uv: [f32; 2],
     /// RGBA shadow colour (pre-multiplied opacity).
     pub shadow_colour: [f32; 4],
-    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y.
+    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y, w = border_mode.
     pub shadow_params: [f32; 4],
+    /// Per-shape flags. x = is_backdrop_blur (0.0 = regular texture sample
+    /// gets tinted; 1.0 = the bound texture is the scene-blur output and the
+    /// tint is composited over it). Other slots reserved.
+    pub extras: [f32; 4],
 }
 
 impl OverlayShapeTexVertex {
@@ -1446,10 +1450,16 @@ impl OverlayShapeTexVertex {
                     shader_location: 9,
                     format: wgpu::VertexFormat::Float32x4,
                 },
-                // location 10: shadow_params vec4f (radius, offset_x, offset_y, unused)
+                // location 10: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
                 wgpu::VertexAttribute {
                     offset: 104,
                     shader_location: 10,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 11: extras vec4f (x = is_backdrop_blur flag, rest reserved)
+                wgpu::VertexAttribute {
+                    offset: 120,
+                    shader_location: 11,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],

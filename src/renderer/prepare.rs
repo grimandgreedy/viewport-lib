@@ -5710,6 +5710,7 @@ impl ViewportRenderer {
                                 uv: [(lx + hw_s) / (2.0 * hw_s), (ly + hh_s) / (2.0 * hh_s)],
                                 shadow_colour: sc,
                                 shadow_params,
+                                extras: [0.0; 4],
                             });
                         }
                     } else if shape.backdrop_blur > 0.0 {
@@ -5728,6 +5729,7 @@ impl ViewportRenderer {
                                 uv: [px / vp_w, py / vp_h],
                                 shadow_colour: sc,
                                 shadow_params,
+                                extras: [1.0, 0.0, 0.0, 0.0],
                             });
                         }
                     } else {

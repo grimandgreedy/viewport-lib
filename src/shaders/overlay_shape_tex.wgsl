@@ -18,7 +18,8 @@ struct VertexInput {
     @location(7) shape_type:    f32,        // 0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle
     @location(8) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
     @location(9) shadow_colour: vec4<f32>,  // RGBA shadow colour
-    @location(10) shadow_params: vec4<f32>, // x=radius, y=offset_x, z=offset_y
+    @location(10) shadow_params: vec4<f32>, // x=radius, y=offset_x, z=offset_y, w=border_mode
+    @location(11) extras:        vec4<f32>, // x = is_backdrop_blur flag (0=regular tex, 1=scene-blur output)
 };
 
 struct VertexOutput {
@@ -33,6 +34,7 @@ struct VertexOutput {
     @location(7) uv:            vec2<f32>,
     @location(8) shadow_colour: vec4<f32>,
     @location(9) shadow_params: vec4<f32>,
+    @location(10) extras:       vec4<f32>,
 };
 
 @vertex
@@ -49,6 +51,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.uv            = in.uv;
     out.shadow_colour = in.shadow_colour;
     out.shadow_params = in.shadow_params;
+    out.extras        = in.extras;
     return out;
 }
 
@@ -222,14 +225,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (fill_alpha > 0.0) {
         let tex_sample = textureSample(t_fill, s_fill, in.uv);
         var fc: vec4<f32>;
-        if (tex_sample.a >= 1.0) {
-            // Backdrop blur: scene is opaque. Overlay the tint on top of the
-            // blurred scene, then mask by the SDF.
+        if (in.extras.x > 0.5) {
+            // Backdrop blur: bound texture is the scene-blur output (opaque
+            // RGBA). Overlay the tint on top of the blurred scene, then mask
+            // by the SDF.
             let tint = in.fill_colour;
             let blended_rgb = mix(tex_sample.rgb, tint.rgb, tint.a);
             fc = vec4<f32>(blended_rgb, fill_alpha);
         } else {
-            // Regular texture fill: multiply by tint colour.
+            // Regular texture fill: multiply by tint colour. Works correctly
+            // for opaque PNGs (logos, icons, screenshots)
             let tinted = tex_sample * in.fill_colour;
             fc = vec4<f32>(tinted.rgb, tinted.a * fill_alpha);
         }
