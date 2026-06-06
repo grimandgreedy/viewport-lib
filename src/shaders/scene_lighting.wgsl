@@ -67,8 +67,10 @@ struct ClusterGrid {
 };
 
 struct ClusterCell {
-    offset: u32,
-    count:  u32,
+    offset:         u32,
+    count:          u32,
+    punctual_count: u32,
+    _pad:           u32,
 };
 
 @group(0) @binding(13) var<storage, read> lights_storage:        array<SingleLight>;

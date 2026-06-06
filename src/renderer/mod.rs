@@ -484,6 +484,9 @@ pub struct ViewportRenderer {
     /// Lights dropped by the CPU frustum cull on the most recent frame.
     /// Surfaced through the cluster debug overlay when enabled.
     pub(crate) last_frustum_culled_lights: u32,
+    /// Most recent cluster build readback. Populated when a frame's
+    /// `ViewportFrame::cluster_stats_request` was true.
+    pub(crate) last_cluster_stats: Option<crate::resources::clustered::ClusterStats>,
 }
 
 impl ViewportRenderer {
@@ -610,6 +613,7 @@ impl ViewportRenderer {
             last_contact_shadow_active: false,
             last_logged_cascade_splits: [f32::MAX; 4],
             last_frustum_culled_lights: 0,
+            last_cluster_stats: None,
         }
     }
 
@@ -621,6 +625,13 @@ impl ViewportRenderer {
     /// Performance counters from the last completed frame.
     pub fn last_frame_stats(&self) -> crate::renderer::stats::FrameStats {
         self.last_stats
+    }
+
+    /// Diagnostics from the cluster build pass on the most recent frame that
+    /// requested them (`ViewportFrame::cluster_stats_request`). Returns
+    /// `None` until a request has been served.
+    pub fn cluster_stats(&self) -> Option<crate::resources::clustered::ClusterStats> {
+        self.last_cluster_stats
     }
 
     /// Disable GPU-driven culling, reverting to the direct draw path.

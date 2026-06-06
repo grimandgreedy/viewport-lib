@@ -646,9 +646,11 @@ impl ViewportRenderer {
             let active_count = lights_packed.len() as u32;
             // Skip the cluster build entirely for scenes with only a handful
             // of lights : straight per-fragment iteration is cheaper than the
-            // lookup-table indirection at that scale.
-            let use_clusters = active_count
-                > crate::resources::clustered::SMALL_N_THRESHOLD;
+            // lookup-table indirection at that scale. A consumer-set debug
+            // override also forces the fallback path so the two can be A/B'd
+            // for correctness checks.
+            let use_clusters = !frame.viewport.force_cluster_fallback
+                && active_count > crate::resources::clustered::SMALL_N_THRESHOLD;
             let fallback_flag = if use_clusters { 0.0 } else { 1.0 };
             let grid_uniform = ClusterGridUniform {
                 dimensions: [CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES, CLUSTER_COUNT],
@@ -721,6 +723,18 @@ impl ViewportRenderer {
                 .clustered
                 .dispatch_frame(&mut encoder, build_count);
             queue.submit(std::iter::once(encoder.finish()));
+
+            // Optional host readback for the debug stats panel. Synchronous;
+            // off by default.
+            if frame.viewport.cluster_stats_request {
+                let stats = resources.clustered.read_stats(
+                    device,
+                    queue,
+                    active_count,
+                    !use_clusters,
+                );
+                self.last_cluster_stats = Some(stats);
+            }
         }
 
         // Upload all cascade matrices to the shadow uniform buffer before the shadow pass.

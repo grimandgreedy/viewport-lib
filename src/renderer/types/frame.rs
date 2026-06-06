@@ -604,11 +604,18 @@ pub struct ViewportFrame {
     pub grid_colour: Option<[f32; 3]>,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
-    /// Draw the clustered-shading grid as a wireframe overlay, with each
-    /// cluster cell colour-coded by the number of lights assigned to it.
-    /// Useful for diagnosing light density and tuning the grid dimensions.
-    /// Default: false.
-    pub show_light_clusters: bool,
+    /// Force every lit pipeline to take the straight-iteration light loop
+    /// even when the active light count is above the cluster-build threshold.
+    /// Set this and the clustered path renders pixels identical to the path
+    /// the renderer would take with one or two lights, which lets a consumer
+    /// A/B against the clustered path to spot bugs. Default: false.
+    pub force_cluster_fallback: bool,
+    /// Trigger a host-visible readback of the cluster cell array at the end
+    /// of `prepare_scene`. The result is exposed via
+    /// `ViewportRenderer::cluster_stats`. The readback blocks the calling
+    /// thread on a device poll, so leave this off unless a debug panel is
+    /// actively displaying the numbers. Default: false.
+    pub cluster_stats_request: bool,
 }
 
 impl Default for ViewportFrame {
@@ -622,7 +629,8 @@ impl Default for ViewportFrame {
             grid_z: 0.0,
             grid_colour: None,
             show_axes_indicator: true,
-            show_light_clusters: false,
+            force_cluster_fallback: false,
+            cluster_stats_request: false,
         }
     }
 }

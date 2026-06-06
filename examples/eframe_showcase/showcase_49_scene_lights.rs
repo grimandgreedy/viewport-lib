@@ -55,6 +55,14 @@ pub(crate) struct SlState {
     pub stress_light_ids: Vec<u64>,
     pub stress_sources: Vec<LightSource>,
     pub stress_seed: u32,
+
+    /// Force every lit pipeline to take the straight-iteration light loop
+    /// instead of the per-fragment cluster lookup. Used to A/B against the
+    /// clustered path to spot rendering bugs.
+    pub force_cluster_fallback: bool,
+    /// Ask the renderer to read back the cluster cell array each frame and
+    /// expose a `ClusterStats` snapshot for display in the controls panel.
+    pub show_cluster_stats: bool,
 }
 
 fn default_lights() -> [LightSource; 3] {
@@ -117,6 +125,9 @@ impl Default for SlState {
             stress_light_ids: Vec::new(),
             stress_sources: Vec::new(),
             stress_seed: 0xC0FFEE,
+
+            force_cluster_fallback: false,
+            show_cluster_stats: false,
         }
     }
 }
@@ -461,6 +472,65 @@ pub(crate) fn controls_sl(app: &mut App, ui: &mut egui::Ui) {
     match app.sl_state.tab {
         SlTab::Basics => controls_basics(app, ui),
         SlTab::Stress => controls_stress(app, ui),
+    }
+
+    ui.separator();
+    ui.checkbox(
+        &mut app.sl_state.force_cluster_fallback,
+        "Force fallback path (A/B vs cluster path)",
+    );
+    ui.label(
+        "Toggle on to make every lit pipeline iterate the full active-light \
+         array instead of the per-fragment cluster lookup. Pixels should be \
+         visually identical; any difference is a bug in the clustered path.",
+    );
+
+    ui.separator();
+    ui.checkbox(&mut app.sl_state.show_cluster_stats, "Show cluster build stats");
+    if app.sl_state.show_cluster_stats {
+        draw_cluster_stats(app, ui);
+    }
+}
+
+fn draw_cluster_stats(app: &App, ui: &mut egui::Ui) {
+    let stats = app.last_cluster_stats;
+    let Some(s) = stats else {
+        ui.label("(waiting for first readback)");
+        return;
+    };
+    egui::Grid::new("cluster_stats_grid")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Active lights (post-cull):");
+            ui.label(format!("{}", s.active_light_count));
+            ui.end_row();
+            ui.label("Cluster path:");
+            ui.label(if s.fallback_active { "FALLBACK (straight loop)" } else { "clustered" });
+            ui.end_row();
+            ui.label("Non-empty cells:");
+            ui.label(format!("{} / {}", s.non_empty_cells, s.total_cells));
+            ui.end_row();
+            ui.label("Punctuals / cell (median / p99 / max):");
+            ui.label(format!(
+                "{} / {} / {}",
+                s.median_punctual, s.p99_punctual, s.max_punctual
+            ));
+            ui.end_row();
+            ui.label("Mean punctuals (non-empty cells):");
+            ui.label(format!("{:.2}", s.mean_punctual));
+            ui.end_row();
+            ui.label("Index slots used:");
+            ui.label(format!(
+                "{} / {}",
+                s.total_index_slots_used, s.max_index_slots
+            ));
+            ui.end_row();
+        });
+    if s.total_index_slots_used >= s.max_index_slots {
+        ui.colored_label(
+            egui::Color32::from_rgb(220, 100, 100),
+            "Global index list saturated : some clusters dropped lights.",
+        );
     }
 }
 

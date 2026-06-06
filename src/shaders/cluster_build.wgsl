@@ -18,8 +18,10 @@
 // z slice distribution is log-uniform: z_view(i) = -near * (far/near)^(i/Nz).
 
 struct ClusterCell {
-    offset: u32,
-    count:  u32,
+    offset:         u32,
+    count:          u32,
+    punctual_count: u32,
+    _pad:           u32,
 };
 
 struct ActiveLight {
@@ -42,6 +44,7 @@ struct GridUniform {
 @group(0) @binding(4) var<storage, read>      active_lights:  array<ActiveLight>;
 
 var<workgroup> wg_count:        atomic<u32>;
+var<workgroup> wg_punctual:     atomic<u32>;
 var<workgroup> wg_write_cursor: atomic<u32>;
 var<workgroup> wg_base_offset:  u32;
 
@@ -109,15 +112,26 @@ fn cluster_aabb(cluster_id: u32) -> array<vec3<f32>, 2> {
     return array<vec3<f32>, 2>(lo, hi);
 }
 
-fn light_intersects(idx: u32, lo: vec3<f32>, hi: vec3<f32>) -> bool {
+struct HitResult {
+    hit:        bool,
+    is_punctual: bool,
+};
+
+fn light_intersects(idx: u32, lo: vec3<f32>, hi: vec3<f32>) -> HitResult {
+    var r: HitResult;
     let l = active_lights[idx];
     let t = l.type_pad.x;
     if t == 0u {
-        // Directional : affects every cluster.
-        return true;
+        // Directional : affects every cluster but doesn't count toward the
+        // per-cluster density signal the overlay reads.
+        r.hit = true;
+        r.is_punctual = false;
+        return r;
     }
     // Point / spot : conservative sphere-vs-AABB on the bounding sphere.
-    return sphere_intersects_aabb(l.view_pos_range.xyz, l.view_pos_range.w, lo, hi);
+    r.hit = sphere_intersects_aabb(l.view_pos_range.xyz, l.view_pos_range.w, lo, hi);
+    r.is_punctual = r.hit;
+    return r;
 }
 
 @compute @workgroup_size(64)
@@ -137,16 +151,23 @@ fn main(
 
     if lid.x == 0u {
         atomicStore(&wg_count, 0u);
+        atomicStore(&wg_punctual, 0u);
         atomicStore(&wg_write_cursor, 0u);
     }
     workgroupBarrier();
 
-    // Pass 1 : count intersecting lights.
+    // Pass 1 : count intersecting lights. Punctuals tracked separately for
+    // the overlay so an always-present directional doesn't flatten the
+    // density signal.
     var i = lid.x;
     loop {
         if i >= n_lights { break; }
-        if light_intersects(i, lo, hi) {
+        let h = light_intersects(i, lo, hi);
+        if h.hit {
             atomicAdd(&wg_count, 1u);
+            if h.is_punctual {
+                atomicAdd(&wg_punctual, 1u);
+            }
         }
         i = i + WG_SIZE;
     }
@@ -155,6 +176,7 @@ fn main(
     // Thread 0 reserves a contiguous slot in the global list.
     if lid.x == 0u {
         let n = atomicLoad(&wg_count);
+        let np = atomicLoad(&wg_punctual);
         var base = 0u;
         if n > 0u {
             base = atomicAdd(&global_offset, n);
@@ -165,18 +187,21 @@ fn main(
             let limit = arrayLength(&light_indices);
             if base >= limit {
                 base = 0u;
-                cluster_grid[cluster_id].offset = 0u;
-                cluster_grid[cluster_id].count  = 0u;
+                cluster_grid[cluster_id].offset         = 0u;
+                cluster_grid[cluster_id].count          = 0u;
+                cluster_grid[cluster_id].punctual_count = 0u;
                 wg_base_offset = limit; // sentinel : block writes below.
             } else {
                 let writable = min(n, limit - base);
-                cluster_grid[cluster_id].offset = base;
-                cluster_grid[cluster_id].count  = writable;
+                cluster_grid[cluster_id].offset         = base;
+                cluster_grid[cluster_id].count          = writable;
+                cluster_grid[cluster_id].punctual_count = np;
                 wg_base_offset = base;
             }
         } else {
-            cluster_grid[cluster_id].offset = 0u;
-            cluster_grid[cluster_id].count  = 0u;
+            cluster_grid[cluster_id].offset         = 0u;
+            cluster_grid[cluster_id].count          = 0u;
+            cluster_grid[cluster_id].punctual_count = 0u;
             wg_base_offset = 0u;
         }
     }
@@ -193,7 +218,7 @@ fn main(
     var j = lid.x;
     loop {
         if j >= n_lights { break; }
-        if light_intersects(j, lo, hi) {
+        if light_intersects(j, lo, hi).hit {
             let slot = atomicAdd(&wg_write_cursor, 1u);
             if slot < cell_count {
                 light_indices[cell_offset + slot] = j;

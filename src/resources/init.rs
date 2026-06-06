@@ -187,11 +187,10 @@ impl ViewportGpuResources {
                     count: None,
                 },
                 // Binding 15: cluster cell storage (offset + count per cell),
-                // read-only. The debug overlay reads this in the vertex stage
-                // to colour each cluster box by its light count.
+                // read-only in the fragment stage.
                 wgpu::BindGroupLayoutEntry {
                     binding: 15,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -798,12 +797,7 @@ impl ViewportGpuResources {
             mapped_at_creation: false,
         });
 
-        let clustered = crate::resources::clustered::ClusteredResources::new(
-            device,
-            &camera_bgl,
-            target_format,
-            sample_count,
-        );
+        let clustered = crate::resources::clustered::ClusteredResources::new(device);
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
             layout: &camera_bgl,

@@ -221,6 +221,7 @@ fn main() -> eframe::Result {
                 sl_state: showcase_49_scene_lights::SlState::default(),
                 wave_state: showcase_50_gpu_wave::WaveState::default(),
                 async_uploads_state: showcase_51_async_uploads::AsyncUploadsState::default(),
+                last_cluster_stats: None,
             }))
         }),
     )
@@ -518,6 +519,10 @@ pub(crate) struct App {
 
     // --- Showcase 51 ---
     pub(crate) async_uploads_state: showcase_51_async_uploads::AsyncUploadsState,
+
+    /// Latest cluster build stats pulled from the renderer, surfaced by the
+    /// scene-lights controls panel.
+    pub(crate) last_cluster_stats: Option<viewport_lib::resources::clustered::ClusterStats>,
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +531,18 @@ pub(crate) struct App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Pull the latest cluster stats off the renderer for the scene-lights
+        // controls panel. Cheap : the renderer only does the readback when the
+        // panel previously requested it.
+        if let Some(rs) = frame.wgpu_render_state() {
+            let guard = rs.renderer.read();
+            if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
+                if let Some(stats) = renderer.cluster_stats() {
+                    self.last_cluster_stats = Some(stats);
+                }
+            }
+        }
+
         let mut cycle_dir = 0_i32;
         let mut toggle_keybinds = false;
         let mut tab_pressed = false;
@@ -3143,6 +3160,10 @@ impl App {
             fd.viewport.grid_z = self.gp_state.height;
         }
         fd.viewport.show_axes_indicator = true;
+        fd.viewport.force_cluster_fallback =
+            self.mode == ShowcaseMode::SceneLights && self.sl_state.force_cluster_fallback;
+        fd.viewport.cluster_stats_request =
+            self.mode == ShowcaseMode::SceneLights && self.sl_state.show_cluster_stats;
         fd.viewport.background_colour = bg_colour;
 
         // Ground plane (Showcase 3).
