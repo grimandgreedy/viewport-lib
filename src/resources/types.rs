@@ -606,26 +606,40 @@ pub(crate) struct InstanceAabb {
 
 const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);
 
-/// Per-batch metadata for the GPU compute cull pass.
+/// Per-batch metadata read by the GPU cull pass.
 ///
-/// Layout (32 bytes):
-/// - index_count:     u32 =  4 bytes - mesh.index_count
-/// - first_index:     u32 =  4 bytes - always 0
-/// - instance_offset: u32 =  4 bytes - offset into instance_storage_buf
-/// - instance_count:  u32 =  4 bytes - total instances in this batch
-/// - vis_offset:      u32 =  4 bytes - pre-computed prefix sum (equals instance_offset)
-/// - is_transparent:  u32 =  4 bytes - 1 = transparent batch
-/// - _pad:       [u32; 2] =  8 bytes
+/// One entry per batch in the `batch_meta` storage buffer attached to a
+/// [`CullSubmission`](crate::plugin_api::CullSubmission). Layout (32 bytes,
+/// 16-byte aligned):
+///
+/// - `index_count`:     `u32` - index range used by this batch's draw
+/// - `first_index`:     `u32` - index buffer offset (typically 0)
+/// - `instance_offset`: `u32` - first instance for this batch in the AABB buffer
+/// - `instance_count`:  `u32` - number of instances belonging to this batch
+/// - `vis_offset`:      `u32` - first slot in the visibility output buffer
+/// - `is_transparent`:  `u32` - `1` marks a transparent batch
+/// - `_pad`:            `[u32; 2]`
+///
+/// `vis_offset` is a prefix sum of `instance_count` across batches; for a
+/// scene where instances are laid out contiguously per batch it equals
+/// `instance_offset`.
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct BatchMeta {
-    pub(crate) index_count: u32,
-    pub(crate) first_index: u32,
-    pub(crate) instance_offset: u32,
-    pub(crate) instance_count: u32,
-    pub(crate) vis_offset: u32,
-    pub(crate) is_transparent: u32,
-    pub(crate) _pad: [u32; 2],
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct BatchMeta {
+    /// Mesh index count for one instance.
+    pub index_count: u32,
+    /// First index offset into the bound index buffer.
+    pub first_index: u32,
+    /// Offset into the instance AABB buffer where this batch begins.
+    pub instance_offset: u32,
+    /// Number of instances in the batch.
+    pub instance_count: u32,
+    /// First slot in the visibility output buffer this batch writes to.
+    pub vis_offset: u32,
+    /// `1` if the batch is transparent, `0` for opaque.
+    pub is_transparent: u32,
+    /// Padding to keep the struct 16-byte aligned.
+    pub _pad: [u32; 2],
 }
 
 const _: () = assert!(std::mem::size_of::<BatchMeta>() == 32);

@@ -1542,38 +1542,25 @@ impl ViewportRenderer {
                     resources.visibility_index_buf.as_ref(),
                     resources.indirect_args_buf.as_ref(),
                 ) {
-                    // Build the FrustumUniform from the current camera view-projection.
                     let vp_mat = frame.camera.render_camera.view_proj();
                     let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
-                    let frustum_uniform = crate::resources::FrustumUniform {
-                        planes: std::array::from_fn(|i| crate::resources::FrustumPlane {
-                            normal: cpu_frustum.planes[i].normal.into(),
-                            distance: cpu_frustum.planes[i].d,
-                        }),
-                        instance_count,
-                        batch_count,
-                        shadow_pass: 0,
-                        _pad: 0,
-                    };
 
                     let cull = self.cull_resources.as_ref().unwrap();
                     let mut encoder =
                         device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("cull_encoder"),
                         });
-                    cull.dispatch(
-                        &mut encoder,
-                        device,
-                        queue,
-                        &frustum_uniform,
-                        aabb_buf,
-                        meta_buf,
-                        counter_buf,
-                        vis_buf,
-                        indirect_buf,
+                    let sub = crate::plugin_api::CullSubmission {
+                        instance_aabbs: aabb_buf,
                         instance_count,
+                        batch_meta: meta_buf,
                         batch_count,
-                    );
+                        counter: counter_buf,
+                        visible_out: vis_buf,
+                        indirect_out: indirect_buf,
+                        shadow_pass: false,
+                    };
+                    cull.dispatch(&mut encoder, device, queue, &cpu_frustum, None, &sub);
 
                     // Copy indirect_args_buf to the CPU-readable staging buffer so the
                     // visible instance count can be read back next frame (one-frame lag).
@@ -2632,29 +2619,23 @@ impl ViewportRenderer {
                             let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(
                                 &cascade_view_projs[c],
                             );
-                            let frustum_uniform = crate::resources::FrustumUniform {
-                                planes: std::array::from_fn(|i| crate::resources::FrustumPlane {
-                                    normal: cpu_frustum.planes[i].normal.into(),
-                                    distance: cpu_frustum.planes[i].d,
-                                }),
+                            let sub = crate::plugin_api::CullSubmission {
+                                instance_aabbs: aabb_buf,
                                 instance_count,
+                                batch_meta: meta_buf,
                                 batch_count,
-                                shadow_pass: 1,
-                                _pad: 0,
+                                counter: counter_buf,
+                                visible_out: shadow_vis_buf,
+                                indirect_out: shadow_indirect_buf,
+                                shadow_pass: true,
                             };
-                            cull.dispatch_shadow(
+                            cull.dispatch(
                                 &mut shadow_cull_encoder,
                                 device,
                                 queue,
-                                c,
-                                &frustum_uniform,
-                                aabb_buf,
-                                meta_buf,
-                                counter_buf,
-                                shadow_vis_buf,
-                                shadow_indirect_buf,
-                                instance_count,
-                                batch_count,
+                                &cpu_frustum,
+                                Some(c),
+                                &sub,
                             );
                         }
                     }

@@ -2,6 +2,26 @@
 
 ## [Unreleased Changes]
 
+### GPU cull service is now multi-batch
+
+`CullSubmission` carries the per-batch metadata buffer + per-batch atomic
+counter buffer + per-batch indirect-draw buffer alongside the instance AABB
+list, and one call dispatches the cull compute for every batch in the
+submission. The single-batch `CullSubmission` fields (`index_count`,
+`first_index`, `base_vertex`, `first_instance`) are gone; per-mesh draw
+parameters now live in `BatchMeta`, which is published from
+`plugin_api::cull` so plugin authors can fill the buffer directly.
+
+For one-mesh-N-instances plugins, `submit_cull_single_mesh` and
+`submit_cull_shadow_single_mesh` keep the simple call shape: the renderer
+fills its scratch `BatchMeta` slot and counter from a `SingleMeshDraw` and
+calls `submit_cull` internally. Plugins don't have to allocate either
+buffer for the single-mesh case.
+
+The lib's own opaque, transparent, and shadow cascade culls go through the
+same `submit_cull` path as plugins. The four-method dispatch surface on
+`CullResources` collapses to one.
+
 ### Residual Y-up fixes
 
 Several leftover Y-up assumptions are corrected to match the library's Z-up convention.

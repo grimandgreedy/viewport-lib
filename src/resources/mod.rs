@@ -61,8 +61,9 @@ pub use self::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::types::ClipVolumeUniform;
 pub(crate) use self::types::ScatterViewportState;
+pub use self::types::BatchMeta;
 pub(crate) use self::types::{
-    AtlasBlitUniform, BackdropBlurState, BatchMeta, BloomUniform, ClipPlanesUniform,
+    AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform,
     ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,
     FrustumUniform, GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh,
     GridUniform, GroundPlaneUniform, ImageSliceGpuData, InstanceAabb, InstanceData, LabelGpuData,

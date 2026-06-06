@@ -771,29 +771,24 @@ impl ViewportRenderer {
         self.instanced_batches.len()
     }
 
-    /// Run the GPU-driven cull compute against a plugin-supplied instance
-    /// AABB buffer.
+    /// Run the GPU-driven cull compute against a plugin's
+    /// [`CullSubmission`](crate::plugin_api::CullSubmission).
     ///
     /// Encodes two compute passes into `encoder`:
     /// 1. one thread per instance, tests AABB against `frustum`, claims a
-    ///    visibility slot;
-    /// 2. one thread writes a `DrawIndexedIndirect` entry into
-    ///    `sub.indirect_out` with the final visible count.
+    ///    visibility slot via atomic add;
+    /// 2. one thread per batch, writes a `DrawIndexedIndirect` entry into
+    ///    `sub.indirect_out` with the final visible count and zeroes the
+    ///    counter for the next call.
     ///
-    /// After the encoder is submitted, the plugin draws with
-    /// `pass.draw_indexed_indirect(sub.indirect_out, 0)` using
+    /// After the encoder runs, draw each batch with
+    /// `pass.draw_indexed_indirect(sub.indirect_out, batch_idx * 20)` using
     /// `sub.visible_out` as the per-instance lookup buffer.
-    ///
-    /// Single-batch only: plugins with multiple meshes call this once
-    /// per mesh. Each submission consumes its own scratch counter so
-    /// submissions are independent. Internal lib batches use a separate
-    /// path and do not collide.
     ///
     /// The cull pipeline is created lazily on the first call. Returns
     /// without dispatching if the device does not support
     /// `INDIRECT_FIRST_INSTANCE` (call
-    /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported)
-    /// first).
+    /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported) first).
     pub fn submit_cull(
         &mut self,
         device: &wgpu::Device,
@@ -809,24 +804,18 @@ impl ViewportRenderer {
             self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
         }
         let cull = self.cull_resources.as_ref().unwrap();
-        cull.dispatch_plugin(encoder, device, queue, frustum, sub);
+        cull.dispatch(encoder, device, queue, frustum, None, sub);
     }
 
-    /// Run the GPU cull compute against a plugin's instance buffer for
-    /// one shadow cascade.
+    /// Same as [`submit_cull`](Self::submit_cull) for one shadow cascade.
     ///
-    /// Same shape as [`submit_cull`](Self::submit_cull) but writes to a
-    /// per-cascade scratch frustum slot (so a single frame can submit
+    /// Uploads the frustum to the cascade slot (so a single frame can submit
     /// the main pass plus every cascade without overwriting an in-flight
-    /// upload), and forces the cull shader's `shadow_pass` flag so
+    /// upload) and forces the cull shader's shadow flag so
     /// `InstanceAabb::cast_shadows = 0` entries are skipped.
     ///
-    /// Call once per cascade per plugin item type; the plugin then draws
-    /// into its cascade tile of the shadow atlas with
-    /// `pass.draw_indexed_indirect(sub.indirect_out, 0)`.
-    ///
-    /// `cascade_idx` must be in `0..4`; values outside that range panic
-    /// in debug builds and clamp to 3 in release.
+    /// `cascade_idx` must be in `0..4`; values outside that range panic in
+    /// debug builds and clamp to 3 in release.
     pub fn submit_cull_shadow(
         &mut self,
         device: &wgpu::Device,
@@ -845,7 +834,134 @@ impl ViewportRenderer {
             self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
         }
         let cull = self.cull_resources.as_ref().unwrap();
-        cull.dispatch_plugin_shadow(encoder, device, queue, cascade_idx, cascade_frustum, sub);
+        cull.dispatch(encoder, device, queue, cascade_frustum, Some(cascade_idx), sub);
+    }
+
+    /// Convenience wrapper around [`submit_cull`](Self::submit_cull) for the
+    /// common case of one mesh with N instances.
+    ///
+    /// The renderer fills its scratch [`BatchMeta`] slot from `draw`, zeroes
+    /// its scratch counter, seeds the indirect entry, and runs a one-batch
+    /// cull. Plugins that only have a single mesh per submission don't have
+    /// to allocate either buffer themselves.
+    ///
+    /// `indirect_out` must hold one `DrawIndexedIndirect` entry (20 bytes).
+    pub fn submit_cull_single_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        frustum: &crate::camera::frustum::Frustum,
+        instance_aabbs: &wgpu::Buffer,
+        instance_count: u32,
+        visible_out: &wgpu::Buffer,
+        indirect_out: &wgpu::Buffer,
+        draw: crate::plugin_api::SingleMeshDraw,
+        shadow_pass: bool,
+    ) {
+        self.dispatch_cull_single_mesh(
+            device,
+            queue,
+            encoder,
+            frustum,
+            None,
+            instance_aabbs,
+            instance_count,
+            visible_out,
+            indirect_out,
+            draw,
+            shadow_pass,
+        );
+    }
+
+    /// Single-mesh shadow variant of
+    /// [`submit_cull_single_mesh`](Self::submit_cull_single_mesh).
+    pub fn submit_cull_shadow_single_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        cascade_idx: usize,
+        cascade_frustum: &crate::camera::frustum::Frustum,
+        instance_aabbs: &wgpu::Buffer,
+        instance_count: u32,
+        visible_out: &wgpu::Buffer,
+        indirect_out: &wgpu::Buffer,
+        draw: crate::plugin_api::SingleMeshDraw,
+    ) {
+        debug_assert!(cascade_idx < 4, "cascade_idx must be in 0..4");
+        let cascade_idx = cascade_idx.min(3);
+        self.dispatch_cull_single_mesh(
+            device,
+            queue,
+            encoder,
+            cascade_frustum,
+            Some(cascade_idx),
+            instance_aabbs,
+            instance_count,
+            visible_out,
+            indirect_out,
+            draw,
+            true,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_cull_single_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        frustum: &crate::camera::frustum::Frustum,
+        cascade: Option<usize>,
+        instance_aabbs: &wgpu::Buffer,
+        instance_count: u32,
+        visible_out: &wgpu::Buffer,
+        indirect_out: &wgpu::Buffer,
+        draw: crate::plugin_api::SingleMeshDraw,
+        shadow_pass: bool,
+    ) {
+        if !self.gpu_culling_supported {
+            return;
+        }
+        if self.cull_resources.is_none() {
+            self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+        }
+        let cull = self.cull_resources.as_ref().unwrap();
+        let (meta_buf, counter_buf) = cull.scratch_single_mesh_buffers();
+        let meta = crate::plugin_api::BatchMeta {
+            index_count: draw.index_count,
+            first_index: draw.first_index,
+            instance_offset: 0,
+            instance_count,
+            vis_offset: 0,
+            is_transparent: 0,
+            _pad: [0, 0],
+        };
+        queue.write_buffer(meta_buf, 0, bytemuck::bytes_of(&meta));
+        queue.write_buffer(counter_buf, 0, &[0u8; 4]);
+        // Seed the static fields of the indirect entry; the compute pass
+        // overwrites `instance_count` with the final visible count.
+        let seed: [u32; 5] = [
+            draw.index_count,
+            0,
+            draw.first_index,
+            draw.base_vertex as u32,
+            draw.first_instance,
+        ];
+        queue.write_buffer(indirect_out, 0, bytemuck::cast_slice(&seed));
+
+        let sub = crate::plugin_api::CullSubmission {
+            instance_aabbs,
+            instance_count,
+            batch_meta: meta_buf,
+            batch_count: 1,
+            counter: counter_buf,
+            visible_out,
+            indirect_out,
+            shadow_pass,
+        };
+        cull.dispatch(encoder, device, queue, frustum, cascade, &sub);
     }
 
     /// Register an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).

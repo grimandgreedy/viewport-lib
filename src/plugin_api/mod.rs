@@ -28,7 +28,7 @@ pub mod item_type;
 pub mod shared_wgsl;
 pub mod target_desc;
 
-pub use cull::{CullSubmission, InstanceAabb};
+pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use item_type::{
     ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickRay,
     PluginItemCollection, ShadowCastContext,
