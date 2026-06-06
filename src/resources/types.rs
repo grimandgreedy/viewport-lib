@@ -590,7 +590,7 @@ const _: () = assert!(std::mem::size_of::<PickInstance>() == 80);
 ///
 /// Layout (32 bytes):
 /// - min:         [f32; 3] = 12 bytes, offset  0
-/// - batch_index: u32      =  4 bytes, offset 12 — index into batch_meta_buf
+/// - batch_index: u32      =  4 bytes, offset 12 (index into batch_meta_buf)
 /// - max:         [f32; 3] = 12 bytes, offset 16
 /// - _pad:        u32      =  4 bytes, offset 28
 #[repr(C)]
@@ -608,12 +608,12 @@ const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);
 /// Per-batch metadata for the GPU compute cull pass.
 ///
 /// Layout (32 bytes):
-/// - index_count:     u32 =  4 bytes — mesh.index_count
-/// - first_index:     u32 =  4 bytes — always 0
-/// - instance_offset: u32 =  4 bytes — offset into instance_storage_buf
-/// - instance_count:  u32 =  4 bytes — total instances in this batch
-/// - vis_offset:      u32 =  4 bytes — pre-computed prefix sum (equals instance_offset)
-/// - is_transparent:  u32 =  4 bytes — 1 = transparent batch
+/// - index_count:     u32 =  4 bytes - mesh.index_count
+/// - first_index:     u32 =  4 bytes - always 0
+/// - instance_offset: u32 =  4 bytes - offset into instance_storage_buf
+/// - instance_count:  u32 =  4 bytes - total instances in this batch
+/// - vis_offset:      u32 =  4 bytes - pre-computed prefix sum (equals instance_offset)
+/// - is_transparent:  u32 =  4 bytes - 1 = transparent batch
 /// - _pad:       [u32; 2] =  8 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -886,7 +886,7 @@ impl ClipVolumeUniform {
     }
 }
 
-// SAFETY: ClipVolumeUniform is repr(C) and contains only u32/f32 fields — all Pod-compatible.
+// SAFETY: ClipVolumeUniform is repr(C) and contains only u32/f32 fields - all Pod-compatible.
 #[allow(deprecated)]
 unsafe impl bytemuck::Zeroable for ClipVolumeUniform {}
 #[allow(deprecated)]
@@ -1004,7 +1004,7 @@ pub(crate) struct SubHighlightUniform {
     pub(crate) vertex_size: f32,      //  4 bytes (pixels)
     pub(crate) viewport_width: f32,   //  4 bytes
     pub(crate) viewport_height: f32,  //  4 bytes
-                                      // total 48 bytes — no padding required
+                                      // total 48 bytes
 }
 
 /// GPU buffers for one frame of sub-object highlight rendering.
@@ -3209,7 +3209,9 @@ pub struct ViewportGpuResources {
     pub ibl_irradiance_view: Option<wgpu::TextureView>,
     /// IBL prefiltered specular equirect texture view (binding 8). None until environment uploaded.
     pub ibl_prefiltered_view: Option<wgpu::TextureView>,
-    /// BRDF integration LUT texture view (binding 9). None until environment uploaded.
+    /// BRDF integration LUT texture view (binding 9). None until the first
+    /// `upload_environment_map`; cached across subsequent uploads (the LUT is
+    /// scene-independent: function of roughness x N.V only).
     pub ibl_brdf_lut_view: Option<wgpu::TextureView>,
     /// IBL linear-clamp sampler (binding 10).
     pub(crate) ibl_sampler: wgpu::Sampler,
@@ -3220,7 +3222,9 @@ pub struct ViewportGpuResources {
     pub(crate) ibl_fallback_texture: wgpu::Texture,
     /// View of ibl_fallback_texture.
     pub(crate) ibl_fallback_view: wgpu::TextureView,
-    /// Fallback 1×1 BRDF LUT (black : placeholder, never sampled due to `ibl_enabled` guard).
+    /// Fallback 1x1 BRDF LUT placeholder; swapped for the real 128x128 LUT
+    /// on the first `upload_environment_map` call. Bound to satisfy the bind
+    /// group layout when no environment map has been uploaded yet.
     #[allow(dead_code)]
     pub(crate) ibl_fallback_brdf_texture: wgpu::Texture,
     pub(crate) ibl_fallback_brdf_view: wgpu::TextureView,
@@ -3299,19 +3303,19 @@ pub struct ViewportGpuResources {
     pub(crate) pick_camera_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Sub-object highlight (lazily created) ---
-    /// Translucent face fill pipeline — HDR path (Rgba16Float colour target).
+    /// Translucent face fill pipeline. HDR path (Rgba16Float colour target).
     /// `None` until the first frame that has `sub_selection.is_some()`.
     pub(crate) sub_highlight_fill_pipeline: Option<wgpu::RenderPipeline>,
-    /// Depth-nudged billboard edge-line pipeline — HDR path (Rgba16Float colour target).
+    /// Depth-nudged billboard edge-line pipeline. HDR path (Rgba16Float colour target).
     /// `None` until the first frame that has `sub_selection.is_some()`.
     pub(crate) sub_highlight_edge_pipeline: Option<wgpu::RenderPipeline>,
-    /// Billboard sprite pipeline for vertex/point highlights — HDR path (Rgba16Float).
+    /// Billboard sprite pipeline for vertex/point highlights. HDR path (Rgba16Float).
     pub(crate) sub_highlight_sprite_pipeline: Option<wgpu::RenderPipeline>,
-    /// Translucent face fill pipeline — LDR path (swapchain `target_format`).
+    /// Translucent face fill pipeline. LDR path (swapchain `target_format`).
     pub(crate) sub_highlight_fill_ldr_pipeline: Option<wgpu::RenderPipeline>,
-    /// Depth-nudged billboard edge-line pipeline — LDR path (swapchain `target_format`).
+    /// Depth-nudged billboard edge-line pipeline. LDR path (swapchain `target_format`).
     pub(crate) sub_highlight_edge_ldr_pipeline: Option<wgpu::RenderPipeline>,
-    /// Billboard sprite pipeline for vertex/point highlights — LDR path (swapchain `target_format`).
+    /// Billboard sprite pipeline for vertex/point highlights. LDR path (swapchain `target_format`).
     pub(crate) sub_highlight_sprite_ldr_pipeline: Option<wgpu::RenderPipeline>,
     /// Shared bind group layout for all highlight pipelines (group 1: SubHighlightUniform).
     pub(crate) sub_highlight_bgl: Option<wgpu::BindGroupLayout>,

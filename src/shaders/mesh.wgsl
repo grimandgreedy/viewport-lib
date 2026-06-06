@@ -439,13 +439,15 @@ fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
 
 const IBL_PI: f32 = 3.14159265;
 
-/// Convert a world-space direction to equirectangular UV, applying optional Y-rotation.
+/// Convert a Z-up world-space direction to equirectangular UV, applying optional
+/// Z-axis rotation. The IBL panorama is sampled with its vertical axis aligned
+/// to +Z; horizon HDR pixels girdle the camera in the XY plane.
 fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
     let s = sin(rotation);
     let c = cos(rotation);
-    let d = vec3<f32>(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
-    let phi = atan2(d.z, d.x); // -PI..PI
-    let theta = asin(clamp(d.y, -1.0, 1.0)); // -PI/2..PI/2
+    let d = vec3<f32>(c * dir.x - s * dir.y, s * dir.x + c * dir.y, dir.z);
+    let phi = atan2(d.y, d.x); // -PI..PI (longitude around Z)
+    let theta = asin(clamp(d.z, -1.0, 1.0)); // -PI/2..PI/2 (latitude: Z is polar)
     return vec2<f32>(0.5 + phi / (2.0 * IBL_PI), 0.5 - theta / IBL_PI);
 }
 

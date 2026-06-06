@@ -12,9 +12,18 @@ Built-in light glyphs and picking. `scene::build_light_glyphs(&scene, &selection
 
 8-light cap gone. The fixed `array<Light, 8>` uniform is replaced by a per-frame storage buffer of `SingleLightUniform` entries sized to `MAX_SCENE_LIGHTS` (currently 512). When the union of `EffectsFrame::lighting.lights` and `SceneFrame::lights` exceeds the cap, the renderer keeps the first directional (the shadow caster) at index 0 and ranks the rest by `LightSource::importance * proximity_weight`, dropping the tail.
 
+### IBL upload performance
+
+`upload_environment_map` is much faster than before. The single-threaded CPU reference port still ships as the universal fallback, but it now runs in parallel and skips the work it shouldn't have been doing in the first place. A GPU compute path takes over on adapters that expose Rgba16Float storage write, dropping a multi-hundred-millisecond load-screen cost to a few milliseconds.
+
+- BRDF integration LUT is cached after its first generation rather than recomputed on every call.
+- The CPU irradiance, GGX prefilter, and BRDF LUT loops run in parallel via `rayon::par_chunks_mut` over row strides. Near-linear scaling on the number of physical cores.
+- A GPU compute path runs the three convolutions as compute dispatches. Selected at runtime when the device was created with `Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`; otherwise the (now parallelised) CPU path runs.
+
 ### Bug fixes
 
 - OIT instanced pipeline: fix init-order trap where the pipeline was never created when the first frame had an empty scene. Instanced transparent geometry added on later frames is now drawn correctly.
+- Equirectangular IBL convention switched from Y-up to Z-up to match the conventions of viewport-lib.
 
 
 ## [0.16.0]

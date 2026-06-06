@@ -6,6 +6,8 @@ pub(crate) mod decal;
 pub(crate) mod dyn_res;
 /// IBL precomputation and environment map upload.
 pub mod environment;
+/// GPU compute path for IBL precomputation (selected at runtime when supported).
+mod ibl_compute;
 mod extra_impls;
 /// Font atlas and single-line text layout for overlay rendering.
 pub(crate) mod font;

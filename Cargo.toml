@@ -21,6 +21,7 @@ bytemuck = { version = "1.25", features = ["derive"] }
 parry3d = "0.26"
 bitflags = "2"
 rayon = "1"
+half = "2"
 fontdue = "0.9"
 thiserror = "2.0"
 tracing = "0.1"

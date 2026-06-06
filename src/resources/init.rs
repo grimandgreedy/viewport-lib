@@ -722,9 +722,10 @@ impl ViewportGpuResources {
         let ibl_fallback_view =
             ibl_fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // 1×1 black Rgba16Float : never actually sampled because the `ibl_enabled` guard
-        // in prepare.rs prevents IBL calculations when no environment map is uploaded.
-        // Exists only to satisfy the bind group layout.
+        // BRDF integration LUT placeholder: a 1x1 black fallback that's swapped for the real
+        // 128x128 LUT on the first call to `upload_environment_map`. The LUT is scene-independent
+        // (function of roughness x N.V only); idempotent caching inside `upload_environment_map`
+        // means subsequent uploads skip its ~16.7M Hammersley samples.
         let ibl_fallback_brdf_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("ibl_fallback_brdf"),
             size: wgpu::Extent3d {

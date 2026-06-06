@@ -12,6 +12,7 @@
 //! mesh_oit.wgsl, and mesh_instanced_oit.wgsl. mesh.wgsl is the canonical copy.
 //! Update all four when changing IBL shader code.
 
+use rayon::prelude::*;
 use std::f32::consts::PI;
 
 // -------------------------------------------------------------------------
@@ -44,6 +45,55 @@ pub fn upload_environment_map(
         });
     }
 
+    // GPU compute path when the adapter exposes Rgba16Float storage-write support
+    // (gated on TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES). CPU path is the
+    // fallback for older adapters and WebGL2 backends.
+    if super::ibl_compute::compute_supported(device) {
+        upload_environment_map_gpu(resources, device, queue, pixels, width, height);
+    } else {
+        upload_environment_map_cpu(resources, device, queue, pixels, width, height);
+    }
+    Ok(())
+}
+
+fn upload_environment_map_gpu(
+    resources: &mut super::ViewportGpuResources,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pixels: &[f32],
+    width: u32,
+    height: u32,
+) {
+    let compute_brdf = resources.ibl_brdf_lut_texture.is_none();
+    let result = super::ibl_compute::compute_ibl(
+        device,
+        queue,
+        pixels,
+        width,
+        height,
+        compute_brdf,
+    );
+
+    resources.ibl_irradiance_view = Some(result.irradiance_view);
+    resources.ibl_prefiltered_view = Some(result.prefilter_view);
+    resources.ibl_skybox_view = Some(result.skybox_view);
+    resources.ibl_irradiance_texture = Some(result.irradiance_texture);
+    resources.ibl_prefiltered_texture = Some(result.prefilter_texture);
+    resources.ibl_skybox_texture = Some(result.skybox_texture);
+    if let (Some(brdf_tex), Some(brdf_view)) = (result.brdf_texture, result.brdf_view) {
+        resources.ibl_brdf_lut_view = Some(brdf_view);
+        resources.ibl_brdf_lut_texture = Some(brdf_tex);
+    }
+}
+
+fn upload_environment_map_cpu(
+    resources: &mut super::ViewportGpuResources,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pixels: &[f32],
+    width: u32,
+    height: u32,
+) {
     // 1. Upload full-res skybox texture.
     let skybox_tex = upload_rgba16f(device, queue, pixels, width, height, "ibl_skybox");
     let skybox_view = skybox_tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -72,29 +122,33 @@ pub fn upload_environment_map(
     let _ = spec_data_mips; // CPU data no longer needed
     let spec_view = spec_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // 4. Generate BRDF integration LUT.
-    let brdf_size = 128u32;
-    let brdf_data = generate_brdf_lut(brdf_size);
-    let brdf_tex = upload_rgba16f(
-        device,
-        queue,
-        &brdf_data,
-        brdf_size,
-        brdf_size,
-        "ibl_brdf_lut",
-    );
-    let brdf_view = brdf_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    // 4. Generate BRDF integration LUT (idempotent: scene-independent, cached after first call).
+    //
+    // The LUT depends only on (roughness, N.V) and never changes between environment maps.
+    // Skip the ~16.7M Hammersley samples on every subsequent call by reusing the cached texture.
+    if resources.ibl_brdf_lut_texture.is_none() {
+        let brdf_size = 128u32;
+        let brdf_data = generate_brdf_lut(brdf_size);
+        let brdf_tex = upload_rgba16f(
+            device,
+            queue,
+            &brdf_data,
+            brdf_size,
+            brdf_size,
+            "ibl_brdf_lut",
+        );
+        let brdf_view = brdf_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        resources.ibl_brdf_lut_view = Some(brdf_view);
+        resources.ibl_brdf_lut_texture = Some(brdf_tex);
+    }
 
     // 5. Store on resources.
     resources.ibl_irradiance_view = Some(irr_view);
     resources.ibl_prefiltered_view = Some(spec_view);
-    resources.ibl_brdf_lut_view = Some(brdf_view);
     resources.ibl_skybox_view = Some(skybox_view);
     resources.ibl_irradiance_texture = Some(irr_tex);
     resources.ibl_prefiltered_texture = Some(spec_tex);
-    resources.ibl_brdf_lut_texture = Some(brdf_tex);
     resources.ibl_skybox_texture = Some(skybox_tex);
-    Ok(())
 }
 
 // -------------------------------------------------------------------------
@@ -102,7 +156,7 @@ pub fn upload_environment_map(
 // -------------------------------------------------------------------------
 
 /// Upload f32 RGBA pixel data as an Rgba16Float GPU texture.
-fn upload_rgba16f(
+pub(crate) fn upload_rgba16f(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     pixels: &[f32],
@@ -149,12 +203,14 @@ fn upload_rgba16f(
     tex
 }
 
-/// Sample an equirectangular HDR image at a world-space direction.
+/// Sample an equirectangular HDR image at a Z-up world-space direction.
+///
+/// viewport-lib is Z-up: longitude is measured around the +Z axis in the XY
+/// plane, latitude has +Z polar.
 fn sample_equirect(pixels: &[f32], width: u32, height: u32, dir: [f32; 3]) -> [f32; 3] {
     let [x, y, z] = dir;
-    // Longitude: atan2(z, x), latitude: asin(y)
-    let phi = z.atan2(x); // -PI..PI
-    let theta = y.clamp(-1.0, 1.0).asin(); // -PI/2..PI/2
+    let phi = y.atan2(x); // -PI..PI (longitude around Z)
+    let theta = z.clamp(-1.0, 1.0).asin(); // -PI/2..PI/2 (latitude: Z polar)
     let u = 0.5 + phi / (2.0 * PI);
     let v = 0.5 - theta / PI;
     let px = (u * width as f32).rem_euclid(width as f32);
@@ -177,64 +233,68 @@ fn convolve_irradiance(src: &[f32], src_w: u32, src_h: u32, dst_w: u32, dst_h: u
     let sample_delta = 0.05f32; // ~40 phi steps × ~20 theta steps = 800 samples
     let mut out = vec![0.0f32; (dst_w * dst_h * 4) as usize];
 
-    for y in 0..dst_h {
-        let v = y as f32 / dst_h as f32;
-        let theta_n = PI * (0.5 - v); // latitude
-        for x in 0..dst_w {
-            let u = x as f32 / dst_w as f32;
-            let phi_n = 2.0 * PI * (u - 0.5); // longitude
+    // Per-row parallelism. Each row writes a disjoint slice of `out`, so
+    // chunk by row stride and dispatch in parallel via rayon.
+    let row_stride = (dst_w as usize) * 4;
+    out.par_chunks_mut(row_stride)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let v = y as f32 / dst_h as f32;
+            let theta_n = PI * (0.5 - v); // latitude
+            for x in 0..dst_w {
+                let u = x as f32 / dst_w as f32;
+                let phi_n = 2.0 * PI * (u - 0.5); // longitude
 
-            // Normal direction for this texel.
-            let (st, ct) = theta_n.sin_cos();
-            let (sp, cp) = phi_n.sin_cos();
-            let normal = [ct * cp, st, ct * sp];
+                // Normal direction for this texel (Z-up: latitude theta drives Z,
+                // longitude phi spins around Z in the XY plane).
+                let (st, ct) = theta_n.sin_cos();
+                let (sp, cp) = phi_n.sin_cos();
+                let normal = [ct * cp, ct * sp, st];
 
-            // Build tangent frame.
-            let up = if normal[1].abs() < 0.999 {
-                [0.0, 1.0, 0.0]
-            } else {
-                [1.0, 0.0, 0.0]
-            };
-            let tangent = cross(up, normal);
-            let tangent = normalize(tangent);
-            let bitangent = cross(normal, tangent);
+                // Build tangent frame.
+                let up = if normal[2].abs() < 0.999 {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    [1.0, 0.0, 0.0]
+                };
+                let tangent = cross(up, normal);
+                let tangent = normalize(tangent);
+                let bitangent = cross(normal, tangent);
 
-            let mut irr = [0.0f32; 3];
-            let mut sample_count = 0.0f32;
+                let mut irr = [0.0f32; 3];
+                let mut sample_count = 0.0f32;
 
-            let mut s_phi = 0.0f32;
-            while s_phi < 2.0 * PI {
-                let mut s_theta = 0.0f32;
-                while s_theta < 0.5 * PI {
-                    let (sst, sct) = s_theta.sin_cos();
-                    let (ssp, scp) = s_phi.sin_cos();
-                    // Tangent-space direction.
-                    let ts = [sst * scp, sst * ssp, sct];
-                    // World-space direction.
-                    let dir = [
-                        ts[0] * tangent[0] + ts[1] * bitangent[0] + ts[2] * normal[0],
-                        ts[0] * tangent[1] + ts[1] * bitangent[1] + ts[2] * normal[1],
-                        ts[0] * tangent[2] + ts[1] * bitangent[2] + ts[2] * normal[2],
-                    ];
-                    let c = sample_equirect(src, src_w, src_h, dir);
-                    let w = sct * sst; // cos(theta) * sin(theta) for solid angle
-                    irr[0] += c[0] * w;
-                    irr[1] += c[1] * w;
-                    irr[2] += c[2] * w;
-                    sample_count += 1.0;
-                    s_theta += sample_delta;
+                let mut s_phi = 0.0f32;
+                while s_phi < 2.0 * PI {
+                    let mut s_theta = 0.0f32;
+                    while s_theta < 0.5 * PI {
+                        let (sst, sct) = s_theta.sin_cos();
+                        let (ssp, scp) = s_phi.sin_cos();
+                        let ts = [sst * scp, sst * ssp, sct];
+                        let dir = [
+                            ts[0] * tangent[0] + ts[1] * bitangent[0] + ts[2] * normal[0],
+                            ts[0] * tangent[1] + ts[1] * bitangent[1] + ts[2] * normal[1],
+                            ts[0] * tangent[2] + ts[1] * bitangent[2] + ts[2] * normal[2],
+                        ];
+                        let c = sample_equirect(src, src_w, src_h, dir);
+                        let w = sct * sst; // cos(theta) * sin(theta) for solid angle
+                        irr[0] += c[0] * w;
+                        irr[1] += c[1] * w;
+                        irr[2] += c[2] * w;
+                        sample_count += 1.0;
+                        s_theta += sample_delta;
+                    }
+                    s_phi += sample_delta;
                 }
-                s_phi += sample_delta;
-            }
 
-            let scale = PI / sample_count;
-            let idx = (y * dst_w + x) as usize * 4;
-            out[idx] = irr[0] * scale;
-            out[idx + 1] = irr[1] * scale;
-            out[idx + 2] = irr[2] * scale;
-            out[idx + 3] = 1.0;
-        }
-    }
+                let scale = PI / sample_count;
+                let idx = (x as usize) * 4;
+                row[idx] = irr[0] * scale;
+                row[idx + 1] = irr[1] * scale;
+                row[idx + 2] = irr[2] * scale;
+                row[idx + 3] = 1.0;
+            }
+        });
     out
 }
 
@@ -276,27 +336,31 @@ fn prefilter_specular(
         let roughness = mip as f32 / (mip_levels - 1).max(1) as f32;
         let mut data = vec![0.0f32; (mip_w * mip_h * 4) as usize];
 
-        for y in 0..mip_h {
-            let v = y as f32 / mip_h as f32;
-            let theta_n = PI * (0.5 - v);
-            for x in 0..mip_w {
-                let u = x as f32 / mip_w as f32;
-                let phi_n = 2.0 * PI * (u - 0.5);
-                let (st, ct) = theta_n.sin_cos();
-                let (sp, cp) = phi_n.sin_cos();
-                let n = [ct * cp, st, ct * sp];
-                let r = n; // reflect = normal for prefilter
-                let v_dir = r;
+        let row_stride = (mip_w as usize) * 4;
+        data.par_chunks_mut(row_stride)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let v = y as f32 / mip_h as f32;
+                let theta_n = PI * (0.5 - v);
+                for x in 0..mip_w {
+                    let u = x as f32 / mip_w as f32;
+                    let phi_n = 2.0 * PI * (u - 0.5);
+                    // Z-up: latitude theta drives Z, longitude phi spins around Z in the XY plane.
+                    let (st, ct) = theta_n.sin_cos();
+                    let (sp, cp) = phi_n.sin_cos();
+                    let n = [ct * cp, ct * sp, st];
+                    let r = n; // reflect = normal for prefilter
+                    let v_dir = r;
 
-                let colour =
-                    prefilter_sample(src, src_w, src_h, n, r, v_dir, roughness, num_samples);
-                let idx = (y * mip_w + x) as usize * 4;
-                data[idx] = colour[0];
-                data[idx + 1] = colour[1];
-                data[idx + 2] = colour[2];
-                data[idx + 3] = 1.0;
-            }
-        }
+                    let colour =
+                        prefilter_sample(src, src_w, src_h, n, r, v_dir, roughness, num_samples);
+                    let idx = (x as usize) * 4;
+                    row[idx] = colour[0];
+                    row[idx + 1] = colour[1];
+                    row[idx + 2] = colour[2];
+                    row[idx + 3] = 1.0;
+                }
+            });
 
         // Upload this mip level.
         let half_data: Vec<u16> = data.iter().map(|&f| f32_to_f16(f)).collect();
@@ -367,25 +431,28 @@ fn prefilter_sample(
 // BRDF integration LUT (split-sum second integral)
 // -------------------------------------------------------------------------
 
-fn generate_brdf_lut(size: u32) -> Vec<f32> {
+pub(crate) fn generate_brdf_lut(size: u32) -> Vec<f32> {
     let num_samples = 1024u32;
     let mut data = vec![0.0f32; (size * size * 4) as usize];
 
-    for y in 0..size {
-        let roughness = (y as f32 + 0.5) / size as f32;
-        let roughness = roughness.max(0.01);
-        for x in 0..size {
-            let n_dot_v = (x as f32 + 0.5) / size as f32;
-            let n_dot_v = n_dot_v.max(0.001);
+    let row_stride = (size as usize) * 4;
+    data.par_chunks_mut(row_stride)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let roughness = (y as f32 + 0.5) / size as f32;
+            let roughness = roughness.max(0.01);
+            for x in 0..size {
+                let n_dot_v = (x as f32 + 0.5) / size as f32;
+                let n_dot_v = n_dot_v.max(0.001);
 
-            let (a, b) = integrate_brdf(n_dot_v, roughness, num_samples);
-            let idx = (y * size + x) as usize * 4;
-            data[idx] = a;
-            data[idx + 1] = b;
-            data[idx + 2] = 0.0;
-            data[idx + 3] = 1.0;
-        }
-    }
+                let (a, b) = integrate_brdf(n_dot_v, roughness, num_samples);
+                let idx = (x as usize) * 4;
+                row[idx] = a;
+                row[idx + 1] = b;
+                row[idx + 2] = 0.0;
+                row[idx + 3] = 1.0;
+            }
+        });
     data
 }
 
@@ -492,38 +559,12 @@ fn normalize(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
-/// Convert f32 to IEEE 754 half-precision (f16) bits with round-to-nearest.
+/// Convert f32 to IEEE 754 half-precision (f16) bits.
+///
+/// Wraps `half::f16::from_f32` which uses SIMD intrinsics and precomputed tables
+/// where available. Called millions of times per environment upload, so the speed
+/// of the underlying implementation matters.
+#[inline]
 fn f32_to_f16(value: f32) -> u16 {
-    let bits = value.to_bits();
-    let sign = (bits >> 16) & 0x8000;
-
-    // NaN -> f16 NaN (preserve sign, quiet NaN).
-    if (bits & 0x7FFF_FFFF) > 0x7F80_0000 {
-        return (sign | 0x7E00) as u16;
-    }
-
-    let exp = ((bits >> 23) & 0xFF) as i32 - 127;
-    let mantissa = bits & 0x7F_FFFF;
-
-    if exp > 15 {
-        // Overflow -> infinity.
-        (sign | 0x7C00) as u16
-    } else if exp < -14 {
-        // Underflow -> flush to zero (denormals ignored for simplicity).
-        sign as u16
-    } else {
-        let rounded = mantissa + 0x0000_1000; // round to nearest
-        if rounded & 0x0080_0000 != 0 {
-            // Mantissa overflow : carry into exponent.
-            let new_exp = (exp + 16) as u32;
-            if new_exp > 30 {
-                return (sign | 0x7C00) as u16; // overflow to infinity
-            }
-            (sign | (new_exp << 10)) as u16
-        } else {
-            let f16_exp = ((exp + 15) as u32) << 10;
-            let f16_mantissa = (rounded >> 13) & 0x3FF;
-            (sign | f16_exp | f16_mantissa) as u16
-        }
-    }
+    half::f16::from_f32(value).to_bits()
 }

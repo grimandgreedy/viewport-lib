@@ -66,15 +66,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let world_pos = camera.inv_view_proj * ndc;
     let dir = normalize(world_pos.xyz / world_pos.w - camera.eye_pos);
 
-    // Apply Y-axis rotation.
+    // Apply Z-axis rotation (viewport-lib is Z-up; rotating the panorama spins
+    // it around the world up axis).
     let rotation = lights_uniform.ibl_rotation;
     let s = sin(rotation);
     let c = cos(rotation);
-    let d = vec3<f32>(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
+    let d = vec3<f32>(c * dir.x - s * dir.y, s * dir.x + c * dir.y, dir.z);
 
-    // Convert direction to equirectangular UV.
-    let phi = atan2(d.z, d.x);
-    let theta = asin(clamp(d.y, -1.0, 1.0));
+    // Convert direction to equirectangular UV: longitude phi around +Z, latitude
+    // theta with +Z polar.
+    let phi = atan2(d.y, d.x);
+    let theta = asin(clamp(d.z, -1.0, 1.0));
     let uv = vec2<f32>(0.5 + phi / (2.0 * PI), 0.5 - theta / PI);
 
     let colour = textureSampleLevel(skybox_texture, ibl_sampler, uv, 0.0).rgb;

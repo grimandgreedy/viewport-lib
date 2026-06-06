@@ -373,8 +373,8 @@ fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
 const IBL_PI: f32 = 3.14159265;
 fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
     let s = sin(rotation); let c = cos(rotation);
-    let d = vec3<f32>(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
-    return vec2<f32>(0.5 + atan2(d.z, d.x) / (2.0 * IBL_PI), 0.5 - asin(clamp(d.y, -1.0, 1.0)) / IBL_PI);
+    let d = vec3<f32>(c * dir.x - s * dir.y, s * dir.x + c * dir.y, dir.z);
+    return vec2<f32>(0.5 + atan2(d.y, d.x) / (2.0 * IBL_PI), 0.5 - asin(clamp(d.z, -1.0, 1.0)) / IBL_PI);
 }
 fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
     return textureSampleLevel(ibl_irradiance, ibl_sampler, dir_to_equirect_uv(N, rotation), 0.0).rgb;
