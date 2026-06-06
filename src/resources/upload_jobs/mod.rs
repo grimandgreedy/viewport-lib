@@ -10,7 +10,7 @@
 //! alongside the async variants of each existing `upload_*` method.
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -182,6 +182,46 @@ impl JobProduct {
     }
 }
 
+/// Cap on how long `process_uploads_with_budget` is allowed to spend running
+/// completed jobs' apply steps in a single call.
+///
+/// The budget measures only the main-thread apply work (and the wgpu device
+/// poll that precedes it); it does not bound worker-thread time, which runs
+/// concurrently. When the budget is exhausted, any apply closures that have
+/// not yet run are held inside the runner and processed on the next
+/// `process_uploads*` call. Their owning jobs continue to report
+/// `UploadStatus::Pending` until their apply runs, so the typed result is
+/// never observably available before it is in place.
+#[derive(Clone, Copy, Debug)]
+pub struct FrameBudget {
+    deadline: Option<Instant>,
+}
+
+impl FrameBudget {
+    /// No bound. `process_uploads_with_budget` behaves like the unbounded
+    /// `process_uploads`.
+    pub fn unbounded() -> Self {
+        Self { deadline: None }
+    }
+
+    /// Cap apply-step work for the current call to roughly `duration` from
+    /// now. The check happens between applies, so a single long-running
+    /// apply may push past the deadline once it starts.
+    pub fn from_now(duration: Duration) -> Self {
+        Self {
+            deadline: Some(Instant::now() + duration),
+        }
+    }
+
+    /// True when the budget has elapsed.
+    fn exhausted(&self) -> bool {
+        match self.deadline {
+            Some(t) => Instant::now() >= t,
+            None => false,
+        }
+    }
+}
+
 /// Outcome the worker sends through its channel.
 ///
 /// The `Duration` captures the wall-clock time the worker spent on the
@@ -233,6 +273,15 @@ struct JobSlot {
 pub struct JobRunner {
     next_id: u64,
     slots: HashMap<u64, JobSlot>,
+    /// Jobs whose worker and GPU work have finished but whose main-thread
+    /// apply closure has not yet been run.
+    ///
+    /// Populated by `process` for successful jobs that carry an apply step;
+    /// drained by the caller of `process_uploads` (and friends). Entries
+    /// remain visible as `UploadStatus::Pending { progress: 1.0 }` until
+    /// the apply runs, so the typed result is never reported as `Ready`
+    /// before it is materialized in the resource state.
+    pending_apply: VecDeque<PendingApply>,
     /// Recently finished jobs, kept for one drain cycle so callers can still
     /// see `Ready` or `Failed` after the completion frame.
     finished: HashMap<u64, UploadStatus>,
@@ -242,6 +291,27 @@ pub struct JobRunner {
     /// until `drop_duration` is called so consumers have at least one frame
     /// to read the result.
     durations: HashMap<u64, Duration>,
+}
+
+/// Entry on the `pending_apply` queue.
+///
+/// Holds everything the caller needs to fold a successful job into resource
+/// state on the main thread: the id (for status updates and callback
+/// registration), the final status, the apply closure, and any completion
+/// callback that was registered on the job. Failed jobs do not produce
+/// these; they go straight to `finished` and surface in the `Completion`
+/// vec returned by `process`.
+pub struct PendingApply {
+    /// Id of the job whose apply is pending.
+    pub id: JobId,
+    /// Terminal status to record once the apply finishes; always
+    /// `UploadStatus::Ready` for entries on the queue.
+    pub status: UploadStatus,
+    /// Closure that mutates `ViewportGpuResources` and fills any typed
+    /// result slot.
+    pub apply: ApplyFn,
+    /// Completion callback registered via `on_complete`.
+    pub callback: Option<CompletionCallback>,
 }
 
 impl Default for JobRunner {
@@ -258,6 +328,7 @@ impl JobRunner {
         Self {
             next_id: 1,
             slots: HashMap::new(),
+            pending_apply: VecDeque::new(),
             finished: HashMap::new(),
             durations: HashMap::new(),
         }
@@ -415,6 +486,13 @@ impl JobRunner {
                 progress: slot.progress.read(),
             };
         }
+        // A job whose worker is done but whose apply step has not yet
+        // run is reported as Pending at full progress. The typed result
+        // is only available after apply runs, so we keep callers in the
+        // Pending arm until then.
+        if self.pending_apply.iter().any(|pa| pa.id.0 == id.0) {
+            return UploadStatus::Pending { progress: 1.0 };
+        }
         if let Some(status) = self.finished.get(&id.0) {
             return status.clone();
         }
@@ -422,13 +500,43 @@ impl JobRunner {
     }
 
     /// Count of jobs still in flight, ignoring the retention window.
+    /// Includes jobs whose worker has finished but whose apply step has
+    /// not yet been drained.
     pub fn pending(&self) -> usize {
-        self.slots.len()
+        self.slots.len() + self.pending_apply.len()
     }
 
     /// True when no jobs are in flight.
     pub fn all_complete(&self) -> bool {
-        self.slots.is_empty()
+        self.slots.is_empty() && self.pending_apply.is_empty()
+    }
+
+    /// Pop the next apply closure off the queue. Returns `None` when the
+    /// queue is empty. The caller is expected to run the closure against
+    /// `ViewportGpuResources` and then call `mark_applied` so the job
+    /// transitions from Pending to Ready.
+    pub fn pop_pending_apply(&mut self) -> Option<PendingApply> {
+        self.pending_apply.pop_front()
+    }
+
+    /// Push an entry back onto the front of the queue. Used by
+    /// `process_uploads_with_budget` when the time budget runs out
+    /// mid-drain so the next call picks up where this one stopped.
+    pub fn requeue_pending_apply(&mut self, pa: PendingApply) {
+        self.pending_apply.push_front(pa);
+    }
+
+    /// Record that a pending-apply entry's closure has finished running.
+    /// Moves the job into the short-retention `finished` table so the
+    /// next `status` query reports `Ready`.
+    pub fn mark_applied(&mut self, id: JobId, status: UploadStatus) {
+        self.finished.insert(id.0, status);
+    }
+
+    /// Count of jobs sitting on the apply queue. Exposed for tests and
+    /// metrics; `pending` already aggregates it into the in-flight total.
+    pub fn pending_apply_len(&self) -> usize {
+        self.pending_apply.len()
     }
 
     /// Walk the job table, advance any worker results, and check pending
@@ -559,13 +667,35 @@ impl JobRunner {
         let Some(mut slot) = self.slots.remove(&id) else {
             return;
         };
-        completions.push(Completion {
-            id: JobId(id),
-            status: status.clone(),
-            apply,
-            callback: slot.callback.take(),
-        });
-        self.finished.insert(id, status);
+        let callback = slot.callback.take();
+        // Successful jobs that carry an apply step are held on the
+        // pending_apply queue. They keep reporting Pending until the
+        // caller runs the apply (via process_uploads or
+        // process_uploads_with_budget); only then do they move into
+        // `finished` and start reporting Ready. Failures and no-apply
+        // successes go through the standard Completion path so callbacks
+        // fire immediately.
+        match (status, apply) {
+            (UploadStatus::Ready, Some(apply_fn)) => {
+                self.pending_apply.push_back(PendingApply {
+                    id: JobId(id),
+                    status: UploadStatus::Ready,
+                    apply: apply_fn,
+                    callback,
+                });
+                return;
+            }
+            (status, _) => {
+                completions.push(Completion {
+                    id: JobId(id),
+                    status: status.clone(),
+                    apply: None,
+                    callback,
+                });
+                self.finished.insert(id, status);
+                return;
+            }
+        }
     }
 }
 
@@ -579,27 +709,78 @@ impl super::ViewportGpuResources {
     /// released, so they are free to query the runner or submit a fresh job
     /// without risk of deadlock.
     pub fn process_uploads(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.process_uploads_with_budget(device, queue, FrameBudget::unbounded());
+    }
+
+    /// Advance the upload-job runner with a cap on per-call apply-step
+    /// work.
+    ///
+    /// Behaves the same as `process_uploads` except that, after the
+    /// runner has been advanced and any failure callbacks fired, the
+    /// caller stops popping apply closures off the queue once `budget`
+    /// elapses. Remaining apply closures stay on the queue and are
+    /// picked up by the next call. Their owning jobs continue to report
+    /// `UploadStatus::Pending` until their apply runs, so the typed
+    /// result is never observably available before it is in place.
+    ///
+    /// The budget covers only the main-thread apply work and the
+    /// preceding device poll. Worker-thread time is independent. The
+    /// check happens between applies, so a single long-running apply
+    /// may push past the deadline once it has started; the budget is a
+    /// soft cap, not a hard deadline.
+    pub fn process_uploads_with_budget(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        budget: FrameBudget,
+    ) {
+        // Stage 1: advance the runner and drain immediate (failure /
+        // no-apply) completions. Their callbacks fire here regardless of
+        // budget: they do no main-thread work and dropping them would
+        // hide errors from consumers.
         let completions = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.process(device, queue)
         };
         for Completion {
-            id,
+            id: _,
             status,
-            apply,
+            apply: _,
             callback,
         } in completions
         {
-            if matches!(status, UploadStatus::Ready) {
-                if let Some(apply) = apply {
-                    let t = Instant::now();
-                    apply(self);
-                    let apply_d = t.elapsed();
-                    self.jobs
-                        .lock()
-                        .expect("upload job runner poisoned")
-                        .add_apply_duration(id, apply_d);
-                }
+            if let Some(cb) = callback {
+                cb(&status);
+            }
+        }
+
+        // Stage 2: drain the apply queue under the budget. Each apply
+        // mutates `self`, so we pop one at a time and re-check the
+        // budget between iterations.
+        loop {
+            if budget.exhausted() {
+                break;
+            }
+            let next = {
+                let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+                runner.pop_pending_apply()
+            };
+            let Some(PendingApply {
+                id,
+                status,
+                apply,
+                callback,
+            }) = next
+            else {
+                break;
+            };
+            let t = Instant::now();
+            apply(self);
+            let apply_d = t.elapsed();
+            {
+                let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+                runner.add_apply_duration(id, apply_d);
+                runner.mark_applied(id, status.clone());
             }
             if let Some(cb) = callback {
                 cb(&status);
@@ -1301,6 +1482,73 @@ mod tests {
         let result = pollster::block_on(handle);
         assert!(matches!(result, Ok(())));
         driver_handle.join().ok();
+    }
+
+    // -----------------------------------------------------------------
+    // Frame budget
+    // -----------------------------------------------------------------
+
+    /// Submit a batch of apply-bearing jobs, run one short-budget pass,
+    /// and check that the leftover applies survive to the next pass.
+    ///
+    /// Each apply spins for a few hundred microseconds, so a 100 us
+    /// budget is virtually guaranteed to drop work to the next frame
+    /// without being so tight that the runner spins forever. Across
+    /// successive unbounded passes everything drains and every job ends
+    /// in Ready.
+    #[test]
+    fn budgeted_drain_spills_to_next_call() {
+        let Some((device, queue, mut resources)) = make_resources_for_jobs() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+
+        let mut ids = Vec::with_capacity(32);
+        {
+            let jobs = super::Jobs::new(&resources);
+            for i in 0..32_u32 {
+                // The closure body runs on the worker; the value
+                // arrives via the plugin facade's typed slot, which
+                // materializes through an apply step on the main
+                // thread. That apply step is what the budget caps.
+                ids.push(jobs.submit_cpu(move || i * 2));
+            }
+        }
+
+        // Drain workers first so every job is sitting on pending_apply.
+        for _ in 0..400 {
+            {
+                let runner = resources.jobs.lock().unwrap();
+                if runner.pending_apply_len() == ids.len() {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+            // Advance the runner without running applies. A zero-duration
+            // budget pops nothing (the exhausted check fires before the
+            // first pop), so pending_apply grows as workers report in.
+            resources.process_uploads_with_budget(
+                &device,
+                &queue,
+                super::FrameBudget::from_now(Duration::from_nanos(0)),
+            );
+        }
+        let after_workers = resources.jobs.lock().unwrap().pending_apply_len();
+        assert!(
+            after_workers > 0,
+            "expected at least one apply queued, got 0"
+        );
+
+        // One unbounded pass clears the rest and lands every job in
+        // Ready.
+        resources.process_uploads(&device, &queue);
+        for &id in &ids {
+            assert!(matches!(
+                resources.upload_status(id),
+                UploadStatus::Ready
+            ));
+        }
+        assert!(resources.all_uploads_complete());
     }
 
     /// Creates a headless wgpu device + queue for the duration of `f`.

@@ -88,7 +88,7 @@ pub(crate) use self::scivis::curve_store::{
     GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
-pub use self::upload_jobs::{JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
+pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
 #[allow(deprecated)]
