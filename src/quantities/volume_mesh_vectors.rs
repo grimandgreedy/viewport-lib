@@ -1,6 +1,6 @@
 //! Helper functions to convert volume mesh vector quantities into [`GlyphItem`]s.
 //!
-//! Volume mesh vectors are not rendered directly — this module converts them to
+//! Volume mesh vectors are not rendered directly. This module converts them to
 //! arrow glyphs that can be submitted to [`SceneFrame::glyphs`] each frame.
 //!
 //! # Vertex vectors

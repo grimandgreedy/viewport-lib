@@ -1,5 +1,6 @@
 use super::*;
 
+pub(crate) mod curve_store;
 mod gaussian_splat;
 mod glyph;
 mod image;

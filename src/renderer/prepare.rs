@@ -1522,7 +1522,7 @@ impl ViewportRenderer {
                 if item.settings.hidden || item.positions.is_empty() {
                     continue;
                 }
-                let mut gpu_data = resources.upload_polyline(device, queue, item, vp_size);
+                let mut gpu_data = resources.upload_polyline_per_frame(device, queue, item, vp_size);
                 gpu_data.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 if frame.interaction.outline_selected && item.settings.selected {
                     self.polyline_selected_gpu_indices
@@ -1549,6 +1549,36 @@ impl ViewportRenderer {
                         self.glyph_gpu_data.push(gd);
                     }
                 }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Pre-uploaded polyline references.
+        // ------------------------------------------------------------------
+        if !frame.scene.polyline_refs.is_empty() {
+            resources.ensure_polyline_pipeline(device);
+            for ref_item in &frame.scene.polyline_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.polyline_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                // Model matrix lives at offset 0 of PolylineUniform.
+                queue.write_buffer(
+                    &entry._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&ref_item.model),
+                );
+                let mut gpu_data = entry;
+                gpu_data.wireframe =
+                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                if frame.interaction.outline_selected && ref_item.settings.selected {
+                    self.polyline_selected_gpu_indices
+                        .push(self.polyline_gpu_data.len());
+                }
+                self.polyline_gpu_data.push(gpu_data);
             }
         }
 
@@ -1584,7 +1614,7 @@ impl ViewportRenderer {
                         crate::renderer::sphere_wireframe_polyline(center, radius, 48, colour)
                     }
                 };
-                let mut gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
+                let mut gpu_data = resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
                 gpu_data.wireframe = true;
                 self.polyline_gpu_data.push(gpu_data);
             }
@@ -1613,7 +1643,7 @@ impl ViewportRenderer {
                     line_width: item.line_width,
                     ..Default::default()
                 };
-                let gpu_data = resources.upload_polyline(device, queue, &polyline, vp_size);
+                let gpu_data = resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
                 self.polyline_gpu_data.push(gpu_data);
             }
         }
@@ -1768,9 +1798,40 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data = resources.upload_streamtube(device, queue, item, wireframe);
+                let gpu_data = resources.upload_streamtube_per_frame(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
+                        self.streamtube_selected_gpu_indices
+                            .push(self.streamtube_gpu_data.len());
+                    }
+                    self.streamtube_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Pre-uploaded streamtube references.
+        // ------------------------------------------------------------------
+        if !frame.scene.streamtube_refs.is_empty() {
+            resources.ensure_streamtube_pipeline(device);
+            for ref_item in &frame.scene.streamtube_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.streamtube_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                queue.write_buffer(
+                    &entry._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&ref_item.model),
+                );
+                let mut gpu_data = entry;
+                gpu_data.wireframe =
+                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                if gpu_data.index_count > 0 {
+                    if frame.interaction.outline_selected && ref_item.settings.selected {
                         self.streamtube_selected_gpu_indices
                             .push(self.streamtube_gpu_data.len());
                     }
@@ -1794,9 +1855,40 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data = resources.upload_tube(device, queue, item, wireframe);
+                let gpu_data = resources.upload_tube_per_frame(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
+                        self.tube_selected_gpu_indices
+                            .push(self.tube_gpu_data.len());
+                    }
+                    self.tube_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Pre-uploaded tube references.
+        // ------------------------------------------------------------------
+        if !frame.scene.tube_refs.is_empty() {
+            resources.ensure_streamtube_pipeline(device);
+            for ref_item in &frame.scene.tube_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.tube_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                queue.write_buffer(
+                    &entry._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&ref_item.model),
+                );
+                let mut gpu_data = entry;
+                gpu_data.wireframe =
+                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                if gpu_data.index_count > 0 {
+                    if frame.interaction.outline_selected && ref_item.settings.selected {
                         self.tube_selected_gpu_indices
                             .push(self.tube_gpu_data.len());
                     }
@@ -1820,9 +1912,40 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data = resources.upload_ribbon(device, queue, item, wireframe);
+                let gpu_data = resources.upload_ribbon_per_frame(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
+                        self.ribbon_selected_gpu_indices
+                            .push(self.ribbon_gpu_data.len());
+                    }
+                    self.ribbon_gpu_data.push(gpu_data);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Pre-uploaded ribbon references.
+        // ------------------------------------------------------------------
+        if !frame.scene.ribbon_refs.is_empty() {
+            resources.ensure_streamtube_pipeline(device);
+            for ref_item in &frame.scene.ribbon_refs {
+                if ref_item.settings.hidden {
+                    continue;
+                }
+                let entry = match resources.ribbon_store.get(ref_item.id) {
+                    Some(e) => e.clone(),
+                    None => continue,
+                };
+                queue.write_buffer(
+                    &entry._uniform_buf,
+                    0,
+                    bytemuck::bytes_of(&ref_item.model),
+                );
+                let mut gpu_data = entry;
+                gpu_data.wireframe =
+                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                if gpu_data.index_count > 0 {
+                    if frame.interaction.outline_selected && ref_item.settings.selected {
                         self.ribbon_selected_gpu_indices
                             .push(self.ribbon_gpu_data.len());
                     }
@@ -1985,7 +2108,7 @@ impl ViewportRenderer {
                     continue;
                 }
                 let polyline = volume_obb_polyline(item);
-                let gpu = resources.upload_polyline(device, queue, &polyline, vp_size);
+                let gpu = resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
                 self.polyline_gpu_data.push(gpu);
             }
         }
@@ -3878,7 +4001,7 @@ impl ViewportRenderer {
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources
-                            .upload_polyline(device, queue, &polyline, vp_size);
+                            .upload_polyline_per_frame(device, queue, &polyline, vp_size);
                         gpu.skip_clip = true;
                         self.polyline_gpu_data.push(gpu);
                     }
@@ -3887,7 +4010,7 @@ impl ViewportRenderer {
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources
-                            .upload_polyline(device, queue, &polyline, vp_size);
+                            .upload_polyline_per_frame(device, queue, &polyline, vp_size);
                         gpu.skip_clip = true;
                         self.polyline_gpu_data.push(gpu);
                     }
@@ -3902,7 +4025,7 @@ impl ViewportRenderer {
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources
-                            .upload_polyline(device, queue, &polyline, vp_size);
+                            .upload_polyline_per_frame(device, queue, &polyline, vp_size);
                         gpu.skip_clip = true;
                         self.polyline_gpu_data.push(gpu);
                     }
@@ -5835,7 +5958,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // Overlay rects — handled by the unified label+rect pass above.
+        // Overlay rects: handled by the unified label+rect pass above.
         // ------------------------------------------------------------------
 
         // ------------------------------------------------------------------
@@ -5924,7 +6047,7 @@ impl ViewportRenderer {
                 if !polyline.positions.is_empty() {
                     let gpu = self
                         .resources
-                        .upload_polyline(device, queue, &polyline, vp_size);
+                        .upload_polyline_per_frame(device, queue, &polyline, vp_size);
                     self.polyline_gpu_data.push(gpu);
                 }
             }
@@ -5954,7 +6077,7 @@ impl ViewportRenderer {
                 if !polyline.positions.is_empty() {
                     let gpu = self
                         .resources
-                        .upload_polyline(device, queue, &polyline, vp_size);
+                        .upload_polyline_per_frame(device, queue, &polyline, vp_size);
                     self.polyline_gpu_data.push(gpu);
                 }
             }

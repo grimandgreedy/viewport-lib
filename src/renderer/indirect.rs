@@ -4,10 +4,10 @@
 //! the cull pass. Call `dispatch` once per frame after uploading instance AABBs
 //! and batch metadata to run:
 //!
-//!   1. `cull_instances`    — one thread per instance, tests AABB vs frustum,
+//!   1. `cull_instances`      one thread per instance, tests AABB vs frustum,
 //!                            claims a visibility slot via atomicAdd.
-//!   2. `write_indirect_args` — one thread per batch, writes a DrawIndexedIndirect
-//!                              entry and resets the counter for the next frame.
+//!   2. `write_indirect_args` one thread per batch, writes a DrawIndexedIndirect
+//!                            entry and resets the counter for the next frame.
 //!
 //! The two dispatches run in separate wgpu compute passes so the automatic
 //! storage-buffer barrier between passes guarantees pass 2 sees pass 1 writes.
@@ -427,7 +427,7 @@ impl CullResources {
             ],
         });
 
-        // Pass 1: cull_instances — one thread per instance.
+        // Pass 1: cull_instances, one thread per instance.
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("cull_instances_pass"),
@@ -442,7 +442,7 @@ impl CullResources {
         // wgpu inserts an automatic storage-buffer barrier between compute passes,
         // so pass 2 is guaranteed to see all writes from pass 1.
 
-        // Pass 2: write_indirect_args — one thread per batch.
+        // Pass 2: write_indirect_args, one thread per batch.
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("write_indirect_args_pass"),
@@ -514,7 +514,7 @@ impl CullResources {
             ],
         });
 
-        // Pass 1: cull_instances — one thread per instance.
+        // Pass 1: cull_instances, one thread per instance.
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(&format!("shadow_cull_instances_pass_{cascade_idx}")),
@@ -527,7 +527,7 @@ impl CullResources {
 
         // wgpu inserts an automatic storage-buffer barrier between compute passes.
 
-        // Pass 2: write_indirect_args — one thread per batch.
+        // Pass 2: write_indirect_args, one thread per batch.
         // Also zeroes batch_counters ready for the next cascade or next frame.
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

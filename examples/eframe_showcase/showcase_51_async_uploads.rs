@@ -19,8 +19,10 @@ use std::time::Instant;
 
 use eframe::egui;
 use viewport_lib::{
-    JobId, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, SceneRenderItem,
-    SkinWeights, UploadStatus, ViewportRenderer,
+    JobId, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, PolylineId,
+    PolylineItem, PolylineRefItem, RibbonId, RibbonItem, RibbonRefItem, SceneRenderItem,
+    SkinWeights, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TubeId, TubeItem, TubeRefItem,
+    UploadStatus, ViewportRenderer,
 };
 
 use crate::App;
@@ -70,9 +72,17 @@ pub(crate) struct AsyncUploadsState {
     pub mesh_state: AssetState,
     pub texture_state: AssetState,
     pub skin_state: AssetState,
+    pub polyline_state: AssetState,
+    pub streamtube_state: AssetState,
+    pub tube_state: AssetState,
+    pub ribbon_state: AssetState,
 
     pub loaded_mesh_id: Option<MeshId>,
     pub loaded_texture_id: Option<u64>,
+    pub loaded_polyline_id: Option<PolylineId>,
+    pub loaded_streamtube_id: Option<StreamtubeId>,
+    pub loaded_tube_id: Option<TubeId>,
+    pub loaded_ribbon_id: Option<RibbonId>,
     pub skin_installed: bool,
     pub built: bool,
 }
@@ -88,8 +98,16 @@ impl Default for AsyncUploadsState {
             mesh_state: AssetState::Idle,
             texture_state: AssetState::Idle,
             skin_state: AssetState::Idle,
+            polyline_state: AssetState::Idle,
+            streamtube_state: AssetState::Idle,
+            tube_state: AssetState::Idle,
+            ribbon_state: AssetState::Idle,
             loaded_mesh_id: None,
             loaded_texture_id: None,
+            loaded_polyline_id: None,
+            loaded_streamtube_id: None,
+            loaded_tube_id: None,
+            loaded_ribbon_id: None,
             skin_installed: false,
             built: false,
         }
@@ -123,8 +141,16 @@ impl App {
         self.async_uploads_state.mesh_state = AssetState::Idle;
         self.async_uploads_state.texture_state = AssetState::Idle;
         self.async_uploads_state.skin_state = AssetState::Idle;
+        self.async_uploads_state.polyline_state = AssetState::Idle;
+        self.async_uploads_state.streamtube_state = AssetState::Idle;
+        self.async_uploads_state.tube_state = AssetState::Idle;
+        self.async_uploads_state.ribbon_state = AssetState::Idle;
         self.async_uploads_state.loaded_mesh_id = None;
         self.async_uploads_state.loaded_texture_id = None;
+        self.async_uploads_state.loaded_polyline_id = None;
+        self.async_uploads_state.loaded_streamtube_id = None;
+        self.async_uploads_state.loaded_tube_id = None;
+        self.async_uploads_state.loaded_ribbon_id = None;
         self.async_uploads_state.skin_installed = false;
         self.async_uploads_state.built = true;
     }
@@ -233,6 +259,159 @@ impl App {
         // up.
         if env_just_loaded {
             renderer.rebuild_camera_bind_groups(&self.device);
+        }
+
+        // Polyline: when Ready, take the PolylineId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.polyline_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.resources_mut().upload_result_polyline(job) {
+                    Ok(id) => {
+                        self.async_uploads_state.loaded_polyline_id = Some(id);
+                        self.async_uploads_state.polyline_state = AssetState::Loaded {
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                    Err(e) => {
+                        self.async_uploads_state.polyline_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    self.async_uploads_state.polyline_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.polyline_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    self.async_uploads_state.polyline_state = AssetState::Idle;
+                }
+            }
+        }
+
+        // Streamtube: when Ready, take the StreamtubeId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.streamtube_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.resources_mut().upload_result_streamtube(job)
+                {
+                    Ok(id) => {
+                        self.async_uploads_state.loaded_streamtube_id = Some(id);
+                        self.async_uploads_state.streamtube_state = AssetState::Loaded {
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                    Err(e) => {
+                        self.async_uploads_state.streamtube_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    self.async_uploads_state.streamtube_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.streamtube_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    self.async_uploads_state.streamtube_state = AssetState::Idle;
+                }
+            }
+        }
+
+        // Tube: when Ready, take the TubeId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.tube_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.resources_mut().upload_result_tube(job) {
+                    Ok(id) => {
+                        self.async_uploads_state.loaded_tube_id = Some(id);
+                        self.async_uploads_state.tube_state = AssetState::Loaded {
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                    Err(e) => {
+                        self.async_uploads_state.tube_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    self.async_uploads_state.tube_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.tube_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    self.async_uploads_state.tube_state = AssetState::Idle;
+                }
+            }
+        }
+
+        // Ribbon: when Ready, take the RibbonId.
+        if let AssetState::InFlight { job, started, .. } =
+            self.async_uploads_state.ribbon_state.clone()
+        {
+            match renderer.upload_status(job) {
+                UploadStatus::Ready => match renderer.resources_mut().upload_result_ribbon(job) {
+                    Ok(id) => {
+                        self.async_uploads_state.loaded_ribbon_id = Some(id);
+                        self.async_uploads_state.ribbon_state = AssetState::Loaded {
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                    Err(e) => {
+                        self.async_uploads_state.ribbon_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms: started.elapsed().as_millis() as u64,
+                        };
+                    }
+                },
+                UploadStatus::Failed(e) => {
+                    self.async_uploads_state.ribbon_state = AssetState::Failed {
+                        reason: format!("{e}"),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    };
+                }
+                UploadStatus::Pending { progress } => {
+                    self.async_uploads_state.ribbon_state = AssetState::InFlight {
+                        job,
+                        progress,
+                        started,
+                    };
+                }
+                UploadStatus::Unknown => {
+                    self.async_uploads_state.ribbon_state = AssetState::Idle;
+                }
+            }
         }
     }
 }
@@ -396,6 +575,64 @@ fn unit_skin_weights(vertex_count: usize) -> SkinWeights {
     }
 }
 
+// A short helix in the XZ plane, used by all four curve types so each
+// pre-uploaded asset has visibly the same source geometry.
+fn demo_curve_positions() -> (Vec<[f32; 3]>, Vec<u32>) {
+    let n: usize = 48;
+    let mut positions = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / (n - 1) as f32;
+        let theta = t * std::f32::consts::TAU * 1.5;
+        let x = 0.8 * theta.cos();
+        let y = 0.0;
+        let z = 0.8 * theta.sin() + t * 1.2 - 0.6;
+        positions.push([x, y, z]);
+    }
+    let strip = vec![n as u32];
+    (positions, strip)
+}
+
+fn demo_polyline() -> PolylineItem {
+    let (positions, strip_lengths) = demo_curve_positions();
+    let mut item = PolylineItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.line_width = 3.0;
+    item.default_colour = [0.95, 0.55, 0.35, 1.0];
+    item
+}
+
+fn demo_streamtube() -> StreamtubeItem {
+    let (positions, strip_lengths) = demo_curve_positions();
+    let mut item = StreamtubeItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.radius = 0.07;
+    item.colour = [0.45, 0.85, 0.95, 1.0];
+    item
+}
+
+fn demo_tube() -> TubeItem {
+    let (positions, strip_lengths) = demo_curve_positions();
+    let mut item = TubeItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.radius = 0.08;
+    item.sides = 16;
+    item.colour = [0.95, 0.85, 0.45, 1.0];
+    item
+}
+
+fn demo_ribbon() -> RibbonItem {
+    let (positions, strip_lengths) = demo_curve_positions();
+    let mut item = RibbonItem::default();
+    item.positions = positions;
+    item.strip_lengths = strip_lengths;
+    item.width = 0.18;
+    item.colour = [0.65, 0.55, 0.95, 1.0];
+    item
+}
+
 // ---------------------------------------------------------------------------
 // Asset launch helpers (Sync vs Async)
 // ---------------------------------------------------------------------------
@@ -545,11 +782,145 @@ impl App {
         }
     }
 
+    fn launch_polyline(&mut self, renderer: &mut ViewportRenderer) {
+        let item = demo_polyline();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            let id = renderer
+                .resources_mut()
+                .upload_polyline(&self.device, &self.queue, &item);
+            self.async_uploads_state.loaded_polyline_id = Some(id);
+            self.async_uploads_state.polyline_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            let job =
+                renderer
+                    .resources_mut()
+                    .begin_upload_polyline(&self.device, &self.queue, item);
+            self.async_uploads_state.polyline_state = AssetState::InFlight {
+                job,
+                progress: 0.0,
+                started,
+            };
+        }
+    }
+
+    fn launch_streamtube(&mut self, renderer: &mut ViewportRenderer) {
+        let item = demo_streamtube();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            let id = renderer
+                .resources_mut()
+                .upload_streamtube(&self.device, &self.queue, &item);
+            self.async_uploads_state.loaded_streamtube_id = Some(id);
+            self.async_uploads_state.streamtube_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            let job =
+                renderer
+                    .resources_mut()
+                    .begin_upload_streamtube(&self.device, &self.queue, item);
+            self.async_uploads_state.streamtube_state = AssetState::InFlight {
+                job,
+                progress: 0.0,
+                started,
+            };
+        }
+    }
+
+    fn launch_tube(&mut self, renderer: &mut ViewportRenderer) {
+        let item = demo_tube();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            let id = renderer
+                .resources_mut()
+                .upload_tube(&self.device, &self.queue, &item);
+            self.async_uploads_state.loaded_tube_id = Some(id);
+            self.async_uploads_state.tube_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            let job = renderer
+                .resources_mut()
+                .begin_upload_tube(&self.device, &self.queue, item);
+            self.async_uploads_state.tube_state = AssetState::InFlight {
+                job,
+                progress: 0.0,
+                started,
+            };
+        }
+    }
+
+    fn launch_ribbon(&mut self, renderer: &mut ViewportRenderer) {
+        let item = demo_ribbon();
+        let started = Instant::now();
+        if self.async_uploads_state.use_sync {
+            let id = renderer
+                .resources_mut()
+                .upload_ribbon(&self.device, &self.queue, &item);
+            self.async_uploads_state.loaded_ribbon_id = Some(id);
+            self.async_uploads_state.ribbon_state = AssetState::Loaded {
+                duration_ms: started.elapsed().as_millis() as u64,
+            };
+        } else {
+            let job = renderer
+                .resources_mut()
+                .begin_upload_ribbon(&self.device, &self.queue, item);
+            self.async_uploads_state.ribbon_state = AssetState::InFlight {
+                job,
+                progress: 0.0,
+                started,
+            };
+        }
+    }
+
     fn launch_all(&mut self, renderer: &mut ViewportRenderer) {
         self.launch_env_map(renderer);
         self.launch_mesh(renderer);
         self.launch_texture(renderer);
         self.launch_skin(renderer);
+        self.launch_polyline(renderer);
+        self.launch_streamtube(renderer);
+        self.launch_tube(renderer);
+        self.launch_ribbon(renderer);
+    }
+}
+
+// Pushes per-frame reference items for any pre-uploaded curves into the
+// scene frame. Each curve is positioned in front of the camera, fanned out
+// horizontally so all four can be loaded at once.
+pub(crate) fn submit_async_uploads_items(
+    app: &mut crate::App,
+    fd: &mut viewport_lib::FrameData,
+) {
+    if !app.async_uploads_state.built {
+        return;
+    }
+    let translate = |x: f32, z: f32| -> [[f32; 4]; 4] {
+        glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d()
+    };
+
+    if let Some(id) = app.async_uploads_state.loaded_polyline_id {
+        let mut ref_item = PolylineRefItem::new(id);
+        ref_item.model = translate(0.0, 2.4);
+        fd.scene.polyline_refs.push(ref_item);
+    }
+    if let Some(id) = app.async_uploads_state.loaded_streamtube_id {
+        let mut ref_item = StreamtubeRefItem::new(id);
+        ref_item.model = translate(-2.4, 2.4);
+        fd.scene.streamtube_refs.push(ref_item);
+    }
+    if let Some(id) = app.async_uploads_state.loaded_tube_id {
+        let mut ref_item = TubeRefItem::new(id);
+        ref_item.model = translate(2.4, 2.4);
+        fd.scene.tube_refs.push(ref_item);
+    }
+    if let Some(id) = app.async_uploads_state.loaded_ribbon_id {
+        let mut ref_item = RibbonRefItem::new(id);
+        ref_item.model = translate(0.0, 4.8);
+        fd.scene.ribbon_refs.push(ref_item);
     }
 }
 
@@ -588,8 +959,16 @@ pub(crate) fn controls_async_uploads(
         app.async_uploads_state.mesh_state = AssetState::Idle;
         app.async_uploads_state.texture_state = AssetState::Idle;
         app.async_uploads_state.skin_state = AssetState::Idle;
+        app.async_uploads_state.polyline_state = AssetState::Idle;
+        app.async_uploads_state.streamtube_state = AssetState::Idle;
+        app.async_uploads_state.tube_state = AssetState::Idle;
+        app.async_uploads_state.ribbon_state = AssetState::Idle;
         app.async_uploads_state.loaded_mesh_id = None;
         app.async_uploads_state.loaded_texture_id = None;
+        app.async_uploads_state.loaded_polyline_id = None;
+        app.async_uploads_state.loaded_streamtube_id = None;
+        app.async_uploads_state.loaded_tube_id = None;
+        app.async_uploads_state.loaded_ribbon_id = None;
         app.async_uploads_state.skin_installed = false;
     }
     ui.label(if app.async_uploads_state.use_sync {
@@ -617,6 +996,10 @@ pub(crate) fn controls_async_uploads(
     let mut clicked_mesh = false;
     let mut clicked_texture = false;
     let mut clicked_skin = false;
+    let mut clicked_polyline = false;
+    let mut clicked_streamtube = false;
+    let mut clicked_tube = false;
+    let mut clicked_ribbon = false;
     let mut clicked_all = false;
 
     ui.heading("Assets");
@@ -648,6 +1031,30 @@ pub(crate) fn controls_async_uploads(
                 &app.async_uploads_state.skin_state,
                 &mut clicked_skin,
             );
+            asset_row(
+                ui,
+                "Polyline",
+                &app.async_uploads_state.polyline_state,
+                &mut clicked_polyline,
+            );
+            asset_row(
+                ui,
+                "Streamtube",
+                &app.async_uploads_state.streamtube_state,
+                &mut clicked_streamtube,
+            );
+            asset_row(
+                ui,
+                "Tube",
+                &app.async_uploads_state.tube_state,
+                &mut clicked_tube,
+            );
+            asset_row(
+                ui,
+                "Ribbon",
+                &app.async_uploads_state.ribbon_state,
+                &mut clicked_ribbon,
+            );
         });
 
     ui.add_space(6.0);
@@ -668,7 +1075,16 @@ pub(crate) fn controls_async_uploads(
         let _ = ui.button("Overlay texture");
     });
 
-    if !(clicked_env || clicked_mesh || clicked_texture || clicked_skin || clicked_all) {
+    if !(clicked_env
+        || clicked_mesh
+        || clicked_texture
+        || clicked_skin
+        || clicked_polyline
+        || clicked_streamtube
+        || clicked_tube
+        || clicked_ribbon
+        || clicked_all)
+    {
         return;
     }
 
@@ -689,6 +1105,18 @@ pub(crate) fn controls_async_uploads(
     }
     if clicked_skin {
         app.launch_skin(renderer);
+    }
+    if clicked_polyline {
+        app.launch_polyline(renderer);
+    }
+    if clicked_streamtube {
+        app.launch_streamtube(renderer);
+    }
+    if clicked_tube {
+        app.launch_tube(renderer);
+    }
+    if clicked_ribbon {
+        app.launch_ribbon(renderer);
     }
     if clicked_all {
         app.launch_all(renderer);

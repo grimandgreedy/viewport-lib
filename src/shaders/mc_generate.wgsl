@@ -77,7 +77,7 @@ fn scalar_at_i(x: i32, y: i32, z: i32) -> f32 {
 }
 
 // Gradient of the scalar field at (x, y, z) via central differences.
-// The gradient points from low to high scalar values — outward from the isosurface.
+// The gradient points from low to high scalar values, i.e., outward from the isosurface.
 fn gradient_at(x: i32, y: i32, z: i32) -> vec3<f32> {
     let gx = (scalar_at_i(x + 1, y, z) - scalar_at_i(x - 1, y, z)) * (0.5 / params.spacing_x);
     let gy = (scalar_at_i(x, y + 1, z) - scalar_at_i(x, y - 1, z)) * (0.5 / params.spacing_y);
@@ -187,7 +187,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let ev1 = edge_vertex(cx, cy, cz, u32(e1));
         let ev2 = edge_vertex(cx, cy, cz, u32(e2));
 
-        // Write [e0, e2, e1] — CCW winding from outside (matches CPU swap).
+        // Write [e0, e2, e1]. CCW winding from outside (matches CPU swap).
         write_vertex(vbase + 0u,  ev0.pos, ev0.nrm);
         write_vertex(vbase + 6u,  ev2.pos, ev2.nrm);
         write_vertex(vbase + 12u, ev1.pos, ev1.nrm);

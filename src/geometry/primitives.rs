@@ -209,7 +209,7 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
     }
 
     // UVs follow the same vertex order as the position build above.
-    // Side UVs have a single-edge seam (u wraps at j=0/j=sectors) — accepted for non-seam geometry.
+    // Side UVs have a single-edge seam (u wraps at j=0/j=sectors) which are accepted for non-seam geometry.
     let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(4 * sectors as usize + 2);
     for j in 0..sectors {
         uvs.push([j as f32 / sectors as f32, 0.0]);
@@ -631,7 +631,7 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> MeshData {
     let indices: Vec<u32> = faces.iter().flat_map(|f| f.iter().copied()).collect();
 
     // Spherical UV projection. Triangles that span the antimeridian will have a
-    // seam artefact — unavoidable without duplicating vertices at the seam.
+    // seam artefact (unavoidable without duplicating vertices at the seam)
     let uvs: Vec<[f32; 2]> = verts
         .iter()
         .map(|p| {

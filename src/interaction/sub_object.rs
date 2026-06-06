@@ -332,7 +332,7 @@ impl SubSelection {
 ///
 /// Pass one entry per volume object via [`SubSelectionRef::with_voxels`].
 pub struct VolumeSelectionInfo {
-    /// Grid dimensions `[nx, ny, nz]` — same as [`VolumeData::dims`].
+    /// Grid dimensions `[nx, ny, nz]`: same as [`VolumeData::dims`].
     pub dims: [u32; 3],
     /// Local-space bounding-box minimum corner (matches [`VolumeItem::bbox_min`]).
     pub bbox_min: [f32; 3],

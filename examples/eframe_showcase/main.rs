@@ -3220,6 +3220,11 @@ impl App {
             showcase_16_streamlines::submit_stream_items(self, &mut fd);
         }
 
+        // Pre-uploaded curve references for the async-uploads showcase.
+        if self.mode == ShowcaseMode::AsyncUploads {
+            showcase_51_async_uploads::submit_async_uploads_items(self, &mut fd);
+        }
+
         // Spline widget polyline + handles (Showcase 4) : submitted every frame.
         if self.mode == ShowcaseMode::Interaction {
             showcase_04_interaction::submit_interact_items(self, &mut fd, w, h);

@@ -1891,6 +1891,7 @@ impl GaussianSplatStore {
 }
 
 /// Per-frame GPU data for one polyline item, created in `prepare()`.
+#[derive(Clone)]
 pub struct PolylineGpuData {
     /// Instance buffer: `[xa, ya, za, xb, yb, zb, scalar_a, scalar_b]` per segment (32 bytes).
     pub(crate) vertex_buffer: wgpu::Buffer,
@@ -1984,6 +1985,7 @@ pub struct TensorGlyphGpuData {
 ///
 /// The connected tube mesh (vertices + indices) is generated CPU-side for the
 /// entire item (all strips) and uploaded as a single owned buffer pair.
+#[derive(Clone)]
 pub struct StreamtubeGpuData {
     /// Owned vertex buffer for the connected tube mesh (world-space positions + normals).
     pub(crate) vertex_buffer: wgpu::Buffer,
@@ -2546,6 +2548,43 @@ pub struct ViewportGpuResources {
         std::collections::HashMap<
             super::upload_jobs::JobId,
             super::upload_jobs::ResultSlot<Box<dyn std::any::Any + Send>>,
+        >,
+    >,
+    /// Pre-uploaded polyline storage; entries are referenced from per-frame
+    /// `PolylineRefItem`s.
+    pub(crate) polyline_store: super::PolylineStore,
+    /// Pre-uploaded streamtube storage.
+    pub(crate) streamtube_store: super::StreamtubeStore,
+    /// Pre-uploaded tube storage.
+    pub(crate) tube_store: super::TubeStore,
+    /// Pre-uploaded ribbon storage.
+    pub(crate) ribbon_store: super::RibbonStore,
+    /// Typed result slots for async polyline uploads, keyed by job id.
+    pub(crate) job_polyline_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::PolylineId>,
+        >,
+    >,
+    /// Typed result slots for async streamtube uploads, keyed by job id.
+    pub(crate) job_streamtube_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::StreamtubeId>,
+        >,
+    >,
+    /// Typed result slots for async tube uploads, keyed by job id.
+    pub(crate) job_tube_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::TubeId>,
+        >,
+    >,
+    /// Typed result slots for async ribbon uploads, keyed by job id.
+    pub(crate) job_ribbon_results: std::sync::Mutex<
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<super::RibbonId>,
         >,
     >,
     /// Bytes allocated on the GPU for user-uploaded textures.

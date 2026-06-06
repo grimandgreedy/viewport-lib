@@ -1,9 +1,9 @@
 //! GPU marching cubes.
 //!
 //! Three-pass GPU compute pipeline for isosurface extraction:
-//!   1. Classify — computes case index and triangle count per cell.
-//!   2. Prefix sum — hierarchical exclusive scan to build triangle offsets.
-//!   3. Generate — interpolates vertex positions and normals into a vertex buffer.
+//!   1. Classify       computes case index and triangle count per cell.
+//!   2. Prefix sum     hierarchical exclusive scan to build triangle offsets.
+//!   3. Generate       interpolates vertex positions and normals into a vertex buffer.
 //!
 //! The output is drawn with a lightweight Phong render pipeline via `draw_indirect`.
 
@@ -566,7 +566,7 @@ impl ViewportGpuResources {
 
             // Scalar data is x-fastest: index = x + y*nx + z*nx*ny.
             // A Z-slab covering scalar layers z_cell_start..z_cell_start+slab_nz is
-            // a contiguous slice — no copying required.
+            // a contiguous slice, no copying required.
             let scalar_start = z_cell_start as usize * nodes_per_z;
             let scalar_end = (z_cell_start + slab_nz) as usize * nodes_per_z;
             let slab_origin_z = vol.origin[2] + z_cell_start as f32 * vol.spacing[2];

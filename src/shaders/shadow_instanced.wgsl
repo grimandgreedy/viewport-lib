@@ -31,7 +31,7 @@ struct InstanceData {
 
 @group(0) @binding(0) var<uniform> light: Light;
 @group(1) @binding(0) var<storage, read> instances: array<InstanceData>;
-// binding 5: visibility_indices — only present in the GPU-culling cull variant pipeline.
+// binding 5: visibility_indices, only present in the GPU-culling cull variant pipeline.
 @group(1) @binding(5) var<storage, read> visibility_indices: array<u32>;
 
 @vertex

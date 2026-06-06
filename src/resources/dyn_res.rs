@@ -251,7 +251,7 @@ impl ViewportGpuResources {
 
     /// Create a [`HdrCallbackTarget`] at `size` for use with the eframe HDR callback path.
     ///
-    /// The shared pipeline and sampler must already exist — call
+    /// The shared pipeline and sampler must already exist. I.e., call
     /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) first.
     pub(crate) fn create_hdr_callback_target(
         &self,

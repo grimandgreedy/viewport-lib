@@ -44,12 +44,12 @@ pub struct ImplicitPrimitive {
 /// How multiple primitives are combined into a single SDF.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImplicitBlendMode {
-    /// Hard min() union — sharp junctions between primitives.
+    /// Hard min() union (sharp junctions between primitives)
     #[default]
     Union,
-    /// Smooth-min union — primitives fuse organically; uses per-primitive `blend` radius.
+    /// Smooth-min union (primitives fuse organically; uses per-primitive `blend` radius)
     SmoothUnion,
-    /// Max() intersection — only the region inside all primitives is visible.
+    /// Max() intersection (only the region inside all primitives is visible)
     Intersection,
 }
 

@@ -41,7 +41,7 @@ var<workgroup> smem: array<u32, 256>;
 
 // Blelloch exclusive scan of smem[0..256].
 // After return, smem[i] = sum(smem[0..i]) (exclusive), i.e. smem[0] = 0.
-// smem[255] = sum(smem[0..255]) after load, before the clear — NOT available
+// smem[255] = sum(smem[0..255]) after load, before the clear  NOT available
 // after this function. Use the technique: save smem[255] before calling if needed.
 fn blelloch_scan_256(lid: u32) {
     // Up-sweep (reduce).

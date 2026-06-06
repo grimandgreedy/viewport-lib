@@ -327,12 +327,18 @@ pub struct SceneFrame {
     pub glyphs: Vec<GlyphItem>,
     /// Polyline (streamline) items to render this frame.
     pub polylines: Vec<PolylineItem>,
+    /// References to pre-uploaded polylines (one entry per draw). Each
+    /// `PolylineRefItem` carries a handle into the renderer's polyline store
+    /// plus a per-frame model matrix and item settings.
+    pub polyline_refs: Vec<PolylineRefItem>,
     /// Volume items to render this frame via GPU ray-marching.
     pub volumes: Vec<VolumeItem>,
     /// Isoline (contour line) items to render on mesh surfaces.
     pub isolines: Vec<crate::geometry::isoline::IsolineItem>,
     /// Streamtube items to render this frame.
     pub streamtube_items: Vec<StreamtubeItem>,
+    /// References to pre-uploaded streamtubes.
+    pub streamtube_refs: Vec<StreamtubeRefItem>,
     /// Screen-space image overlay items to render this frame.
     pub screen_images: Vec<ScreenImageItem>,
     /// GPU implicit surface items to render this frame.
@@ -353,12 +359,16 @@ pub struct SceneFrame {
     pub volume_mesh_items: Vec<VolumeMeshItem>,
     /// General tube items to render this frame.
     pub tube_items: Vec<TubeItem>,
+    /// References to pre-uploaded tubes.
+    pub tube_refs: Vec<TubeRefItem>,
     /// 2D image slice items to render this frame.
     pub image_slices: Vec<ImageSliceItem>,
     /// Tensor glyph items to render this frame.
     pub tensor_glyphs: Vec<TensorGlyphItem>,
     /// Ribbon items to render this frame.
     pub ribbon_items: Vec<RibbonItem>,
+    /// References to pre-uploaded ribbons.
+    pub ribbon_refs: Vec<RibbonRefItem>,
     /// Volume surface slice items to render this frame.
     pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
     /// Billboard sprite items to render this frame.
@@ -419,18 +429,22 @@ impl Default for SceneFrame {
             point_clouds: Vec::new(),
             glyphs: Vec::new(),
             polylines: Vec::new(),
+            polyline_refs: Vec::new(),
             volumes: Vec::new(),
             isolines: Vec::new(),
             streamtube_items: Vec::new(),
+            streamtube_refs: Vec::new(),
             screen_images: Vec::new(),
             gpu_implicit: Vec::new(),
             gpu_mc_jobs: Vec::new(),
             transparent_volume_meshes: Vec::new(),
             volume_mesh_items: Vec::new(),
             tube_items: Vec::new(),
+            tube_refs: Vec::new(),
             image_slices: Vec::new(),
             tensor_glyphs: Vec::new(),
             ribbon_items: Vec::new(),
+            ribbon_refs: Vec::new(),
             volume_surface_slices: Vec::new(),
             sprite_items: Vec::new(),
             mesh_instances: Vec::new(),

@@ -239,7 +239,7 @@ impl ViewportGpuResources {
     /// each polyline strip, then uploads the result as a single owned vertex+index buffer.
     /// Adjacent rings are joined by quads (2 triangles each) giving a smooth, seamless tube
     /// without the z-fighting or inter-segment gaps that plagued the old instanced approach.
-    pub(crate) fn upload_streamtube(
+    pub(crate) fn upload_streamtube_per_frame(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -486,6 +486,43 @@ impl ViewportGpuResources {
         }
     }
 
+    /// Pre-upload a streamtube and return a typed handle.
+    ///
+    /// Submit a [`StreamtubeRefItem`](crate::renderer::StreamtubeRefItem) on
+    /// `SceneFrame::streamtube_refs` each frame to draw the tube at a
+    /// per-frame model transform without rebuilding its mesh.
+    pub fn upload_streamtube(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::StreamtubeItem,
+    ) -> crate::resources::StreamtubeId {
+        self.ensure_streamtube_pipeline(device);
+        let gpu = self.upload_streamtube_per_frame(device, queue, item, false);
+        self.streamtube_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded streamtube.
+    pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
+        self.streamtube_store.remove(id)
+    }
+
+    /// Replace the geometry of a pre-uploaded streamtube, keeping the same id.
+    pub fn replace_streamtube(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::StreamtubeId,
+        item: &crate::renderer::StreamtubeItem,
+    ) -> bool {
+        if !self.streamtube_store.contains(id) {
+            return false;
+        }
+        self.ensure_streamtube_pipeline(device);
+        let gpu = self.upload_streamtube_per_frame(device, queue, item, false);
+        self.streamtube_store.replace(id, gpu)
+    }
+
     // -------------------------------------------------------------------------
     // General Tube representation
     // -------------------------------------------------------------------------
@@ -495,7 +532,7 @@ impl ViewportGpuResources {
     /// Generates a connected tube mesh CPU-side using a parallel-transport frame.
     /// Scalar values are baked into per-vertex colours using the CPU-side colourmap copy.
     /// Uses the same streamtube pipeline; sets `use_vertex_colour=1` when scalars are present.
-    pub(crate) fn upload_tube(
+    pub(crate) fn upload_tube_per_frame(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -785,6 +822,39 @@ impl ViewportGpuResources {
         }
     }
 
+    /// Pre-upload a general tube and return a typed handle.
+    pub fn upload_tube(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::TubeItem,
+    ) -> crate::resources::TubeId {
+        self.ensure_streamtube_pipeline(device);
+        let gpu = self.upload_tube_per_frame(device, queue, item, false);
+        self.tube_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded tube.
+    pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
+        self.tube_store.remove(id)
+    }
+
+    /// Replace the geometry of a pre-uploaded tube, keeping the same id.
+    pub fn replace_tube(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::TubeId,
+        item: &crate::renderer::TubeItem,
+    ) -> bool {
+        if !self.tube_store.contains(id) {
+            return false;
+        }
+        self.ensure_streamtube_pipeline(device);
+        let gpu = self.upload_tube_per_frame(device, queue, item, false);
+        self.tube_store.replace(id, gpu)
+    }
+
     // -------------------------------------------------------------------------
     // Ribbon representation
     // -------------------------------------------------------------------------
@@ -794,7 +864,7 @@ impl ViewportGpuResources {
     /// Each strip is swept as a flat quad surface. Two vertices are generated per
     /// point (left and right edges), connected as a triangle strip. The normal is
     /// the cross product of the tangent and the lateral direction `u`.
-    pub(crate) fn upload_ribbon(
+    pub(crate) fn upload_ribbon_per_frame(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -1049,11 +1119,288 @@ impl ViewportGpuResources {
             _uniform_buf: uniform_buf,
         }
     }
+
+    /// Pre-upload a ribbon and return a typed handle.
+    pub fn upload_ribbon(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::RibbonItem,
+    ) -> crate::resources::RibbonId {
+        self.ensure_streamtube_pipeline(device);
+        let gpu = self.upload_ribbon_per_frame(device, queue, item, false);
+        self.ribbon_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded ribbon.
+    pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
+        self.ribbon_store.remove(id)
+    }
+
+    /// Replace the geometry of a pre-uploaded ribbon, keeping the same id.
+    pub fn replace_ribbon(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::RibbonId,
+        item: &crate::renderer::RibbonItem,
+    ) -> bool {
+        if !self.ribbon_store.contains(id) {
+            return false;
+        }
+        self.ensure_streamtube_pipeline(device);
+        let gpu = self.upload_ribbon_per_frame(device, queue, item, false);
+        self.ribbon_store.replace(id, gpu)
+    }
+
+    /// Start an asynchronous streamtube upload.
+    pub fn begin_upload_streamtube(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::StreamtubeItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::StreamtubeId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let sid = resources.upload_streamtube(
+                            &device_for_apply,
+                            &queue_for_apply,
+                            &item,
+                        );
+                        slot_for_apply.set(sid);
+                    }),
+                ))
+            })
+        };
+        self.job_streamtube_results
+            .lock()
+            .expect("streamtube result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`StreamtubeId`](crate::resources::StreamtubeId) produced by a
+    /// completed [`begin_upload_streamtube`](Self::begin_upload_streamtube) job.
+    pub fn upload_result_streamtube(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::StreamtubeId> {
+        let mut map = self
+            .job_streamtube_results
+            .lock()
+            .expect("streamtube result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(sid) => {
+                map.remove(&id);
+                Ok(sid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
+    /// Start an asynchronous tube upload.
+    pub fn begin_upload_tube(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::TubeItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::TubeId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let tid = resources.upload_tube(
+                            &device_for_apply,
+                            &queue_for_apply,
+                            &item,
+                        );
+                        slot_for_apply.set(tid);
+                    }),
+                ))
+            })
+        };
+        self.job_tube_results
+            .lock()
+            .expect("tube result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`TubeId`](crate::resources::TubeId) produced by a completed
+    /// [`begin_upload_tube`](Self::begin_upload_tube) job.
+    pub fn upload_result_tube(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::TubeId> {
+        let mut map = self
+            .job_tube_results
+            .lock()
+            .expect("tube result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(tid) => {
+                map.remove(&id);
+                Ok(tid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
+
+    /// Start an asynchronous ribbon upload.
+    pub fn begin_upload_ribbon(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::RibbonItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::RibbonId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let rid = resources.upload_ribbon(
+                            &device_for_apply,
+                            &queue_for_apply,
+                            &item,
+                        );
+                        slot_for_apply.set(rid);
+                    }),
+                ))
+            })
+        };
+        self.job_ribbon_results
+            .lock()
+            .expect("ribbon result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`RibbonId`](crate::resources::RibbonId) produced by a completed
+    /// [`begin_upload_ribbon`](Self::begin_upload_ribbon) job.
+    pub fn upload_result_ribbon(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::RibbonId> {
+        let mut map = self
+            .job_ribbon_results
+            .lock()
+            .expect("ribbon result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(rid) => {
+                map.remove(&id);
+                Ok(rid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::ViewportGpuResources;
     use crate::renderer::{RibbonItem, StreamtubeItem, TubeItem};
+    use crate::resources::UploadStatus;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn sample_streamtube() -> StreamtubeItem {
+        StreamtubeItem {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            strip_lengths: vec![3],
+            radius: 0.1,
+            ..Default::default()
+        }
+    }
+
+    fn sample_tube() -> TubeItem {
+        TubeItem {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            strip_lengths: vec![3],
+            radius: 0.1,
+            ..Default::default()
+        }
+    }
+
+    fn sample_ribbon() -> RibbonItem {
+        RibbonItem {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            strip_lengths: vec![3],
+            width: 0.2,
+            ..Default::default()
+        }
+    }
+
+    fn drive_until_ready(
+        resources: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::JobId,
+        label: &'static str,
+    ) {
+        for _ in 0..200 {
+            resources.process_uploads(device, queue);
+            match resources.upload_status(id) {
+                UploadStatus::Ready => return,
+                UploadStatus::Failed(e) => panic!("{label} upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("{label} job id disappeared"),
+            }
+        }
+        panic!("{label} upload did not complete in time");
+    }
 
     const IDENTITY: [[f32; 4]; 4] = [
         [1.0, 0.0, 0.0, 0.0],
@@ -1108,5 +1455,92 @@ mod tests {
             ..RibbonItem::default()
         };
         assert_eq!(item.model[3], [1.0, 2.0, 3.0, 1.0]);
+    }
+
+    #[test]
+    fn upload_streamtube_returns_valid_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_streamtube(&device, &queue, &sample_streamtube());
+        assert!(resources.streamtube_store.contains(id));
+        assert!(resources.drop_streamtube(id));
+        assert!(!resources.streamtube_store.contains(id));
+    }
+
+    #[test]
+    fn upload_tube_returns_valid_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_tube(&device, &queue, &sample_tube());
+        assert!(resources.tube_store.contains(id));
+        assert!(resources.drop_tube(id));
+    }
+
+    #[test]
+    fn upload_ribbon_returns_valid_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_ribbon(&device, &queue, &sample_ribbon());
+        assert!(resources.ribbon_store.contains(id));
+        assert!(resources.drop_ribbon(id));
+    }
+
+    #[test]
+    fn begin_upload_streamtube_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_streamtube(&device, &queue, sample_streamtube());
+        drive_until_ready(&mut resources, &device, &queue, job, "streamtube");
+        let id = resources.upload_result_streamtube(job).expect("ready");
+        assert!(resources.streamtube_store.contains(id));
+        let err = resources.upload_result_streamtube(job).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::JobResultMissing { .. }
+        ));
+    }
+
+    #[test]
+    fn begin_upload_tube_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_tube(&device, &queue, sample_tube());
+        drive_until_ready(&mut resources, &device, &queue, job, "tube");
+        let id = resources.upload_result_tube(job).expect("ready");
+        assert!(resources.tube_store.contains(id));
+    }
+
+    #[test]
+    fn begin_upload_ribbon_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_ribbon(&device, &queue, sample_ribbon());
+        drive_until_ready(&mut resources, &device, &queue, job, "ribbon");
+        let id = resources.upload_result_ribbon(job).expect("ready");
+        assert!(resources.ribbon_store.contains(id));
     }
 }

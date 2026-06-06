@@ -20,8 +20,8 @@ impl TransformWriteback {
     ///
     /// For physics-driven nodes with no parent, local space equals world space.
     /// If the same node is written more than once, all ops are kept and applied
-    /// in order (last write wins after scene propagation). The full transform —
-    /// including scale embedded in the `Affine3A` — replaces the node's current
+    /// in order (last write wins after scene propagation). The full transform,
+    /// including scale embedded in the `Affine3A`, replaces the node's current
     /// local transform.
     pub fn set(&mut self, id: NodeId, transform: glam::Affine3A) {
         self.ops.push(NodeTransformOp {

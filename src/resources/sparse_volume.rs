@@ -70,7 +70,7 @@ const FACE_CORNERS: [[[u32; 3]; 4]; 6] = [
 ///   `nk * (W * H) + nj * W + ni` where `W = max_i + 2`, `H = max_j + 2`
 ///   and `max_i`, `max_j`, `max_k` are derived from `active_cells` (see module
 ///   docs).  Set via [`AttributeRef { kind: AttributeKind::Face, .. }`] after
-///   upload — node scalars are averaged to face scalars during extraction.
+///   upload. Node scalars are averaged to face scalars during extraction.
 ///
 /// # Upload
 ///
@@ -122,7 +122,7 @@ pub struct SparseVolumeGridData {
 ///
 /// Returns an empty [`MeshData`] if `active_cells` is empty or `cell_size <=
 /// 0.0`.  This causes [`upload_mesh_data`](super::ViewportGpuResources::upload_mesh_data)
-/// to return a `ViewportError::EmptyMesh` — the upload layer handles it.
+/// to return a `ViewportError::EmptyMesh`, the upload layer handles it.
 pub(crate) fn extract_sparse_boundary(data: &SparseVolumeGridData) -> MeshData {
     if data.active_cells.is_empty() || data.cell_size <= 0.0 {
         return MeshData::default();
@@ -171,7 +171,7 @@ pub(crate) fn extract_sparse_boundary(data: &SparseVolumeGridData) -> MeshData {
             };
 
             if neighbor_active {
-                continue; // interior face — skip
+                continue; // interior face: skip
             }
 
             // Boundary face: resolve the 4 node keys and deduplicate vertices.

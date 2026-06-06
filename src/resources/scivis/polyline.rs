@@ -287,7 +287,7 @@ impl ViewportGpuResources {
     ///
     /// `viewport_size` is `[width_px, height_px]` and is baked into the per-item
     /// uniform so the vertex shader can compute correct pixel offsets.
-    pub(crate) fn upload_polyline(
+    pub(crate) fn upload_polyline_per_frame(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -538,6 +538,122 @@ impl ViewportGpuResources {
             skip_clip: false,
             wireframe: false,
             wireframe_bind_group,
+        }
+    }
+
+    /// Pre-upload a polyline and return a typed handle.
+    ///
+    /// The returned [`PolylineId`](crate::resources::PolylineId) refers to GPU
+    /// buffers retained by the renderer until [`drop_polyline`] is called.
+    /// Submit a [`PolylineRefItem`](crate::renderer::PolylineRefItem) on
+    /// `SceneFrame::polyline_refs` each frame to draw the polyline at a
+    /// custom model transform without rebuilding its segment buffer.
+    ///
+    /// The viewport size used for screen-space miter calculations is set
+    /// from the most recent ref-item draw of this polyline. Stationary
+    /// callers can rely on it being correct after the first frame.
+    pub fn upload_polyline(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::PolylineItem,
+    ) -> crate::resources::PolylineId {
+        self.ensure_polyline_pipeline(device);
+        let gpu = self.upload_polyline_per_frame(device, queue, item, [1.0, 1.0]);
+        self.polyline_store.insert(gpu)
+    }
+
+    /// Remove a pre-uploaded polyline. Returns `true` if a polyline was
+    /// actually removed, `false` if the id was already invalid.
+    pub fn drop_polyline(&mut self, id: crate::resources::PolylineId) -> bool {
+        self.polyline_store.remove(id)
+    }
+
+    /// Replace the geometry of a pre-uploaded polyline, keeping the same
+    /// [`PolylineId`](crate::resources::PolylineId).
+    ///
+    /// Returns `true` if the id was valid and the polyline was replaced,
+    /// `false` if the slot was empty (call [`upload_polyline`](Self::upload_polyline) instead).
+    pub fn replace_polyline(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::PolylineId,
+        item: &crate::renderer::PolylineItem,
+    ) -> bool {
+        if !self.polyline_store.contains(id) {
+            return false;
+        }
+        self.ensure_polyline_pipeline(device);
+        let gpu = self.upload_polyline_per_frame(device, queue, item, [1.0, 1.0]);
+        self.polyline_store.replace(id, gpu)
+    }
+
+    /// Start an asynchronous polyline upload.
+    ///
+    /// Returns a [`JobId`](crate::resources::JobId) immediately. The upload
+    /// runs during the next `process_uploads` call (driven by `prepare_scene`);
+    /// once the status is `Ready`, call
+    /// [`upload_result_polyline`](Self::upload_result_polyline) to take the
+    /// resulting handle.
+    ///
+    /// Ownership of `item` transfers into the worker.
+    pub fn begin_upload_polyline(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: crate::renderer::PolylineItem,
+    ) -> crate::resources::JobId {
+        let slot = crate::resources::ResultSlot::<crate::resources::PolylineId>::new();
+        let slot_for_apply = slot.clone();
+        let device_for_apply = device.clone();
+        let queue_for_apply = queue.clone();
+
+        let id = {
+            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                progress.set(0.9);
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let pid =
+                            resources.upload_polyline(&device_for_apply, &queue_for_apply, &item);
+                        slot_for_apply.set(pid);
+                    }),
+                ))
+            })
+        };
+
+        self.job_polyline_results
+            .lock()
+            .expect("polyline result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Take the [`PolylineId`](crate::resources::PolylineId) produced by a
+    /// completed [`begin_upload_polyline`](Self::begin_upload_polyline) job.
+    pub fn upload_result_polyline(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::PolylineId> {
+        let mut map = self
+            .job_polyline_results
+            .lock()
+            .expect("polyline result map poisoned");
+        let slot = match map.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                });
+            }
+        };
+        match slot.take() {
+            Some(pid) => {
+                map.remove(&id);
+                Ok(pid)
+            }
+            None => Err(crate::error::ViewportError::JobNotReady),
         }
     }
 
@@ -837,7 +953,28 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod tests {
+    use crate::ViewportGpuResources;
     use crate::renderer::PolylineItem;
+    use crate::resources::UploadStatus;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn sample_polyline() -> PolylineItem {
+        PolylineItem {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+            strip_lengths: vec![3],
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn default_model_is_identity() {
@@ -849,6 +986,73 @@ mod tests {
             [0.0, 0.0, 0.0, 1.0],
         ];
         assert_eq!(item.model, expected);
+    }
+
+    #[test]
+    fn upload_polyline_returns_valid_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_polyline(&device, &queue, &sample_polyline());
+        assert!(resources.polyline_store.contains(id));
+        // drop + reupload cycles the slot.
+        assert!(resources.drop_polyline(id));
+        assert!(!resources.polyline_store.contains(id));
+    }
+
+    #[test]
+    fn replace_polyline_keeps_handle_stable() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_polyline(&device, &queue, &sample_polyline());
+        let mut updated = sample_polyline();
+        updated.line_width = 5.0;
+        assert!(resources.replace_polyline(&device, &queue, id, &updated));
+        assert!(resources.polyline_store.contains(id));
+    }
+
+    #[test]
+    fn begin_upload_polyline_drains_to_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let job = resources.begin_upload_polyline(&device, &queue, sample_polyline());
+
+        // Not ready yet.
+        let err = resources.upload_result_polyline(job).unwrap_err();
+        assert!(matches!(err, crate::error::ViewportError::JobNotReady));
+
+        for _ in 0..200 {
+            resources.process_uploads(&device, &queue);
+            match resources.upload_status(job) {
+                UploadStatus::Ready => break,
+                UploadStatus::Failed(e) => panic!("polyline upload failed: {e:?}"),
+                UploadStatus::Pending { .. } => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                UploadStatus::Unknown => panic!("polyline job id disappeared"),
+            }
+        }
+
+        let id = resources.upload_result_polyline(job).expect("ready result");
+        assert!(resources.polyline_store.contains(id));
+
+        // Second take of the same id should now report missing.
+        let err = resources.upload_result_polyline(job).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::JobResultMissing { .. }
+        ));
     }
 
     #[test]

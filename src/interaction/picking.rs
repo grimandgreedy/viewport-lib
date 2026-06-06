@@ -742,7 +742,7 @@ pub fn box_select(
 ///
 /// Returns `(t_entry, t_exit, entry_axis, entry_sign)` or `None` on miss.
 /// - `entry_axis` : 0/1/2 for x/y/z
-/// - `entry_sign` : ±1.0 — sign of the outward face normal on the entry face
+/// - `entry_sign` : +-1.0 - sign of the outward face normal on the entry face
 ///   (points back toward the ray origin)
 fn ray_aabb_volume(
     origin: glam::Vec3,
@@ -793,7 +793,7 @@ fn ray_aabb_volume(
 
 /// Ray-cast a single volume using Amanatides-Woo DDA traversal.
 ///
-/// Walks voxels in exact ray order — no steps are skipped — and returns a
+/// Walks voxels in exact ray order and returns a
 /// [`PickHit`] for the first voxel whose raw scalar value falls within
 /// `[item.threshold_min, item.threshold_max]`.
 ///
@@ -802,7 +802,7 @@ fn ray_aabb_volume(
 /// * `ray_dir` : world-space ray direction (normalized)
 /// * `id` : caller-assigned object identifier, copied into [`PickHit::id`]
 /// * `item` : volume render parameters (bounding box, transform, thresholds)
-/// * `volume` : CPU-side scalar field — same data passed to
+/// * `volume` : CPU-side scalar field: same data passed to
 ///   [`upload_volume`](crate::resources::ViewportGpuResources::upload_volume)
 ///
 /// # Returns
@@ -987,7 +987,7 @@ pub fn pick_volume_cpu(
 /// around the selected voxel.
 ///
 /// When `item.model` contains rotation or non-uniform scale the returned AABB
-/// is the world-space envelope of the (non-axis-aligned) voxel — computed by
+/// is the world-space envelope of the (non-axis-aligned) voxel. Computed by
 /// transforming all 8 corners.
 ///
 /// # Panics

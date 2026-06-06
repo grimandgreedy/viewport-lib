@@ -80,6 +80,10 @@ pub use self::types::{
     PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
     SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
+pub use self::scivis::curve_store::{PolylineId, RibbonId, StreamtubeId, TubeId};
+pub(crate) use self::scivis::curve_store::{
+    PolylineStore, RibbonStore, StreamtubeStore, TubeStore,
+};
 pub use self::upload_jobs::{JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
 #[allow(deprecated)]
 pub use self::volume_mesh::{

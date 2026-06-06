@@ -844,6 +844,116 @@ impl Default for RibbonItem {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-uploaded curve references
+// ---------------------------------------------------------------------------
+
+/// Per-frame reference to a pre-uploaded polyline.
+///
+/// Submit one of these on `SceneFrame::polyline_refs` instead of pushing the
+/// full `PolylineItem` on `polylines` every frame. The renderer looks up the
+/// stored GPU buffers by `id` and applies the per-frame `model` and
+/// `settings` without rebuilding the segment buffer.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PolylineRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_polyline`](crate::resources::ViewportGpuResources::upload_polyline)
+    /// or `begin_upload_polyline`.
+    pub id: crate::resources::PolylineId,
+    /// Per-frame model matrix. Identity uses the polyline's own world-space
+    /// positions.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings (visibility, wireframe, selection, picking).
+    pub settings: ItemSettings,
+}
+
+impl PolylineRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::PolylineId) -> Self {
+        Self {
+            id,
+            model: IDENTITY_MAT4,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+/// Per-frame reference to a pre-uploaded streamtube. See [`PolylineRefItem`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct StreamtubeRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_streamtube`](crate::resources::ViewportGpuResources::upload_streamtube)
+    /// or `begin_upload_streamtube`.
+    pub id: crate::resources::StreamtubeId,
+    /// Per-frame model matrix.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl StreamtubeRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::StreamtubeId) -> Self {
+        Self {
+            id,
+            model: IDENTITY_MAT4,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+/// Per-frame reference to a pre-uploaded tube. See [`PolylineRefItem`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct TubeRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_tube`](crate::resources::ViewportGpuResources::upload_tube)
+    /// or `begin_upload_tube`.
+    pub id: crate::resources::TubeId,
+    /// Per-frame model matrix.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl TubeRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::TubeId) -> Self {
+        Self {
+            id,
+            model: IDENTITY_MAT4,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+/// Per-frame reference to a pre-uploaded ribbon. See [`PolylineRefItem`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct RibbonRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`ViewportGpuResources::upload_ribbon`](crate::resources::ViewportGpuResources::upload_ribbon)
+    /// or `begin_upload_ribbon`.
+    pub id: crate::resources::RibbonId,
+    /// Per-frame model matrix.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl RibbonRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::RibbonId) -> Self {
+        Self {
+            id,
+            model: IDENTITY_MAT4,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 2D Image Slice representation
 // ---------------------------------------------------------------------------
 

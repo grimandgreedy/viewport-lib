@@ -28,7 +28,7 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 1: texture_3d<f32> — R32Float is not filterable on most hardware,
+                // binding 1: texture_3d<f32>: R32Float is not filterable on most hardware,
                 // so declare as non-filterable and use a NonFiltering sampler.
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
@@ -40,7 +40,7 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 2: vol_sampler (non-filtering nearest — matches R32Float)
+                // binding 2: vol_sampler (non-filtering nearest, matches R32Float)
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,

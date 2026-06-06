@@ -20,6 +20,12 @@ Texture uploads consolidate on the same shape. `begin_upload_texture` and `begin
 
 The earlier async-texture path is removed. `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the internal `submit_pending_texture_uploads` drain are gone, along with the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
 
+#### Pre-uploaded curve types
+
+The four curve types (polyline, streamtube, tube, ribbon) now support a pre-upload + per-frame reference workflow on top of the existing per-frame upload.
+
+Async upload entry points (`begin_upload_polyline` / `_streamtube` / `_tube` / `_ribbon`) return a `JobId`; the result is taken via `upload_result_polyline` (and friends) once the runner reports `Ready`. The synchronous `upload_*` methods continue to work for callers that submit fresh data every frame.
+
 ### Plugin-facing job API
 
 `ItemTypePlugin` implementations can now submit background work through the same runner the built-in uploads use. `ItemFrameContext` gains a `jobs: Jobs<'a>` field with three methods: `submit_cpu<T, F>(work) -> JobId` schedules a CPU job that returns a value of type `T`; `status(JobId) -> UploadStatus` polls; `take<T: 'static>(JobId) -> Option<T>` retrieves the typed result once `Ready`. Results are stored as `Box<dyn Any + Send>` internally; `take` downcasts and returns `None` on a type mismatch.
