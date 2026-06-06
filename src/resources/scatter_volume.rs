@@ -20,7 +20,9 @@
 //! the history slot (when temporal is on) or `raw_current` (when off) and
 //! composites onto the HDR target with premultiplied alpha-over.
 
-use crate::scene::scatter_volume::{ColourSource, GpuScatterVolume, ScatterVolume};
+use crate::scene::scatter_volume::{
+    ColourSource, GpuRefractionVolume, GpuScatterVolume, ScatterVolume,
+};
 
 /// Hard cap on the number of volumes per frame. Same as the original cap; the
 /// per-volume draw flow handles up to this many active volumes.
@@ -865,6 +867,305 @@ impl crate::resources::ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(depth_sampler),
+                },
+            ],
+        })
+    }
+
+    // ---------------------------------------------------------------------
+    // Refraction pass
+    // ---------------------------------------------------------------------
+
+    fn ensure_scatter_refraction_per_volume_bgl(&mut self, device: &wgpu::Device) {
+        if self.scatter_refraction_per_volume_bgl.is_some() {
+            return;
+        }
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scatter_refraction_per_volume_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: std::num::NonZeroU64::new(
+                        std::mem::size_of::<GpuRefractionVolume>() as u64,
+                    ),
+                },
+                count: None,
+            }],
+        });
+        self.scatter_refraction_per_volume_bgl = Some(bgl);
+    }
+
+    fn ensure_scatter_refraction_source_bgl(&mut self, device: &wgpu::Device) {
+        if self.scatter_refraction_source_bgl.is_some() {
+            return;
+        }
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scatter_refraction_source_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        self.scatter_refraction_source_bgl = Some(bgl);
+    }
+
+    pub(crate) fn ensure_scatter_refraction_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        colour_format: wgpu::TextureFormat,
+    ) {
+        if self.scatter_refraction_pipeline.is_some() {
+            return;
+        }
+        self.ensure_scatter_refraction_per_volume_bgl(device);
+        self.ensure_scatter_refraction_source_bgl(device);
+        self.ensure_scatter_composite_pipeline(device, colour_format);
+
+        let per_vol = self.scatter_refraction_per_volume_bgl.as_ref().unwrap();
+        let source_bgl = self.scatter_refraction_source_bgl.as_ref().unwrap();
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter_refraction_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/scatter_refraction.wgsl")).into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scatter_refraction_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, per_vol, source_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scatter_refraction_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: colour_format,
+                    // Replace blend: the distorted sample overwrites the HDR
+                    // pixel before the scatter pass composites on top.
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.scatter_refraction_pipeline = Some(pipeline);
+    }
+
+    /// Build a render pipeline that samples a source colour texture (via the
+    /// composite BGL / shader) and writes it to a render target with replace
+    /// blend. Used to copy the HDR scene into the refraction source texture
+    /// before the per-volume distortion runs.
+    pub(crate) fn ensure_scatter_refraction_blit_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        colour_format: wgpu::TextureFormat,
+    ) {
+        if self.scatter_refraction_blit_pipeline.is_some() {
+            return;
+        }
+        self.ensure_scatter_composite_pipeline(device, colour_format);
+        let bgl = self.scatter_composite_bgl.as_ref().unwrap();
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter_refraction_blit_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/scatter_composite.wgsl")).into(),
+            ),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scatter_refraction_blit_pipeline_layout"),
+            bind_group_layouts: &[bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scatter_refraction_blit_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: colour_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+        self.scatter_refraction_blit_pipeline = Some(pipeline);
+    }
+
+    /// Pack visible refractive volumes into the dynamic-offset uniform buffer.
+    /// Returns the number of slots written.
+    pub(crate) fn write_scatter_refraction_per_volume_buffer(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        volumes: &[(ScatterVolume, f32)],
+        time_seconds: f32,
+    ) -> u32 {
+        let align = device.limits().min_uniform_buffer_offset_alignment as u64;
+        let struct_size = std::mem::size_of::<GpuRefractionVolume>() as u64;
+        let stride = ((struct_size + align - 1) / align * align).max(struct_size) as u32;
+        let capacity = volumes.len().min(MAX_SCATTER_VOLUMES).max(1) as u32;
+        let buffer_size = (stride as u64) * (capacity as u64);
+
+        let need_realloc = self.scatter_refraction_per_volume_buffer.is_none()
+            || self.scatter_refraction_per_volume_stride != stride
+            || self.scatter_refraction_per_volume_capacity < capacity;
+        if need_realloc {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("scatter_refraction_per_volume_uniform"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.scatter_refraction_per_volume_buffer = Some(buf);
+            self.scatter_refraction_per_volume_stride = stride;
+            self.scatter_refraction_per_volume_capacity = capacity;
+            self.scatter_refraction_per_volume_bg = None;
+        }
+
+        if self.scatter_refraction_per_volume_bg.is_none() {
+            self.ensure_scatter_refraction_per_volume_bgl(device);
+            let bgl = self.scatter_refraction_per_volume_bgl.as_ref().unwrap();
+            let buf = self.scatter_refraction_per_volume_buffer.as_ref().unwrap();
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("scatter_refraction_per_volume_bg"),
+                layout: bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: buf,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(struct_size),
+                    }),
+                }],
+            });
+            self.scatter_refraction_per_volume_bg = Some(bg);
+        }
+
+        let mut bytes = vec![0u8; buffer_size as usize];
+        let mut n: u32 = 0;
+        for (volume, _) in volumes.iter() {
+            if n as usize >= MAX_SCATTER_VOLUMES {
+                break;
+            }
+            if let Some(packed) = GpuRefractionVolume::pack(volume, time_seconds) {
+                let offset = (n as usize) * (stride as usize);
+                let src = bytemuck::bytes_of(&packed);
+                bytes[offset..offset + src.len()].copy_from_slice(src);
+                n += 1;
+            }
+        }
+        if let Some(buf) = self.scatter_refraction_per_volume_buffer.as_ref() {
+            queue.write_buffer(
+                buf,
+                0,
+                &bytes[..(n as usize * stride as usize).max(stride as usize)],
+            );
+        }
+        n
+    }
+
+    /// Stride between dynamic-offset slots in the refraction per-volume buffer.
+    pub(crate) fn scatter_refraction_per_volume_stride(&self) -> u32 {
+        self.scatter_refraction_per_volume_stride
+    }
+
+    /// Build the bind group sampling the refraction source texture + depth.
+    pub(crate) fn make_scatter_refraction_source_bg(
+        &mut self,
+        device: &wgpu::Device,
+        source_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        self.ensure_scatter_refraction_source_bgl(device);
+        self.ensure_scatter_composite_pipeline(device, wgpu::TextureFormat::Rgba16Float);
+        let bgl = self.scatter_refraction_source_bgl.as_ref().unwrap();
+        let sampler = self.scatter_composite_sampler.as_ref().unwrap();
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scatter_refraction_source_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
                 },
             ],
         })

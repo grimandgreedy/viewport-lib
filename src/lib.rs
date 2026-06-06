@@ -111,7 +111,8 @@ pub use scene::aabb;
 pub use scene::material;
 pub use scene::scatter_volume;
 pub use scene::scatter_volume::{
-    ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, ScatterShape, ScatterVolume,
+    ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, RefractionParams,
+    ScatterShape, ScatterVolume,
 };
 pub use scene::traits;
 pub use widgets::axes_indicator;

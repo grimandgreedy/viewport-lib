@@ -12,7 +12,7 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     BuiltinColourmap, ColourSource, DensityRemap, Emission, EmissionCurve, Material, NoiseDriver,
-    ScatterQuality, ScatterVolume, ScatterVolumeItem, ViewportRenderer,
+    RefractionParams, ScatterQuality, ScatterVolume, ScatterVolumeItem, ViewportRenderer,
     scene::{Scene, aabb::Aabb},
 };
 
@@ -90,6 +90,13 @@ pub(crate) struct SvolState {
     pub temporal_blend: f32,
     pub fire_step_budget_override: bool,
     pub fire_step_budget: u32,
+
+    /// Heat-haze refraction over the fire. When enabled the renderer
+    /// distorts the scene colour behind the fire's screen footprint by a
+    /// density-gradient-driven offset, producing a shimmer that reads as
+    /// rising hot air.
+    pub fire_refraction: bool,
+    pub fire_refraction_strength: f32,
 }
 
 impl SvolPreset {
@@ -146,6 +153,9 @@ impl SvolPreset {
         s.hemisphere_intensity = 0.35;
         s.show_sphere_outline = false;
         s.show_global_outline = false;
+        // Refraction defaults off; the Campfire preset turns it on so the
+        // shimmer is visible the moment the preset loads.
+        s.fire_refraction = false;
 
         match self {
             Self::FoggyCorridor => {
@@ -177,6 +187,7 @@ impl SvolPreset {
                 s.global_density = 0.025;
                 s.global_colour = [0.45, 0.5, 0.62];
                 s.fire_enabled = true;
+                s.fire_refraction = true;
                 s.sky_colour = [0.05, 0.08, 0.16];
                 s.ground_colour = [0.03, 0.03, 0.05];
                 s.hemisphere_intensity = 0.15;
@@ -253,6 +264,8 @@ impl Default for SvolState {
             temporal_blend: 0.85,
             fire_step_budget_override: false,
             fire_step_budget: 24,
+            fire_refraction: false,
+            fire_refraction_strength: 0.015,
         };
         SvolPreset::FoggyCorridor.apply(&mut s);
         s
@@ -432,6 +445,14 @@ impl App {
             if s.fire_step_budget_override {
                 v.step_budget = Some(s.fire_step_budget);
             }
+            if s.fire_refraction {
+                let mut r = RefractionParams::default();
+                r.strength = s.fire_refraction_strength;
+                // Scale the noise to the fire's size so the shimmer cell
+                // matches the visible turbulence rather than going random.
+                r.noise_scale = (s.fire_noise_scale * 0.6).max(0.5);
+                v.refraction = Some(r);
+            }
             let mut item = ScatterVolumeItem::new(v);
             // Self-emissive volumes read better as unlit: in-scattering the
             // sun and ambient through the LUT's dark low-density colours
@@ -538,6 +559,16 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
         ui.color_edit_button_rgb(&mut s.fire_colour);
     });
     ui.checkbox(&mut s.fire_use_ramp, "Inferno colourmap");
+    ui.checkbox(&mut s.fire_refraction, "Heat haze (refraction)");
+    if s.fire_refraction {
+        ui.horizontal(|ui| {
+            ui.label("Strength");
+            ui.add(
+                egui::Slider::new(&mut s.fire_refraction_strength, 0.0..=0.05)
+                    .step_by(0.0005),
+            );
+        });
+    }
     ui.checkbox(&mut s.fire_animate, "Animate");
     if s.fire_animate {
         ui.horizontal(|ui| {

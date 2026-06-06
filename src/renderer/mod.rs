@@ -398,6 +398,11 @@ pub struct ViewportRenderer {
     /// can re-upload as needed without re-walking the scene frame.
     pub(crate) prepared_scatter_volumes:
         Vec<(crate::scene::scatter_volume::ScatterVolume, f32, u32)>,
+    /// Subset of the prepared scatter volumes that carry `RefractionParams`.
+    /// Cleared and refilled each frame by `prepare_viewport`. The refraction
+    /// pass walks this list; an empty list skips the pass entirely.
+    pub(crate) prepared_refraction_volumes:
+        Vec<(crate::scene::scatter_volume::ScatterVolume, f32)>,
     /// Per-viewport scatter intermediates and temporal history. Indexed by
     /// `vp_idx`. Grown lazily inside the scatter pass; each entry is
     /// reallocated when the requested scatter target size or downsample mode
@@ -580,6 +585,7 @@ impl ViewportRenderer {
             pick_tvm_items: Vec::new(),
             pick_scatter_volume_items: Vec::new(),
             prepared_scatter_volumes: Vec::new(),
+            prepared_refraction_volumes: Vec::new(),
             scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
             pick_polyline_items: Vec::new(),

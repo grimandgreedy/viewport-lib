@@ -138,6 +138,10 @@ Plugins can now run their own GPU work each frame and feed the result straight i
 
 A new scene item, the scatter volume, renders ray-marched participating media: atmospheric fog, smoke columns, cloud layers, fire, magic effects. Each volume is a box or a sphere placed in the scene with a density, a colour, and a handful of look knobs; the renderer composites visible volumes onto the scene every frame with no upload step. Up to 16 volumes can overlap a single pixel.
 
+#### Heat haze / refractive volumes
+
+`ScatterVolume::refraction: Option<RefractionParams>` enables a per-volume refraction pass that distorts the scene colour behind the volume's screen footprint. Off by default, so existing scenes render unchanged. When enabled the renderer copies the HDR scene to a per-viewport source texture, then samples it at a UV offset taken from the local density gradient and writes the distorted result back over the volume's projected rectangle. The scatter pass runs on top of the shimmered scene so absorption and in-scattering still apply normally. `RefractionParams` exposes `strength` (max UV displacement), `density_threshold` (gates wispy edges so only the dense core shimmers), and `noise_scale` (frequency of the shimmer cell). The showcase campfire entry exposes a Heat haze toggle and strength slider.
+
 ### Scene-graph lights
 
 Lights are now scene-graph nodes rather than per-frame configuration data.

@@ -6651,6 +6651,7 @@ impl ViewportRenderer {
             self.pick_tvm_items = frame.scene.transparent_volume_meshes.clone();
             self.pick_scatter_volume_items = frame.scene.scatter_volumes.clone();
             self.prepared_scatter_volumes.clear();
+            self.prepared_refraction_volumes.clear();
             let global_wireframe = frame.viewport.wireframe_mode;
             let eye = frame.camera.render_camera.eye_position;
             for item in &frame.scene.scatter_volumes {
@@ -6669,6 +6670,10 @@ impl ViewportRenderer {
                     item.settings.opacity,
                     flags,
                 ));
+                if item.volume.refraction.is_some() {
+                    self.prepared_refraction_volumes
+                        .push((item.volume.clone(), item.settings.opacity));
+                }
             }
             // Sort back-to-front for the per-volume scatter draws. The
             // metric is the maximum corner distance of the volume's world

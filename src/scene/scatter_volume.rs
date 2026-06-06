@@ -51,6 +51,13 @@ pub struct ScatterVolume {
     /// Only one density texture can be bound per frame; the first volume
     /// in `SceneFrame::scatter_volumes` with a texture wins for the pass.
     pub density_texture: Option<crate::resources::VolumeId>,
+    /// Refractive distortion of the scene behind the volume. `None` is the
+    /// default and skips the refraction pass entirely. When `Some`, the
+    /// renderer copies the scene colour, samples it at a UV offset derived
+    /// from the local density gradient, and writes the distorted result
+    /// back over the volume's screen footprint before the scatter pass
+    /// runs. Used for heat haze and similar shimmer effects.
+    pub refraction: Option<RefractionParams>,
 }
 
 impl Default for ScatterVolume {
@@ -68,6 +75,7 @@ impl Default for ScatterVolume {
             noise: None,
             step_budget: None,
             density_texture: None,
+            refraction: None,
         }
     }
 }
@@ -222,6 +230,91 @@ impl Default for NoiseDriver {
             time_scale: 0.0,
             lacunarity: 2.0,
         }
+    }
+}
+
+/// Refractive distortion parameters for a [`ScatterVolume`].
+///
+/// The renderer samples the scene colour at a UV offset taken from the
+/// local density gradient and writes the result over the volume's screen
+/// footprint. The scatter pass then runs on top of the distorted scene,
+/// so absorption and in-scattering still apply normally.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct RefractionParams {
+    /// Maximum screen-space displacement, in normalized UV units. Typical
+    /// values are 0.005 to 0.04. Larger values look like strong heat haze.
+    pub strength: f32,
+    /// Density threshold below which a sample contributes no distortion.
+    /// Useful for keeping wispy edges quiet while the hot core shimmers.
+    pub density_threshold: f32,
+    /// Frequency multiplier on the noise field that drives the gradient.
+    /// Higher values make the shimmer finer.
+    pub noise_scale: f32,
+}
+
+impl Default for RefractionParams {
+    fn default() -> Self {
+        Self {
+            strength: 0.015,
+            density_threshold: 0.05,
+            noise_scale: 1.5,
+        }
+    }
+}
+
+/// Packed GPU layout for a refractive volume. 80 bytes, 16-byte aligned.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuRefractionVolume {
+    /// 0 = Box, 1 = Sphere.
+    pub shape_kind: u32,
+    /// Padding to keep the following `vec4<f32>` 16-byte aligned.
+    pub _pad0: u32,
+    /// Padding to keep the following `vec4<f32>` 16-byte aligned.
+    pub _pad1: u32,
+    /// Padding to keep the following `vec4<f32>` 16-byte aligned.
+    pub _pad2: u32,
+    /// Box: `min.xyz, _`. Sphere: `center.xyz, radius`.
+    pub p0: [f32; 4],
+    /// Box: `max.xyz, _`. Sphere: unused.
+    pub p1: [f32; 4],
+    /// Distortion parameters: `(strength, density_threshold, noise_scale, time)`.
+    pub params: [f32; 4],
+}
+
+impl GpuRefractionVolume {
+    /// Pack the refraction half of a `ScatterVolume`. Returns `None` when the
+    /// volume has no refraction enabled or zero strength.
+    pub fn pack(volume: &ScatterVolume, time_seconds: f32) -> Option<Self> {
+        let r = volume.refraction?;
+        if !(r.strength > 0.0) {
+            return None;
+        }
+        let (shape_kind, p0, p1) = match volume.shape {
+            ScatterShape::Box(b) => (
+                0u32,
+                [b.min.x, b.min.y, b.min.z, 0.0],
+                [b.max.x, b.max.y, b.max.z, 0.0],
+            ),
+            ScatterShape::Sphere { center, radius } => {
+                (1u32, [center[0], center[1], center[2], radius], [0.0; 4])
+            }
+        };
+        Some(Self {
+            shape_kind,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+            p0,
+            p1,
+            params: [
+                r.strength,
+                r.density_threshold.max(0.0),
+                r.noise_scale.max(1e-4),
+                time_seconds,
+            ],
+        })
     }
 }
 

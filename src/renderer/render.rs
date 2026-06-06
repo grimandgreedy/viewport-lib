@@ -2929,6 +2929,11 @@ impl ViewportRenderer {
                         parity: 0,
                         history_valid: false,
                         prev_view_proj: [[0.0; 4]; 4],
+                        refraction_source_texture: None,
+                        refraction_source_view: None,
+                        refraction_source_bg: None,
+                        refraction_blit_bg: None,
+                        refraction_source_size: [0, 0],
                     });
             }
 
@@ -2936,6 +2941,136 @@ impl ViewportRenderer {
                 let s = self.scatter_viewport_states[vp_idx].as_ref().unwrap();
                 (s.parity, s.history_valid, s.prev_view_proj)
             };
+
+            // -----------------------------------------------------------------
+            // Refraction pass: distort the scene colour behind each refractive
+            // volume. Runs before the scatter pass so absorption and
+            // in-scattering apply on top of the shimmered scene. Skipped
+            // entirely when no volume has `refraction = Some(...)`.
+            // -----------------------------------------------------------------
+            if !self.prepared_refraction_volumes.is_empty() {
+                self.resources.ensure_scatter_refraction_pipeline(
+                    device,
+                    wgpu::TextureFormat::Rgba16Float,
+                );
+                self.resources.ensure_scatter_refraction_blit_pipeline(
+                    device,
+                    wgpu::TextureFormat::Rgba16Float,
+                );
+
+                // Allocate (or resize) the refraction source texture at HDR
+                // resolution. Replaces the per-viewport entry's view when the
+                // scene size changes.
+                let need_realloc = {
+                    let s = self.scatter_viewport_states[vp_idx].as_ref().unwrap();
+                    s.refraction_source_view.is_none() || s.refraction_source_size != [sw, sh]
+                };
+                if need_realloc {
+                    let src_tex = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("scatter_refraction_source"),
+                        size: wgpu::Extent3d {
+                            width: sw.max(1),
+                            height: sh.max(1),
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    });
+                    let src_view = src_tex.create_view(&wgpu::TextureViewDescriptor::default());
+                    let blit_bg = self
+                        .resources
+                        .make_scatter_composite_bg(device, &slot_hdr.hdr_view);
+                    let source_bg = self.resources.make_scatter_refraction_source_bg(
+                        device,
+                        &src_view,
+                        &slot_hdr.hdr_depth_only_view,
+                    );
+                    let s = self.scatter_viewport_states[vp_idx].as_mut().unwrap();
+                    s.refraction_source_texture = Some(src_tex);
+                    s.refraction_source_view = Some(src_view);
+                    s.refraction_source_bg = Some(source_bg);
+                    s.refraction_blit_bg = Some(blit_bg);
+                    s.refraction_source_size = [sw, sh];
+                }
+
+                let time_seconds = self.start_instant.elapsed().as_secs_f32();
+                let n_ref = self
+                    .resources
+                    .write_scatter_refraction_per_volume_buffer(
+                        device,
+                        queue,
+                        &self.prepared_refraction_volumes,
+                        time_seconds,
+                    );
+                let ref_stride = self.resources.scatter_refraction_per_volume_stride();
+
+                if n_ref > 0 {
+                    let s = self.scatter_viewport_states[vp_idx].as_ref().unwrap();
+                    let src_view = s.refraction_source_view.as_ref().unwrap();
+                    let blit_bg = s.refraction_blit_bg.as_ref().unwrap();
+                    let source_bg = s.refraction_source_bg.as_ref().unwrap();
+
+                    // Blit-copy HDR -> refraction source (replace blend).
+                    if let Some(blit_pipeline) =
+                        self.resources.scatter_refraction_blit_pipeline.as_ref()
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("scatter_refraction_blit_pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: src_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                        pass.set_pipeline(blit_pipeline);
+                        pass.set_bind_group(0, blit_bg, &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+
+                    // Per-volume distortion pass: write distorted samples into
+                    // the HDR target.
+                    if let (Some(pipeline), Some(per_vol_bg)) = (
+                        self.resources.scatter_refraction_pipeline.as_ref(),
+                        self.resources.scatter_refraction_per_volume_bg.as_ref(),
+                    ) {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("scatter_refraction_pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &slot_hdr.hdr_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, camera_bg, &[]);
+                        pass.set_bind_group(2, source_bg, &[]);
+                        for i in 0..n_ref {
+                            let dyn_offset = i * ref_stride;
+                            pass.set_bind_group(1, per_vol_bg, &[dyn_offset]);
+                            pass.draw(0..6, 0..1);
+                        }
+                    }
+                }
+            }
 
             // Per-volume uniform buffer.
             self.resources.clear_scatter_per_volume_tex_cache();

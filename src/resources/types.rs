@@ -2330,6 +2330,23 @@ pub(crate) struct ScatterViewportState {
     pub history_valid: bool,
     /// Previous frame's view-projection (row-major mat4).
     pub prev_view_proj: [[f32; 4]; 4],
+    /// Scene colour copy sampled by the refraction pass. Allocated on demand
+    /// when at least one volume has refraction enabled. Matches the HDR
+    /// target's size and format.
+    #[allow(dead_code)]
+    pub refraction_source_texture: Option<wgpu::Texture>,
+    /// View paired with `refraction_source_texture`. Bound as the source
+    /// during the refraction pass and as the render target during the
+    /// preceding blit-copy of the HDR scene.
+    pub refraction_source_view: Option<wgpu::TextureView>,
+    /// Per-viewport bind group binding `(refraction_source_view, depth)` to
+    /// the refraction pass.
+    pub refraction_source_bg: Option<wgpu::BindGroup>,
+    /// Per-viewport bind group binding the HDR view as the source for the
+    /// blit-copy that fills `refraction_source_view`.
+    pub refraction_blit_bg: Option<wgpu::BindGroup>,
+    /// Allocated size of the refraction source, matched to the HDR target.
+    pub refraction_source_size: [u32; 2],
 }
 
 // ---------------------------------------------------------------------------
@@ -3270,6 +3287,27 @@ pub struct ViewportGpuResources {
     /// Per-frame uniform buffer for the temporal-resolve pass (mat4 + vec4
     /// temporal pack + viewport dims).
     pub(crate) scatter_temporal_resolve_uniform_buffer: Option<wgpu::Buffer>,
+    /// Refraction pass: per-volume distortion using a noise-driven gradient.
+    /// Writes the displaced scene colour back into the HDR target before the
+    /// scatter pass runs.
+    pub(crate) scatter_refraction_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the refraction pass's per-volume uniform.
+    pub(crate) scatter_refraction_per_volume_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for the refraction pass's source-scene + depth bindings.
+    pub(crate) scatter_refraction_source_bgl: Option<wgpu::BindGroupLayout>,
+    /// Single dynamic-offset uniform buffer holding every refractive volume's
+    /// packed parameters. Stride matches `min_uniform_buffer_offset_alignment`.
+    pub(crate) scatter_refraction_per_volume_buffer: Option<wgpu::Buffer>,
+    /// Cached stride between refractive-volume slots in
+    /// `scatter_refraction_per_volume_buffer`.
+    pub(crate) scatter_refraction_per_volume_stride: u32,
+    /// Capacity (slot count) the per-volume buffer is currently sized for.
+    pub(crate) scatter_refraction_per_volume_capacity: u32,
+    /// Dynamic-offset bind group for the per-volume uniform buffer.
+    pub(crate) scatter_refraction_per_volume_bg: Option<wgpu::BindGroup>,
+    /// Blit pipeline that copies the HDR target into the refraction source
+    /// texture before the per-volume distortion runs.
+    pub(crate) scatter_refraction_blit_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- IBL / environment map resources ---
     /// IBL irradiance equirect texture view (binding 7). None until environment uploaded.
