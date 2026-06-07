@@ -17,7 +17,8 @@ impl ViewportRenderer {
             grid_bg,
             &self.compute_filter_results,
             vp_slot,
-            &self.wireframe_bind_groups
+            &self.wireframe_bind_groups,
+            &self.per_item_object_bind_groups
         );
         emit_scivis_draw_calls!(
             &self.resources,
@@ -324,7 +325,8 @@ impl ViewportRenderer {
                 grid_bg,
                 &self.compute_filter_results,
                 Some(slot),
-                &self.wireframe_bind_groups
+                &self.wireframe_bind_groups,
+                &self.per_item_object_bind_groups
             );
             emit_scivis_draw_calls!(
                 &self.resources,
@@ -972,7 +974,8 @@ impl ViewportRenderer {
                     grid_bg,
                     &self.compute_filter_results,
                     Some(slot),
-                    &self.wireframe_bind_groups
+                    &self.wireframe_bind_groups,
+                    &self.per_item_object_bind_groups
                 );
                 emit_scivis_draw_calls!(
                     &self.resources,
@@ -1610,13 +1613,15 @@ impl ViewportRenderer {
 
             if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
-                    let excluded_items: Vec<&SceneRenderItem> = scene_items
+                    let excluded_items: Vec<(usize, &SceneRenderItem)> = scene_items
                         .iter()
-                        .filter(|item| {
+                        .enumerate()
+                        .filter(|(_, item)| {
                             !item.settings.hidden
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
-                                    || item.material.matcap_id().is_some())
+                                    || item.material.matcap_id().is_some()
+                                    || item.material.param_vis.is_some())
                                 && resources.mesh_store.get(item.mesh_id).is_some()
                         })
                         .collect();
@@ -1753,7 +1758,7 @@ impl ViewportRenderer {
                         // items inline (including transparent ones) using the transparent
                         // pipeline -- an intentional divergence since HDR uses OIT for
                         // transparency throughout.
-                        for item in excluded_items.into_iter().filter(|item| {
+                        for (item_idx, item) in excluded_items.iter().copied().filter(|(_, item)| {
                             item.settings.opacity >= 1.0 && !item.material.is_blend()
                         }) {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -1780,7 +1785,12 @@ impl ViewportRenderer {
                                 };
                                 render_pass.set_pipeline(pipeline);
                             }
-                            render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            let obj_bg = self
+                                .per_item_object_bind_groups
+                                .get(item_idx)
+                                .and_then(|opt| opt.as_ref())
+                                .unwrap_or(&mesh.object_bind_group);
+                            render_pass.set_bind_group(1, obj_bg, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             let filter = compute_filter_results
                                 .iter()
@@ -1825,23 +1835,24 @@ impl ViewportRenderer {
                 } else {
                     // Per-object path.
                     let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
-                    let dist_from_eye = |item: &&SceneRenderItem| -> f32 {
+                    let dist_from_eye = |entry: &(usize, &SceneRenderItem)| -> f32 {
+                        let item = entry.1;
                         let pos =
                             glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
                         (pos - eye).length()
                     };
 
-                    let mut opaque: Vec<&SceneRenderItem> = Vec::new();
-                    let mut transparent: Vec<&SceneRenderItem> = Vec::new();
-                    for item in scene_items {
+                    let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
+                    let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
+                    for (idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none()
                         {
                             continue;
                         }
                         if item.settings.opacity < 1.0 || item.material.is_blend() {
-                            transparent.push(item);
+                            transparent.push((idx, item));
                         } else {
-                            opaque.push(item);
+                            opaque.push((idx, item));
                         }
                     }
                     opaque.sort_by(|a, b| {
@@ -1855,16 +1866,20 @@ impl ViewportRenderer {
                             .unwrap_or(std::cmp::Ordering::Equal)
                     });
 
+                    let per_item_bgs = &self.per_item_object_bind_groups;
                     let draw_item_hdr =
                         |render_pass: &mut wgpu::RenderPass<'_>,
+                         item_idx: usize,
                          item: &SceneRenderItem,
                          solid_pl: &wgpu::RenderPipeline,
                          trans_pl: &wgpu::RenderPipeline,
                          wf_pl: &wgpu::RenderPipeline| {
                             let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
-                            // mesh.object_bind_group (group 1) already carries the object uniform
-                            // and the correct texture views.
-                            render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            let obj_bg = per_item_bgs
+                                .get(item_idx)
+                                .and_then(|opt| opt.as_ref())
+                                .unwrap_or(&mesh.object_bind_group);
+                            render_pass.set_bind_group(1, obj_bg, &[]);
 
                             // Skinned routing: if the mesh has a skin sidecar
                             // and this item's instance has a palette uploaded,
@@ -1973,13 +1988,13 @@ impl ViewportRenderer {
                         &resources.hdr_transparent_pipeline,
                         &resources.hdr_wireframe_pipeline,
                     ) {
-                        for item in &opaque {
+                        for (item_idx, item) in &opaque {
                             let solid_pl = if item.material.is_two_sided() {
                                 hdr_solid_two_sided
                             } else {
                                 hdr_solid
                             };
-                            draw_item_hdr(&mut render_pass, item, solid_pl, hdr_trans, hdr_wf);
+                            draw_item_hdr(&mut render_pass, *item_idx, item, solid_pl, hdr_trans, hdr_wf);
                         }
                     }
                 }
@@ -2524,12 +2539,13 @@ impl ViewportRenderer {
                         && (i.settings.opacity < 1.0 || i.material.is_blend())
                         && (i.active_attribute.is_some()
                             || i.material.is_two_sided()
-                            || i.material.matcap_id().is_some())
+                            || i.material.matcap_id().is_some()
+                            || i.material.param_vis.is_some())
                 })
         } else {
             scene_items
                 .iter()
-                .any(|i| !i.settings.hidden && i.settings.opacity < 1.0)
+                .any(|i| !i.settings.hidden && (i.settings.opacity < 1.0 || i.material.is_blend()))
         } || frame
             .scene
             .transparent_volume_meshes
@@ -2672,7 +2688,7 @@ impl ViewportRenderer {
                     if let Some(ref pipeline) = self.resources.oit_pipeline {
                         oit_pass.set_pipeline(pipeline);
                         let mut last_skinned = false;
-                        for item in scene_items {
+                        for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || (item.settings.opacity >= 1.0 && !item.material.is_blend())
                             {
@@ -2703,7 +2719,12 @@ impl ViewportRenderer {
                                 }
                                 last_skinned = want_skinned;
                             }
-                            oit_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            let obj_bg = self
+                                .per_item_object_bind_groups
+                                .get(item_idx)
+                                .and_then(|opt| opt.as_ref())
+                                .unwrap_or(&mesh.object_bind_group);
+                            oit_pass.set_bind_group(1, obj_bg, &[]);
                             if let Some(bg) = skin_bg {
                                 oit_pass.set_bind_group(2, bg, &[]);
                             }
@@ -2718,8 +2739,10 @@ impl ViewportRenderer {
                 } else if let Some(ref pipeline) = self.resources.oit_pipeline {
                     oit_pass.set_pipeline(pipeline);
                     let mut last_skinned = false;
-                    for item in scene_items {
-                        if item.settings.hidden || item.settings.opacity >= 1.0 {
+                    for (item_idx, item) in scene_items.iter().enumerate() {
+                        if item.settings.hidden
+                            || (item.settings.opacity >= 1.0 && !item.material.is_blend())
+                        {
                             continue;
                         }
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
@@ -2740,7 +2763,12 @@ impl ViewportRenderer {
                             }
                             last_skinned = want_skinned;
                         }
-                        oit_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                        let obj_bg = self
+                            .per_item_object_bind_groups
+                            .get(item_idx)
+                            .and_then(|opt| opt.as_ref())
+                            .unwrap_or(&mesh.object_bind_group);
+                        oit_pass.set_bind_group(1, obj_bg, &[]);
                         if let Some(bg) = skin_bg {
                             oit_pass.set_bind_group(2, bg, &[]);
                         }

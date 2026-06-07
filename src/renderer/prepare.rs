@@ -809,7 +809,17 @@ impl ViewportRenderer {
             || has_normal_vis_items
             || has_override_items
         {
-            for item in scene_items {
+            // Make sure the per-item object pool can index every scene item.
+            // Pool entries for items that go through the instanced path stay None.
+            if self.per_item_object_bind_groups.len() < scene_items.len() {
+                self.per_item_object_bind_groups
+                    .resize_with(scene_items.len(), || None);
+            }
+            if self.per_item_object_cache_keys.len() < scene_items.len() {
+                self.per_item_object_cache_keys
+                    .resize(scene_items.len(), 0);
+            }
+            for (item_idx, item) in scene_items.iter().enumerate() {
                 // When instancing is active, skip items that will be rendered
                 // via the instanced path. They don't need per-object uniform
                 // writes; writing them anyway causes O(n) write_buffer calls
@@ -1051,6 +1061,53 @@ impl ViewportRenderer {
                     item.material.metallic_roughness_texture_id,
                     item.material.emissive_texture_id,
                 );
+
+                // Per-item object pool: ensure this slot has its own uniform buffer +
+                // bind group keyed on the item's position in scene_items. Multiple
+                // scene items can share the same MeshId; the mesh's shared
+                // object_uniform_buf above is stomped by whichever item wrote last,
+                // so we maintain this parallel pool to guarantee each item draws
+                // with its own transform/material.
+                {
+                    let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
+                    while self.per_item_object_uniform_bufs.len() <= item_idx {
+                        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("per_item_object_uniform"),
+                            size: uniform_size,
+                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        });
+                        self.per_item_object_uniform_bufs.push(buf);
+                    }
+                    queue.write_buffer(
+                        &self.per_item_object_uniform_bufs[item_idx],
+                        0,
+                        bytemuck::cast_slice(&[obj_uniform]),
+                    );
+
+                    let built = resources.build_per_item_object_bind_group(
+                        device,
+                        item.mesh_id,
+                        &self.per_item_object_uniform_bufs[item_idx],
+                        item.material.texture_id,
+                        item.material.normal_map_id,
+                        item.material.ao_map_id,
+                        item.colourmap_id,
+                        item.active_attribute.as_ref().map(|a| a.name.as_str()),
+                        item.material.matcap_id(),
+                        item.warp_attribute.as_deref(),
+                        item.material.metallic_roughness_texture_id,
+                        item.material.emissive_texture_id,
+                    );
+                    if let Some((bg, key)) = built {
+                        let need_rebuild = self.per_item_object_bind_groups[item_idx].is_none()
+                            || self.per_item_object_cache_keys[item_idx] != key;
+                        if need_rebuild {
+                            self.per_item_object_bind_groups[item_idx] = Some(bg);
+                            self.per_item_object_cache_keys[item_idx] = key;
+                        }
+                    }
+                }
             }
         }
 

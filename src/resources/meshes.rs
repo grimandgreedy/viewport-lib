@@ -1,5 +1,4 @@
 use super::*;
-use rayon::prelude::*;
 
 /// CPU-prepared vertex stream and ancillary buffers needed to finish a mesh
 /// upload on the main thread.
@@ -1433,126 +1432,82 @@ impl ViewportGpuResources {
         let n = positions.len();
         let tri_count = indices.len() / 3;
 
-        // Accumulate sdir/tdir contributions per vertex.
-        // Above 1024 triangles: parallel fold/reduce with thread-local arrays.
-        // Below: sequential loop to avoid per-thread allocation overhead.
-        let (tan1, tan2) = if tri_count >= 1024 {
-            indices
-                .par_chunks(3)
-                .fold(
-                    || (vec![[0.0f32; 3]; n], vec![[0.0f32; 3]; n]),
-                    |(mut t1, mut t2), chunk| {
-                        if chunk.len() < 3 {
-                            return (t1, t2);
-                        }
-                        let i0 = chunk[0] as usize;
-                        let i1 = chunk[1] as usize;
-                        let i2 = chunk[2] as usize;
+        // Accumulate sdir/tdir contributions per vertex. Sequential.
+        //
+        // **Do not** use rayon parallel iterators in this function. This
+        // routine is already invoked from a rayon worker — every mesh
+        // upload runs `prep_mesh_data → compute_tangents` inside a
+        // `submit_cpu` job (see `upload_jobs::Runner::submit_cpu`).
+        // Adding intra-mesh parallelism causes nested rayon work:
+        // a worker enters `par_chunks(3).fold(...)`, parks at a join,
+        // steals another mesh's upload (which itself enters compute_tangents
+        // and parks again), and so on. Each suspension keeps frames on
+        // the worker's 2 MB stack; with the upload queue draining
+        // concurrent tangent tasks, stack depth grows unboundedly and
+        // overflows.
+        //
+        // The pathology was observed on the Leartes Roman Street pack
+        // loaded by `drake-demo-aaa --example romanstreet_district`:
+        // hero statues 16–27 MB FBX, ~500 k tri each, ~3 000
+        // simultaneous mesh-prep jobs. The stack-overflow backtrace
+        // showed `compute_tangents +432` (the Gram-Schmidt collect) and
+        // `compute_tangents +184` (the par_chunks fold) interleaved at
+        // many stack levels — the signature of work-stealing while
+        // suspended inside a parallel iter.
+        //
+        // The function is cache-friendly and runs at ~30 ns / triangle
+        // sequentially (≈ 15 ms for a 500 k-tri mesh). Per-mesh
+        // parallelism comes from the upload job pool, not from inside
+        // this function.
+        let mut tan1 = vec![[0.0f32; 3]; n];
+        let mut tan2 = vec![[0.0f32; 3]; n];
+        for t in 0..tri_count {
+            let i0 = indices[t * 3] as usize;
+            let i1 = indices[t * 3 + 1] as usize;
+            let i2 = indices[t * 3 + 2] as usize;
 
-                        let p0 = positions[i0];
-                        let p1 = positions[i1];
-                        let p2 = positions[i2];
-                        let uv0 = uvs[i0];
-                        let uv1 = uvs[i1];
-                        let uv2 = uvs[i2];
+            let p0 = positions[i0];
+            let p1 = positions[i1];
+            let p2 = positions[i2];
+            let uv0 = uvs[i0];
+            let uv1 = uvs[i1];
+            let uv2 = uvs[i2];
 
-                        let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-                        let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-                        let du1 = uv1[0] - uv0[0];
-                        let dv1 = uv1[1] - uv0[1];
-                        let du2 = uv2[0] - uv0[0];
-                        let dv2 = uv2[1] - uv0[1];
+            let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+            let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+            let du1 = uv1[0] - uv0[0];
+            let dv1 = uv1[1] - uv0[1];
+            let du2 = uv2[0] - uv0[0];
+            let dv2 = uv2[1] - uv0[1];
 
-                        let det = du1 * dv2 - du2 * dv1;
-                        if det.abs() < 1e-10 {
-                            return (t1, t2);
-                        }
-                        let r = 1.0 / det;
+            let det = du1 * dv2 - du2 * dv1;
+            if det.abs() < 1e-10 {
+                continue;
+            }
+            let r = 1.0 / det;
 
-                        let sdir = [
-                            (dv2 * e1[0] - dv1 * e2[0]) * r,
-                            (dv2 * e1[1] - dv1 * e2[1]) * r,
-                            (dv2 * e1[2] - dv1 * e2[2]) * r,
-                        ];
-                        let tdir = [
-                            (du1 * e2[0] - du2 * e1[0]) * r,
-                            (du1 * e2[1] - du2 * e1[1]) * r,
-                            (du1 * e2[2] - du2 * e1[2]) * r,
-                        ];
+            let sdir = [
+                (dv2 * e1[0] - dv1 * e2[0]) * r,
+                (dv2 * e1[1] - dv1 * e2[1]) * r,
+                (dv2 * e1[2] - dv1 * e2[2]) * r,
+            ];
+            let tdir = [
+                (du1 * e2[0] - du2 * e1[0]) * r,
+                (du1 * e2[1] - du2 * e1[1]) * r,
+                (du1 * e2[2] - du2 * e1[2]) * r,
+            ];
 
-                        for &vi in &[i0, i1, i2] {
-                            for k in 0..3 {
-                                t1[vi][k] += sdir[k];
-                                t2[vi][k] += tdir[k];
-                            }
-                        }
-                        (t1, t2)
-                    },
-                )
-                .reduce(
-                    || (vec![[0.0f32; 3]; n], vec![[0.0f32; 3]; n]),
-                    |(mut a1, mut a2), (b1, b2)| {
-                        for i in 0..n {
-                            for k in 0..3 {
-                                a1[i][k] += b1[i][k];
-                                a2[i][k] += b2[i][k];
-                            }
-                        }
-                        (a1, a2)
-                    },
-                )
-        } else {
-            let mut tan1 = vec![[0.0f32; 3]; n];
-            let mut tan2 = vec![[0.0f32; 3]; n];
-            for t in 0..tri_count {
-                let i0 = indices[t * 3] as usize;
-                let i1 = indices[t * 3 + 1] as usize;
-                let i2 = indices[t * 3 + 2] as usize;
-
-                let p0 = positions[i0];
-                let p1 = positions[i1];
-                let p2 = positions[i2];
-                let uv0 = uvs[i0];
-                let uv1 = uvs[i1];
-                let uv2 = uvs[i2];
-
-                let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-                let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-                let du1 = uv1[0] - uv0[0];
-                let dv1 = uv1[1] - uv0[1];
-                let du2 = uv2[0] - uv0[0];
-                let dv2 = uv2[1] - uv0[1];
-
-                let det = du1 * dv2 - du2 * dv1;
-                if det.abs() < 1e-10 {
-                    continue;
-                }
-                let r = 1.0 / det;
-
-                let sdir = [
-                    (dv2 * e1[0] - dv1 * e2[0]) * r,
-                    (dv2 * e1[1] - dv1 * e2[1]) * r,
-                    (dv2 * e1[2] - dv1 * e2[2]) * r,
-                ];
-                let tdir = [
-                    (du1 * e2[0] - du2 * e1[0]) * r,
-                    (du1 * e2[1] - du2 * e1[1]) * r,
-                    (du1 * e2[2] - du2 * e1[2]) * r,
-                ];
-
-                for &vi in &[i0, i1, i2] {
-                    for k in 0..3 {
-                        tan1[vi][k] += sdir[k];
-                        tan2[vi][k] += tdir[k];
-                    }
+            for &vi in &[i0, i1, i2] {
+                for k in 0..3 {
+                    tan1[vi][k] += sdir[k];
+                    tan2[vi][k] += tdir[k];
                 }
             }
-            (tan1, tan2)
-        };
+        }
 
-        // Gram-Schmidt orthogonalization per vertex -- trivially parallel.
+        // Gram-Schmidt orthogonalization per vertex. Sequential, for the
+        // same nested-rayon reason as above.
         (0..n)
-            .into_par_iter()
             .map(|i| {
                 let n_v = normals[i];
                 let t = tan1[i];

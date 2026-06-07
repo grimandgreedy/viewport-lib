@@ -2,6 +2,39 @@
 
 ## [Unreleased Changes]
 
+### Per-object draw path no longer collapses shared-mesh instances
+
+The per-object draw path (used for two-sided, matcap, param_vis, scalar
+attribute, override, and wireframe items) wrote every item's `ObjectUniform`
+into `mesh.object_uniform_buf`, which is one buffer per `MeshId`. When N
+scene nodes shared a mesh, only the last write's transform survived, so only
+one instance ever drew.
+
+`ViewportRenderer` now maintains a per-scene-item pool of object uniform
+buffers and bind groups, indexed by position in the scene-items list. Each
+bind group pairs the per-item uniform with the mesh's real textures, LUT,
+matcap, scalar, and override buffers. The pool grows lazily and uses a cache
+key so unchanged items skip the rebuild.
+
+The LDR, HDR scene, and OIT per-object loops bind the per-item bind group in
+place of `mesh.object_bind_group`. The shared `mesh.object_bind_group` is
+still updated for compatibility with shadow passes and other consumers.
+
+### Excluded-item filter consistency across LDR, HDR, and OIT
+
+Four related gaps in the filters that decide which items get per-object draws
+are fixed:
+
+- LDR excluded-items filter now includes `matcap_id`. Previously a matcap-only
+  item was excluded from instancing in `prepare` but never drawn in LDR.
+- HDR excluded-items filter and the `has_transparent` instancing-branch
+  predicate now include `param_vis`. Previously a `param_vis`-only item was
+  invisible in HDR.
+- The non-instancing HDR `has_transparent` check and the per-object OIT loop
+  guard now accept `material.is_blend()` items at opacity 1.0. Previously a
+  fully opaque blend item was sorted out of the scene pass and then skipped in
+  OIT, leaving it invisible.
+
 ### GPU cull service is now multi-batch
 
 `CullSubmission` carries the per-batch metadata buffer + per-batch atomic

@@ -343,6 +343,20 @@ pub struct ViewportRenderer {
     /// the per-item uniform buffer with the mesh's fallback textures so it is
     /// compatible with the object bind group layout.
     wireframe_bind_groups: Vec<wgpu::BindGroup>,
+    /// Per-scene-item uniform buffers for the per-object draw path. Multiple scene
+    /// items can share the same MeshId, but each needs its own object uniform
+    /// (model matrix, colour, etc.). The mesh's single `object_uniform_buf` is
+    /// stomped by the last item prepared, so we maintain a parallel pool indexed
+    /// by position in `scene_items`. Grown lazily, never shrunk.
+    per_item_object_uniform_bufs: Vec<wgpu::Buffer>,
+    /// Bind groups corresponding to `per_item_object_uniform_bufs`. Each pairs the
+    /// per-item uniform buffer with the mesh's real textures, LUT, matcap, scalar
+    /// buffer, etc. -- the same resources that `mesh.object_bind_group` references,
+    /// just with binding 0 swapped for the per-item uniform.
+    per_item_object_bind_groups: Vec<Option<wgpu::BindGroup>>,
+    /// Cache keys for `per_item_object_bind_groups`. When the key matches we only
+    /// write the uniform; otherwise we rebuild the bind group.
+    per_item_object_cache_keys: Vec<u64>,
     /// Per-frame list of boundary mesh IDs to draw in wireframe for
     /// TransparentVolumeMeshItems with `appearance.wireframe = true`.
     /// Cleared and rebuilt each frame in prepare_scene_internal.
@@ -567,6 +581,9 @@ impl ViewportRenderer {
             compute_filter_results: Vec::new(),
             wireframe_uniform_bufs: Vec::new(),
             wireframe_bind_groups: Vec::new(),
+            per_item_object_uniform_bufs: Vec::new(),
+            per_item_object_bind_groups: Vec::new(),
+            per_item_object_cache_keys: Vec::new(),
             tvm_wireframe_draws: Vec::new(),
             tvm_wireframe_buf: None,
             tvm_wireframe_bg: None,
@@ -1965,7 +1982,8 @@ impl ViewportRenderer {
             grid_bg,
             &self.compute_filter_results,
             vp_slot,
-            &self.wireframe_bind_groups
+            &self.wireframe_bind_groups,
+            &self.per_item_object_bind_groups
         );
         emit_scivis_draw_calls!(
             &self.resources,

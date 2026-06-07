@@ -148,7 +148,7 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
@@ -160,6 +160,10 @@ macro_rules! emit_draw_calls {
         let camera_bg: &wgpu::BindGroup = $camera_bg;
         let grid_bg: &wgpu::BindGroup = $grid_bg;
         let wireframe_bind_groups: &[wgpu::BindGroup] = $wireframe_bgs;
+        // Per-item object bind groups indexed by position in scene_items. Each combines
+        // a per-item ObjectUniform buffer with the mesh's real textures/LUT/matcap.
+        // Items routed through the instanced path have None here and use mesh.object_bind_group.
+        let per_item_object_bind_groups: &[Option<wgpu::BindGroup>] = $per_item_bgs;
 
         // Read scene items from the surface submission.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
@@ -192,12 +196,14 @@ macro_rules! emit_draw_calls {
 
             if !scene_items.is_empty() {
                 if use_instancing && !batches.is_empty() {
-                    let excluded_items: Vec<&SceneRenderItem> = scene_items
+                    let excluded_items: Vec<(usize, &SceneRenderItem)> = scene_items
                         .iter()
-                        .filter(|item| {
+                        .enumerate()
+                        .filter(|(_, item)| {
                             !item.settings.hidden
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
+                                    || item.material.matcap_id().is_some()
                                     || item.material.param_vis.is_some()
                                     || (item.skin_instance.is_some()
                                         && resources.is_skinned_mesh(item.mesh_id)))
@@ -298,7 +304,8 @@ macro_rules! emit_draw_calls {
                         // using the transparent (alpha-blend) pipeline. HDR instead routes
                         // transparent excluded items to the OIT pass in render_frame_internal
                         // so they composite correctly with the HDR transparency model.
-                        for item in &excluded_items {
+                        for (item_idx, item) in &excluded_items {
+                            let item_idx = *item_idx;
                             let Some(mesh) = resources
                                 .mesh_store
                                 .get(item.mesh_id)
@@ -330,7 +337,7 @@ macro_rules! emit_draw_calls {
                                 &resources.solid_pipeline
                             };
                             render_pass.set_pipeline(pipeline);
-                            render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
 
                             let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
                                 matches!(
@@ -360,7 +367,8 @@ macro_rules! emit_draw_calls {
                 // --- Per-object draw path (original) ---
                 let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
 
-                let dist_from_eye = |item: &&SceneRenderItem| -> f32 {
+                let dist_from_eye = |entry: &(usize, &SceneRenderItem)| -> f32 {
+                    let item = entry.1;
                     let pos = glam::Vec3::new(
                         item.model[3][0],
                         item.model[3][1],
@@ -369,26 +377,26 @@ macro_rules! emit_draw_calls {
                     (pos - eye).length()
                 };
 
-                let mut opaque: Vec<&SceneRenderItem> = Vec::new();
-                let mut transparent: Vec<&SceneRenderItem> = Vec::new();
-                for item in scene_items {
+                let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
+                let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
+                for (idx, item) in scene_items.iter().enumerate() {
                     if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                         continue;
                     }
                     if item.settings.opacity < 1.0 {
-                        transparent.push(item);
+                        transparent.push((idx, item));
                     } else {
-                        opaque.push(item);
+                        opaque.push((idx, item));
                     }
                 }
                 opaque.sort_by(|a, b| dist_from_eye(a).partial_cmp(&dist_from_eye(b)).unwrap_or(std::cmp::Ordering::Equal));
                 transparent.sort_by(|a, b| dist_from_eye(b).partial_cmp(&dist_from_eye(a)).unwrap_or(std::cmp::Ordering::Equal));
 
                 macro_rules! draw_item {
-                    ($item:expr, $pipeline:expr) => {{
-                        let item = $item;
+                    ($entry:expr, $pipeline:expr) => {{
+                        let (item_idx, item): (usize, &SceneRenderItem) = $entry;
                         let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
-                        render_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                        render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
 
                         // Skinned routing: if the mesh has a skin sidecar and
                         // this item's instance has a palette uploaded, draw
@@ -483,16 +491,16 @@ macro_rules! emit_draw_calls {
                     }};
                 }
 
-                for item in &opaque {
-                    let pl = if item.material.is_two_sided() {
+                for entry in &opaque {
+                    let pl = if entry.1.material.is_two_sided() {
                         &resources.solid_two_sided_pipeline
                     } else {
                         &resources.solid_pipeline
                     };
-                    draw_item!(item, pl);
+                    draw_item!((entry.0, entry.1), pl);
                 }
-                for item in &transparent {
-                    draw_item!(item, &resources.transparent_pipeline);
+                for entry in &transparent {
+                    draw_item!((entry.0, entry.1), &resources.transparent_pipeline);
                 }
             }
         }

@@ -599,6 +599,202 @@ impl ViewportGpuResources {
         mesh.last_tex_key = key;
     }
 
+    /// Build an object bind group that pairs an external per-item uniform buffer with
+    /// the mesh's textures/LUT/matcap/scalar/override resources. Returns the bind group
+    /// and the cache key that was used to construct it.
+    ///
+    /// This mirrors the resource-resolution in `update_mesh_texture_bind_group`, but
+    /// reads from a caller-supplied uniform buffer instead of the mesh's shared
+    /// `object_uniform_buf`. The per-object draw path uses one of these per scene item
+    /// so that items sharing a `MeshId` each get their own transform.
+    pub(crate) fn build_per_item_object_bind_group(
+        &self,
+        device: &wgpu::Device,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        item_uniform_buf: &wgpu::Buffer,
+        albedo_id: Option<u64>,
+        normal_map_id: Option<u64>,
+        ao_map_id: Option<u64>,
+        lut_id: Option<ColourmapId>,
+        active_attr: Option<&str>,
+        matcap_id: Option<crate::resources::MatcapId>,
+        warp_attr: Option<&str>,
+        metallic_roughness_id: Option<u64>,
+        emissive_texture_id: Option<u64>,
+    ) -> Option<(wgpu::BindGroup, u64)> {
+        let hash_str = |name: &str| -> u64 {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            name.hash(&mut h);
+            h.finish()
+        };
+        let attr_hash = active_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
+        let warp_hash = warp_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
+
+        let mesh = self.mesh_store.get(mesh_id)?;
+        let pos_override_gen = mesh.position_override_gen;
+        let nrm_override_gen = mesh.normal_override_gen;
+
+        let cache_key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            mesh_id.index().hash(&mut h);
+            albedo_id.unwrap_or(u64::MAX).hash(&mut h);
+            normal_map_id.unwrap_or(u64::MAX).hash(&mut h);
+            ao_map_id.unwrap_or(u64::MAX).hash(&mut h);
+            lut_id.map(|id| id.0 as u64).unwrap_or(u64::MAX).hash(&mut h);
+            attr_hash.hash(&mut h);
+            matcap_id
+                .map(|id| id.index as u64)
+                .unwrap_or(u64::MAX)
+                .hash(&mut h);
+            warp_hash.hash(&mut h);
+            metallic_roughness_id.unwrap_or(u64::MAX).hash(&mut h);
+            emissive_texture_id.unwrap_or(u64::MAX).hash(&mut h);
+            pos_override_gen.hash(&mut h);
+            nrm_override_gen.hash(&mut h);
+            h.finish()
+        };
+
+        let albedo_view = match albedo_id {
+            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            _ => &self.fallback_texture.view,
+        };
+        let normal_view = match normal_map_id {
+            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            _ => &self.fallback_normal_map_view,
+        };
+        let ao_view = match ao_map_id {
+            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            _ => &self.fallback_ao_map_view,
+        };
+        let lut_view = match lut_id {
+            Some(id) if id.0 < self.colourmap_views.len() => &self.colourmap_views[id.0],
+            _ => &self.fallback_lut_view,
+        };
+
+        let scalar_buf: &wgpu::Buffer = match active_attr {
+            Some(name) => {
+                let found_vertex = mesh.attribute_buffers.get(name);
+                let found_face = mesh.face_attribute_buffers.get(name);
+                found_vertex
+                    .or(found_face)
+                    .unwrap_or(&self.fallback_scalar_buf)
+            }
+            None => &self.fallback_scalar_buf,
+        };
+
+        let face_colour_buf: &wgpu::Buffer = match active_attr {
+            Some(name) => mesh
+                .face_colour_buffers
+                .get(name)
+                .unwrap_or(&self.fallback_face_colour_buf),
+            None => &self.fallback_face_colour_buf,
+        };
+
+        let matcap_view: &wgpu::TextureView = match matcap_id {
+            Some(id) if id.index < self.matcap_views.len() => &self.matcap_views[id.index],
+            _ => self
+                .fallback_matcap_view
+                .as_ref()
+                .unwrap_or(&self.fallback_texture.view),
+        };
+
+        let warp_buf: &wgpu::Buffer = match warp_attr {
+            Some(name) => mesh
+                .vector_attribute_buffers
+                .get(name)
+                .unwrap_or(&self.fallback_warp_buf),
+            None => &self.fallback_warp_buf,
+        };
+
+        let position_override_buf: &wgpu::Buffer = mesh
+            .position_override_buffer
+            .as_ref()
+            .unwrap_or(&self.fallback_position_override_buf);
+        let normal_override_buf: &wgpu::Buffer = mesh
+            .normal_override_buffer
+            .as_ref()
+            .unwrap_or(&self.fallback_normal_override_buf);
+
+        let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
+            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            _ => &self.fallback_metallic_roughness_texture_view,
+        };
+        let emissive_view: &wgpu::TextureView = match emissive_texture_id {
+            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            _ => &self.fallback_emissive_texture_view,
+        };
+
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("per_item_object_bind_group"),
+            layout: &self.object_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: item_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(albedo_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(ao_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(lut_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: scalar_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(matcap_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: face_colour_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: warp_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(metallic_roughness_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::TextureView(emissive_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: position_override_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: normal_override_buf.as_entire_binding(),
+                },
+            ],
+        });
+        Some((bg, cache_key))
+    }
+
     /// Upload a 256-sample RGBA colourmap to the GPU and return its `ColourmapId`.
     ///
     /// The returned ID can be stored in `SceneRenderItem::colourmap_id`.
