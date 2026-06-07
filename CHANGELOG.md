@@ -2,177 +2,58 @@
 
 ## [Unreleased Changes]
 
-### Per-object draw path no longer collapses shared-mesh instances
+## [0.17.0]
 
-The per-object draw path (used for two-sided, matcap, param_vis, scalar
-attribute, override, and wireframe items) wrote every item's `ObjectUniform`
-into `mesh.object_uniform_buf`, which is one buffer per `MeshId`. When N
-scene nodes shared a mesh, only the last write's transform survived, so only
-one instance ever drew.
+### Features
 
-`ViewportRenderer` now maintains a per-scene-item pool of object uniform
-buffers and bind groups, indexed by position in the scene-items list. Each
-bind group pairs the per-item uniform with the mesh's real textures, LUT,
-matcap, scalar, and override buffers. The pool grows lazily and uses a cache
-key so unchanged items skip the rebuild.
+#### Async upload jobs
 
-The LDR, HDR scene, and OIT per-object loops bind the per-item bind group in
-place of `mesh.object_bind_group`. The shared `mesh.object_bind_group` is
-still updated for compatibility with shadow passes and other consumers.
+Long-running uploads can run on a background thread without freezing the viewport. The renderer owns a job runner that workers report to via a channel; the main thread drains completions once per frame from `prepare_scene`. Each call returns a `JobId` immediately; consumers poll `upload_status(JobId)` or attach a completion callback, then take the resulting handle with `upload_result_*(JobId)`. The synchronous `upload_*` entries keep their signatures and are now thin wrappers that submit a job and wait.
 
-### Excluded-item filter consistency across LDR, HDR, and OIT
+Async entry points are wired up for every upload that previously blocked the main thread:
 
-Four related gaps in the filters that decide which items get per-object draws
-are fixed:
+- Environment maps (`begin_upload_environment_map`). Irradiance convolution, GGX prefilter, and BRDF LUT generation run on a worker. The GPU compute path no longer blocks on `device.poll`. The BRDF LUT is cached after its first generation.
+- Mesh data (`begin_upload_mesh_data`). Tangent computation, vertex repack, and normal-line generation move to a worker.
+- Skin weights (`begin_upload_skin_weights`).
+- Textures and normal maps (`begin_upload_texture`, `begin_upload_normal_map`).
+- Gaussian splats (`begin_upload_gaussian_splats`) and overlay textures (`begin_upload_overlay_texture`).
+- Volume meshes: `begin_upload_volume_mesh_data`, `begin_upload_clipped_volume_mesh_data`, `begin_upload_sparse_volume_grid_data`, `begin_upload_projected_tet_mesh`.
+- Volumes: `begin_upload_volume` and `begin_upload_volume_for_mc`.
+- The four curve types: `begin_upload_polyline`, `_streamtube`, `_tube`, `_ribbon`.
 
-- LDR excluded-items filter now includes `matcap_id`. Previously a matcap-only
-  item was excluded from instancing in `prepare` but never drawn in LDR.
-- HDR excluded-items filter and the `has_transparent` instancing-branch
-  predicate now include `param_vis`. Previously a `param_vis`-only item was
-  invisible in HDR.
-- The non-instancing HDR `has_transparent` check and the per-object OIT loop
-  guard now accept `material.is_blend()` items at opacity 1.0. Previously a
-  fully opaque blend item was sorted out of the scene pass and then skipped in
-  OIT, leaving it invisible.
+Three scene-item categories also gain a pre-upload + per-frame reference workflow (own an id, submit a lightweight ref item each frame): point clouds (`PointCloudId`), glyph sets (`GlyphSetId`), tensor glyph sets (`TensorGlyphSetId`), and two sprite variants for non-particle use (`SpriteSetId` for static billboards, `SpriteInstanceSetId` for entity sprites). `SceneFrame` gains matching `*_refs` fields. `GlyphUniform` and `TensorGlyphUniform` now carry a per-frame `model` matrix at offset 0; existing per-frame consumers see identical output.
 
-### GPU cull service is now multi-batch
+Public types: `JobId`, `UploadStatus`, `ProgressHandle`, `ResultSlot`. New methods on `ViewportGpuResources` and `ViewportRenderer`: `process_uploads`, `upload_status`, `uploads_pending`, `all_uploads_complete`, `on_upload_complete`. `ViewportRenderer::rebuild_camera_bind_groups` is now public so consumers driving `begin_upload_environment_map` can rebuild bind groups themselves once the job lands.
 
-`CullSubmission` carries the per-batch metadata buffer + per-batch atomic
-counter buffer + per-batch indirect-draw buffer alongside the instance AABB
-list, and one call dispatches the cull compute for every batch in the
-submission. The single-batch `CullSubmission` fields (`index_count`,
-`first_index`, `base_vertex`, `first_instance`) are gone; per-mesh draw
-parameters now live in `BatchMeta`, which is published from
-`plugin_api::cull` so plugin authors can fill the buffer directly.
+Showcase 51 (`eframe-showcase`) demonstrates the system end to end with a sync vs async toggle, per-asset progress bars, and an in-flight count read from the same public API a consumer would use.
 
-For one-mesh-N-instances plugins, `submit_cull_single_mesh` and
-`submit_cull_shadow_single_mesh` keep the simple call shape: the renderer
-fills its scratch `BatchMeta` slot and counter from a `SingleMeshDraw` and
-calls `submit_cull` internally. Plugins don't have to allocate either
-buffer for the single-mesh case.
+#### Item-type plugins
 
-The lib's own opaque, transparent, and shadow cascade culls go through the
-same `submit_cull` path as plugins. The four-method dispatch surface on
-`CullResources` collapses to one.
+Plugins can ship a new kind of scene item without forking the lib. New categories register through an `ItemTypePlugin` trait and submit their per-frame data via `SceneFrame::submit_plugin_items`. The lib handles picking, selection outline, frustum cull, clip volumes, shadow casting, and OIT transparency for plugin items the same way it handles built-ins. Published WGSL helpers for lighting, transparency, and clipping keep plugin shaders in sync with the renderer.
 
-### Residual Y-up fixes
+#### Plugin-facing job API
 
-Several leftover Y-up assumptions are corrected to match the library's Z-up convention.
+`ItemTypePlugin` implementations can submit background work through the same runner the built-in uploads use. `ItemFrameContext` gains a `jobs: Jobs<'a>` field with `submit_cpu<T, F>`, `status`, and `take<T: 'static>`. The plugin trait surface is otherwise unchanged: a job submitted in frame N is consumable in frame N+1. A worked example lives at `viewport-lib-terrain/examples/eframe_plugin_jobs.rs`.
 
-- Hemisphere ambient now uses `world_normal.z` in `mesh.wgsl`, `mesh_oit.wgsl`, `mesh_instanced.wgsl`, and `mesh_instanced_oit.wgsl` (8 sites). Sky-facing surfaces now receive `sky_colour` and ground-facing surfaces receive `ground_colour`; previously the gradient was rotated 90 degrees.
-- Shadow up-vector fallbacks in `renderer/prepare.rs` (directional, point, spot) and `scene/light_glyphs.rs` use `Vec3::X` instead of `Vec3::Y` when the light direction is collinear with Z. `Vec3::Y` happened to be perpendicular to a +Z light but produced unstable `look_at_rh` bases under small rotations.
-- `build_glyph_arrow` is rebuilt along +Z (positions, cone-tip and cone-cap normals, side-ring normal axis). `GlyphItem` arrows and the directional/spot light glyphs now point along the supplied vector instead of being rotated into the Y axis. The `GlyphItem` per-instance vector fallback is now `[0, 0, 1]`.
-- Placeholder pick-hit normals for curve types (polyline, tube, ribbon, streamtube) are `Vec3::Z`, and the clip-plane test helper default matches the production default.
+### Improvements
 
-### Async upload jobs
-
-Long-running uploads can run on a background thread without freezing the viewport. The renderer owns a job runner that workers report to via a channel; the main thread drains completions once per frame from inside the prepare path. Each job carries an optional GPU submission to gate on and an optional apply step that mutates renderer state once the worker (and any GPU work) has finished. Callers query progress via a per-job `UploadStatus` or attach a completion callback.
-
-Public types: `JobId`, `UploadStatus`, `ProgressHandle`, `ResultSlot`. New methods on `ViewportGpuResources`: `process_uploads`, `upload_status`, `uploads_pending`, `all_uploads_complete`, `on_upload_complete`. The runner is wired into `prepare_scene` alongside the existing pending-texture drain so completion is observable on the next frame.
-
-Environment-map upload is the first consumer. `ViewportRenderer::begin_upload_environment_map` returns a `JobId` immediately; the synchronous `upload_environment_map` keeps its signature and is now a thin wrapper that submits a job and waits for `Ready`. The CPU path runs irradiance convolution, GGX prefilter, and BRDF LUT generation on a worker, queues writes, and submits a flush to gate completion. The GPU compute path no longer blocks on `device.poll`; `ibl_compute::compute_ibl` returns the submission index and the runner gates on it. The BRDF LUT is still computed once and reused across env-map swaps.
-
-Mesh uploads gain the same shape. `ViewportRenderer::begin_upload_mesh_data` returns a `JobId`; tangent computation, vertex repack, and normal-line generation run on a worker thread. The main-thread apply step creates buffers and bind groups, inserts the mesh into the store, and publishes the new `MeshId` into a typed result slot. The consumer takes the id with `upload_result_mesh(JobId)`, which returns `JobNotReady` while the worker is still running and `JobResultMissing` for ids that have been taken, were never issued, or belong to a different upload type. The synchronous `upload_mesh_data` keeps its signature and is unchanged for callers who do not need async behaviour.
-
-Skin weights have an async entry too. `begin_upload_skin_weights` on `ViewportGpuResources` returns a `JobId`; the per-vertex pack (joint indices and blend weights into the GPU layout) runs on a worker thread, with buffer creation and the per-mesh skinning install applied on the main thread. The function has no return value, so no `upload_result_*` is needed: once the job reports `Ready`, the mesh is marked skinnable. The synchronous `set_skin_weights` keeps its signature and now shares its install path with the async route.
-
-Texture uploads consolidate on the same shape. `begin_upload_texture` and `begin_upload_normal_map` on both `ViewportRenderer` and `ViewportGpuResources` return a `JobId`; the worker creates the GPU texture, sampler, and bind group on cloned device/queue handles and queues `write_texture` with the pixel data, then submits a flush that the runner gates the job on. Take the resulting texture id with `upload_result_texture`. The synchronous `upload_texture` and `upload_normal_map` keep their signatures and behaviour.
-
-### Removed: legacy async texture API
-
-The earlier async-texture path is removed. `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the internal `submit_pending_texture_uploads` drain are gone, along with the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
-
-#### Async one-shot uploads
-
-`begin_upload_gaussian_splats(device, queue, GaussianSplatData) -> ViewportResult<JobId>` and `upload_result_gaussian_splats(JobId) -> ViewportResult<GaussianSplatId>` move the vec4-padding for positions / scales / rotations plus all storage-buffer creation and writes (positions, scales, rotations, opacities, SH coefficients) onto the worker thread. Validation (empty list, mismatched per-attribute lengths) runs synchronously and returns `InvalidGaussianSplatData` before any job is submitted.
-
-`begin_upload_overlay_texture(device, queue, width, height, Vec<u8>) -> ViewportResult<JobId>` and `upload_result_overlay_texture(JobId) -> ViewportResult<OverlayTextureId>` do the same for `upload_overlay_texture`: texture creation and `queue.write_texture` run on the worker; the apply step inserts the `OverlayShapeTextureEntry` into the store. `InvalidTextureData` is returned synchronously when `rgba_data.len() != width * height * 4`.
-
-Sync `upload_gaussian_splats` and `upload_overlay_texture` keep their signatures.
-
-#### Pre-uploaded sprite types
-
-Sprite uploads gain a pre-upload + ref-item workflow for the two non-particle use cases. The per-frame `SpriteItem` particle path is unchanged.
-
-- `SpriteSetId` backs static billboards (foliage, signage, light flares). `upload_sprite_set` / `drop_sprite_set` / `replace_sprite_set` / `begin_upload_sprite_set` / `upload_result_sprite_set` mirror the C1 curve pattern. Submit a `SpriteSetRefItem` on `SceneFrame::sprite_set_refs` each frame.
-- `SpriteInstanceSetId` backs entity sprites (NPCs, item drops, damage numbers). Same method shape with `_sprite_instance_set` suffixes; `SceneFrame::sprite_instance_set_refs` holds the per-frame refs. The current implementation pre-bakes both the definition and the instance transforms; full per-frame instance transform override against a stable definition is a planned follow-up.
-
-`ViewportRenderer` gains forwarders for both new id types and for the gaussian splat / overlay texture async pairs.
-
-Showcase 51 lights up four new buttons (Gaussian splats, Overlay texture, Sprite set, Sprite instances); the J5 greyed-out section is now empty. "Load a level" fires all sixteen assets.
-
-#### Async volume mesh uploads
-
-The four volume-mesh upload variants gain async entry points that move boundary extraction and vertex prep off the main thread:
-
-- `begin_upload_volume_mesh_data(device, VolumeMeshData) -> JobId` and `upload_result_volume_mesh(JobId) -> ViewportResult<(MeshId, Vec<u32>)>`. Worker runs `extract_boundary_faces` and `prep_mesh_data`; the apply step calls `assemble_mesh_data` and surfaces the face-to-cell map.
-- `begin_upload_clipped_volume_mesh_data(device, VolumeMeshData, Vec<[f32; 4]>) -> JobId` and `upload_result_clipped_volume_mesh(JobId) -> ViewportResult<(MeshId, Vec<u32>)>`. Same shape but the worker runs `extract_clipped_volume_faces` with the supplied clip planes.
-- `begin_upload_sparse_volume_grid_data(device, SparseVolumeGridData) -> JobId` and `upload_result_sparse_volume_grid(JobId) -> ViewportResult<MeshId>`. Worker runs `extract_sparse_boundary` and `prep_mesh_data`.
-- `begin_upload_projected_tet_mesh(device, VolumeMeshData, String, ColourmapId) -> JobId` and `upload_result_projected_tet_mesh(JobId) -> ViewportResult<(ProjectedTetId, f32, f32)>`. Slab decomposition and the per-chunk tet storage buffers run on the worker on a cloned `Device`; the apply step builds bind groups against the renderer's `pt_bind_group_layout` and the colourmap LUT, then inserts the mesh.
-
-Synchronous `upload_volume_mesh_data`, `upload_clipped_volume_mesh_data`, `upload_sparse_volume_grid_data`, and `upload_projected_tet_mesh` keep their signatures.
-
-#### Async volume uploads
-
-`begin_upload_volume(&Device, &Queue, Vec<f32>, [u32; 3]) -> ViewportResult<JobId>` and `upload_result_volume(JobId) -> ViewportResult<VolumeId>` move the 3D-texture creation and `queue.write_texture` for `upload_volume` onto the worker thread. The synchronous `upload_volume` keeps its signature.
-
-`begin_upload_volume_for_mc(&Device, &Queue, VolumeData) -> JobId` and `upload_result_volume_mc(JobId) -> ViewportResult<VolumeGpuId>` do the same for `upload_volume_for_mc`: slab sizing, scalar buffer allocation, and the intermediate/output buffer allocations all run on the worker. The apply step inserts the prepared `McVolumeGpuData` into the store. `McBufferTooLarge` errors come back through `UploadStatus::Failed`. A new helper `build_mc_volume_gpu_data` is factored out of the existing sync path so sync and async share the same body.
-
-A new `ViewportError::VolumeDataLengthMismatch` variant is returned synchronously from `begin_upload_volume` when `data.len() != dims[0] * dims[1] * dims[2]`.
-
-Showcase 51 lights up the "Volume" button, which uploads a 32^3 radial-falloff scalar field and submits a `VolumeItem` rendered with the default colour LUT. The button is removed from the J5-greyed section.
-
-#### Pre-uploaded point cluster types
-
-`PointCloudId`, `GlyphSetId`, and `TensorGlyphSetId` handles plus matching `upload_*` / `drop_*` / `replace_*` / `begin_upload_*` / `upload_result_*` methods extend the pre-upload pattern to the three point-cluster scivis types. `SceneFrame` gains `point_cloud_refs`, `glyph_set_refs`, and `tensor_glyph_set_refs`.
-
-All three ref item types honour the per-frame `model` matrix: the renderer rewrites the model field of the stored uniform at offset 0 each frame. `GlyphUniform` and `TensorGlyphUniform` gained a `model: mat4x4<f32>` field at offset 0 and the vertex shaders compose it on top of the per-instance transform. `GlyphItem.model` is now applied at upload (previously silently ignored) and `TensorGlyphItem.model` no longer bakes into per-instance world transforms — both feed the new uniform instead. Existing per-frame consumers see identical output because the default identity matrix is a no-op.
-
-Showcase 51 lights three new buttons (point cloud, glyph set, tensor glyph set). The "Load a level" button now fires all eleven assets.
-
-#### Pre-uploaded curve types
-
-The four curve types (polyline, streamtube, tube, ribbon) now support a pre-upload + per-frame reference workflow on top of the existing per-frame upload.
-
-Async upload entry points (`begin_upload_polyline` / `_streamtube` / `_tube` / `_ribbon`) return a `JobId`; the result is taken via `upload_result_polyline` (and friends) once the runner reports `Ready`. The synchronous `upload_*` methods continue to work for callers that submit fresh data every frame.
-
-### Plugin-facing job API
-
-`ItemTypePlugin` implementations can now submit background work through the same runner the built-in uploads use. `ItemFrameContext` gains a `jobs: Jobs<'a>` field with three methods: `submit_cpu<T, F>(work) -> JobId` schedules a CPU job that returns a value of type `T`; `status(JobId) -> UploadStatus` polls; `take<T: 'static>(JobId) -> Option<T>` retrieves the typed result once `Ready`. Results are stored as `Box<dyn Any + Send>` internally; `take` downcasts and returns `None` on a type mismatch.
-
-The plugin trait surface itself is unchanged: `init_gpu` stays synchronous, and `prepare` still takes `&ItemFrameContext`. The runner's drain runs before plugin `prepare` each frame, so a job submitted in frame N is consumable in frame N+1.
-
-A worked example lives at `viewport-lib-terrain/examples/eframe_plugin_jobs.rs`: a small `HeightStatsPlugin` that synthesises a 1024x1024 heightmap on a worker, polls the job from its `prepare`, and takes the typed result.
-
-### Showcase 51: async asset streaming
-
-A new showcase in `eframe-showcase` demonstrates the upload-job system end to end. A sync vs async toggle drives the same asset buttons; in async mode the orbit camera keeps moving while the env-map, mesh, texture, or skin-weights load on background workers. Per-asset progress bars and an in-flight count read from the same public API a consumer would use (`upload_status`, `uploads_pending`). Volume / gaussian-splat / sprite / overlay-texture buttons appear greyed out and land in a later phase.
-
-`ViewportRenderer::rebuild_camera_bind_groups` is now public so consumers driving `begin_upload_environment_map` can rebuild bind groups themselves once the job lands. The sync entry still does this internally. `upload_status`, `uploads_pending`, `all_uploads_complete`, and `on_upload_complete` also forward through `ViewportRenderer` for convenience.
-
-### Item-type plugins
-
-Plugins can ship a new kind of scene item without forking the lib. The set of renderable categories used to be fixed; new ones now register through an `ItemTypePlugin` trait and submit their per-frame data via `SceneFrame::submit_plugin_items`. The lib handles picking, selection outline, frustum cull, clip volumes, shadow casting, and OIT transparency for plugin items the same way it handles built-ins. Plugin shaders include published WGSL helpers for lighting, transparency, and clipping so they stay in sync with the rest of the renderer.
-
-### Scene-graph lights
-
-Built-in light glyphs and picking. `scene::build_light_glyphs(&scene, &selection)` returns a `GlyphItem` per scene-graph light (sphere for point, arrow for spot or directional) plus a `PolylineItem` influence-volume wireframe (range sphere or spot cone) for any selected light. 
-
-8-light cap gone. The fixed `array<Light, 8>` uniform is replaced by a per-frame storage buffer of `SingleLightUniform` entries sized to `MAX_SCENE_LIGHTS` (currently 512). When the union of `EffectsFrame::lighting.lights` and `SceneFrame::lights` exceeds the cap, the renderer keeps the first directional (the shadow caster) at index 0 and ranks the rest by `LightSource::importance * proximity_weight`, dropping the tail.
-
-### IBL upload performance
-
-`upload_environment_map` is much faster than before. The single-threaded CPU reference port still ships as the universal fallback, but it now runs in parallel and skips the work it shouldn't have been doing in the first place. A GPU compute path takes over on adapters that expose Rgba16Float storage write, dropping a multi-hundred-millisecond load-screen cost to a few milliseconds.
-
-- BRDF integration LUT is cached after its first generation rather than recomputed on every call.
-- The CPU irradiance, GGX prefilter, and BRDF LUT loops run in parallel via `rayon::par_chunks_mut` over row strides. Near-linear scaling on the number of physical cores.
-- A GPU compute path runs the three convolutions as compute dispatches. Selected at runtime when the device was created with `Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`; otherwise the (now parallelised) CPU path runs.
+- GPU cull service is now multi-batch. `CullSubmission` carries per-batch metadata, atomic counter, and indirect-draw buffers alongside the instance AABB list; one call dispatches the cull compute for every batch. Per-mesh draw parameters live in `BatchMeta`, published from `plugin_api::cull`. `submit_cull_single_mesh` and `submit_cull_shadow_single_mesh` keep the simple call shape for one-mesh-N-instances plugins. The four-method dispatch surface on `CullResources` collapses to one.
+- Scene-graph lights gain built-in glyphs and picking. `scene::build_light_glyphs(&scene, &selection)` returns a `GlyphItem` per light (sphere for point, arrow for spot/directional) plus a `PolylineItem` influence-volume wireframe for any selected light.
+- 8-light cap removed. The fixed `array<Light, 8>` uniform is replaced by a per-frame storage buffer sized to `MAX_SCENE_LIGHTS` (currently 512). When the union of `EffectsFrame::lighting.lights` and `SceneFrame::lights` exceeds the cap, the shadow-casting directional stays at index 0 and the rest are ranked by `LightSource::importance * proximity_weight`.
+- `upload_environment_map` is much faster. The CPU irradiance, GGX prefilter, and BRDF LUT loops now run in parallel via `rayon::par_chunks_mut`. A GPU compute path runs the three convolutions as compute dispatches when the device exposes Rgba16Float storage write, dropping a multi-hundred-millisecond cost to a few milliseconds.
 
 ### Bug fixes
 
+- Per-object draw path no longer collapses shared-mesh instances. The path used for two-sided, matcap, param_vis, scalar attribute, override, and wireframe items wrote every item's `ObjectUniform` into one buffer per `MeshId`, so when N scene nodes shared a mesh only the last write's transform survived. The renderer now maintains a per-scene-item pool of object uniform buffers and bind groups, indexed by position in the scene-items list, growing lazily with a cache key.
+- Excluded-item filter gaps across LDR, HDR, and OIT: the LDR filter now includes `matcap_id`, the HDR filter and `has_transparent` predicate now include `param_vis`, and the non-instancing HDR check plus per-object OIT loop now accept `material.is_blend()` items at opacity 1.0. Previously matcap-only, param_vis-only, or fully opaque blend items could be silently invisible.
 - OIT instanced pipeline: fix init-order trap where the pipeline was never created when the first frame had an empty scene. Instanced transparent geometry added on later frames is now drawn correctly.
-- Equirectangular IBL convention switched from Y-up to Z-up to match the conventions of viewport-lib.
-- `OverlayImageItem.alpha` now actually fades the image. Previously the pre-multiplied alpha blending left RGB at full intensity and only attenuated `a`, so `u.alpha` was discarded by the blend equation. Same fix incidentally corrects soft-edge PNGs.
+- Residual Y-up fixes. Hemisphere ambient now uses `world_normal.z` in `mesh.wgsl`, `mesh_oit.wgsl`, and the two instanced variants; shadow up-vector fallbacks use `Vec3::X` when the light direction is collinear with Z; `build_glyph_arrow` is rebuilt along +Z, so `GlyphItem` arrows and directional/spot light glyphs point along the supplied vector; placeholder pick-hit normals for the curve types are `Vec3::Z`.
+- Equirectangular IBL convention switched from Y-up to Z-up to match the rest of the library.
+- `OverlayImageItem.alpha` now actually fades the image. The pre-multiplied alpha blending was leaving RGB at full intensity. Same fix incidentally corrects soft-edge PNGs.
+
+### Removed
+
+- Legacy async texture API: `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
 
 
 ## [0.16.0]
