@@ -20,9 +20,10 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    FrameData, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem, PolylineItem,
-    RibbonItem, SceneRenderItem, SpriteBlend, SpriteItem, SpriteSizeMode, ViewportRenderer,
-    primitives,
+    ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId, GpuParticleSystemItem,
+    LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem, ParticleRender,
+    PolylineItem, RibbonItem, SceneRenderItem, SpawnShape, SpriteBlend, SpriteItem, SpriteSizeMode,
+    VelocityDist, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,10 @@ pub(crate) enum SpriteSubMode {
     /// `colour_attribute` ramps alpha from zero at the tail to full at the
     /// head, and the per-vertex `width_attribute` tapers in the same direction.
     Trails,
+    /// A GPU-simulated particle fountain. The host owns no per-particle state;
+    /// the renderer runs the emitter, integrates forces (gravity + an
+    /// orbiting attractor), and draws live particles each frame.
+    GpuParticles,
 }
 
 pub(crate) struct TrailEmitter {
@@ -120,6 +125,12 @@ pub(crate) struct SpriteState {
     /// horizontal sweep of the soft-fade sprite plane.
     pub demo_time: f32,
 
+    // GPU particles mode
+    pub gpu_particle_system: Option<GpuParticleSystemId>,
+    pub gpu_emit_rate: f32,
+    pub gpu_lifetime: (f32, f32),
+    pub gpu_attractor_enabled: bool,
+
     // Trails mode
     pub trails: Vec<TrailEmitter>,
     /// Number of points held in each emitter's history ring buffer. Higher
@@ -175,6 +186,10 @@ impl Default for SpriteState {
             trail_length: 80,
             trail_width: 0.18,
             trail_blend: SpriteBlend::Additive,
+            gpu_particle_system: None,
+            gpu_emit_rate: 20_000.0,
+            gpu_lifetime: (1.5, 3.0),
+            gpu_attractor_enabled: true,
         }
     }
 }
@@ -340,6 +355,21 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         },
     ];
 
+    // Allocate one persistent GPU particle system. Capacity is fixed at
+    // creation; the per-frame item only carries emitter and force parameters.
+    let mut particle_cfg = GpuParticleSystemConfig::default();
+    particle_cfg.capacity = 60_000;
+    particle_cfg.render = ParticleRender::Sprite {
+        texture_id: Some(glow_tex),
+        blend: SpriteBlend::Additive,
+        size_mode: SpriteSizeMode::ScreenSpace,
+        depth_write: false,
+    };
+    let particle_sys = renderer
+        .resources_mut()
+        .create_gpu_particle_system(&app.device, &app.queue, &particle_cfg);
+    app.sprite_state.gpu_particle_system = Some(particle_sys);
+
     app.sprite_state.cube_id = cube_id;
     app.sprite_state.sphere_id = sphere_id;
     app.sprite_state.sprite_tex = sprite_tex;
@@ -485,6 +515,11 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             SpriteSubMode::Trails,
             "Trails",
         );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::GpuParticles,
+            "GPU Particles",
+        );
     });
     ui.separator();
 
@@ -516,6 +551,29 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             ui.label("A swarm of cubes orbiting like leaves, drawn through `MeshInstanceItem`.");
             ui.label("Each blend bucket renders as one indexed draw call, additive blending picked");
             ui.label("here so overlapping cubes glow brighter at their intersections.");
+        }
+        SpriteSubMode::GpuParticles => {
+            ui.label("GPU-simulated particle fountain. The host owns no per-particle state;");
+            ui.label("emit + sim run as compute passes in the renderer each frame and draw");
+            ui.label("through a sprite shader sourcing positions from the particle buffer.");
+            ui.separator();
+            ui.label("Emit rate (particles/s):");
+            ui.add(
+                egui::Slider::new(&mut app.sprite_state.gpu_emit_rate, 0.0..=40_000.0)
+                    .step_by(500.0),
+            );
+            ui.label("Lifetime (min, max seconds):");
+            ui.horizontal(|ui| {
+                ui.add(egui::Slider::new(&mut app.sprite_state.gpu_lifetime.0, 0.1..=4.0));
+                ui.add(egui::Slider::new(&mut app.sprite_state.gpu_lifetime.1, 0.1..=8.0));
+            });
+            if app.sprite_state.gpu_lifetime.1 < app.sprite_state.gpu_lifetime.0 {
+                app.sprite_state.gpu_lifetime.1 = app.sprite_state.gpu_lifetime.0;
+            }
+            ui.checkbox(
+                &mut app.sprite_state.gpu_attractor_enabled,
+                "Orbiting point attractor",
+            );
         }
         SpriteSubMode::Trails => {
             ui.label("Four orbiters trace figure-eights and leave fading ribbon trails behind them.");
@@ -604,7 +662,7 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
             let fps = 10.0_f32;
             app.sprite_state.atlas_frame = (app.sprite_state.atlas_time * fps) as u32 % 16;
         }
-        SpriteSubMode::Soft | SpriteSubMode::MeshParticles => {
+        SpriteSubMode::Soft | SpriteSubMode::MeshParticles | SpriteSubMode::GpuParticles => {
             app.sprite_state.demo_time += dt;
         }
         SpriteSubMode::Trails => {
@@ -857,6 +915,11 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             Vec::new()
         }
 
+        SpriteSubMode::GpuParticles => {
+            // GPU particles draw through their own pipeline; no sprite items here.
+            Vec::new()
+        }
+
         SpriteSubMode::Trails => {
             // A small glowing dot at the head of each emitter makes the
             // ribbon read as a comet rather than a free-floating brushstroke.
@@ -1003,7 +1066,7 @@ pub(crate) fn sprite_lighting() -> LightingSettings {
 // Frame assembly
 // ---------------------------------------------------------------------------
 
-pub(crate) fn submit_sprite_items(app: &App, fd: &mut FrameData) {
+pub(crate) fn submit_sprite_items(app: &App, fd: &mut FrameData, dt: f32) {
     if !app.sprite_state.built {
         return;
     }
@@ -1011,6 +1074,48 @@ pub(crate) fn submit_sprite_items(app: &App, fd: &mut FrameData) {
     fd.scene.polylines.extend(ring_polylines(app));
     fd.scene.mesh_instances.extend(mesh_instance_items(app));
     fd.scene.ribbon_items.extend(trail_ribbon_items(app));
+    if let Some(item) = gpu_particle_item(app, dt) {
+        fd.scene.gpu_particle_systems.push(item);
+    }
+}
+
+/// Build a per-frame `GpuParticleSystemItem` for the GpuParticles sub-mode.
+///
+/// The emitter is a vertical cone at the origin. Forces are gravity plus an
+/// optional point attractor that orbits around the system on a slow cycle, so
+/// the trail bends visibly even though every particle is host-stateless.
+fn gpu_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
+    if app.sprite_state.sub_mode != SpriteSubMode::GpuParticles {
+        return None;
+    }
+    let sys = app.sprite_state.gpu_particle_system?;
+
+    let mut item = GpuParticleSystemItem::new(sys, dt);
+    item.emitter.rate = app.sprite_state.gpu_emit_rate;
+    item.emitter.lifetime = app.sprite_state.gpu_lifetime;
+    item.emitter.initial_velocity = VelocityDist::UniformCone {
+        axis: [0.0, 0.0, 1.0],
+        half_angle: 0.35,
+        min_speed: 2.0,
+        max_speed: 4.5,
+    };
+    item.emitter.spawn_shape = SpawnShape::Sphere {
+        center: [0.0, 0.0, 0.0],
+        radius: 0.2,
+    };
+    item.emitter.colour = [1.0, 0.55, 0.15, 1.0];
+    item.emitter.size = 18.0;
+    item.forces.push(ForceField::Gravity([0.0, 0.0, -2.5]));
+    if app.sprite_state.gpu_attractor_enabled {
+        let t = app.sprite_state.demo_time;
+        let r = 2.6;
+        item.forces.push(ForceField::PointAttractor {
+            position: [r * t.cos(), r * t.sin(), 1.0],
+            strength: 6.0,
+            falloff: 0.5,
+        });
+    }
+    Some(item)
 }
 
 /// One `RibbonItem` per emitter so each trail keeps its own RGB tint while

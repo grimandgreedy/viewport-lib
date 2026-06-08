@@ -2336,6 +2336,82 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
+        // GPU particle sprite pass: each particle system draws its full
+        // capacity as billboards through a sprite-shader variant that reads
+        // positions and per-instance data from the system's GPU buffer. Dead
+        // particles emit a degenerate vertex and contribute no fragments.
+        // -----------------------------------------------------------------------
+        if !self.particle_gpu_data.is_empty() {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
+            let resources = &self.resources;
+
+            let use_ssaa = ssaa_factor > 1
+                && slot_hdr.ssaa_colour_view.is_some()
+                && slot_hdr.ssaa_depth_view.is_some();
+            let colour_view = if use_ssaa {
+                slot_hdr.ssaa_colour_view.as_ref().unwrap()
+            } else {
+                &slot_hdr.hdr_view
+            };
+            let depth_view = if use_ssaa {
+                slot_hdr.ssaa_depth_view.as_ref().unwrap()
+            } else {
+                &slot_hdr.hdr_depth_view
+            };
+
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("gpu_particle_sprite_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: colour_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_bind_group(0, camera_bg, &[]);
+            for pd in &self.particle_gpu_data {
+                if pd.hidden {
+                    continue;
+                }
+                let dual = match pd.blend {
+                    crate::renderer::SpriteBlend::Additive => {
+                        resources.particle_sprite_pipeline_additive.as_ref()
+                    }
+                    crate::renderer::SpriteBlend::Premultiplied => {
+                        resources.particle_sprite_pipeline_premultiplied.as_ref()
+                    }
+                    crate::renderer::SpriteBlend::AlphaBlend => {
+                        resources.particle_sprite_pipeline_alpha.as_ref()
+                    }
+                };
+                let Some(dual) = dual else { continue };
+                let Some(system) = resources
+                    .particle_systems
+                    .get(pd.system_idx)
+                    .and_then(|s| s.as_ref())
+                    .filter(|s| s.alive)
+                else { continue };
+                pass.set_pipeline(dual.for_format(true));
+                pass.set_bind_group(1, &system.draw_bg, &[]);
+                pass.draw(0..6, 0..system.capacity);
+            }
+        }
+
+        // -----------------------------------------------------------------------
         // SSAA resolve pass: downsample supersampled scene -> hdr_texture.
         // Only runs when ssaa_factor > 1 and the resolve pipeline is available.
         // -----------------------------------------------------------------------

@@ -3408,6 +3408,27 @@ pub struct ViewportGpuResources {
     /// Outline mask pipeline for MC surfaces (stride-24 vertex buffer, draw_indirect). None until first selected item.
     pub(crate) mc_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
+    // --- GPU particle systems ---
+    /// Live particle systems indexed by `GpuParticleSystemId`. Slots can be
+    /// reused after `drop_gpu_particle_system`.
+    pub(crate) particle_systems:
+        Vec<Option<crate::resources::gpu_particles::ParticleSystem>>,
+    /// Bind group layout for the emit + sim compute pipelines (group 1:
+    /// particle buffer + free-list buffer; emit/sim params are group 0).
+    pub(crate) particle_sim_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for emit/sim params (group 0).
+    pub(crate) particle_params_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for the particle-sprite draw pipeline (group 1).
+    pub(crate) particle_draw_bgl: Option<wgpu::BindGroupLayout>,
+    /// Compute pipeline that pops free-list slots and writes new particles.
+    pub(crate) particle_emit_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline that integrates forces and decrements lifetime.
+    pub(crate) particle_sim_pipeline: Option<wgpu::ComputePipeline>,
+    /// Draw pipeline variants for the particle-sprite shader, keyed by blend.
+    pub(crate) particle_sprite_pipeline_alpha: Option<DualPipeline>,
+    pub(crate) particle_sprite_pipeline_additive: Option<DualPipeline>,
+    pub(crate) particle_sprite_pipeline_premultiplied: Option<DualPipeline>,
+
     // --- Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.
     pub(crate) screen_image_pipeline: Option<wgpu::RenderPipeline>,

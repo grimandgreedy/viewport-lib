@@ -25,8 +25,9 @@ mod hidden_tests;
 pub use self::types::{
     AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape, ComputeFilterItem,
     ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation,
-    DecalBlendMode, DecalItem, DecalProjection, EffectsFrame, EnvironmentMap, FilterMode,
-    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
+    DecalBlendMode, DecalItem, DecalProjection, EffectsFrame, EmitterConfig, EnvironmentMap, FilterMode,
+    ForceField, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem,
+    GpuParticleSystemItem, GlyphItem, GlyphType,
     GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
     LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
     LoadingBarItem, MeshInstanceItem, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
@@ -35,8 +36,9 @@ pub use self::types::{
     PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RibbonItem, RibbonRefItem,
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
     ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShDegree, ShadowFilter, SliceAxis, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem,
-    SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig,
+    ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
+    SpriteItem, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
+    SurfaceLICConfig, VelocityDist,
     SurfaceSubmission, TensorGlyphItem, ToneMapping,
     TransparentVolumeMeshItem, TriangleDirection, TubeItem, TubeRefItem,
     ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
@@ -299,6 +301,8 @@ pub struct ViewportRenderer {
     sprite_gpu_data: Vec<crate::resources::SpriteGpuData>,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
+    /// Per-frame GPU particle systems, dispatched in prepare(), consumed in paint().
+    particle_gpu_data: Vec<crate::resources::gpu_particles::ParticleFrameData>,
     /// Per-frame Gaussian splat draw data, rebuilt in prepare_viewport_internal(), consumed in paint().
     gaussian_splat_draw_data: Vec<crate::resources::GaussianSplatDrawData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
@@ -562,6 +566,7 @@ impl ViewportRenderer {
             volume_surface_slice_gpu_data: Vec::new(),
             sprite_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
+            particle_gpu_data: Vec::new(),
             gaussian_splat_draw_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),

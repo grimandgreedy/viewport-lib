@@ -15,6 +15,8 @@ mod extra_impls;
 pub(crate) mod font;
 /// GPU marching cubes compute pipeline.
 pub mod gpu_marching_cubes;
+/// GPU particle systems: compute-driven emit + sim with sprite draw.
+pub mod gpu_particles;
 mod highlight;
 /// GPU implicit surface types and pipeline.
 pub mod implicit;
@@ -50,6 +52,7 @@ use self::extra_impls::{
 };
 pub use self::font::{FontError, FontHandle};
 pub use self::gpu_marching_cubes::{GpuMarchingCubesJob, VolumeGpuId};
+pub use self::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };

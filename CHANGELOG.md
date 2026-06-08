@@ -4,6 +4,16 @@
 
 ### Features
 
+#### GPU-simulated particle systems
+
+Particle effects can now run end to end on the GPU. The host allocates a system once with a capacity and a render route, then submits one item per frame carrying emitter settings (rate, lifetime, spawn shape, initial-velocity distribution) and a list of force fields (gravity, drag, point attractor). The renderer dispatches emit and sim compute passes, then draws live particles as billboard sprites through a dedicated pipeline that sources positions and per-particle data straight from the GPU buffer.
+
+Per-particle CPU work on the host drops to zero. A 60k-particle fountain costs the host one allocation at startup and one item push per frame.
+
+Picking the render route at creation time keeps the per-frame surface compact. Three blend modes (alpha, additive, premultiplied) are available; additive is the usual pick for emissive effects and disables depth write so overlapping particles accumulate brightness instead of clipping.
+
+Showcase 41 gains a `GPU Particles` sub-mode demonstrating a vertical fountain with gravity and an orbiting point attractor.
+
 #### Ribbon trails
 
 Ribbons can now render as faded particle trails without building a custom colourmap. Two additions on `RibbonItem`:

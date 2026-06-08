@@ -385,6 +385,8 @@ pub struct SceneFrame {
     pub sprite_instance_set_refs: Vec<SpriteInstanceSetRefItem>,
     /// Mesh-instance batches to render this frame (mesh-based particles).
     pub mesh_instances: Vec<MeshInstanceItem>,
+    /// GPU particle systems to advance and draw this frame.
+    pub gpu_particle_systems: Vec<GpuParticleSystemItem>,
     /// Gaussian splat items to render this frame.
     pub gaussian_splats: Vec<GaussianSplatItem>,
     /// Screen-space decal items to render this frame (D1).
@@ -463,6 +465,7 @@ impl Default for SceneFrame {
             sprite_set_refs: Vec::new(),
             sprite_instance_set_refs: Vec::new(),
             mesh_instances: Vec::new(),
+            gpu_particle_systems: Vec::new(),
             gaussian_splats: Vec::new(),
             decals: Vec::new(),
             scatter_volumes: Vec::new(),

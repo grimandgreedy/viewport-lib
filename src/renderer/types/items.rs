@@ -1559,6 +1559,138 @@ impl Default for MeshInstanceItem {
 }
 
 // ---------------------------------------------------------------------------
+// GPU particle simulation
+// ---------------------------------------------------------------------------
+
+/// Distribution used to assign an initial velocity to a newly spawned particle.
+#[derive(Debug, Clone, Copy)]
+pub enum VelocityDist {
+    /// Every particle gets the same velocity.
+    Fixed([f32; 3]),
+    /// Velocity is sampled uniformly inside an axis-aligned box.
+    UniformBox { min: [f32; 3], max: [f32; 3] },
+    /// Velocity direction is sampled uniformly inside a cone around `axis`,
+    /// magnitude in `[min_speed, max_speed]`.
+    UniformCone {
+        axis: [f32; 3],
+        half_angle: f32,
+        min_speed: f32,
+        max_speed: f32,
+    },
+}
+
+impl Default for VelocityDist {
+    fn default() -> Self {
+        VelocityDist::Fixed([0.0, 0.0, 1.0])
+    }
+}
+
+/// Shape from which new particles are spawned.
+#[derive(Debug, Clone, Copy)]
+pub enum SpawnShape {
+    /// All particles spawn at the same point.
+    Point([f32; 3]),
+    /// Spawn uniformly inside an axis-aligned box.
+    Box { min: [f32; 3], max: [f32; 3] },
+    /// Spawn uniformly inside a sphere.
+    Sphere { center: [f32; 3], radius: f32 },
+}
+
+impl Default for SpawnShape {
+    fn default() -> Self {
+        SpawnShape::Point([0.0, 0.0, 0.0])
+    }
+}
+
+/// Force applied to every live particle each simulation step.
+#[derive(Debug, Clone, Copy)]
+pub enum ForceField {
+    /// Constant acceleration. World units per second squared.
+    Gravity([f32; 3]),
+    /// Velocity-proportional drag. Coefficient is the fraction of velocity
+    /// lost per second.
+    Drag(f32),
+    /// Pull toward a world-space point. Acceleration scales as
+    /// `strength / (distance + falloff)^2`.
+    PointAttractor {
+        position: [f32; 3],
+        strength: f32,
+        falloff: f32,
+    },
+}
+
+/// Emitter configuration for a GPU particle system.
+///
+/// All fields are independent of any simulation state on the GPU; the host can
+/// change them between frames and the next emit pass picks up the new values.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct EmitterConfig {
+    /// New particles per second. Fractional values accumulate across frames.
+    pub rate: f32,
+    /// Range of per-particle lifetimes in seconds. Each new particle gets a
+    /// uniformly sampled value in `[lifetime.0, lifetime.1]`.
+    pub lifetime: (f32, f32),
+    /// Initial velocity distribution.
+    pub initial_velocity: VelocityDist,
+    /// Spawn shape relative to world space.
+    pub spawn_shape: SpawnShape,
+    /// Per-particle RGBA tint, multiplied with any texture sample at draw time.
+    pub colour: [f32; 4],
+    /// Per-particle starting size. Pixels (ScreenSpace) or world units
+    /// (WorldSpace) per the system's render config.
+    pub size: f32,
+}
+
+impl Default for EmitterConfig {
+    fn default() -> Self {
+        Self {
+            rate: 100.0,
+            lifetime: (1.0, 2.0),
+            initial_velocity: VelocityDist::default(),
+            spawn_shape: SpawnShape::default(),
+            colour: [1.0, 1.0, 1.0, 1.0],
+            size: 16.0,
+        }
+    }
+}
+
+/// Per-frame submission that advances and draws one GPU particle system.
+///
+/// Submit on `SceneFrame::gpu_particle_systems`. The renderer dispatches an
+/// emit kernel that spawns new particles into the persistent buffer behind
+/// `system_id`, then a sim kernel that integrates `forces` and decrements
+/// lifetime, then draws the live particles through the render route chosen
+/// when the system was created. No CPU per-particle work happens on the host.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct GpuParticleSystemItem {
+    /// Target system. The buffer behind this handle is updated in place.
+    pub system_id: crate::resources::GpuParticleSystemId,
+    /// Emitter parameters for this frame's emit pass.
+    pub emitter: EmitterConfig,
+    /// Forces applied to every live particle this frame.
+    pub forces: Vec<ForceField>,
+    /// Simulation time step in seconds. Typically the frame delta time.
+    pub time_step: f32,
+    /// Per-item render settings (visibility, picking, selection).
+    pub settings: ItemSettings,
+}
+
+impl GpuParticleSystemItem {
+    /// Visible item with default emitter and no forces.
+    pub fn new(system_id: crate::resources::GpuParticleSystemId, time_step: f32) -> Self {
+        Self {
+            system_id,
+            emitter: EmitterConfig::default(),
+            forces: Vec::new(),
+            time_step,
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Gaussian splat renderer types
 // ---------------------------------------------------------------------------
 

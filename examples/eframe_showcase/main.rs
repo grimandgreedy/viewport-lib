@@ -1230,11 +1230,13 @@ impl eframe::App for App {
                 }
 
                 // ----- Build frame data -----
+                let dt_frame = ui.ctx().input(|i| i.stable_dt.min(1.0 / 15.0));
                 let frame_data = self.build_frame_data(
                     rect.width(),
                     rect.height(),
                     ui.ctx().pixels_per_point(),
                     frame,
+                    dt_frame,
                 );
 
                 // ----- Update gizmo_center cache for next frame's hit-testing -----
@@ -2269,6 +2271,7 @@ impl App {
         h: f32,
         pixels_per_point: f32,
         frame: &eframe::Frame,
+        dt: f32,
     ) -> FrameData {
         let mut adv_clip_objects: Vec<ClipObject> = vec![];
         let mut adv_outline = false;
@@ -3533,7 +3536,7 @@ impl App {
 
         // Sprite items and ring polylines (Showcase 41) : submitted every frame when built.
         if self.mode == ShowcaseMode::Sprites {
-            showcase_41_sprites::submit_sprite_items(self, &mut fd);
+            showcase_41_sprites::submit_sprite_items(self, &mut fd, dt);
         }
 
         // Gaussian splat items (Showcase 42) : submitted every frame when built.

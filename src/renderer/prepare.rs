@@ -1784,6 +1784,15 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        // GPU particle systems: dispatch emit + sim compute passes.
+        // ------------------------------------------------------------------
+        self.particle_gpu_data.clear();
+        if !frame.scene.gpu_particle_systems.is_empty() {
+            self.particle_gpu_data =
+                resources.run_particle_jobs(device, queue, &frame.scene.gpu_particle_systems);
+        }
+
+        // ------------------------------------------------------------------
         // Tensor glyph GPU data upload.
         // ------------------------------------------------------------------
         self.tensor_glyph_gpu_data.clear();
