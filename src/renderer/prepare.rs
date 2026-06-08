@@ -5962,7 +5962,27 @@ impl ViewportRenderer {
 
                 let overlay_time = frame.overlays.time;
 
+                // First pass: collect clip-mask bounding rects keyed by
+                // clip_mask_id. Shape positions are in the same pixel space
+                // as the fragment shader's `clip_position.xy`.
+                let mut clip_rects: std::collections::HashMap<u32, [f32; 4]> =
+                    std::collections::HashMap::new();
                 for shape in &sorted {
+                    if let Some(id) = shape.clip_mask_id {
+                        let x0 = shape.position[0];
+                        let y0 = shape.position[1];
+                        let x1 = x0 + shape.size[0];
+                        let y1 = y0 + shape.size[1];
+                        clip_rects.insert(id, [x0, y0, x1, y1]);
+                    }
+                }
+
+                for shape in &sorted {
+                    // Mask-only shapes contribute a clip rectangle but are
+                    // not drawn themselves.
+                    if shape.clip_mask_id.is_some() {
+                        continue;
+                    }
                     // Resolve animation to final opacity.
                     let resolved_opacity = match shape.animation {
                         crate::renderer::types::OverlayAnimation::None => shape.opacity,
@@ -6096,6 +6116,15 @@ impl ViewportRenderer {
                             end_colour,
                             angle,
                         } => (start_colour, end_colour, [1.0f32, angle]),
+                        crate::renderer::types::OverlayFill::RadialGradient {
+                            centre_colour,
+                            edge_colour,
+                        } => (centre_colour, edge_colour, [2.0f32, 0.0]),
+                        crate::renderer::types::OverlayFill::ConicalGradient {
+                            start_colour,
+                            end_colour,
+                            offset_angle,
+                        } => (start_colour, end_colour, [3.0f32, offset_angle]),
                     };
                     let mut fc = start_colour;
                     fc[3] *= resolved_opacity;
@@ -6182,6 +6211,14 @@ impl ViewportRenderer {
                             });
                         }
                     } else {
+                        // Look up the clip rect for this shape (if it has a
+                        // clip_id). Missing or unmatched ids fall through to
+                        // an all-zero rect, which the shader treats as no
+                        // clipping.
+                        let clip_rect = shape
+                            .clip_id
+                            .and_then(|id| clip_rects.get(&id).copied())
+                            .unwrap_or([0.0, 0.0, 0.0, 0.0]);
                         for (px, py, lx, ly) in corners_px {
                             solid_verts.push(crate::resources::OverlayShapeVertex {
                                 position: px_to_ndc(px, py, vp_w, vp_h),
@@ -6196,6 +6233,7 @@ impl ViewportRenderer {
                                 gradient_params,
                                 shadow_colour: sc,
                                 shadow_params,
+                                clip_rect,
                             });
                         }
                     }

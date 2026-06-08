@@ -17,6 +17,7 @@ struct VertexInput {
     @location(9) gradient_params: vec2<f32>,  // x=type (0=solid, 1=linear), y=angle radians
     @location(10) shadow_colour:  vec4<f32>,  // RGBA shadow colour
     @location(11) shadow_params:  vec4<f32>,  // x=radius, y=offset_x, z=offset_y
+    @location(12) clip_rect:      vec4<f32>,  // framebuffer-pixel clip rect (x0,y0,x1,y1); all zero = no clip
 };
 
 struct VertexOutput {
@@ -32,6 +33,7 @@ struct VertexOutput {
     @location(8) gradient_params: vec2<f32>,
     @location(9) shadow_colour:   vec4<f32>,
     @location(10) shadow_params:  vec4<f32>,
+    @location(11) @interpolate(flat) clip_rect: vec4<f32>,
 };
 
 @vertex
@@ -49,6 +51,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.gradient_params = in.gradient_params;
     out.shadow_colour   = in.shadow_colour;
     out.shadow_params   = in.shadow_params;
+    out.clip_rect       = in.clip_rect;
     return out;
 }
 
@@ -319,6 +322,17 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Clip rectangle: discard fragments outside the mask's bounding box when
+    // a clip is set. `clip_rect` is in framebuffer pixels (top-left origin),
+    // which matches `clip_position.xy` in the fragment stage. An all-zero
+    // rect means no clipping.
+    let cr = in.clip_rect;
+    if (cr.z > cr.x && cr.w > cr.y) {
+        let fp = in.clip_position.xy;
+        if (fp.x < cr.x || fp.x > cr.z || fp.y < cr.y || fp.y > cr.w) {
+            discard;
+        }
+    }
     let p = in.local_pos;
     let hs = in.half_size;
 
@@ -345,15 +359,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    // Compute fill colour: solid or linear gradient.
+    // Compute fill colour: solid, linear gradient, radial gradient, or
+    // conical (sweep) gradient. gradient_params.x selects the mode:
+    //   0 = solid
+    //   1 = linear  (y = angle in radians)
+    //   2 = radial  (centre -> edge over max half-extent)
+    //   3 = conical (sweep around origin, y = offset_angle in radians)
     var fill_col: vec4<f32>;
-    if (in.gradient_params.x > 0.5) {
-        // Linear gradient: project local_pos onto gradient direction and
-        // map to [0, 1] over the bounding box extent along that axis.
+    let gtype = i32(in.gradient_params.x + 0.5);
+    if (gtype == 1) {
         let angle = in.gradient_params.y;
         let dir = vec2<f32>(cos(angle), sin(angle));
         let max_proj = abs(hs.x * dir.x) + abs(hs.y * dir.y);
         let t = clamp(dot(p, dir) / max(max_proj, 0.001) * 0.5 + 0.5, 0.0, 1.0);
+        fill_col = mix(in.fill_colour, in.fill_colour2, t);
+    } else if (gtype == 2) {
+        let max_half = max(hs.x, hs.y);
+        let t = clamp(length(p) / max(max_half, 0.001), 0.0, 1.0);
+        fill_col = mix(in.fill_colour, in.fill_colour2, t);
+    } else if (gtype == 3) {
+        let two_pi = 6.28318530717958647692;
+        let a = atan2(p.y, p.x) - in.gradient_params.y;
+        let t = fract(a / two_pi + 1.0);
         fill_col = mix(in.fill_colour, in.fill_colour2, t);
     } else {
         fill_col = in.fill_colour;

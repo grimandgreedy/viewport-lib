@@ -486,7 +486,8 @@ impl Default for OverlayRectItem {
 /// Fill style for an [`OverlayShapeItem`].
 ///
 /// `Solid` is the default and matches the previous single-colour behaviour.
-/// `LinearGradient` interpolates between two colours along an angled axis.
+/// `LinearGradient`, `RadialGradient`, and `ConicalGradient` interpolate
+/// between two colours across the shape's bounding box.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OverlayFill {
     /// Uniform solid colour in linear RGBA float format.
@@ -505,6 +506,30 @@ pub enum OverlayFill {
         end_colour: [f32; 4],
         /// Gradient direction in radians. `0.0` = left-to-right.
         angle: f32,
+    },
+    /// Radial gradient running from the shape centre to its bounding-box edge.
+    ///
+    /// `centre_colour` sits at the shape origin; `edge_colour` sits at the
+    /// farthest bounding-box corner. The transition follows
+    /// `length(local_pos) / max_half_size`.
+    RadialGradient {
+        /// RGBA colour at the centre of the shape.
+        centre_colour: [f32; 4],
+        /// RGBA colour at the bounding-box edge.
+        edge_colour: [f32; 4],
+    },
+    /// Conical (sweep) gradient rotating around the shape centre.
+    ///
+    /// The hue wraps once around the origin like a colour wheel.
+    /// `offset_angle` rotates the seam (where `end_colour` meets
+    /// `start_colour`) counter-clockwise in math coordinates.
+    ConicalGradient {
+        /// RGBA colour at the sweep start.
+        start_colour: [f32; 4],
+        /// RGBA colour at the sweep end (wraps back to start).
+        end_colour: [f32; 4],
+        /// Rotation offset in radians. `0.0` places the seam to the right.
+        offset_angle: f32,
     },
 }
 
@@ -776,6 +801,26 @@ pub struct OverlayShapeItem {
     /// encoder (`render`, `render_viewport`); in `paint`/`paint_to` paths
     /// blur shapes fall back to a regular solid fill.
     pub backdrop_blur: f32,
+    /// Marks this shape as a clip mask. The shape itself is not drawn; its
+    /// bounding box defines a clipping rectangle for any shape whose
+    /// `clip_id` equals this value. `None` means the shape is not a mask.
+    ///
+    /// Used for scroll containers, masked panels, and composite widgets.
+    /// Only the solid (non-textured, non-blur) shape path participates in
+    /// clipping; textured and backdrop-blur shapes ignore both
+    /// `clip_id` and `clip_mask_id`.
+    ///
+    /// Current limitation: the clip uses the mask shape's axis-aligned
+    /// bounding box, not its SDF. For `Rect` and `RoundedRect` masks this
+    /// matches the visible bounds; for `Circle`, `Ellipse`, and other
+    /// curved shapes the clip is the enclosing square/rectangle.
+    pub clip_mask_id: Option<u32>,
+    /// When set, this shape is clipped to the bounding box of the mask shape
+    /// whose `clip_mask_id` matches this value. Fragments outside the mask's
+    /// bounding rect are discarded. `None` means the shape is drawn
+    /// unclipped. If no mask with the matching id is present in the frame,
+    /// the shape is also drawn unclipped.
+    pub clip_id: Option<u32>,
 }
 
 impl Default for OverlayShapeItem {
@@ -796,6 +841,8 @@ impl Default for OverlayShapeItem {
             shadow_offset: [0.0, 0.0],
             animation: OverlayAnimation::None,
             backdrop_blur: 0.0,
+            clip_mask_id: None,
+            clip_id: None,
         }
     }
 }

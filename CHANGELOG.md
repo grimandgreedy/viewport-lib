@@ -6,34 +6,40 @@
 
 #### GPU-simulated particle systems
 
-Particle effects can now run end to end on the GPU. The host allocates a system once with a capacity and a render route, then submits one item per frame carrying emitter settings (rate, lifetime, spawn shape, initial-velocity distribution) and a list of force fields (gravity, drag, point attractor). The renderer dispatches emit and sim compute passes, then draws live particles as billboard sprites through a dedicated pipeline that sources positions and per-particle data straight from the GPU buffer.
+Particle effects can run end to end on the GPU. The host allocates a `GpuParticleSystemId` once with a capacity and a render route, then submits one `GpuParticleSystemItem` per frame carrying emitter settings (rate, lifetime, spawn shape, initial-velocity distribution) and a list of force fields. The renderer dispatches emit and sim compute passes and draws live particles through a sprite pipeline that sources positions and per-particle data directly from the GPU buffer.
 
-Per-particle CPU work on the host drops to zero. A 60k-particle fountain costs the host one allocation at startup and one item push per frame.
-
-Picking the render route at creation time keeps the per-frame surface compact. Three blend modes (alpha, additive, premultiplied) are available; additive is the usual pick for emissive effects and disables depth write so overlapping particles accumulate brightness instead of clipping.
-
-Showcase 41 gains a `GPU Particles` sub-mode demonstrating a vertical fountain with gravity and an orbiting point attractor.
+Spawn shapes: `Point`, `Box`, `Sphere`. Velocity distributions: `Fixed`, `UniformBox`, `UniformCone`. Forces: `Gravity`, `Drag`, `PointAttractor`. Three blend modes (alpha, additive, premultiplied) are available; additive disables depth write so overlapping particles accumulate brightness. Per-particle CPU work on the host drops to zero.
 
 #### Sprite orientation modes
 
-Sprite batches can now pick how each billboard is oriented in world space, beyond the historical always-face-the-camera behaviour:
+`SpriteItem` gains a `SpriteOrientation` field. `CameraFacing` is the default and unchanged. `VelocityStretched` aligns each quad's long axis with the per-instance velocity vector projected to screen, with length scaling by speed (sparks, muzzle flashes, rain streaks). `AxisLocked` locks each quad's long axis to a fixed world-space direction (vertical flames, grass cards, plume columns). Backing fields: `velocities: Vec<[f32; 3]>` and `axis: [f32; 3]`.
 
-- **Camera-facing** is the default and unchanged: every quad turns to face the viewer. Use for world-space labels, icons, and HUD-style markers.
-- **Velocity-stretched** aligns each quad's long axis with the per-instance velocity vector projected to screen, with length scaling by velocity magnitude. Use for falling rain, sparks, muzzle flashes, and bullet streaks.
-- **Axis-locked** locks each quad's long axis to a fixed world-space direction. Use for vertical flames, grass cards, plume columns, and anything tethered to world up.
+#### Refractive sprites
 
-Showcase 41 gains an `Orientations` sub-mode demonstrating each: a 3D scatter plot with persistent category markers, falling rain streaks, and candle flames in a ring.
+`SpriteItem` gains `refraction_strength: Option<f32>`. When set, the sprite draws as a screen-space distortion: the renderer copies the resolved scene colour into a per-viewport resolve texture and samples it at an offset driven by the sprite's RGBA (R/G as signed displacement, A as mask) in a dedicated post-pass. Use for heat haze, shockwaves, force-field hits, water splashes.
 
-#### Ribbon texturing
-
-`RibbonItem` gains an optional streak texture sampled along the strip. Lightning, slash arcs, laser beams, and dragon breath can now multiply a custom texture into the resolved ribbon colour without giving up the per-vertex RGBA fade path. Per-vertex `u` coordinates are optional; when omitted they are derived from cumulative arc length so the texture stretches evenly across the strip. Showcase 41's `Trails` sub-mode gains a streak texture toggle.
+HDR path only; the direct LDR `paint_to` cannot resolve scene colour for sampling, matching the soft-particle constraint. `None` (the default) keeps the sprite on the normal pipeline.
 
 #### Ribbon trails
 
-Ribbons can now render as faded particle trails without building a custom colourmap. Two additions on `RibbonItem`:
+`RibbonItem` gains a per-vertex RGBA `colour_attribute` and a `blend: SpriteBlend` field, so trails can fade from invisible tail to bright head without a custom colourmap and switch between alpha, additive, and premultiplied modes. Additive and premultiplied disable depth write so overlapping segments accumulate brightness.
 
-- A per-vertex RGBA array drives colour directly. Setting alpha along the strip is the natural way to fade a comet or sword-swing trail from invisible tail to bright head.
-- A blend mode selector picks between standard alpha, additive (emissive trails, energy beams, sparks), and premultiplied. Additive and premultiplied variants disable depth write so overlapping segments accumulate brightness instead of clipping.
+#### Radial and conical overlay gradients
+
+`OverlayFill` gains `RadialGradient { centre_colour, edge_colour }` and `ConicalGradient { start_colour, end_colour, offset_angle }`. Radial interpolates by distance from the shape centre to the bounding-box edge; conical wraps once around the origin like a colour wheel.
+
+#### Overlay clipping groups
+
+`OverlayShapeItem` gains `clip_mask_id: Option<u32>` and `clip_id: Option<u32>`. A shape with `clip_mask_id` is not drawn; its bounding box defines a clip rectangle for any shape whose `clip_id` matches. Fragments outside the rect are discarded. Solid (non-textured, non-backdrop-blur) shapes only. The clip is the mask's axis-aligned bounding box.
+
+### Improvements
+
+- `RibbonItem` gains optional texturing. A `texture_id` and per-vertex `u_attribute` let lightning, slash arcs, laser beams, and similar effects multiply a streak texture into the resolved ribbon colour. Per-vertex `u` is optional; when empty it derives from cumulative arc length so the texture stretches evenly across each strip.
+- `SpriteItem` gains `soft_particle_distances: Vec<f32>` for per-instance soft-fade distance. Mixed-size batches (large smoke puffs next to small embers) can carry a different fade per instance instead of sharing one batch value. An empty vector or a zero entry falls back to the existing batch-level `soft_particle_distance`, so existing call sites behave the same.
+
+### Bug fixes
+
+_None yet._
 
 
 ## [0.17.0]

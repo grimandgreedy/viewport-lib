@@ -606,6 +606,37 @@ pub(crate) fn build_overlay_frame(
                 border_width: bw,
                 ..Default::default()
             });
+            x3 += 60.0 + gap;
+
+            // Circle with a radial gradient: bright centre, dark edge.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [row3_h, row3_h],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::RadialGradient {
+                    centre_colour: [1.0, 0.95, 0.7, 1.0],
+                    edge_colour: [0.2, 0.05, 0.0, 0.9],
+                },
+                border_colour: [1.0, 0.8, 0.4, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            x3 += row3_h + gap;
+
+            // Circle with a conical (sweep) gradient: colour-wheel arc.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [row3_h, row3_h],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::ConicalGradient {
+                    start_colour: [0.95, 0.2, 0.4, 1.0],
+                    end_colour: [0.2, 0.6, 1.0, 1.0],
+                    offset_angle: 0.0,
+                },
+                border_colour: [0.9, 0.9, 0.9, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
             let _ = x3;
         }
 
@@ -914,6 +945,60 @@ pub(crate) fn build_overlay_frame(
                 ..Default::default()
             });
             let _ = x6;
+        }
+
+        // Clipping group: a rounded-rect "panel" acts as a mask that clips
+        // any shape sharing its clip_id. The mask itself is invisible; the
+        // child shapes (a tiled pattern of small squares) are visible only
+        // where they overlap the mask's bounding box. This demonstrates how
+        // `clip_mask_id` / `clip_id` work for scroll containers and masked
+        // panels.
+        {
+            let cx0 = 20.0_f32;
+            let cy0 = 470.0_f32;
+            let cw = 220.0_f32;
+            let ch = 70.0_f32;
+            // Mask shape: not drawn, only defines the clip rect.
+            shapes.push(OverlayShapeItem {
+                position: [cx0, cy0],
+                size: [cw, ch],
+                shape: OverlayShape::Rect { corner_radius: 0.0 },
+                clip_mask_id: Some(7),
+                ..Default::default()
+            });
+            // A visible outline so the clip area is easy to see.
+            shapes.push(OverlayShapeItem {
+                position: [cx0, cy0],
+                size: [cw, ch],
+                shape: OverlayShape::Rect { corner_radius: 0.0 },
+                fill: OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]),
+                border_colour: [1.0, 1.0, 1.0, 0.6],
+                border_width: 1.0,
+                border_mode: BorderMode::Outer,
+                ..Default::default()
+            });
+            // Tile a row of squares that extends beyond the mask on both
+            // sides; only the squares inside the rect should be visible.
+            let tile = 30.0_f32;
+            let n_tiles = 14;
+            let row_y = cy0 + (ch - tile) * 0.5;
+            for i in 0..n_tiles {
+                let tx = cx0 - 40.0 + i as f32 * (tile + 6.0);
+                let hue = i as f32 / n_tiles as f32;
+                shapes.push(OverlayShapeItem {
+                    position: [tx, row_y],
+                    size: [tile, tile],
+                    shape: OverlayShape::Rect { corner_radius: 6.0 },
+                    fill: OverlayFill::Solid([
+                        0.3 + 0.6 * hue,
+                        0.4 + 0.3 * (1.0 - hue),
+                        0.9 - 0.4 * hue,
+                        0.95,
+                    ]),
+                    clip_id: Some(7),
+                    ..Default::default()
+                });
+            }
         }
 
         // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).

@@ -1277,6 +1277,9 @@ pub(crate) struct OverlayShapeVertex {
     pub shadow_colour: [f32; 4],
     /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y.
     pub shadow_params: [f32; 4],
+    /// Clip rectangle in framebuffer pixels (x0, y0, x1, y1). All-zero means
+    /// no clipping. Fragments outside the rect are discarded.
+    pub clip_rect: [f32; 4],
 }
 
 impl OverlayShapeVertex {
@@ -1355,6 +1358,12 @@ impl OverlayShapeVertex {
                 wgpu::VertexAttribute {
                     offset: 120,
                     shader_location: 11,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 12: clip_rect vec4f (x0, y0, x1, y1 in framebuffer pixels)
+                wgpu::VertexAttribute {
+                    offset: 136,
+                    shader_location: 12,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],

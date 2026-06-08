@@ -1441,6 +1441,12 @@ impl eframe::App for App {
                         ctx.request_repaint();
                     }
                 }
+                // ----- Overlay (35): keep repainting so OverlayFrame::time
+                // advances and the built-in opacity animations (FadeIn,
+                // FadeOut, Pulse) update without requiring user input.
+                if self.mode == ShowcaseMode::Overlay {
+                    ctx.request_repaint();
+                }
                 // ----- Lighting consistency (49): request repaint while the
                 // second-light rotation animation is on so the cross-type
                 // response is continuously observable.
