@@ -751,6 +751,166 @@ impl Default for OverlayAnimation {
     }
 }
 
+/// OverlayEasing curve applied to an [`AnimTrack`]'s normalised parameter `t`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum OverlayEasing {
+    /// Returns `t` unchanged. Constant speed.
+    #[default]
+    Linear,
+    /// `t * t`. Starts slow, accelerates.
+    EaseIn,
+    /// `1 - (1 - t)^2`. Starts fast, decelerates.
+    EaseOut,
+    /// Smoothstep: `3t^2 - 2t^3`. Slow start, fast middle, slow end.
+    EaseInOut,
+    /// Sinusoidal half-wave: `sin(t * PI)`. Returns to 0 at both ends; peaks
+    /// at the midpoint. Combine with [`RepeatMode::Loop`] for a continuous
+    /// pulse.
+    Pulse,
+}
+
+/// How an [`AnimTrack`] handles time past the end of its duration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RepeatMode {
+    /// Run the track once and hold the final value. Default.
+    #[default]
+    Once,
+    /// Restart the track from `from` each cycle.
+    Loop,
+    /// Reverse direction at each end so the value oscillates between
+    /// `from` and `to`.
+    PingPong,
+}
+
+/// A single animation track interpolating one channel from `from` to `to`
+/// over `duration` seconds, with optional easing and repeat mode.
+///
+/// Resolved during `prepare()` using `OverlayFrame::time`. Times share the
+/// same application-defined epoch as the rest of the overlay animation
+/// system. Negative or zero `duration` snaps directly to `to`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnimTrack<T: Copy> {
+    /// Absolute time at which the track starts.
+    pub start_time: f64,
+    /// Length of one cycle in seconds.
+    pub duration: f32,
+    /// Value at `start_time` (or each loop restart).
+    pub from: T,
+    /// Value at `start_time + duration`.
+    pub to: T,
+    /// Curve applied to the normalised parameter before interpolation.
+    pub easing: OverlayEasing,
+    /// What happens past the end of one cycle.
+    pub repeat: RepeatMode,
+}
+
+impl<T: Copy + Default> Default for AnimTrack<T> {
+    fn default() -> Self {
+        Self {
+            start_time: 0.0,
+            duration: 1.0,
+            from: T::default(),
+            to: T::default(),
+            easing: OverlayEasing::Linear,
+            repeat: RepeatMode::Once,
+        }
+    }
+}
+
+/// Multi-channel animation tracks attached to an [`OverlayShapeItem`].
+///
+/// Each `Some` track replaces the matching field on the item for the frame.
+/// Tracks are independent: a shape can simultaneously translate, scale,
+/// recolour, and rotate.
+///
+/// Animation resolution is CPU-side in `prepare()`; the host must request
+/// continuous repaints while any track is active.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct OverlayAnimations {
+    /// Drives the item's overall opacity multiplier. Takes precedence over
+    /// the legacy [`OverlayShapeItem::animation`] field when both are set.
+    pub opacity: Option<AnimTrack<f32>>,
+    /// Drives `position` (top-left in logical pixels).
+    pub position: Option<AnimTrack<[f32; 2]>>,
+    /// Drives `size` (width / height in logical pixels).
+    pub size: Option<AnimTrack<[f32; 2]>>,
+    /// Drives the item's solid fill colour. Applies only when `fill` is a
+    /// solid colour; gradient fills are left alone.
+    pub fill: Option<AnimTrack<[f32; 4]>>,
+    /// Drives `border_colour`.
+    pub border: Option<AnimTrack<[f32; 4]>>,
+    /// Drives `rotation` in radians.
+    pub rotation: Option<AnimTrack<f32>>,
+}
+
+/// Trait used by [`AnimTrack`] resolution to interpolate between `from`
+/// and `to`. Implemented for the channel types the overlay animation
+/// system needs: `f32`, `[f32; 2]`, `[f32; 4]`.
+pub trait LerpAnim: Copy {
+    /// Returns `from * (1 - t) + to * t`.
+    fn lerp(from: Self, to: Self, t: f32) -> Self;
+}
+
+impl LerpAnim for f32 {
+    fn lerp(from: Self, to: Self, t: f32) -> Self {
+        from * (1.0 - t) + to * t
+    }
+}
+
+impl LerpAnim for [f32; 2] {
+    fn lerp(from: Self, to: Self, t: f32) -> Self {
+        [
+            f32::lerp(from[0], to[0], t),
+            f32::lerp(from[1], to[1], t),
+        ]
+    }
+}
+
+impl LerpAnim for [f32; 4] {
+    fn lerp(from: Self, to: Self, t: f32) -> Self {
+        [
+            f32::lerp(from[0], to[0], t),
+            f32::lerp(from[1], to[1], t),
+            f32::lerp(from[2], to[2], t),
+            f32::lerp(from[3], to[3], t),
+        ]
+    }
+}
+
+impl<T: Copy + LerpAnim> AnimTrack<T> {
+    /// Resolve the track at the given absolute time. Returns the
+    /// interpolated value.
+    pub fn sample(&self, time: f64) -> T {
+        if self.duration <= 0.0 {
+            return self.to;
+        }
+        let raw = ((time - self.start_time) as f32) / self.duration;
+        let phase = match self.repeat {
+            RepeatMode::Once => raw.clamp(0.0, 1.0),
+            RepeatMode::Loop => {
+                let f = raw - raw.floor();
+                if f < 0.0 { f + 1.0 } else { f }
+            }
+            RepeatMode::PingPong => {
+                let two = (raw * 0.5).floor() * 2.0;
+                let r = raw - two;
+                if r > 1.0 { 2.0 - r } else { r }
+            }
+        };
+        let t = match self.easing {
+            OverlayEasing::Linear => phase,
+            OverlayEasing::EaseIn => phase * phase,
+            OverlayEasing::EaseOut => {
+                let inv = 1.0 - phase;
+                1.0 - inv * inv
+            }
+            OverlayEasing::EaseInOut => phase * phase * (3.0 - 2.0 * phase),
+            OverlayEasing::Pulse => (phase * std::f32::consts::PI).sin(),
+        };
+        T::lerp(self.from, self.to, t)
+    }
+}
+
 /// Shape type for an `OverlayShapeItem`.
 ///
 /// Each variant maps to a signed-distance function evaluated per fragment
@@ -997,6 +1157,12 @@ pub struct OverlayShapeItem {
     /// both at once. Stackable outer + inner shadow layers are planned for
     /// a follow-up phase.
     pub shadow_inset: bool,
+    /// Multi-channel animation tracks for `position`, `size`, `fill`,
+    /// `border_colour`, `rotation`, and `opacity`. Each `Some` track
+    /// replaces the matching field on the item for the frame. The
+    /// `opacity` track takes precedence over the legacy
+    /// [`Self::animation`] field when both are set.
+    pub animations: OverlayAnimations,
 }
 
 impl Default for OverlayShapeItem {
@@ -1023,6 +1189,7 @@ impl Default for OverlayShapeItem {
             nine_slice: None,
             shadow_inset: false,
             texture_transform: TextureTransform::default(),
+            animations: OverlayAnimations::default(),
         }
     }
 }
@@ -1670,6 +1837,58 @@ mod tests {
         );
         assert!(s.distance([50.0, 50.0]) < 0.0);
         assert!(s.distance([0.0, 0.0]) > 0.0);
+    }
+
+    #[test]
+    fn anim_track_linear_lerps_endpoints() {
+        let track = AnimTrack::<f32> {
+            start_time: 10.0,
+            duration: 2.0,
+            from: 0.0,
+            to: 100.0,
+            easing: OverlayEasing::Linear,
+            repeat: RepeatMode::Once,
+        };
+        assert!((track.sample(10.0) - 0.0).abs() < 1e-3);
+        assert!((track.sample(11.0) - 50.0).abs() < 1e-3);
+        assert!((track.sample(12.0) - 100.0).abs() < 1e-3);
+        // After duration, Once holds the final value.
+        assert!((track.sample(50.0) - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn anim_track_pingpong_oscillates() {
+        let track = AnimTrack::<f32> {
+            start_time: 0.0,
+            duration: 1.0,
+            from: 0.0,
+            to: 10.0,
+            easing: OverlayEasing::Linear,
+            repeat: RepeatMode::PingPong,
+        };
+        // forward leg
+        assert!((track.sample(0.5) - 5.0).abs() < 1e-3);
+        assert!((track.sample(1.0) - 10.0).abs() < 1e-3);
+        // reverse leg
+        assert!((track.sample(1.5) - 5.0).abs() < 1e-3);
+        assert!((track.sample(2.0) - 0.0).abs() < 1e-3);
+        // next forward leg
+        assert!((track.sample(2.5) - 5.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn anim_track_vec2_interpolates_componentwise() {
+        let track = AnimTrack::<[f32; 2]> {
+            start_time: 0.0,
+            duration: 1.0,
+            from: [0.0, 100.0],
+            to: [200.0, 0.0],
+            easing: OverlayEasing::Linear,
+            repeat: RepeatMode::Once,
+        };
+        let v = track.sample(0.5);
+        assert!((v[0] - 100.0).abs() < 1e-3);
+        assert!((v[1] - 50.0).abs() < 1e-3);
     }
 
     #[test]

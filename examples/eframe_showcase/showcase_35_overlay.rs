@@ -1024,6 +1024,120 @@ pub(crate) fn build_overlay_frame(
                 border_width: bw,
                 ..Default::default()
             });
+            x5 += row5_h + gap;
+
+            // Multi-channel animation demos (Phase 18). Each shape isolates
+            // one channel of OverlayAnimations so the system is obvious:
+            // position, size, fill, rotation.
+            let base_x = x5;
+
+            // Position: sliding rect, PingPong EaseInOut.
+            shapes.push(OverlayShapeItem {
+                position: [base_x, y5_mid - 14.0],
+                size: [44.0, 28.0],
+                shape: OverlayShape::Rect { corner_radius: 4.0 },
+                fill: OverlayFill::Solid([0.95, 0.65, 0.25, 0.95]),
+                border_colour: [1.0, 0.85, 0.4, 0.9],
+                border_width: bw,
+                animations: viewport_lib::OverlayAnimations {
+                    position: Some(viewport_lib::AnimTrack {
+                        start_time: 0.0,
+                        duration: 1.8,
+                        from: [base_x, y5_mid - 14.0],
+                        to: [base_x + 50.0, y5_mid - 14.0],
+                        easing: viewport_lib::OverlayEasing::EaseInOut,
+                        repeat: viewport_lib::RepeatMode::PingPong,
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            x5 += 100.0 + gap;
+
+            // Size: pulsating circle, PingPong Pulse easing.
+            let pulse_cx = x5 + row5_h * 0.5;
+            let pulse_cy = y5_mid;
+            shapes.push(OverlayShapeItem {
+                position: [pulse_cx - 22.0, pulse_cy - 22.0],
+                size: [44.0, 44.0],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::Solid([0.45, 0.85, 1.0, 0.95]),
+                border_colour: [0.7, 0.95, 1.0, 0.9],
+                border_width: bw,
+                animations: viewport_lib::OverlayAnimations {
+                    size: Some(viewport_lib::AnimTrack {
+                        start_time: 0.0,
+                        duration: 1.4,
+                        from: [44.0, 44.0],
+                        to: [64.0, 64.0],
+                        easing: viewport_lib::OverlayEasing::Pulse,
+                        repeat: viewport_lib::RepeatMode::Loop,
+                    }),
+                    position: Some(viewport_lib::AnimTrack {
+                        // Recentre while the size grows so the circle pulses
+                        // about its centre rather than drifting south-east.
+                        start_time: 0.0,
+                        duration: 1.4,
+                        from: [pulse_cx - 22.0, pulse_cy - 22.0],
+                        to: [pulse_cx - 32.0, pulse_cy - 32.0],
+                        easing: viewport_lib::OverlayEasing::Pulse,
+                        repeat: viewport_lib::RepeatMode::Loop,
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            x5 += row5_h + gap;
+
+            // Fill colour: colour cycles smoothly between two colours,
+            // Loop with EaseInOut for a soft transition.
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - row5_h * 0.5],
+                size: [70.0, row5_h],
+                shape: OverlayShape::Rect { corner_radius: cr },
+                fill: OverlayFill::Solid([0.95, 0.25, 0.5, 0.95]),
+                border_colour: [1.0, 1.0, 1.0, 0.7],
+                border_width: bw,
+                animations: viewport_lib::OverlayAnimations {
+                    fill: Some(viewport_lib::AnimTrack {
+                        start_time: 0.0,
+                        duration: 1.6,
+                        from: [0.95, 0.25, 0.5, 0.95],
+                        to: [0.25, 0.55, 0.95, 0.95],
+                        easing: viewport_lib::OverlayEasing::EaseInOut,
+                        repeat: viewport_lib::RepeatMode::PingPong,
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            x5 += 70.0 + gap;
+
+            // Rotation: a Star slowly spinning via the rotation channel
+            // (Linear, Loop).
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - row5_h * 0.5],
+                size: [row5_h, row5_h],
+                shape: OverlayShape::Star {
+                    points: 5,
+                    inner_radius_frac: 0.45,
+                },
+                fill: OverlayFill::Solid([0.95, 0.9, 0.3, 0.95]),
+                border_colour: [1.0, 0.95, 0.5, 0.9],
+                border_width: bw,
+                animations: viewport_lib::OverlayAnimations {
+                    rotation: Some(viewport_lib::AnimTrack {
+                        start_time: 0.0,
+                        duration: 4.0,
+                        from: 0.0,
+                        to: std::f32::consts::TAU,
+                        easing: viewport_lib::OverlayEasing::Linear,
+                        repeat: viewport_lib::RepeatMode::Loop,
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
             let _ = x5;
         }
 

@@ -5979,12 +5979,42 @@ impl ViewportRenderer {
                     }
                 }
 
-                for shape in &sorted {
+                for shape_orig in &sorted {
                     // Mask-only shapes contribute a clip rectangle but are
                     // not drawn themselves.
-                    if shape.clip_mask_id.is_some() {
+                    if shape_orig.clip_mask_id.is_some() {
                         continue;
                     }
+                    // Clone so per-frame animation overrides are local and
+                    // the input frame data stays untouched.
+                    let mut owned: crate::renderer::types::OverlayShapeItem =
+                        (*shape_orig).clone();
+                    if let Some(track) = owned.animations.opacity {
+                        // Multi-channel opacity track takes precedence over
+                        // the legacy `animation` field.
+                        owned.opacity = track.sample(overlay_time);
+                        owned.animation = crate::renderer::types::OverlayAnimation::None;
+                    }
+                    if let Some(track) = owned.animations.position {
+                        owned.position = track.sample(overlay_time);
+                    }
+                    if let Some(track) = owned.animations.size {
+                        owned.size = track.sample(overlay_time);
+                    }
+                    if let Some(track) = owned.animations.fill {
+                        if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
+                            owned.fill = crate::renderer::types::OverlayFill::Solid(
+                                track.sample(overlay_time),
+                            );
+                        }
+                    }
+                    if let Some(track) = owned.animations.border {
+                        owned.border_colour = track.sample(overlay_time);
+                    }
+                    if let Some(track) = owned.animations.rotation {
+                        owned.rotation = track.sample(overlay_time);
+                    }
+                    let shape = &owned;
                     // Resolve animation to final opacity.
                     let resolved_opacity = match shape.animation {
                         crate::renderer::types::OverlayAnimation::None => shape.opacity,
