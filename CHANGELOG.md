@@ -14,6 +14,20 @@ Picking the render route at creation time keeps the per-frame surface compact. T
 
 Showcase 41 gains a `GPU Particles` sub-mode demonstrating a vertical fountain with gravity and an orbiting point attractor.
 
+#### Sprite orientation modes
+
+Sprite batches can now pick how each billboard is oriented in world space, beyond the historical always-face-the-camera behaviour:
+
+- **Camera-facing** is the default and unchanged: every quad turns to face the viewer. Use for world-space labels, icons, and HUD-style markers.
+- **Velocity-stretched** aligns each quad's long axis with the per-instance velocity vector projected to screen, with length scaling by velocity magnitude. Use for falling rain, sparks, muzzle flashes, and bullet streaks.
+- **Axis-locked** locks each quad's long axis to a fixed world-space direction. Use for vertical flames, grass cards, plume columns, and anything tethered to world up.
+
+Showcase 41 gains an `Orientations` sub-mode demonstrating each: a 3D scatter plot with persistent category markers, falling rain streaks, and candle flames in a ring.
+
+#### Ribbon texturing
+
+`RibbonItem` gains an optional streak texture sampled along the strip. Lightning, slash arcs, laser beams, and dragon breath can now multiply a custom texture into the resolved ribbon colour without giving up the per-vertex RGBA fade path. Per-vertex `u` coordinates are optional; when omitted they are derived from cumulative arc length so the texture stretches evenly across the strip. Showcase 41's `Trails` sub-mode gains a streak texture toggle.
+
 #### Ribbon trails
 
 Ribbons can now render as faded particle trails without building a custom colourmap. Two additions on `RibbonItem`:

@@ -2974,6 +2974,7 @@ impl ViewportGpuResources {
             ribbon_pipeline_additive: None,
             ribbon_pipeline_premultiplied: None,
             ribbon_wireframe_pipeline: None,
+            ribbon_bgl: None,
             streamtube_bgl: None,
             image_slice_pipeline: None,
             image_slice_bgl: None,

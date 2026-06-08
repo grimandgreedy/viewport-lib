@@ -312,6 +312,7 @@ impl ViewportGpuResources {
         queue.write_buffer(&vertex_buffer, 0, &pos_bytes);
 
         // Per-instance storage buffer: build by zipping item vecs with defaults.
+        // Layout matches `SpriteInstance` in `sprite.wgsl`. 64 bytes per instance.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct GpuSpriteInstance {
@@ -321,6 +322,8 @@ impl ViewportGpuResources {
             _pad0: f32,
             _pad1: f32,
             uv_rect: [f32; 4],
+            velocity: [f32; 3],
+            _pad2: f32,
         }
 
         let instances: Vec<GpuSpriteInstance> = (0..item.positions.len())
@@ -347,6 +350,12 @@ impl ViewportGpuResources {
                 } else {
                     [0.0, 0.0, 1.0, 1.0]
                 },
+                velocity: if i < item.velocities.len() {
+                    item.velocities[i]
+                } else {
+                    [0.0, 0.0, 0.0]
+                },
+                _pad2: 0.0,
             })
             .collect();
 
@@ -359,7 +368,7 @@ impl ViewportGpuResources {
         });
         queue.write_buffer(&instance_buf, 0, instance_bytes);
 
-        // Uniform buffer: model matrix + flags + soft-particle distance.
+        // Uniform buffer: model matrix + flags + soft-particle distance + orientation.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SpriteUniformData {
@@ -367,6 +376,8 @@ impl ViewportGpuResources {
             world_space: u32,
             has_texture: u32,
             soft_particle_distance: f32,
+            orientation: u32,
+            axis: [f32; 3],
             _pad0: u32,
         }
 
@@ -381,6 +392,12 @@ impl ViewportGpuResources {
                 (&self.fallback_lut_view, 0)
             };
 
+        let orientation = match item.orientation {
+            crate::renderer::SpriteOrientation::CameraFacing => 0u32,
+            crate::renderer::SpriteOrientation::VelocityStretched => 1u32,
+            crate::renderer::SpriteOrientation::AxisLocked => 2u32,
+        };
+
         let uniform_data = SpriteUniformData {
             model: item.model,
             world_space: if item.size_mode == crate::renderer::SpriteSizeMode::WorldSpace {
@@ -393,6 +410,8 @@ impl ViewportGpuResources {
                 .soft_particle_distance
                 .filter(|d| *d > 0.0)
                 .unwrap_or(0.0),
+            orientation,
+            axis: item.axis,
             _pad0: 0,
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {

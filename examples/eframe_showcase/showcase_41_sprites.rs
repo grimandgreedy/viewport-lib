@@ -22,8 +22,8 @@ use eframe::egui;
 use viewport_lib::{
     ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId, GpuParticleSystemItem,
     LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem, ParticleRender,
-    PolylineItem, RibbonItem, SceneRenderItem, SpawnShape, SpriteBlend, SpriteItem, SpriteSizeMode,
-    VelocityDist, ViewportRenderer, primitives,
+    PolylineItem, RibbonItem, SceneRenderItem, SpawnShape, SpriteBlend, SpriteItem,
+    SpriteOrientation, SpriteSizeMode, VelocityDist, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,6 +53,10 @@ pub(crate) enum SpriteSubMode {
     /// the renderer runs the emitter, integrates forces (gravity + an
     /// orbiting attractor), and draws live particles each frame.
     GpuParticles,
+    /// Sprite orientation modes side by side: a flock of camera-facing
+    /// markers, a swarm of velocity-stretched sparks, and a row of grass
+    /// cards locked to the world up axis.
+    Orientations,
 }
 
 pub(crate) struct TrailEmitter {
@@ -125,6 +129,25 @@ pub(crate) struct SpriteState {
     /// horizontal sweep of the soft-fade sprite plane.
     pub demo_time: f32,
 
+    // Streak texture: a procedural noisy lengthwise stripe used to demonstrate
+    // ribbon texturing in the Trails sub-mode (toggle below) and the
+    // velocity-stretched rain in the Orientations sub-mode.
+    pub streak_tex: u64,
+    pub trail_streak_enabled: bool,
+    /// Flame texture: tall taper with hot inner gradient. Used by the
+    /// axis-locked candle flames in the Orientations sub-mode.
+    pub flame_tex: u64,
+
+    // Orientations sub-mode toggles which orientation gets exclusive focus
+    // (so the user can see one mode at a time at a useful scale).
+    pub orientation_focus: SpriteOrientation,
+    /// Per-rain-drop position. Updated each frame in `update_sprites` when the
+    /// Orientations sub-mode is showing velocity-stretched rain.
+    pub rain_positions: Vec<[f32; 3]>,
+    /// Per-rain-drop velocity. Constant downward with a small per-drop jitter
+    /// to keep the streaks from forming a synchronised pulse.
+    pub rain_velocities: Vec<[f32; 3]>,
+
     // GPU particles mode
     pub gpu_particle_system: Option<GpuParticleSystemId>,
     pub gpu_emit_rate: f32,
@@ -186,6 +209,12 @@ impl Default for SpriteState {
             trail_length: 80,
             trail_width: 0.18,
             trail_blend: SpriteBlend::Additive,
+            streak_tex: 0,
+            trail_streak_enabled: false,
+            flame_tex: 0,
+            orientation_focus: SpriteOrientation::VelocityStretched,
+            rain_positions: Vec::new(),
+            rain_velocities: Vec::new(),
             gpu_particle_system: None,
             gpu_emit_rate: 20_000.0,
             gpu_lifetime: (1.5, 3.0),
@@ -229,6 +258,74 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
     };
 
     let placed_positions = icosphere_sample_positions(20, 3.5);
+
+    // Flame texture (32x96): wide hot core at the bottom, narrowing toward
+    // the tip, with a yellow-white inner gradient and soft alpha falloff.
+    let flame_tex = {
+        let (w, h) = (32u32, 96u32);
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            // v = 0 at the wide base, 1 at the narrow tip.
+            let v = y as f32 / (h - 1) as f32;
+            // Half-width of the flame at this height (texture-space).
+            let taper = (1.0 - v * 0.85).max(0.05);
+            for x in 0..w {
+                let cx = (x as f32 - w as f32 * 0.5) / (w as f32 * 0.5); // -1..1
+                let dist = cx.abs();
+                let inside = (taper - dist).max(0.0) / taper;
+                if inside <= 0.0 {
+                    continue;
+                }
+                // Brighter, hotter at the core; cools toward the edge and the tip.
+                let core = inside.powf(1.3) * (1.0 - v * 0.4);
+                let r = 1.0_f32;
+                let g = (0.45 + 0.55 * core).clamp(0.0, 1.0);
+                let b = (core * 0.5).clamp(0.0, 1.0);
+                let a = (core.powf(1.1) * 255.0).clamp(0.0, 255.0) as u8;
+                let i = ((y * w + x) * 4) as usize;
+                pixels[i]     = (r * 255.0) as u8;
+                pixels[i + 1] = (g * 255.0) as u8;
+                pixels[i + 2] = (b * 255.0) as u8;
+                pixels[i + 3] = a;
+            }
+        }
+        renderer
+            .resources_mut()
+            .upload_texture(&app.device, &app.queue, w, h, &pixels)
+            .expect("flame tex")
+    };
+
+    // Streak texture (128x16): a horizontal lengthwise stripe with soft edges
+    // and a noisy intensity along its length. Suited to ribbon trails and
+    // velocity-stretched sparks.
+    let streak_tex = {
+        let (w, h) = (128u32, 16u32);
+        let mut seed = 0x5eed_u64;
+        let mut lcg = move || -> f32 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as f32) / (u32::MAX as f32)
+        };
+        let noise: Vec<f32> = (0..w).map(|_| 0.6 + lcg() * 0.4).collect();
+        let pixels: Vec<u8> = (0..h)
+            .flat_map(|y| {
+                let dy = (y as f32 - h as f32 * 0.5).abs() / (h as f32 * 0.5);
+                let edge = (1.0 - dy).clamp(0.0, 1.0).powf(2.5);
+                noise
+                    .iter()
+                    .flat_map(move |n| {
+                        let a = (edge * n * 255.0) as u8;
+                        [255u8, 230, 180, a]
+                    })
+                    .collect::<Vec<u8>>()
+            })
+            .collect();
+        renderer
+            .resources_mut()
+            .upload_texture(&app.device, &app.queue, w, h, &pixels)
+            .expect("streak tex")
+    };
 
     // Mode B: soft glow disc (32x32, white, for particle sprites).
     let glow_tex = {
@@ -370,6 +467,30 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         .create_gpu_particle_system(&app.device, &app.queue, &particle_cfg);
     app.sprite_state.gpu_particle_system = Some(particle_sys);
 
+    app.sprite_state.streak_tex = streak_tex;
+    app.sprite_state.flame_tex = flame_tex;
+
+    // Rain field for the Orientations demo: 600 drops scattered in a column
+    // above the ground, each with a roughly downward velocity. The host
+    // advances positions each frame in `update_sprites`.
+    let mut rain_positions = Vec::with_capacity(600);
+    let mut rain_velocities = Vec::with_capacity(600);
+    let mut rain_seed = 0x7a1d_u64;
+    let mut rain_rand = move || -> f32 {
+        rain_seed = rain_seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((rain_seed >> 33) as f32) / (u32::MAX as f32)
+    };
+    for _ in 0..600 {
+        let x = (rain_rand() - 0.5) * 12.0;
+        let y = (rain_rand() - 0.5) * 12.0;
+        let z = rain_rand() * 6.0; // 0..6 above the ground
+        rain_positions.push([x, y, z]);
+        rain_velocities.push([0.0, 0.0, -6.0 - rain_rand() * 2.0]);
+    }
+    app.sprite_state.rain_positions = rain_positions;
+    app.sprite_state.rain_velocities = rain_velocities;
     app.sprite_state.cube_id = cube_id;
     app.sprite_state.sphere_id = sphere_id;
     app.sprite_state.sprite_tex = sprite_tex;
@@ -479,7 +600,10 @@ fn icosphere_sample_positions(n: usize, radius: f32) -> Vec<[f32; 3]> {
 
 pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Sub-mode:");
-    ui.horizontal(|ui| {
+    // Wrap the sub-mode chips so the sidebar stays narrow even as more modes
+    // get added. egui's `horizontal_wrapped` flows children into the next row
+    // when they would overflow.
+    ui.horizontal_wrapped(|ui| {
         ui.selectable_value(
             &mut app.sprite_state.sub_mode,
             SpriteSubMode::Placed,
@@ -508,7 +632,7 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
         ui.selectable_value(
             &mut app.sprite_state.sub_mode,
             SpriteSubMode::MeshParticles,
-            "MeshParticles",
+            "Mesh Particles",
         );
         ui.selectable_value(
             &mut app.sprite_state.sub_mode,
@@ -519,6 +643,11 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             &mut app.sprite_state.sub_mode,
             SpriteSubMode::GpuParticles,
             "GPU Particles",
+        );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::Orientations,
+            "Orientations",
         );
     });
     ui.separator();
@@ -608,6 +737,46 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
                     "Premultiplied",
                 );
             });
+            ui.checkbox(
+                &mut app.sprite_state.trail_streak_enabled,
+                "Streak texture (modulates ribbon colour along its length)",
+            );
+        }
+        SpriteSubMode::Orientations => {
+            ui.label("Three sprite orientation modes side by side. Pick which one");
+            ui.label("the demo draws so it stays at a useful scale.");
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut app.sprite_state.orientation_focus,
+                    SpriteOrientation::CameraFacing,
+                    "Camera-facing",
+                );
+                ui.selectable_value(
+                    &mut app.sprite_state.orientation_focus,
+                    SpriteOrientation::VelocityStretched,
+                    "Velocity-stretched",
+                );
+                ui.selectable_value(
+                    &mut app.sprite_state.orientation_focus,
+                    SpriteOrientation::AxisLocked,
+                    "Axis-locked (world up)",
+                );
+            });
+            match app.sprite_state.orientation_focus {
+                SpriteOrientation::CameraFacing => {
+                    ui.label("Category markers in a 3D scatter plot. Each cluster's icon stays");
+                    ui.label("readable from every angle as the camera orbits.");
+                }
+                SpriteOrientation::VelocityStretched => {
+                    ui.label("Falling rain. Each drop stretches along its downward velocity");
+                    ui.label("vector and lengthens with speed, producing classic streak rain.");
+                }
+                SpriteOrientation::AxisLocked => {
+                    ui.label("Candle flames locked to world up. Each flame stays vertical as");
+                    ui.label("the camera orbits instead of pivoting toward the viewer.");
+                }
+            }
         }
     }
 }
@@ -662,8 +831,37 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
             let fps = 10.0_f32;
             app.sprite_state.atlas_frame = (app.sprite_state.atlas_time * fps) as u32 % 16;
         }
-        SpriteSubMode::Soft | SpriteSubMode::MeshParticles | SpriteSubMode::GpuParticles => {
+        SpriteSubMode::Soft
+        | SpriteSubMode::MeshParticles
+        | SpriteSubMode::GpuParticles => {
             app.sprite_state.demo_time += dt;
+        }
+        SpriteSubMode::Orientations => {
+            app.sprite_state.demo_time += dt;
+            // Advance the rain regardless of which orientation is focused so
+            // switching between them does not visibly reset the drops.
+            for i in 0..app.sprite_state.rain_positions.len() {
+                let v = app.sprite_state.rain_velocities[i];
+                let p = &mut app.sprite_state.rain_positions[i];
+                p[0] += v[0] * dt;
+                p[1] += v[1] * dt;
+                p[2] += v[2] * dt;
+                if p[2] < -0.5 {
+                    // Recycle to the top with a fresh xy.
+                    let mut seed = 0xabad_u64.wrapping_add(i as u64).wrapping_add(
+                        (app.sprite_state.demo_time * 9173.0) as u64,
+                    );
+                    let mut r = || -> f32 {
+                        seed = seed
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        ((seed >> 33) as f32) / (u32::MAX as f32)
+                    };
+                    p[0] = (r() - 0.5) * 12.0;
+                    p[1] = (r() - 0.5) * 12.0;
+                    p[2] = 6.0 + r() * 0.5;
+                }
+            }
         }
         SpriteSubMode::Trails => {
             app.sprite_state.demo_time += dt;
@@ -920,6 +1118,8 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             Vec::new()
         }
 
+        SpriteSubMode::Orientations => orientation_demo_items(app),
+
         SpriteSubMode::Trails => {
             // A small glowing dot at the head of each emitter makes the
             // ribbon read as a comet rather than a free-floating brushstroke.
@@ -989,6 +1189,37 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             item.material.specular = 0.2;
             vec![item]
         }
+        SpriteSubMode::Orientations => match app.sprite_state.orientation_focus {
+            // Scatter plot doesn't need backdrop geometry; the cluster
+            // markers and points are the scene.
+            SpriteOrientation::CameraFacing => vec![],
+            // Candle flames sit on a dark slab so the additive glow reads.
+            SpriteOrientation::AxisLocked => {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = app.sprite_state.sphere_id;
+                item.model = glam::Mat4::from_scale_rotation_translation(
+                    glam::Vec3::new(5.0, 5.0, 0.02),
+                    glam::Quat::IDENTITY,
+                    glam::Vec3::new(0.0, 0.0, -0.05),
+                )
+                .to_cols_array_2d();
+                item.material.base_colour = [0.18, 0.12, 0.08];
+                vec![item]
+            }
+            // Rain reads against a darker disc that acts as a puddle.
+            SpriteOrientation::VelocityStretched => {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = app.sprite_state.sphere_id;
+                item.model = glam::Mat4::from_scale_rotation_translation(
+                    glam::Vec3::new(5.0, 5.0, 0.02),
+                    glam::Quat::IDENTITY,
+                    glam::Vec3::new(0.0, 0.0, -0.5),
+                )
+                .to_cols_array_2d();
+                item.material.base_colour = [0.18, 0.22, 0.28];
+                vec![item]
+            }
+        },
         _ => vec![],
     }
 }
@@ -1118,6 +1349,168 @@ fn gpu_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
     Some(item)
 }
 
+/// Sprite items for the `Orientations` sub-mode.
+///
+/// Each focus picks the scene that orientation is actually for:
+/// camera-facing for world-space labels over a centerpiece, velocity-stretched
+/// for falling rain, axis-locked for vertical grass on a ground plane.
+fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
+    match app.sprite_state.orientation_focus {
+        SpriteOrientation::CameraFacing => {
+            // 3D scatter plot: three clusters of data points with a large
+            // category marker pinned at each cluster centroid. The cluster
+            // markers sample three different cells of the atlas texture so
+            // they read as distinct categories; small data points use the
+            // glow texture tinted per cluster.
+            let cluster_centres = [
+                [ 2.4_f32,  0.0,  1.0_f32],
+                [-1.8,       2.0,  0.5],
+                [ 0.0,      -2.4, -0.5],
+            ];
+            let cluster_rgb = [
+                [0.30, 0.65, 1.00], // blue
+                [1.00, 0.55, 0.20], // orange
+                [0.55, 0.85, 0.30], // green
+            ];
+            let mut items = Vec::with_capacity(2);
+
+            // Small data points (one batch, per-instance tint per cluster).
+            let mut positions = Vec::with_capacity(cluster_centres.len() * 80);
+            let mut colours = Vec::with_capacity(cluster_centres.len() * 80);
+            let mut seed = 0xda7au64;
+            let mut rand = move || -> f32 {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((seed >> 33) as f32) / (u32::MAX as f32)
+            };
+            for (ci, c) in cluster_centres.iter().enumerate() {
+                let [r, g, b] = cluster_rgb[ci];
+                for _ in 0..80 {
+                    // Approximate gaussian via three-step uniform sum.
+                    let nx = (rand() + rand() + rand()) / 3.0 - 0.5;
+                    let ny = (rand() + rand() + rand()) / 3.0 - 0.5;
+                    let nz = (rand() + rand() + rand()) / 3.0 - 0.5;
+                    let spread = 1.2;
+                    positions.push([
+                        c[0] + nx * spread,
+                        c[1] + ny * spread,
+                        c[2] + nz * spread,
+                    ]);
+                    colours.push([r, g, b, 0.65]);
+                }
+            }
+            let mut points = SpriteItem::default();
+            points.texture_id = Some(app.sprite_state.glow_tex);
+            points.positions = positions;
+            points.colours = colours;
+            points.default_size = 9.0;
+            points.size_mode = SpriteSizeMode::ScreenSpace;
+            points.blend = SpriteBlend::Additive;
+            points.depth_write = false;
+            points.orientation = SpriteOrientation::CameraFacing;
+            items.push(points);
+
+            // Category markers at the centroids: large atlas icons, world-
+            // space sized so they scale with distance like real labels.
+            let cell = 1.0_f32 / 4.0;
+            let mut marker_pos = Vec::with_capacity(3);
+            let mut marker_uv = Vec::with_capacity(3);
+            let mut marker_col = Vec::with_capacity(3);
+            for (ci, c) in cluster_centres.iter().enumerate() {
+                marker_pos.push(*c);
+                // Pick three distinct atlas cells with a clear shape each.
+                let cell_idx = match ci {
+                    0 => 0_u32,
+                    1 => 4_u32,
+                    _ => 8_u32,
+                };
+                let col_x = (cell_idx % 4) as f32 * cell;
+                let row_y = (cell_idx / 4) as f32 * cell;
+                marker_uv.push([col_x, row_y, col_x + cell, row_y + cell]);
+                let [r, g, b] = cluster_rgb[ci];
+                marker_col.push([r, g, b, 1.0]);
+            }
+            let mut markers = SpriteItem::default();
+            markers.texture_id = Some(app.sprite_state.atlas_tex);
+            markers.positions = marker_pos;
+            markers.colours = marker_col;
+            markers.uv_rects = marker_uv;
+            markers.default_size = 1.1;
+            markers.size_mode = SpriteSizeMode::WorldSpace;
+            markers.blend = SpriteBlend::AlphaBlend;
+            markers.depth_write = true;
+            markers.orientation = SpriteOrientation::CameraFacing;
+            items.push(markers);
+
+            items
+        }
+
+        SpriteOrientation::VelocityStretched => {
+            // Rain. Positions are advanced by the host each frame in
+            // `update_sprites`; the constant downward velocity drives the
+            // stretch direction and length so the drops read as streaks.
+            let mut item = SpriteItem::default();
+            item.texture_id = Some(app.sprite_state.streak_tex);
+            item.positions = app.sprite_state.rain_positions.clone();
+            item.velocities = app.sprite_state.rain_velocities.clone();
+            item.default_colour = [0.75, 0.85, 1.0, 0.85];
+            item.default_size = 18.0;
+            item.size_mode = SpriteSizeMode::ScreenSpace;
+            item.blend = SpriteBlend::AlphaBlend;
+            item.orientation = SpriteOrientation::VelocityStretched;
+            vec![item]
+        }
+
+        SpriteOrientation::AxisLocked => {
+            // Candle flames on a ring around the origin. Axis-locked to world
+            // up means each flame stays vertical as the camera orbits, the
+            // way real fire does. Additive blend so overlapping flames
+            // brighten the way overlapping fire would.
+            let count = 14usize;
+            let mut positions = Vec::with_capacity(count + 8);
+            let mut sizes = Vec::with_capacity(count + 8);
+            // Outer ring of larger candles.
+            for i in 0..count {
+                let a = i as f32 / count as f32 * std::f32::consts::TAU;
+                let r = 2.6_f32;
+                let x = a.cos() * r;
+                let y = a.sin() * r;
+                // Position is the flame centre; size_y/2 lifts so the base
+                // hovers just above the ground.
+                positions.push([x, y, 0.8]);
+                sizes.push(1.6);
+            }
+            // A few smaller flickers in the middle for visual density.
+            let mut seed = 0xf1a3_u64;
+            let mut rand = move || -> f32 {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((seed >> 33) as f32) / (u32::MAX as f32)
+            };
+            for _ in 0..8 {
+                let r = rand() * 1.5;
+                let a = rand() * std::f32::consts::TAU;
+                positions.push([a.cos() * r, a.sin() * r, 0.55]);
+                sizes.push(0.8 + rand() * 0.4);
+            }
+
+            let mut item = SpriteItem::default();
+            item.texture_id = Some(app.sprite_state.flame_tex);
+            item.positions = positions;
+            item.sizes = sizes;
+            item.default_colour = [1.0, 0.85, 0.55, 1.0];
+            item.size_mode = SpriteSizeMode::WorldSpace;
+            item.blend = SpriteBlend::Additive;
+            item.depth_write = false;
+            item.orientation = SpriteOrientation::AxisLocked;
+            item.axis = [0.0, 0.0, 1.0];
+            vec![item]
+        }
+    }
+}
+
 /// One `RibbonItem` per emitter so each trail keeps its own RGB tint while
 /// sharing the same blend mode and fade shape. Returns an empty list outside
 /// the `Trails` sub-mode.
@@ -1154,6 +1547,9 @@ pub(crate) fn trail_ribbon_items(app: &App) -> Vec<RibbonItem> {
             item.width_attribute = Some(widths);
             item.colour_attribute = colours;
             item.blend = blend;
+            if app.sprite_state.trail_streak_enabled {
+                item.texture_id = Some(app.sprite_state.streak_tex);
+            }
             // Trails read more like emitter passes than solid surfaces, so
             // suppress lighting; the per-vertex RGBA carries all the visible
             // information.

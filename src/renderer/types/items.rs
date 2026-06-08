@@ -824,6 +824,15 @@ pub struct RibbonItem {
     /// GPU blend state for this ribbon. Default: [`SpriteBlend::AlphaBlend`].
     /// Use [`SpriteBlend::Additive`] for energy or spark trails.
     pub blend: SpriteBlend,
+    /// Optional streak texture sampled along the ribbon. `None` renders the
+    /// ribbon without a texture (the resolved colour is used directly). Use
+    /// for lightning, slash arcs, dragon breath, laser beams.
+    pub texture_id: Option<u64>,
+    /// Optional per-vertex `u` coordinate along the strip. When empty, `u` is
+    /// derived from cumulative arc length: 0.0 at the first vertex of each
+    /// strip, 1.0 at the last. The cross-strip `v` is fixed at 0.0 on one
+    /// edge and 1.0 on the other.
+    pub u_attribute: Vec<f32>,
     /// Per-frame model matrix applied to `positions` in the vertex shader.
     /// Identity (the default) renders the ribbon at the world-space coordinates
     /// passed in `positions`. Set this to move a pre-uploaded ribbon without
@@ -847,6 +856,8 @@ impl Default for RibbonItem {
             colour: [1.0, 1.0, 1.0, 1.0],
             colour_attribute: Vec::new(),
             blend: SpriteBlend::AlphaBlend,
+            texture_id: None,
+            u_attribute: Vec::new(),
             model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
@@ -1480,8 +1491,41 @@ pub struct SpriteItem {
     /// lines against walls and ground. Requires a sampleable scene depth resolve;
     /// see crate docs for current support status.
     pub soft_particle_distance: Option<f32>,
+    /// How each billboard is oriented in world space. Default
+    /// [`SpriteOrientation::CameraFacing`] matches the historical behaviour:
+    /// every quad turns to face the camera.
+    pub orientation: SpriteOrientation,
+    /// Per-instance velocity vectors. Used by
+    /// [`SpriteOrientation::VelocityStretched`] to align each quad's long axis
+    /// with the projected motion direction. Empty disables stretching for that
+    /// instance (it falls back to a square camera-facing quad).
+    pub velocities: Vec<[f32; 3]>,
+    /// World-space axis used by [`SpriteOrientation::AxisLocked`] for the
+    /// quad's long axis. Ignored in other orientation modes. Default
+    /// `[0, 0, 1]` (world up).
+    pub axis: [f32; 3],
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
+}
+
+/// How a sprite batch's billboards are oriented in world space.
+///
+/// Picked per batch; all instances in one [`SpriteItem`] share the same mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpriteOrientation {
+    /// Every quad turns to face the camera. This is the standard particle and
+    /// marker behaviour and the historical default.
+    #[default]
+    CameraFacing,
+    /// Each quad's long axis follows the projected per-instance velocity
+    /// vector, with length scaled by the velocity magnitude. Use for sparks,
+    /// muzzle flashes, bullets, and rain streaks. Requires the matching entry
+    /// in [`SpriteItem::velocities`] for each instance.
+    VelocityStretched,
+    /// Each quad's long axis is locked to a single world-space direction
+    /// shared by every instance. Use for grass cards, plume columns, and
+    /// anything tethered to world up. The axis comes from [`SpriteItem::axis`].
+    AxisLocked,
 }
 
 impl Default for SpriteItem {
@@ -1500,6 +1544,9 @@ impl Default for SpriteItem {
             depth_write: false,
             blend: SpriteBlend::AlphaBlend,
             soft_particle_distance: None,
+            orientation: SpriteOrientation::default(),
+            velocities: Vec::new(),
+            axis: [0.0, 0.0, 1.0],
             settings: ItemSettings::default(),
         }
     }

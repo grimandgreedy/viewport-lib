@@ -55,26 +55,32 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-// Per-batch uniform (80 bytes):
+// Per-batch uniform (112 bytes):
 //   model:                  mat4x4<f32>  (64 bytes at offset  0)
-//   world_space:            u32          ( 4 bytes at offset 64) -- 0 = screen pixels, 1 = world units
-//   has_texture:            u32          ( 4 bytes at offset 68) -- 0 = solid colour, 1 = sample texture
-//   soft_particle_distance: f32          ( 4 bytes at offset 72) -- 0 disables soft fade
-//   _pad0:                  u32          ( 4 bytes at offset 76)
+//   world_space:            u32          ( 4 bytes at offset 64)
+//   has_texture:            u32          ( 4 bytes at offset 68)
+//   soft_particle_distance: f32          ( 4 bytes at offset 72)
+//   orientation:            u32          ( 4 bytes at offset 76) -- 0=CameraFacing, 1=VelocityStretched, 2=AxisLocked
+//   axis:                   vec3<f32>    (12 bytes at offset 80) -- AxisLocked direction
+//   _pad0:                  u32          ( 4 bytes at offset 92)
 struct SpriteUniform {
     model:                  mat4x4<f32>,
     world_space:            u32,
     has_texture:            u32,
     soft_particle_distance: f32,
+    orientation:            u32,
+    axis:                   vec3<f32>,
     _pad0:                  u32,
 };
 
-// Per-sprite instance data (48 bytes):
+// Per-sprite instance data (64 bytes):
 //   colour:    vec4<f32>  (16 bytes at offset  0)
-//   size:     f32        ( 4 bytes at offset 16)
-//   rotation: f32        ( 4 bytes at offset 20) -- radians, CCW around camera-forward axis
-//   _pad0/1:  f32, f32   ( 8 bytes at offset 24) -- alignment before uv_rect
-//   uv_rect:  vec4<f32>  (16 bytes at offset 32) -- [u0, v0, u1, v1]
+//   size:      f32        ( 4 bytes at offset 16)
+//   rotation:  f32        ( 4 bytes at offset 20)
+//   _pad0/1:   f32, f32   ( 8 bytes at offset 24)
+//   uv_rect:   vec4<f32>  (16 bytes at offset 32)
+//   velocity:  vec3<f32>  (12 bytes at offset 48) -- VelocityStretched direction; zero disables stretch
+//   _pad2:     f32        ( 4 bytes at offset 60)
 struct SpriteInstance {
     colour:    vec4<f32>,
     size:     f32,
@@ -82,6 +88,8 @@ struct SpriteInstance {
     _pad0:    f32,
     _pad1:    f32,
     uv_rect:  vec4<f32>,
+    velocity: vec3<f32>,
+    _pad2:    f32,
 };
 
 @group(0) @binding(0) var<uniform>       camera:        Camera;
@@ -167,31 +175,76 @@ fn vs_main(in: VertexIn) -> VertexOut {
         s * corner.x + c * corner.y,
     );
 
+    // Camera basis vectors in world space (rows of the view matrix).
+    let cam_right_default = vec3<f32>(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
+    let cam_up_default    = vec3<f32>(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
+    let cam_forward       = vec3<f32>(camera.view[0][2], camera.view[1][2], camera.view[2][2]);
+
+    // Pick the quad's local right and up axes based on the orientation mode.
+    var local_right = cam_right_default;
+    var local_up    = cam_up_default;
+    var stretch_x   = 1.0;
+
+    if sprite_ub.orientation == 1u {
+        // VelocityStretched: align local right with the projected velocity.
+        let v = inst.velocity;
+        let speed = length(v);
+        if speed > 1e-4 {
+            // Project velocity onto the plane perpendicular to the camera forward.
+            let v_screen = v - cam_forward * dot(v, cam_forward);
+            let s_len    = length(v_screen);
+            if s_len > 1e-4 {
+                local_right = v_screen / s_len;
+                local_up    = normalize(cross(cam_forward, local_right));
+                stretch_x   = 1.0 + speed * 0.25;
+            }
+        }
+    } else if sprite_ub.orientation == 2u {
+        // AxisLocked: long axis follows the supplied world-space direction;
+        // local right sits in the plane perpendicular to both the axis and
+        // the camera forward so the card stays facing toward the camera.
+        let axis = normalize(sprite_ub.axis);
+        local_up = axis;
+        let right = cross(axis, cam_forward);
+        let r_len = length(right);
+        if r_len > 1e-4 {
+            local_right = right / r_len;
+        } else {
+            // Camera looking straight along the axis: fall back to a stable basis.
+            local_right = cam_right_default;
+        }
+    }
+
     if sprite_ub.world_space != 0u {
-        // World-space sizing: expand along camera right/up before projection.
-        // The view matrix rows give the camera axes in world space.
-        // view is column-major in WGSL: view[col][row].
-        // Row 0 of view = camera right in world space.
-        // Row 1 of view = camera up in world space.
-        let cam_right = vec3<f32>(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
-        let cam_up    = vec3<f32>(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
-        let half      = inst.size * 0.5;
-        let ws_pos    = world_pos
-                      + cam_right * (rotated.x * half)
-                      + cam_up    * (rotated.y * half);
-        out.clip_pos  = camera.view_proj * vec4<f32>(ws_pos, 1.0);
+        let half = inst.size * 0.5;
+        let ws_pos = world_pos
+                   + local_right * (rotated.x * half * stretch_x)
+                   + local_up    * (rotated.y * half);
+        out.clip_pos = camera.view_proj * vec4<f32>(ws_pos, 1.0);
     } else {
-        // Screen-space sizing: expand in NDC after projection (same as point_cloud.wgsl).
+        // Screen-space sizing: project the world axes to NDC so the screen
+        // extent uses the chosen orientation rather than the camera basis.
         let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let half_px   = inst.size * 0.5;
-        let ndc_off   = rotated * half_px
-                      / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
-        out.clip_pos  = vec4<f32>(
-            center.x + ndc_off.x * center.w,
-            center.y + ndc_off.y * center.w,
-            center.z,
-            center.w,
-        );
+        let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
+        let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
+        let half_px    = inst.size * 0.5;
+        let inv_vp     = vec2<f32>(1.0, 1.0)
+                       / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
+        let offset_clip = right_clip * (rotated.x * half_px * stretch_x * inv_vp.x)
+                        + up_clip    * (rotated.y * half_px * inv_vp.y);
+        if sprite_ub.orientation == 0u {
+            // Camera-facing falls back to the original screen-space NDC offset
+            // so the size matches the prior behaviour exactly.
+            let ndc_off = rotated * half_px * inv_vp;
+            out.clip_pos = vec4<f32>(
+                center.x + ndc_off.x * center.w,
+                center.y + ndc_off.y * center.w,
+                center.z,
+                center.w,
+            );
+        } else {
+            out.clip_pos = center + offset_clip * center.w;
+        }
     }
 
     out.world_pos = world_pos;

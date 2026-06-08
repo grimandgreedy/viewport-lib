@@ -3187,6 +3187,10 @@ pub struct ViewportGpuResources {
     pub(crate) ribbon_wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for streamtube uniforms (group 1).
     pub(crate) streamtube_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for ribbons (group 1): uniform + optional streak
+    /// texture + sampler. Distinct from `streamtube_bgl` so streamtubes do not
+    /// pay for a texture binding they never sample.
+    pub(crate) ribbon_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Image slice rendering (lazily created) ---
     /// Image slice render pipeline. None until first slice item is submitted.

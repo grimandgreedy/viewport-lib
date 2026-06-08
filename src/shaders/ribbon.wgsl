@@ -31,6 +31,7 @@ struct StreamtubeUniform {
     unlit:            u32,
     opacity:          f32,
     wireframe:        u32,
+    has_texture:      u32,
 };
 
 struct ClipVolumeEntry {
@@ -64,7 +65,9 @@ struct ClipVolumeUB {
 @group(0) @binding(3) var<uniform> lights:      Lights;
 @group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
-@group(1) @binding(0) var<uniform> tube:        StreamtubeUniform;
+@group(1) @binding(0) var<uniform> tube:           StreamtubeUniform;
+@group(1) @binding(1) var          ribbon_texture: texture_2d<f32>;
+@group(1) @binding(2) var          ribbon_sampler: sampler;
 
 fn clip_volume_test(p: vec3<f32>) -> bool {
     for (var i = 0u; i < clip_volume.count; i = i + 1u) {
@@ -105,6 +108,7 @@ struct VertexOut {
     @location(0)       world_pos: vec3<f32>,
     @location(1)       world_nrm: vec3<f32>,
     @location(2)       vert_col:  vec4<f32>,
+    @location(3)       uv:        vec2<f32>,
 };
 
 @vertex
@@ -116,6 +120,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.world_pos = world;
     out.world_nrm = normalize(nrm);
     out.vert_col  = in.colour;
+    out.uv        = in.uv;
     return out;
 }
 
@@ -134,8 +139,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         return vec4<f32>(0.75, 0.75, 0.75, 1.0);
     }
 
-    // Resolve base colour.
-    let base_colour = select(tube.colour, in.vert_col, tube.use_vertex_colour != 0u);
+    // Resolve base colour. When a streak texture is bound it is multiplied in
+    // on top of the per-vertex resolved colour so trail / beam textures can
+    // ride the existing colour and alpha ramps.
+    var base_colour = select(tube.colour, in.vert_col, tube.use_vertex_colour != 0u);
+    if tube.has_texture != 0u {
+        base_colour = base_colour * textureSample(ribbon_texture, ribbon_sampler, in.uv);
+    }
     let alpha = base_colour.a * tube.opacity;
 
     // Unlit early-out: skip lighting entirely and return the resolved colour.

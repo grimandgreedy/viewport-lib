@@ -79,6 +79,46 @@ impl ViewportGpuResources {
             })
         };
 
+        // Ribbon BGL adds an optional streak texture + sampler alongside the
+        // shared uniform binding. The fragment shader keys off `has_texture`
+        // and falls back to the resolved colour when no texture is bound.
+        let ribbon_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ribbon_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let ribbon_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ribbon_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &ribbon_bgl],
+            push_constant_ranges: &[],
+        });
+
         // Ribbon pipeline: same layout, two-sided shader, cull_mode None.
         let ribbon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ribbon_shader"),
@@ -116,7 +156,7 @@ impl ViewportGpuResources {
         let make_ribbon = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, depth_write: bool, label: &str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
-                layout: Some(&layout),
+                layout: Some(&ribbon_layout),
                 vertex: wgpu::VertexState {
                     module: &ribbon_shader,
                     entry_point: Some("vs_main"),
@@ -201,7 +241,7 @@ impl ViewportGpuResources {
         let make_ribbon_wireframe = |fmt: wgpu::TextureFormat| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("ribbon_wireframe_pipeline"),
-                layout: Some(&layout),
+                layout: Some(&ribbon_layout),
                 vertex: wgpu::VertexState {
                     module: &ribbon_shader,
                     entry_point: Some("vs_main"),
@@ -242,6 +282,7 @@ impl ViewportGpuResources {
         let ldr = self.target_format;
         let hdr = wgpu::TextureFormat::Rgba16Float;
         self.streamtube_bgl = Some(streamtube_bgl);
+        self.ribbon_bgl = Some(ribbon_bgl);
         self.streamtube_pipeline = Some(DualPipeline {
             ldr: make_tube(ldr),
             hdr: make_tube(hdr),
@@ -1001,6 +1042,26 @@ impl ViewportGpuResources {
             };
             let mut u = t0.cross(ref_v).normalize();
 
+            // Per-vertex u along the strip. Defaults to cumulative-arc-length
+            // normalised to [0, 1] when the host did not supply a `u_attribute`.
+            let mut strip_u: Vec<f32> = Vec::with_capacity(pts.len());
+            if item.u_attribute.is_empty() {
+                let mut cum = 0.0_f32;
+                strip_u.push(0.0);
+                for k in 1..pts.len() {
+                    cum += (pts[k] - pts[k - 1]).length();
+                    strip_u.push(cum);
+                }
+                let total = strip_u.last().copied().unwrap_or(1.0).max(1e-6);
+                for v in &mut strip_u {
+                    *v /= total;
+                }
+            } else {
+                for k in 0..pts.len() {
+                    strip_u.push(*item.u_attribute.get(pts_start + k).unwrap_or(&0.0));
+                }
+            }
+
             let base = verts.len() as u32;
 
             for (k, &pt) in pts.iter().enumerate() {
@@ -1045,12 +1106,14 @@ impl ViewportGpuResources {
                     * 0.5;
                 let colour = scalar_to_colour(pts_start + k);
 
-                // Left edge vertex.
+                let uval = strip_u[k];
+                // Left edge vertex. `uv.x` runs along the strip; `uv.y` is the
+                // cross-strip coordinate that picks the left or right edge.
                 verts.push(Vertex {
                     position: (pt + lateral * half_w).to_array(),
                     normal: normal.to_array(),
                     colour,
-                    uv: [0.0, 0.0],
+                    uv: [uval, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                 });
                 // Right edge vertex.
@@ -1058,7 +1121,7 @@ impl ViewportGpuResources {
                     position: (pt - lateral * half_w).to_array(),
                     normal: normal.to_array(),
                     colour,
-                    uv: [1.0, 0.0],
+                    uv: [uval, 1.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                 });
 
@@ -1127,8 +1190,19 @@ impl ViewportGpuResources {
             unlit: u32,
             opacity: f32,
             wireframe: u32,
-            _pad: [f32; 3],
+            has_texture: u32,
+            _pad: [f32; 2],
         }
+        let (texture_view, has_texture): (&wgpu::TextureView, u32) =
+            if let Some(id) = item.texture_id {
+                if let Some(tex) = self.textures.get(id as usize) {
+                    (&tex.view, 1)
+                } else {
+                    (&self.fallback_lut_view, 0)
+                }
+            } else {
+                (&self.fallback_lut_view, 0)
+            };
         let uniform_data = RibbonUniform {
             model: item.model,
             colour: item.colour,
@@ -1137,7 +1211,8 @@ impl ViewportGpuResources {
             unlit: item.settings.unlit as u32,
             opacity: item.settings.opacity,
             wireframe: wireframe as u32,
-            _pad: [0.0; 3],
+            has_texture,
+            _pad: [0.0; 2],
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ribbon_uniform_buf"),
@@ -1148,16 +1223,26 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let bgl = self
-            .streamtube_bgl
+            .ribbon_bgl
             .as_ref()
             .expect("ensure_streamtube_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ribbon_uniform_bg"),
             layout: bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+            ],
         });
 
         StreamtubeGpuData {
