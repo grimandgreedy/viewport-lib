@@ -2019,6 +2019,9 @@ pub struct StreamtubeGpuData {
     pub(crate) wireframe: bool,
     /// Bind group (group 1): tube uniform (colour, radius).
     pub(crate) uniform_bind_group: wgpu::BindGroup,
+    /// Blend mode for the draw. Streamtubes always set this to
+    /// `SpriteBlend::AlphaBlend`; ribbons honour the value from `RibbonItem`.
+    pub(crate) blend: crate::renderer::SpriteBlend,
     // Keep uniform buffer alive.
     pub(crate) _uniform_buf: wgpu::Buffer,
 }
@@ -3171,7 +3174,15 @@ pub struct ViewportGpuResources {
     /// Streamtube wireframe pipeline (LineList topology, cull_mode None). None until first wireframe streamtube.
     pub(crate) streamtube_wireframe_pipeline: Option<DualPipeline>,
     /// Ribbon pipeline: same layout as streamtube but cull_mode None and two-sided normals.
+    /// Standard alpha blend, depth write enabled. Default for plain ribbons.
     pub(crate) ribbon_pipeline: Option<DualPipeline>,
+    /// Ribbon pipeline with additive blend and depth write disabled. Picked
+    /// when `RibbonItem::blend == SpriteBlend::Additive`, the right look for
+    /// energy or spark trails.
+    pub(crate) ribbon_pipeline_additive: Option<DualPipeline>,
+    /// Ribbon pipeline with premultiplied-alpha blend and depth write disabled.
+    /// Picked when `RibbonItem::blend == SpriteBlend::Premultiplied`.
+    pub(crate) ribbon_pipeline_premultiplied: Option<DualPipeline>,
     /// Ribbon wireframe pipeline (LineList topology, cull_mode None).
     pub(crate) ribbon_wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for streamtube uniforms (group 1).

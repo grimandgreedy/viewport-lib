@@ -2,6 +2,16 @@
 
 ## [Unreleased Changes]
 
+### Features
+
+#### Ribbon trails
+
+Ribbons can now render as faded particle trails without building a custom colourmap. Two additions on `RibbonItem`:
+
+- A per-vertex RGBA array drives colour directly. Setting alpha along the strip is the natural way to fade a comet or sword-swing trail from invisible tail to bright head.
+- A blend mode selector picks between standard alpha, additive (emissive trails, energy beams, sparks), and premultiplied. Additive and premultiplied variants disable depth write so overlapping segments accumulate brightness instead of clipping.
+
+
 ## [0.17.0]
 
 ### Features

@@ -86,9 +86,36 @@ impl ViewportGpuResources {
                 include_str!(concat!(env!("OUT_DIR"), "/ribbon.wgsl")).into(),
             ),
         });
-        let make_ribbon = |fmt: wgpu::TextureFormat| {
+        let additive_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let premultiplied_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        // Additive and premultiplied ribbons are typically used for emissive
+        // trails; depth write is disabled so successive segments accumulate
+        // rather than clipping each other when they overlap.
+        let make_ribbon = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, depth_write: bool, label: &str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ribbon_pipeline"),
+                label: Some(label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &ribbon_shader,
@@ -102,7 +129,7 @@ impl ViewportGpuResources {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        blend: Some(blend),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -113,7 +140,7 @@ impl ViewportGpuResources {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
+                    depth_write_enabled: depth_write,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
@@ -223,9 +250,18 @@ impl ViewportGpuResources {
             ldr: make_tube_wireframe(ldr),
             hdr: make_tube_wireframe(hdr),
         });
+        let alpha_blend = wgpu::BlendState::ALPHA_BLENDING;
         self.ribbon_pipeline = Some(DualPipeline {
-            ldr: make_ribbon(ldr),
-            hdr: make_ribbon(hdr),
+            ldr: make_ribbon(ldr, alpha_blend, true, "ribbon_pipeline"),
+            hdr: make_ribbon(hdr, alpha_blend, true, "ribbon_pipeline"),
+        });
+        self.ribbon_pipeline_additive = Some(DualPipeline {
+            ldr: make_ribbon(ldr, additive_blend, false, "ribbon_pipeline_additive"),
+            hdr: make_ribbon(hdr, additive_blend, false, "ribbon_pipeline_additive"),
+        });
+        self.ribbon_pipeline_premultiplied = Some(DualPipeline {
+            ldr: make_ribbon(ldr, premultiplied_blend, false, "ribbon_pipeline_premultiplied"),
+            hdr: make_ribbon(hdr, premultiplied_blend, false, "ribbon_pipeline_premultiplied"),
         });
         self.ribbon_wireframe_pipeline = Some(DualPipeline {
             ldr: make_ribbon_wireframe(ldr),
@@ -482,6 +518,7 @@ impl ViewportGpuResources {
             edge_index_count,
             wireframe,
             uniform_bind_group,
+            blend: crate::renderer::SpriteBlend::AlphaBlend,
             _uniform_buf: uniform_buf,
         }
     }
@@ -818,6 +855,7 @@ impl ViewportGpuResources {
             edge_index_count,
             wireframe,
             uniform_bind_group,
+            blend: crate::renderer::SpriteBlend::AlphaBlend,
             _uniform_buf: uniform_buf,
         }
     }
@@ -871,9 +909,16 @@ impl ViewportGpuResources {
         item: &crate::renderer::RibbonItem,
         wireframe: bool,
     ) -> StreamtubeGpuData {
+        // Per-vertex RGBA (`colour_attribute`) takes precedence over the
+        // scalar+LUT path and the flat `colour` fallback. Trails typically
+        // drive only the alpha channel to fade along their length.
+        let has_colour_attribute = !item.colour_attribute.is_empty();
+
         // Resolve LUT for scalar colouring.
         let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
-            if !item.scalars.is_empty() {
+            if has_colour_attribute {
+                (1, None)
+            } else if !item.scalars.is_empty() {
                 let lut = self
                     .builtin_colourmap_ids
                     .and_then(|ids| {
@@ -901,6 +946,13 @@ impl ViewportGpuResources {
         let scalar_range = (scalar_max - scalar_min).max(f32::EPSILON);
 
         let scalar_to_colour = |idx: usize| -> [f32; 4] {
+            if has_colour_attribute {
+                return item
+                    .colour_attribute
+                    .get(idx)
+                    .copied()
+                    .unwrap_or(item.colour);
+            }
             if let Some(ref lut) = lut_rgba {
                 let s = *item.scalars.get(idx).unwrap_or(&0.0);
                 let t = ((s - scalar_min) / scalar_range).clamp(0.0, 1.0);
@@ -1116,6 +1168,7 @@ impl ViewportGpuResources {
             edge_index_count,
             wireframe,
             uniform_bind_group,
+            blend: item.blend,
             _uniform_buf: uniform_buf,
         }
     }

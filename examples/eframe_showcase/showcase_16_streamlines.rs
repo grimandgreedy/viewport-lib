@@ -10,7 +10,7 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, RibbonItem,
-    SceneRenderItem, StreamtubeItem, TubeItem,
+    SceneRenderItem, SpriteBlend, StreamtubeItem, TubeItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -46,6 +46,13 @@ pub(crate) struct StreamlinesState {
     pub tube_sides: u32,
     /// Half-width of the ribbon in Ribbon mode.
     pub ribbon_width: f32,
+    /// When true, ribbons fade their alpha from head (full) to tail (zero)
+    /// using a per-vertex `colour_attribute` ramp. Demonstrates the trail
+    /// look without needing a custom colourmap with an alpha curve.
+    pub ribbon_trail_fade: bool,
+    /// GPU blend mode used when drawing ribbons. Additive gives the emissive
+    /// trail look; AlphaBlend is the standard opaque-ish surface.
+    pub ribbon_blend: SpriteBlend,
     /// CPU-side streamline paths (one `Vec<[f32;3]>` per seed).
     pub paths: Vec<Vec<[f32; 3]>>,
     /// Per-vertex speed values parallel to `paths`.
@@ -67,6 +74,8 @@ impl Default for StreamlinesState {
             step_size: 0.08,
             tube_sides: 8,
             ribbon_width: 0.15,
+            ribbon_trail_fade: false,
+            ribbon_blend: SpriteBlend::AlphaBlend,
             paths: Vec::new(),
             scalars: Vec::new(),
         }
@@ -149,7 +158,26 @@ impl App {
         item.positions = positions;
         item.strip_lengths = strip_lengths;
         item.width = s.ribbon_width;
-        if s.colour_by_speed {
+        item.blend = s.ribbon_blend;
+
+        if s.ribbon_trail_fade {
+            // Walk each strip and ramp alpha from 0 at the tail (first point)
+            // to 1 at the head (last point). RGB uses the flat colour so the
+            // fade reads as a single emitter trail rather than a coloured field;
+            // for scalar-coloured ribbons the LUT path below is still available
+            // by turning the trail fade off.
+            let rgb = [s.flat_colour[0], s.flat_colour[1], s.flat_colour[2]];
+            let total: usize = item.strip_lengths.iter().map(|n| *n as usize).sum();
+            let mut colours: Vec<[f32; 4]> = Vec::with_capacity(total);
+            for &n in &item.strip_lengths {
+                let n = n as usize;
+                for k in 0..n {
+                    let t = if n > 1 { k as f32 / (n - 1) as f32 } else { 1.0 };
+                    colours.push([rgb[0], rgb[1], rgb[2], t]);
+                }
+            }
+            item.colour_attribute = colours;
+        } else if s.colour_by_speed {
             item.scalars = scalars;
             item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
@@ -221,6 +249,28 @@ pub(crate) fn controls_streamlines(app: &mut App, ui: &mut egui::Ui) {
         StreamRenderMode::Ribbon => {
             ui.label("Ribbon half-width:");
             ui.add(egui::Slider::new(&mut s.ribbon_width, 0.02..=0.5).step_by(0.01));
+            ui.checkbox(&mut s.ribbon_trail_fade, "Trail fade (alpha ramp head -> tail)");
+            ui.label("Blend mode:");
+            ui.horizontal(|ui| {
+                if ui
+                    .radio(s.ribbon_blend == SpriteBlend::AlphaBlend, "Alpha")
+                    .clicked()
+                {
+                    s.ribbon_blend = SpriteBlend::AlphaBlend;
+                }
+                if ui
+                    .radio(s.ribbon_blend == SpriteBlend::Additive, "Additive")
+                    .clicked()
+                {
+                    s.ribbon_blend = SpriteBlend::Additive;
+                }
+                if ui
+                    .radio(s.ribbon_blend == SpriteBlend::Premultiplied, "Premultiplied")
+                    .clicked()
+                {
+                    s.ribbon_blend = SpriteBlend::Premultiplied;
+                }
+            });
         }
     }
 

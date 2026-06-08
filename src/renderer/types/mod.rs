@@ -921,7 +921,9 @@ macro_rules! emit_scivis_draw_calls {
             }
         }
 
-        // Ribbon pass (flat quad strips, two-sided pipeline).
+        // Ribbon pass (flat quad strips, two-sided pipeline). Blend mode
+        // routes through the matching pipeline variant; the default
+        // AlphaBlend path is unchanged.
         if !$ribbon_gpu_data.is_empty() {
             render_pass.set_bind_group(0, camera_bg, &[]);
             for ribbon in $ribbon_gpu_data.iter() {
@@ -934,10 +936,20 @@ macro_rules! emit_scivis_draw_calls {
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 } else {
-                    resources
-                        .ribbon_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
+                    match ribbon.blend {
+                        crate::renderer::SpriteBlend::Additive => resources
+                            .ribbon_pipeline_additive
+                            .as_ref()
+                            .map(|d| d.for_format(_is_hdr)),
+                        crate::renderer::SpriteBlend::Premultiplied => resources
+                            .ribbon_pipeline_premultiplied
+                            .as_ref()
+                            .map(|d| d.for_format(_is_hdr)),
+                        crate::renderer::SpriteBlend::AlphaBlend => resources
+                            .ribbon_pipeline
+                            .as_ref()
+                            .map(|d| d.for_format(_is_hdr)),
+                    }
                 };
                 if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);

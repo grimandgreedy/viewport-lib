@@ -21,7 +21,8 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     FrameData, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem, PolylineItem,
-    SceneRenderItem, SpriteBlend, SpriteItem, SpriteSizeMode, ViewportRenderer, primitives,
+    RibbonItem, SceneRenderItem, SpriteBlend, SpriteItem, SpriteSizeMode, ViewportRenderer,
+    primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,26 @@ pub(crate) enum SpriteSubMode {
     /// A swarm of small cubes orbiting like leaves, drawn through `MeshInstanceItem`
     /// with additive blending and one indexed draw call per blend bucket.
     MeshParticles,
+    /// Moving emitters leaving fading ribbon trails behind them. Each emitter
+    /// keeps a rolling buffer of recent positions; the ribbon's
+    /// `colour_attribute` ramps alpha from zero at the tail to full at the
+    /// head, and the per-vertex `width_attribute` tapers in the same direction.
+    Trails,
+}
+
+pub(crate) struct TrailEmitter {
+    /// Most recent positions, oldest first. The last entry is the current
+    /// emitter position; the first entry is the oldest point still in the
+    /// trail. Updated each frame in `update_sprites`.
+    pub history: Vec<[f32; 3]>,
+    /// Phase offset (radians) so emitters orbit at different starting angles.
+    pub phase: f32,
+    /// Orbit radius.
+    pub radius: f32,
+    /// Vertical bob amplitude.
+    pub bob: f32,
+    /// RGB tint applied to the ribbon.
+    pub colour: [f32; 3],
 }
 
 pub(crate) struct Ring {
@@ -98,6 +119,15 @@ pub(crate) struct SpriteState {
     /// Time used to drive the orbital animation of mesh particles and the
     /// horizontal sweep of the soft-fade sprite plane.
     pub demo_time: f32,
+
+    // Trails mode
+    pub trails: Vec<TrailEmitter>,
+    /// Number of points held in each emitter's history ring buffer. Higher
+    /// values make the trail longer and the fade smoother.
+    pub trail_length: usize,
+    /// Maximum ribbon half-width at the head. The tail tapers toward zero.
+    pub trail_width: f32,
+    pub trail_blend: SpriteBlend,
 }
 
 impl Default for SpriteState {
@@ -141,6 +171,10 @@ impl Default for SpriteState {
             atlas_time: 0.0,
             cube_id: MeshId::from_index(0),
             demo_time: 0.0,
+            trails: Vec::new(),
+            trail_length: 80,
+            trail_width: 0.18,
+            trail_blend: SpriteBlend::Additive,
         }
     }
 }
@@ -273,6 +307,39 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         .upload_mesh_data(&app.device, &cube_mesh)
         .expect("particle cube");
 
+    // Trail emitters: four orbiters at different radii and tints, each starts
+    // with an empty history that fills up over the first ~1s of running.
+    let trails = vec![
+        TrailEmitter {
+            history: Vec::new(),
+            phase: 0.0,
+            radius: 2.6,
+            bob: 0.9,
+            colour: [1.0, 0.45, 0.1],
+        },
+        TrailEmitter {
+            history: Vec::new(),
+            phase: std::f32::consts::FRAC_PI_2,
+            radius: 2.6,
+            bob: 0.9,
+            colour: [0.2, 0.8, 1.0],
+        },
+        TrailEmitter {
+            history: Vec::new(),
+            phase: std::f32::consts::PI,
+            radius: 2.6,
+            bob: 0.9,
+            colour: [0.7, 1.0, 0.3],
+        },
+        TrailEmitter {
+            history: Vec::new(),
+            phase: 3.0 * std::f32::consts::FRAC_PI_2,
+            radius: 2.6,
+            bob: 0.9,
+            colour: [1.0, 0.3, 0.85],
+        },
+    ];
+
     app.sprite_state.cube_id = cube_id;
     app.sprite_state.sphere_id = sphere_id;
     app.sprite_state.sprite_tex = sprite_tex;
@@ -282,6 +349,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
     app.sprite_state.atlas_tex = atlas_tex;
     app.sprite_state.atlas_positions = atlas_positions;
     app.sprite_state.atlas_frame = 0;
+    app.sprite_state.trails = trails;
     app.sprite_state.built = true;
 }
 
@@ -412,6 +480,11 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             SpriteSubMode::MeshParticles,
             "MeshParticles",
         );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::Trails,
+            "Trails",
+        );
     });
     ui.separator();
 
@@ -443,6 +516,40 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             ui.label("A swarm of cubes orbiting like leaves, drawn through `MeshInstanceItem`.");
             ui.label("Each blend bucket renders as one indexed draw call, additive blending picked");
             ui.label("here so overlapping cubes glow brighter at their intersections.");
+        }
+        SpriteSubMode::Trails => {
+            ui.label("Four orbiters trace figure-eights and leave fading ribbon trails behind them.");
+            ui.label("Each trail is a `RibbonItem` whose `colour_attribute` ramps alpha from 0 at the");
+            ui.label("tail to 1 at the head, and whose `width_attribute` tapers the same way.");
+            ui.separator();
+            ui.label("Trail length:");
+            ui.add(
+                egui::Slider::new(&mut app.sprite_state.trail_length, 10..=200)
+                    .step_by(1.0),
+            );
+            ui.label("Head width:");
+            ui.add(
+                egui::Slider::new(&mut app.sprite_state.trail_width, 0.02..=0.5)
+                    .step_by(0.01),
+            );
+            ui.label("Blend mode:");
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut app.sprite_state.trail_blend,
+                    SpriteBlend::AlphaBlend,
+                    "Alpha",
+                );
+                ui.selectable_value(
+                    &mut app.sprite_state.trail_blend,
+                    SpriteBlend::Additive,
+                    "Additive",
+                );
+                ui.selectable_value(
+                    &mut app.sprite_state.trail_blend,
+                    SpriteBlend::Premultiplied,
+                    "Premultiplied",
+                );
+            });
         }
     }
 }
@@ -499,6 +606,26 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
         }
         SpriteSubMode::Soft | SpriteSubMode::MeshParticles => {
             app.sprite_state.demo_time += dt;
+        }
+        SpriteSubMode::Trails => {
+            app.sprite_state.demo_time += dt;
+            let t = app.sprite_state.demo_time;
+            let max = app.sprite_state.trail_length;
+            for emitter in &mut app.sprite_state.trails {
+                // Figure-eight in XY with a bob in Z so the trail crosses
+                // itself, making the additive overlap visible.
+                let theta = emitter.phase + t * 1.3;
+                let pos = [
+                    emitter.radius * theta.sin(),
+                    emitter.radius * (theta * 2.0).sin() * 0.5,
+                    emitter.bob * (theta * 0.5 + emitter.phase).sin(),
+                ];
+                emitter.history.push(pos);
+                if emitter.history.len() > max {
+                    let excess = emitter.history.len() - max;
+                    emitter.history.drain(0..excess);
+                }
+            }
         }
         _ => {}
     }
@@ -730,6 +857,31 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             Vec::new()
         }
 
+        SpriteSubMode::Trails => {
+            // A small glowing dot at the head of each emitter makes the
+            // ribbon read as a comet rather than a free-floating brushstroke.
+            let mut positions = Vec::new();
+            let mut colours = Vec::new();
+            for emitter in &app.sprite_state.trails {
+                if let Some(&head) = emitter.history.last() {
+                    positions.push(head);
+                    colours.push([emitter.colour[0], emitter.colour[1], emitter.colour[2], 1.0]);
+                }
+            }
+            if positions.is_empty() {
+                return Vec::new();
+            }
+            let mut item = SpriteItem::default();
+            item.texture_id = Some(app.sprite_state.glow_tex);
+            item.positions = positions;
+            item.colours = colours;
+            item.default_size = 24.0;
+            item.size_mode = SpriteSizeMode::ScreenSpace;
+            item.blend = SpriteBlend::Additive;
+            item.depth_write = false;
+            vec![item]
+        }
+
         SpriteSubMode::Atlas => {
             let frame = app.sprite_state.atlas_frame;
             let col = frame % 4;
@@ -858,4 +1010,50 @@ pub(crate) fn submit_sprite_items(app: &App, fd: &mut FrameData) {
     fd.scene.sprite_items.extend(sprite_items(app));
     fd.scene.polylines.extend(ring_polylines(app));
     fd.scene.mesh_instances.extend(mesh_instance_items(app));
+    fd.scene.ribbon_items.extend(trail_ribbon_items(app));
+}
+
+/// One `RibbonItem` per emitter so each trail keeps its own RGB tint while
+/// sharing the same blend mode and fade shape. Returns an empty list outside
+/// the `Trails` sub-mode.
+pub(crate) fn trail_ribbon_items(app: &App) -> Vec<RibbonItem> {
+    if !app.sprite_state.built || app.sprite_state.sub_mode != SpriteSubMode::Trails {
+        return Vec::new();
+    }
+
+    let blend = app.sprite_state.trail_blend;
+    let head_width = app.sprite_state.trail_width;
+
+    app.sprite_state
+        .trails
+        .iter()
+        .filter_map(|emitter| {
+            // A ribbon needs at least two points to define a tangent.
+            if emitter.history.len() < 2 {
+                return None;
+            }
+            let n = emitter.history.len();
+            let mut colours = Vec::with_capacity(n);
+            let mut widths = Vec::with_capacity(n);
+            for k in 0..n {
+                // k=0 is the oldest point (tail), k=n-1 is the newest (head).
+                let t = k as f32 / (n - 1) as f32;
+                let alpha = t * t;
+                colours.push([emitter.colour[0], emitter.colour[1], emitter.colour[2], alpha]);
+                widths.push(head_width * t);
+            }
+            let mut item = RibbonItem::default();
+            item.positions = emitter.history.clone();
+            item.strip_lengths = vec![n as u32];
+            item.width = head_width;
+            item.width_attribute = Some(widths);
+            item.colour_attribute = colours;
+            item.blend = blend;
+            // Trails read more like emitter passes than solid surfaces, so
+            // suppress lighting; the per-vertex RGBA carries all the visible
+            // information.
+            item.settings.unlit = true;
+            Some(item)
+        })
+        .collect()
 }

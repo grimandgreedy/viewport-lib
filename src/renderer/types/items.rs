@@ -814,8 +814,16 @@ pub struct RibbonItem {
     pub scalar_range: Option<(f32, f32)>,
     /// Colourmap for scalar colouring. `None` = default builtin (viridis).
     pub colourmap_id: Option<crate::resources::ColourmapId>,
-    /// Flat RGBA colour used when `scalars` is empty. Default: opaque white.
+    /// Flat RGBA colour used when `scalars` and `colour_attribute` are empty.
+    /// Default: opaque white.
     pub colour: [f32; 4],
+    /// Optional per-point RGBA colour. When non-empty this overrides `colour`
+    /// and the `scalars`/`colourmap_id` path, and is the natural way to express
+    /// a trail that fades along its length (set each entry's alpha directly).
+    pub colour_attribute: Vec<[f32; 4]>,
+    /// GPU blend state for this ribbon. Default: [`SpriteBlend::AlphaBlend`].
+    /// Use [`SpriteBlend::Additive`] for energy or spark trails.
+    pub blend: SpriteBlend,
     /// Per-frame model matrix applied to `positions` in the vertex shader.
     /// Identity (the default) renders the ribbon at the world-space coordinates
     /// passed in `positions`. Set this to move a pre-uploaded ribbon without
@@ -837,6 +845,8 @@ impl Default for RibbonItem {
             scalar_range: None,
             colourmap_id: None,
             colour: [1.0, 1.0, 1.0, 1.0],
+            colour_attribute: Vec::new(),
+            blend: SpriteBlend::AlphaBlend,
             model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }

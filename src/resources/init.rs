@@ -2971,6 +2971,8 @@ impl ViewportGpuResources {
             streamtube_pipeline: None,
             streamtube_wireframe_pipeline: None,
             ribbon_pipeline: None,
+            ribbon_pipeline_additive: None,
+            ribbon_pipeline_premultiplied: None,
             ribbon_wireframe_pipeline: None,
             streamtube_bgl: None,
             image_slice_pipeline: None,
