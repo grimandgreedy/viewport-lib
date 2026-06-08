@@ -737,9 +737,10 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             ui.label("Additive columns brighten where sprites overlap; alpha columns do not.");
         }
         SpriteSubMode::Soft => {
-            ui.label("A flat sprite sheet sweeps horizontally through the sphere.");
-            ui.label("`soft_particle_distance` ramps alpha to zero where the sprite meets opaque");
-            ui.label("geometry, replacing the hard intersection line with a smooth fade.");
+            ui.label("Two rows of sprites sweep horizontally through the sphere.");
+            ui.label("Lower (blue) row uses the batch default `soft_particle_distance = 0.3`.");
+            ui.label("Upper (orange) row overrides via `soft_particle_distances = 2.5` per instance.");
+            ui.label("The wider fade on the upper row shows per-instance distance taking precedence.");
         }
         SpriteSubMode::MeshParticles => {
             ui.label("A swarm of cubes orbiting like leaves, drawn through `MeshInstanceItem`.");
@@ -1167,29 +1168,42 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
         }
 
         SpriteSubMode::Soft => {
-            // Lay a row of large glow sprites in a flat plane sweeping
-            // horizontally through the central sphere. With
-            // soft_particle_distance enabled, the alpha ramps to zero where
-            // the sprite plane meets the sphere instead of cutting a hard
-            // intersection line.
+            // Two rows of large glow sprites sweeping horizontally through the
+            // central sphere. Both rows share the batch-default
+            // soft_particle_distance, but the upper row overrides it with a
+            // much longer per-instance distance via soft_particle_distances.
+            // The contrast against the sphere makes the per-instance override
+            // visible: the upper row fades out far earlier as it approaches
+            // the sphere surface.
             let t = app.sprite_state.demo_time;
             let sweep_x = (t * 0.4).sin() * 2.5;
-            let mut positions = Vec::with_capacity(16);
-            let mut colours = Vec::with_capacity(16);
-            for i in 0..16 {
-                let z = -3.5 + i as f32 * 0.5;
-                positions.push([sweep_x, 0.0, z]);
-                colours.push([0.5, 0.8, 1.0, 0.9]);
+            let mut positions = Vec::with_capacity(32);
+            let mut colours = Vec::with_capacity(32);
+            let mut distances = Vec::with_capacity(32);
+            for row in 0..2 {
+                let y = if row == 0 { 1.6 } else { -1.6 };
+                let (tint, per_instance) = if row == 0 {
+                    ([1.0, 0.55, 0.35, 0.9], 2.5)
+                } else {
+                    ([0.4, 0.75, 1.0, 0.9], 0.0)
+                };
+                for i in 0..16 {
+                    let z = -3.5 + i as f32 * 0.5;
+                    positions.push([sweep_x, y, z]);
+                    colours.push(tint);
+                    distances.push(per_instance);
+                }
             }
             let mut item = SpriteItem::default();
             item.texture_id = Some(app.sprite_state.glow_tex);
             item.positions = positions;
             item.colours = colours;
-            item.default_size = 2.2;
+            item.default_size = 1.6;
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.blend = SpriteBlend::AlphaBlend;
             item.depth_write = false;
-            item.soft_particle_distance = Some(0.6);
+            item.soft_particle_distance = Some(0.3);
+            item.soft_particle_distances = distances;
             vec![item]
         }
 

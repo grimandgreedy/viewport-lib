@@ -1490,7 +1490,15 @@ pub struct SpriteItem {
     /// Useful for transparent particles like smoke or fog to avoid hard intersection
     /// lines against walls and ground. Requires a sampleable scene depth resolve;
     /// see crate docs for current support status.
+    ///
+    /// Used as the fallback when [`Self::soft_particle_distances`] is empty or shorter
+    /// than `positions`, or when a per-instance entry is zero.
     pub soft_particle_distance: Option<f32>,
+    /// Per-instance soft-fade distances, in world-space units. Lets a single batch
+    /// mix large smoke puffs (long fade) and small embers (short fade) without
+    /// splitting the draw. Empty falls back to [`Self::soft_particle_distance`]
+    /// for every instance; a zero entry falls back to the batch default as well.
+    pub soft_particle_distances: Vec<f32>,
     /// If `Some(d)`, the sprite is drawn as a refractive distortion rather
     /// than a normal alpha-blended billboard: the renderer samples the
     /// already-resolved scene colour at an offset driven by the sprite's
@@ -1556,6 +1564,7 @@ impl Default for SpriteItem {
             depth_write: false,
             blend: SpriteBlend::AlphaBlend,
             soft_particle_distance: None,
+            soft_particle_distances: Vec::new(),
             refraction_strength: None,
             orientation: SpriteOrientation::default(),
             velocities: Vec::new(),

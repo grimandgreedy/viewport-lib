@@ -420,7 +420,7 @@ impl ViewportGpuResources {
             colour: [f32; 4],
             size: f32,
             rotation: f32,
-            _pad0: f32,
+            soft_distance: f32,
             _pad1: f32,
             uv_rect: [f32; 4],
             velocity: [f32; 3],
@@ -444,7 +444,11 @@ impl ViewportGpuResources {
                 } else {
                     0.0
                 },
-                _pad0: 0.0,
+                soft_distance: if i < item.soft_particle_distances.len() {
+                    item.soft_particle_distances[i].max(0.0)
+                } else {
+                    0.0
+                },
                 _pad1: 0.0,
                 uv_rect: if i < item.uv_rects.len() {
                     item.uv_rects[i]

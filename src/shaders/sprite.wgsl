@@ -74,22 +74,23 @@ struct SpriteUniform {
 };
 
 // Per-sprite instance data (64 bytes):
-//   colour:    vec4<f32>  (16 bytes at offset  0)
-//   size:      f32        ( 4 bytes at offset 16)
-//   rotation:  f32        ( 4 bytes at offset 20)
-//   _pad0/1:   f32, f32   ( 8 bytes at offset 24)
-//   uv_rect:   vec4<f32>  (16 bytes at offset 32)
-//   velocity:  vec3<f32>  (12 bytes at offset 48) -- VelocityStretched direction; zero disables stretch
-//   _pad2:     f32        ( 4 bytes at offset 60)
+//   colour:         vec4<f32>  (16 bytes at offset  0)
+//   size:           f32        ( 4 bytes at offset 16)
+//   rotation:       f32        ( 4 bytes at offset 20)
+//   soft_distance:  f32        ( 4 bytes at offset 24) -- per-instance soft-fade distance; 0 falls back to the batch default
+//   _pad1:          f32        ( 4 bytes at offset 28)
+//   uv_rect:        vec4<f32>  (16 bytes at offset 32)
+//   velocity:       vec3<f32>  (12 bytes at offset 48) -- VelocityStretched direction; zero disables stretch
+//   _pad2:          f32        ( 4 bytes at offset 60)
 struct SpriteInstance {
-    colour:    vec4<f32>,
-    size:     f32,
-    rotation: f32,
-    _pad0:    f32,
-    _pad1:    f32,
-    uv_rect:  vec4<f32>,
-    velocity: vec3<f32>,
-    _pad2:    f32,
+    colour:        vec4<f32>,
+    size:          f32,
+    rotation:      f32,
+    soft_distance: f32,
+    _pad1:         f32,
+    uv_rect:       vec4<f32>,
+    velocity:      vec3<f32>,
+    _pad2:         f32,
 };
 
 @group(0) @binding(0) var<uniform>       camera:        Camera;
@@ -141,10 +142,11 @@ struct VertexIn {
 };
 
 struct VertexOut {
-    @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       colour:     vec4<f32>,
-    @location(1)       world_pos: vec3<f32>,
-    @location(2)       uv:        vec2<f32>,
+    @builtin(position) clip_pos:      vec4<f32>,
+    @location(0)       colour:        vec4<f32>,
+    @location(1)       world_pos:     vec3<f32>,
+    @location(2)       uv:            vec2<f32>,
+    @location(3) @interpolate(flat) soft_distance: f32,
 };
 
 // Unit quad corners (two CCW triangles, matching point_cloud.wgsl winding).
@@ -249,6 +251,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
     out.world_pos = world_pos;
     out.colour     = inst.colour;
+    out.soft_distance = inst.soft_distance;
 
     // Map corner [-1, 1] to the per-instance UV rect [u0, v0] -> [u1, v1].
     let u  = mix(inst.uv_rect.x, inst.uv_rect.z, (corner.x + 1.0) * 0.5);
@@ -275,8 +278,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     // Soft-particle fade: when the sprite fragment approaches opaque scene
     // geometry behind it, ramp alpha to zero over a configurable world-space
-    // distance. Disabled when soft_particle_distance is non-positive.
-    if sprite_ub.soft_particle_distance > 0.0 {
+    // distance. Per-instance overrides the batch default; a non-positive
+    // per-instance value falls back to the batch value. Disabled when both
+    // are non-positive.
+    var soft_dist = sprite_ub.soft_particle_distance;
+    if in.soft_distance > 0.0 {
+        soft_dist = in.soft_distance;
+    }
+    if soft_dist > 0.0 {
         let viewport_size = vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         let screen_uv     = in.clip_pos.xy / viewport_size;
         let scene_ndc_z   = textureSample(scene_depth_tex, scene_depth_samp, screen_uv);
@@ -290,7 +299,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let scene_world = world_h.xyz / world_h.w;
         let scene_view_z = -(camera.view * vec4<f32>(scene_world, 1.0)).z;
         let part_view_z  = -(camera.view * vec4<f32>(in.world_pos, 1.0)).z;
-        let fade = smoothstep(0.0, sprite_ub.soft_particle_distance, scene_view_z - part_view_z);
+        let fade = smoothstep(0.0, soft_dist, scene_view_z - part_view_z);
         colour.a = colour.a * fade;
     }
 
