@@ -19,6 +19,7 @@ pub(crate) struct OvlState {
     pub show_tex_shapes: bool,
     pub tex_id: Option<viewport_lib::OverlayTextureId>,
     pub carlgauss_tex_id: Option<viewport_lib::OverlayTextureId>,
+    pub nine_slice_tex_id: Option<viewport_lib::OverlayTextureId>,
     pub cloud_positions: Vec<[f32; 3]>,
     pub cloud_scalars: Vec<f32>,
     pub cloud_built: bool,
@@ -43,6 +44,7 @@ impl Default for OvlState {
             show_tex_shapes: true,
             tex_id: None,
             carlgauss_tex_id: None,
+            nine_slice_tex_id: None,
             cloud_positions: Vec::new(),
             cloud_scalars: Vec::new(),
             cloud_built: false,
@@ -114,6 +116,79 @@ pub(crate) fn build_demo_texture() -> (u32, u32, Vec<u8>) {
         }
     }
     (size, size, pixels)
+}
+
+/// Procedural 64x32 button texture for the 9-slice demo. Looks like a
+/// shipping UI button asset: rounded corners with a 10px radius, a vertical
+/// teal-blue gradient body, a thin bright bevel highlight along the top
+/// edge, and a darker rim hugging the rounded outline. Pixels outside the
+/// rounded shape are fully transparent so the corner shape is visible
+/// against any backdrop.
+///
+/// At source size the asset reads as one button. Stretched to a much wider
+/// rect without 9-slice, the rounded corners obviously elongate into ovals
+/// and the rim and bevel smear. With 9-slice on, the corners stay 10px in
+/// both directions and only the centre body stretches.
+pub(crate) fn build_nine_slice_texture() -> (u32, u32, Vec<u8>) {
+    let w: u32 = 64;
+    let h: u32 = 32;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    let radius = 10.0_f32;
+    let rim = 2.0_f32;
+    let body_top = [0.30_f32, 0.62, 0.90];
+    let body_bottom = [0.10_f32, 0.25, 0.55];
+    let rim_col = [0.04_f32, 0.08, 0.18];
+    let bevel = [0.80_f32, 0.92, 1.0];
+
+    // Signed distance to the rounded-rect shape (negative inside).
+    //   q = abs(p) - half_size + r
+    //   d = min(max(qx, qy), 0) + length(max(q, 0)) - r
+    let sd_rounded = |fx: f32, fy: f32| -> f32 {
+        let half_w = w as f32 * 0.5;
+        let half_h = h as f32 * 0.5;
+        let qx = (fx - half_w).abs() - half_w + radius;
+        let qy = (fy - half_h).abs() - half_h + radius;
+        let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
+        let inside = qx.max(qy).min(0.0);
+        inside + outside - radius
+    };
+
+    for y in 0..h {
+        for x in 0..w {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let d = sd_rounded(fx, fy);
+            let i = ((y * w + x) * 4) as usize;
+            if d > 0.5 {
+                // Outside the rounded shape: fully transparent.
+                pixels[i + 3] = 0;
+                continue;
+            }
+            // Body gradient runs top -> bottom.
+            let v = (y as f32 / (h - 1) as f32).clamp(0.0, 1.0);
+            let body = [
+                body_top[0] * (1.0 - v) + body_bottom[0] * v,
+                body_top[1] * (1.0 - v) + body_bottom[1] * v,
+                body_top[2] * (1.0 - v) + body_bottom[2] * v,
+            ];
+            // Pick rim, bevel, or body based on inset distance.
+            let c = if d > -rim {
+                rim_col
+            } else if d > -(rim + 1.0) && fy < h as f32 * 0.5 {
+                // 1px bright bevel just inside the rim, top half only.
+                bevel
+            } else {
+                body
+            };
+            // Smoothstep alpha at the outer edge for a clean AA outline.
+            let a = (1.0 - (d + 0.5).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+            pixels[i] = (c[0] * 255.0) as u8;
+            pixels[i + 1] = (c[1] * 255.0) as u8;
+            pixels[i + 2] = (c[2] * 255.0) as u8;
+            pixels[i + 3] = (a * 255.0) as u8;
+        }
+    }
+    (w, h, pixels)
 }
 
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
@@ -637,6 +712,49 @@ pub(crate) fn build_overlay_frame(
                 border_width: bw,
                 ..Default::default()
             });
+            x3 += row3_h + gap;
+
+            // Multi-stop linear gradient (sunset ramp): 4 stops at uneven
+            // positions, demonstrating the OverlayFill::LinearGradientMulti
+            // path.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [120.0, row3_h],
+                shape: OverlayShape::Rect { corner_radius: cr },
+                fill: OverlayFill::LinearGradientMulti {
+                    stops: vec![
+                        viewport_lib::GradientStop::new(0.0, [0.05, 0.05, 0.20, 1.0]),
+                        viewport_lib::GradientStop::new(0.4, [0.55, 0.10, 0.45, 1.0]),
+                        viewport_lib::GradientStop::new(0.75, [0.95, 0.45, 0.20, 1.0]),
+                        viewport_lib::GradientStop::new(1.0, [1.0, 0.95, 0.55, 1.0]),
+                    ],
+                    angle: 0.0,
+                },
+                border_colour: [1.0, 0.85, 0.4, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
+            x3 += 120.0 + gap;
+
+            // Multi-stop conical gradient: 4 stops around the sweep, shows
+            // how positions can be packed asymmetrically.
+            shapes.push(OverlayShapeItem {
+                position: [x3, y3_mid - row3_h * 0.5],
+                size: [row3_h, row3_h],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::ConicalGradientMulti {
+                    stops: vec![
+                        viewport_lib::GradientStop::new(0.0, [0.95, 0.2, 0.2, 1.0]),
+                        viewport_lib::GradientStop::new(0.25, [1.0, 0.85, 0.2, 1.0]),
+                        viewport_lib::GradientStop::new(0.6, [0.2, 0.85, 0.45, 1.0]),
+                        viewport_lib::GradientStop::new(1.0, [0.3, 0.5, 1.0, 1.0]),
+                    ],
+                    offset_angle: 0.0,
+                },
+                border_colour: [0.9, 0.9, 0.9, 0.8],
+                border_width: bw,
+                ..Default::default()
+            });
             let _ = x3;
         }
 
@@ -806,6 +924,44 @@ pub(crate) fn build_overlay_frame(
                     start_time: fade_start,
                     duration: 3.0,
                 },
+                ..Default::default()
+            });
+            x5 += 120.0 + gap;
+
+            // Rotating circle filled with a multi-stop conical gradient.
+            // The gradient rotates with the shape because the SDF is
+            // evaluated in the unrotated local frame.
+            let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - row5_h * 0.5],
+                size: [row5_h, row5_h],
+                shape: OverlayShape::Circle,
+                fill: OverlayFill::ConicalGradientMulti {
+                    stops: vec![
+                        viewport_lib::GradientStop::new(0.0, [0.27, 0.0, 0.33, 1.0]),
+                        viewport_lib::GradientStop::new(0.25, [0.13, 0.32, 0.55, 1.0]),
+                        viewport_lib::GradientStop::new(0.5, [0.12, 0.62, 0.50, 1.0]),
+                        viewport_lib::GradientStop::new(0.75, [0.78, 0.79, 0.21, 1.0]),
+                        viewport_lib::GradientStop::new(1.0, [0.99, 0.91, 0.14, 1.0]),
+                    ],
+                    offset_angle: 0.0,
+                },
+                rotation: t * 0.8,
+                border_colour: [1.0, 1.0, 1.0, 0.7],
+                border_width: bw,
+                ..Default::default()
+            });
+            x5 += row5_h + gap;
+
+            // Rotating cross.
+            shapes.push(OverlayShapeItem {
+                position: [x5, y5_mid - row5_h * 0.5],
+                size: [row5_h, row5_h],
+                shape: OverlayShape::Cross { arm_width_frac: 0.35 },
+                fill: OverlayFill::Solid([0.3, 0.8, 0.5, 0.9]),
+                rotation: -t * 1.2,
+                border_colour: [0.5, 1.0, 0.7, 0.9],
+                border_width: bw,
                 ..Default::default()
             });
             let _ = x5;
@@ -1002,6 +1158,57 @@ pub(crate) fn build_overlay_frame(
                 border_colour: [1.0, 0.8, 0.3, 0.9],
                 border_width: bw,
                 clip_id: Some(7),
+                ..Default::default()
+            });
+        }
+
+        // 9-slice A/B comparison: two panels, same texture, same final size.
+        // Left panel disables 9-slice so the source texture stretches across
+        // the whole rect; the corner squares smear and the highlight bar
+        // distorts. Right panel turns 9-slice on with 12px insets: the dark
+        // corners stay at their authored size and only the edges/centre
+        // stretch.
+        if let Some(tid) = app.ovl_state.nine_slice_tex_id {
+            let py = 20.0
+                + row_h
+                + 24.0
+                + 90.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0;
+            let panel_w = 180.0_f32;
+            let panel_h = 70.0_f32;
+            let x_left = 20.0 + 70.0 + gap; // sit beside the clip demo
+            let x_right = x_left + panel_w + gap;
+
+            // Left: plain stretched texture (no 9-slice).
+            shapes.push(OverlayShapeItem {
+                position: [x_left, py],
+                size: [panel_w, panel_h],
+                shape: OverlayShape::Rect { corner_radius: 0.0 },
+                texture: Some(tid),
+                fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
+                nine_slice: None,
+                ..Default::default()
+            });
+            // Right: same source, same size, 9-slice on.
+            shapes.push(OverlayShapeItem {
+                position: [x_right, py],
+                size: [panel_w, panel_h],
+                shape: OverlayShape::Rect { corner_radius: 0.0 },
+                texture: Some(tid),
+                fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
+                nine_slice: Some(viewport_lib::NineSlice {
+                    insets_px: [10.0, 10.0, 10.0, 10.0],
+                    centre_mode: viewport_lib::TileMode::Stretch,
+                    edge_mode: viewport_lib::TileMode::Stretch,
+                }),
                 ..Default::default()
             });
         }

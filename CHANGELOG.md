@@ -36,6 +36,14 @@ HDR path only; the direct LDR `paint_to` cannot resolve scene colour for samplin
 
 `OverlayShapeItem` gains `rotation: f32` (radians, CCW). Applies to fill, border, shadow, and gradient direction across every SDF shape. The bounding box (`position` + `size`) stays axis-aligned, so the rotated shape draws inside the unrotated box.
 
+#### Multi-stop overlay gradients
+
+`OverlayFill` gains `LinearGradientMulti`, `RadialGradientMulti`, and `ConicalGradientMulti` variants taking a `Vec<GradientStop>` with arbitrary positions in `[0, 1]`. Up to four stops per gradient (`OVERLAY_MAX_GRADIENT_STOPS`); additional stops are truncated. The existing two-stop variants remain so old call sites compile unchanged.
+
+#### 9-slice overlay texture fills
+
+`OverlayShapeItem` gains `nine_slice: Option<NineSlice>` for resizable panel art. Insets are given in texture pixels and converted to UV / shape-fraction ratios at prepare time. `TileMode::{Stretch, Tile}` is picked independently for the centre and edge regions, so a button graphic keeps crisp corners while the middle and edges stretch or repeat with the panel size.
+
 ### Improvements
 
 - `RibbonItem` gains optional texturing. A `texture_id` and per-vertex `u_attribute` let lightning, slash arcs, laser beams, and similar effects multiply a streak texture into the resolved ribbon colour. Per-vertex `u` is optional; when empty it derives from cumulative arc length so the texture stretches evenly across each strip.
@@ -44,6 +52,7 @@ HDR path only; the direct LDR `paint_to` cannot resolve scene colour for samplin
 ### Bug fixes
 
 - Overlay clip rectangle scaled by `pixels_per_point`. The Phase 13 clip-group implementation built rects in logical pixels but the fragment shader's `clip_position.xy` is in framebuffer pixels, so on any display with `pixels_per_point != 1.0` clipped shapes were discarded entirely instead of showing the clipped portion.
+- `OverlayShapeItem::distance` and `contains` now honour `rotation`. The CPU hit-test had been evaluating the SDF in the unrotated frame, so clicks on rotated shapes resolved against the un-spun silhouette.
 
 
 ## [0.17.0]

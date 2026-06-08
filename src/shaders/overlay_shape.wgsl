@@ -11,14 +11,16 @@ struct VertexInput {
     @location(3) border_colour:   vec4<f32>,
     @location(4) half_size:       vec2<f32>,  // shape half-extents in pixels
     @location(5) radii:           vec4<f32>,  // shape-specific params
-    @location(6) border_width:    f32,
-    @location(7) shape_type:      f32,        // 0=rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle, 7=line, 8=star, 9=ngon, 10=cross
-    @location(8) fill_colour2:    vec4<f32>,  // end colour for gradient (equals fill_colour for solid)
-    @location(9) gradient_params: vec2<f32>,  // x=type (0=solid, 1=linear), y=angle radians
+    @location(6) shape_meta:      vec2<f32>, // x=border_width, y=shape_type
+    @location(7) stop_positions:  vec4<f32>, // positions in [0,1] for stops a..d
+    @location(8) fill_colour2:    vec4<f32>,  // 2nd colour stop (equals fill_colour for solid)
+    @location(9) gradient_params: vec4<f32>,  // x=type, y=angle/offset, z=stop_count, w=pad
     @location(10) shadow_colour:  vec4<f32>,  // RGBA shadow colour
-    @location(11) shadow_params:  vec4<f32>,  // x=radius, y=offset_x, z=offset_y
+    @location(11) shadow_params:  vec4<f32>,  // x=radius, y=offset_x, z=offset_y, w=border_mode
     @location(12) clip_rect:      vec4<f32>,  // framebuffer-pixel clip rect (x0,y0,x1,y1); all zero = no clip
     @location(13) rotation:       f32,        // radians; applied to local_pos before SDF eval
+    @location(14) stop_colour_c:  vec4<f32>,  // 3rd colour stop (multi-stop gradients)
+    @location(15) stop_colour_d:  vec4<f32>,  // 4th colour stop
 };
 
 struct VertexOutput {
@@ -31,11 +33,14 @@ struct VertexOutput {
     @location(5) border_width:    f32,
     @location(6) shape_type:      f32,
     @location(7) fill_colour2:    vec4<f32>,
-    @location(8) gradient_params: vec2<f32>,
+    @location(8) gradient_params: vec4<f32>,
     @location(9) shadow_colour:   vec4<f32>,
     @location(10) shadow_params:  vec4<f32>,
     @location(11) @interpolate(flat) clip_rect: vec4<f32>,
     @location(12) @interpolate(flat) rotation:  f32,
+    @location(13) @interpolate(flat) stop_colour_c:  vec4<f32>,
+    @location(14) @interpolate(flat) stop_colour_d:  vec4<f32>,
+    @location(15) @interpolate(flat) stop_positions: vec4<f32>,
 };
 
 @vertex
@@ -47,14 +52,17 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.border_colour   = in.border_colour;
     out.half_size       = in.half_size;
     out.radii           = in.radii;
-    out.border_width    = in.border_width;
-    out.shape_type      = in.shape_type;
+    out.border_width    = in.shape_meta.x;
+    out.shape_type      = in.shape_meta.y;
     out.fill_colour2    = in.fill_colour2;
     out.gradient_params = in.gradient_params;
     out.shadow_colour   = in.shadow_colour;
     out.shadow_params   = in.shadow_params;
     out.clip_rect       = in.clip_rect;
     out.rotation        = in.rotation;
+    out.stop_colour_c   = in.stop_colour_c;
+    out.stop_colour_d   = in.stop_colour_d;
+    out.stop_positions  = in.stop_positions;
     return out;
 }
 
@@ -382,25 +390,58 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //   1 = linear  (y = angle in radians)
     //   2 = radial  (centre -> edge over max half-extent)
     //   3 = conical (sweep around origin, y = offset_angle in radians)
+    // stop_count selects the number of active stops (0 for solid, 2..4 for
+    // multi-stop). 2-stop fills use only stops a and b at positions 0,1.
     var fill_col: vec4<f32>;
     let gtype = i32(in.gradient_params.x + 0.5);
-    if (gtype == 1) {
-        let angle = in.gradient_params.y;
-        let dir = vec2<f32>(cos(angle), sin(angle));
-        let max_proj = abs(hs.x * dir.x) + abs(hs.y * dir.y);
-        let t = clamp(dot(p, dir) / max(max_proj, 0.001) * 0.5 + 0.5, 0.0, 1.0);
-        fill_col = mix(in.fill_colour, in.fill_colour2, t);
-    } else if (gtype == 2) {
-        let max_half = max(hs.x, hs.y);
-        let t = clamp(length(p) / max(max_half, 0.001), 0.0, 1.0);
-        fill_col = mix(in.fill_colour, in.fill_colour2, t);
-    } else if (gtype == 3) {
-        let two_pi = 6.28318530717958647692;
-        let a = atan2(p.y, p.x) - in.gradient_params.y;
-        let t = fract(a / two_pi + 1.0);
-        fill_col = mix(in.fill_colour, in.fill_colour2, t);
-    } else {
+    if (gtype == 0) {
         fill_col = in.fill_colour;
+    } else {
+        // Compute the gradient parameter t in [0, 1] for the chosen mode.
+        var t: f32 = 0.0;
+        if (gtype == 1) {
+            let angle = in.gradient_params.y;
+            let dir = vec2<f32>(cos(angle), sin(angle));
+            let max_proj = abs(hs.x * dir.x) + abs(hs.y * dir.y);
+            t = clamp(dot(p, dir) / max(max_proj, 0.001) * 0.5 + 0.5, 0.0, 1.0);
+        } else if (gtype == 2) {
+            let max_half = max(hs.x, hs.y);
+            t = clamp(length(p) / max(max_half, 0.001), 0.0, 1.0);
+        } else if (gtype == 3) {
+            let two_pi = 6.28318530717958647692;
+            let a = atan2(p.y, p.x) - in.gradient_params.y;
+            t = fract(a / two_pi + 1.0);
+        }
+        // Pack the 4 stops into arrays so we can loop. WGSL doesn't index
+        // vec components by a non-const i, so we copy into temps.
+        var sc0 = in.fill_colour;
+        var sc1 = in.fill_colour2;
+        var sc2 = in.stop_colour_c;
+        var sc3 = in.stop_colour_d;
+        let p0 = in.stop_positions.x;
+        let p1 = in.stop_positions.y;
+        let p2 = in.stop_positions.z;
+        let p3 = in.stop_positions.w;
+        let n = i32(in.gradient_params.z + 0.5);
+        // Default: clamp before first stop / after last stop.
+        fill_col = sc0;
+        if (t >= p3 && n >= 4) {
+            fill_col = sc3;
+        } else if (t >= p2 && n >= 3) {
+            // Between stop 2 and stop 3.
+            let span = max(p3 - p2, 0.000001);
+            fill_col = mix(sc2, sc3, clamp((t - p2) / span, 0.0, 1.0));
+        } else if (t >= p1) {
+            // Between stop 1 and stop 2 (or end for 2-stop).
+            let end = select(p1, p2, n >= 3);
+            let end_col = select(sc1, sc2, n >= 3);
+            let span = max(end - p1, 0.000001);
+            fill_col = mix(sc1, end_col, clamp((t - p1) / span, 0.0, 1.0));
+        } else if (t >= p0) {
+            // Between stop 0 and stop 1.
+            let span = max(p1 - p0, 0.000001);
+            fill_col = mix(sc0, sc1, clamp((t - p0) / span, 0.0, 1.0));
+        }
     }
 
     // Start with the shadow layer.

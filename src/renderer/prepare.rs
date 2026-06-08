@@ -6111,27 +6111,78 @@ impl ViewportRenderer {
                         }
                     };
 
-                    let (start_colour, end_colour, gradient_params) = match shape.fill {
-                        crate::renderer::types::OverlayFill::Solid(c) => (c, c, [0.0f32, 0.0]),
+                    // Resolve the fill into four colour stops + positions +
+                    // a gradient type. Solid and 2-stop variants set
+                    // count = 2 and use only stops[0..2]; multi-stop fills
+                    // pack up to OVERLAY_MAX_GRADIENT_STOPS stops.
+                    let mut stop_colours = [[0.0f32; 4]; 4];
+                    let mut stop_positions = [0.0_f32, 1.0, 1.0, 1.0];
+                    let stop_count: f32;
+                    let gradient_params = match &shape.fill {
+                        crate::renderer::types::OverlayFill::Solid(c) => {
+                            stop_colours[0] = *c;
+                            stop_colours[1] = *c;
+                            stop_count = 0.0;
+                            [0.0_f32, 0.0]
+                        }
                         crate::renderer::types::OverlayFill::LinearGradient {
                             start_colour,
                             end_colour,
                             angle,
-                        } => (start_colour, end_colour, [1.0f32, angle]),
+                        } => {
+                            stop_colours[0] = *start_colour;
+                            stop_colours[1] = *end_colour;
+                            stop_count = 2.0;
+                            [1.0_f32, *angle]
+                        }
                         crate::renderer::types::OverlayFill::RadialGradient {
                             centre_colour,
                             edge_colour,
-                        } => (centre_colour, edge_colour, [2.0f32, 0.0]),
+                        } => {
+                            stop_colours[0] = *centre_colour;
+                            stop_colours[1] = *edge_colour;
+                            stop_count = 2.0;
+                            [2.0_f32, 0.0]
+                        }
                         crate::renderer::types::OverlayFill::ConicalGradient {
                             start_colour,
                             end_colour,
                             offset_angle,
-                        } => (start_colour, end_colour, [3.0f32, offset_angle]),
+                        } => {
+                            stop_colours[0] = *start_colour;
+                            stop_colours[1] = *end_colour;
+                            stop_count = 2.0;
+                            [3.0_f32, *offset_angle]
+                        }
+                        crate::renderer::types::OverlayFill::LinearGradientMulti {
+                            stops,
+                            angle,
+                        } => {
+                            stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
+                            [1.0_f32, *angle]
+                        }
+                        crate::renderer::types::OverlayFill::RadialGradientMulti { stops } => {
+                            stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
+                            [2.0_f32, 0.0]
+                        }
+                        crate::renderer::types::OverlayFill::ConicalGradientMulti {
+                            stops,
+                            offset_angle,
+                        } => {
+                            stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
+                            [3.0_f32, *offset_angle]
+                        }
                     };
-                    let mut fc = start_colour;
-                    fc[3] *= resolved_opacity;
-                    let mut fc2 = end_colour;
-                    fc2[3] *= resolved_opacity;
+                    let start_colour = stop_colours[0];
+                    let end_colour = stop_colours[1];
+                    // Apply opacity to every stop (stops[0..4]) so multi-stop
+                    // gradients fade as a whole when the item's opacity changes.
+                    for colour in &mut stop_colours {
+                        colour[3] *= resolved_opacity;
+                    }
+                    let fc = stop_colours[0];
+                    let fc2 = stop_colours[1];
+                    let _ = (start_colour, end_colour);
                     let mut bc = shape.border_colour;
                     bc[3] *= resolved_opacity;
 
@@ -6177,6 +6228,48 @@ impl ViewportRenderer {
                         let hw_s = if hw > 0.0 { hw } else { 1.0 };
                         let hh_s = if hh > 0.0 { hh } else { 1.0 };
 
+                        // 9-slice: convert pixel insets to texture UV ratios
+                        // (using the bound texture's size) and to shape-fraction
+                        // ratios for the shader's piecewise UV remap.
+                        let (nine_uv, nine_frac, nine_extras_yzw) =
+                            if let Some(ns) = shape.nine_slice {
+                                let tex_size = self
+                                    .resources
+                                    .overlay_textures
+                                    .get(tid as usize)
+                                    .map(|t| t._texture.size())
+                                    .map(|s| (s.width as f32, s.height as f32))
+                                    .unwrap_or((1.0, 1.0));
+                                let tw = tex_size.0.max(1.0);
+                                let th = tex_size.1.max(1.0);
+                                let shape_w = (shape.size[0]).max(1.0);
+                                let shape_h = (shape.size[1]).max(1.0);
+                                let inset_uv = [
+                                    (ns.insets_px[0] / th).clamp(0.0, 0.5),
+                                    (ns.insets_px[1] / tw).clamp(0.0, 0.5),
+                                    (ns.insets_px[2] / th).clamp(0.0, 0.5),
+                                    (ns.insets_px[3] / tw).clamp(0.0, 0.5),
+                                ];
+                                let inset_frac = [
+                                    (ns.insets_px[0] / shape_h).clamp(0.0, 0.5),
+                                    (ns.insets_px[1] / shape_w).clamp(0.0, 0.5),
+                                    (ns.insets_px[2] / shape_h).clamp(0.0, 0.5),
+                                    (ns.insets_px[3] / shape_w).clamp(0.0, 0.5),
+                                ];
+                                let centre =
+                                    match ns.centre_mode {
+                                        crate::renderer::types::TileMode::Stretch => 0.0_f32,
+                                        crate::renderer::types::TileMode::Tile => 1.0,
+                                    };
+                                let edge = match ns.edge_mode {
+                                    crate::renderer::types::TileMode::Stretch => 0.0_f32,
+                                    crate::renderer::types::TileMode::Tile => 1.0,
+                                };
+                                (inset_uv, inset_frac, [centre, edge, 1.0])
+                            } else {
+                                ([0.0; 4], [0.0; 4], [0.0, 0.0, 0.0])
+                            };
+
                         for (px, py, lx, ly) in corners_px {
                             group_verts.push(crate::resources::OverlayShapeTexVertex {
                                 position: px_to_ndc(px, py, vp_w, vp_h),
@@ -6190,7 +6283,14 @@ impl ViewportRenderer {
                                 uv: [(lx + hw_s) / (2.0 * hw_s), (ly + hh_s) / (2.0 * hh_s)],
                                 shadow_colour: sc,
                                 shadow_params,
-                                extras: [0.0; 4],
+                                extras: [
+                                    0.0,
+                                    nine_extras_yzw[0],
+                                    nine_extras_yzw[1],
+                                    nine_extras_yzw[2],
+                                ],
+                                nine_slice_uv: nine_uv,
+                                nine_slice_frac: nine_frac,
                             });
                         }
                     } else if shape.backdrop_blur > 0.0 {
@@ -6210,6 +6310,8 @@ impl ViewportRenderer {
                                 shadow_colour: sc,
                                 shadow_params,
                                 extras: [1.0, 0.0, 0.0, 0.0],
+                                nine_slice_uv: [0.0; 4],
+                                nine_slice_frac: [0.0; 4],
                             });
                         }
                     } else {
@@ -6221,6 +6323,8 @@ impl ViewportRenderer {
                             .clip_id
                             .and_then(|id| clip_rects.get(&id).copied())
                             .unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                        // gradient_params is now vec4: [type, angle, stop_count, _pad]
+                        let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
                         for (px, py, lx, ly) in corners_px {
                             solid_verts.push(crate::resources::OverlayShapeVertex {
                                 position: px_to_ndc(px, py, vp_w, vp_h),
@@ -6232,12 +6336,14 @@ impl ViewportRenderer {
                                 border_width: shape.border_width,
                                 shape_type,
                                 fill_colour2: fc2,
-                                gradient_params,
+                                gradient_params: gp4,
                                 shadow_colour: sc,
                                 shadow_params,
                                 clip_rect,
                                 rotation: shape.rotation,
-                                _pad: [0.0; 3],
+                                stop_colour_c: stop_colours[2],
+                                stop_colour_d: stop_colours[3],
+                                stop_positions,
                             });
                         }
                     }
@@ -7113,6 +7219,39 @@ fn project_to_screen(
 #[inline]
 fn px_to_ndc(px_x: f32, px_y: f32, vp_w: f32, vp_h: f32) -> [f32; 2] {
     [px_x / vp_w * 2.0 - 1.0, 1.0 - px_y / vp_h * 2.0]
+}
+
+/// Pack a multi-stop gradient stop list into the fixed-cap vertex arrays.
+/// Returns the active stop count (clamped to [2, OVERLAY_MAX_GRADIENT_STOPS]).
+/// Stops are sorted by position; remaining slots are filled with the last
+/// stop so out-of-range loop iterations are a no-op.
+fn pack_stops(
+    stops: &[crate::renderer::types::GradientStop],
+    colours: &mut [[f32; 4]; 4],
+    positions: &mut [f32; 4],
+) -> f32 {
+    let cap = crate::renderer::types::OVERLAY_MAX_GRADIENT_STOPS;
+    let mut buf: Vec<crate::renderer::types::GradientStop> = stops.iter().copied().collect();
+    buf.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap_or(std::cmp::Ordering::Equal));
+    if buf.is_empty() {
+        // Empty stops list: degrade to transparent black.
+        let s = crate::renderer::types::GradientStop::new(0.0, [0.0; 4]);
+        buf = vec![s, s];
+    } else if buf.len() == 1 {
+        buf.push(buf[0]);
+    }
+    let n = buf.len().min(cap);
+    for i in 0..n {
+        colours[i] = buf[i].colour;
+        positions[i] = buf[i].position.clamp(0.0, 1.0);
+    }
+    // Fill remaining slots with the last stop so iteration past `count`
+    // returns the same colour and produces a no-op interpolation.
+    for i in n..cap {
+        colours[i] = buf[n - 1].colour;
+        positions[i] = positions[n - 1];
+    }
+    n as f32
 }
 
 /// Emit a solid-colour quad (6 vertices) in screen pixel coordinates.

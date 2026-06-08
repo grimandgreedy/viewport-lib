@@ -2014,6 +2014,12 @@ impl App {
                         showcase_35_overlay::CARLGAUSS_HEIGHT,
                         showcase_35_overlay::CARLGAUSS_RGBA,
                     ));
+                let (nw, nh, ndata) = showcase_35_overlay::build_nine_slice_texture();
+                self.ovl_state.nine_slice_tex_id = Some(
+                    renderer
+                        .resources_mut()
+                        .upload_overlay_texture(&rs.device, &rs.queue, nw, nh, &ndata),
+                );
                 self.camera = Camera {
                     center: glam::Vec3::new(0.0, 1.57, 0.0),
                     distance: 9.0,

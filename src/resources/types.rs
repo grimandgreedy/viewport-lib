@@ -1271,8 +1271,10 @@ pub(crate) struct OverlayShapeVertex {
     pub shape_type: f32,
     /// RGBA end colour for linear gradient (equals fill_colour for solid fill).
     pub fill_colour2: [f32; 4],
-    /// Gradient parameters: x = type (0=solid, 1=linear), y = angle in radians.
-    pub gradient_params: [f32; 2],
+    /// Gradient parameters: `[type, angle, stop_count, _pad]`.
+    /// `type` selects solid/linear/radial/conical; `stop_count` is the
+    /// number of active gradient stops (0 for solid, 2..4 otherwise).
+    pub gradient_params: [f32; 4],
     /// RGBA shadow colour (pre-multiplied opacity).
     pub shadow_colour: [f32; 4],
     /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y.
@@ -1284,7 +1286,15 @@ pub(crate) struct OverlayShapeVertex {
     /// before SDF evaluation so the shape rotates inside its axis-aligned
     /// bounding box.
     pub rotation: f32,
-    pub _pad: [f32; 3],
+    /// Third gradient colour stop. Unused for 2-stop and solid fills.
+    pub stop_colour_c: [f32; 4],
+    /// Fourth gradient colour stop. Unused for 2-stop and solid fills.
+    pub stop_colour_d: [f32; 4],
+    /// Stop positions in `[0, 1]` along the gradient axis, sorted ascending.
+    /// For 2-stop fills only `[0]` and `[1]` are valid; remaining entries
+    /// are 1.0 sentinels. The active stop count lives in
+    /// `gradient_params[2]`.
+    pub stop_positions: [f32; 4],
 }
 
 impl OverlayShapeVertex {
@@ -1329,17 +1339,17 @@ impl OverlayShapeVertex {
                     shader_location: 5,
                     format: wgpu::VertexFormat::Float32x4,
                 },
-                // location 6: border_width f32
+                // location 6: shape_meta vec2f (border_width, shape_type) -- combined
                 wgpu::VertexAttribute {
                     offset: 72,
                     shader_location: 6,
-                    format: wgpu::VertexFormat::Float32,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
-                // location 7: shape_type f32
+                // location 7: stop_positions vec4f (gradient stop positions)
                 wgpu::VertexAttribute {
-                    offset: 76,
+                    offset: 196,
                     shader_location: 7,
-                    format: wgpu::VertexFormat::Float32,
+                    format: wgpu::VertexFormat::Float32x4,
                 },
                 // location 8: fill_colour2 vec4f (end colour for gradient)
                 wgpu::VertexAttribute {
@@ -1347,35 +1357,47 @@ impl OverlayShapeVertex {
                     shader_location: 8,
                     format: wgpu::VertexFormat::Float32x4,
                 },
-                // location 9: gradient_params vec2f (x=type, y=angle)
+                // location 9: gradient_params vec4f (type, angle, stop_count, pad)
                 wgpu::VertexAttribute {
                     offset: 96,
                     shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: wgpu::VertexFormat::Float32x4,
                 },
                 // location 10: shadow_colour vec4f
                 wgpu::VertexAttribute {
-                    offset: 104,
+                    offset: 112,
                     shader_location: 10,
                     format: wgpu::VertexFormat::Float32x4,
                 },
-                // location 11: shadow_params vec4f (radius, offset_x, offset_y, unused)
+                // location 11: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
                 wgpu::VertexAttribute {
-                    offset: 120,
+                    offset: 128,
                     shader_location: 11,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 // location 12: clip_rect vec4f (x0, y0, x1, y1 in framebuffer pixels)
                 wgpu::VertexAttribute {
-                    offset: 136,
+                    offset: 144,
                     shader_location: 12,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 // location 13: rotation f32 (radians)
                 wgpu::VertexAttribute {
-                    offset: 152,
+                    offset: 160,
                     shader_location: 13,
                     format: wgpu::VertexFormat::Float32,
+                },
+                // location 14: stop_colour_c vec4f
+                wgpu::VertexAttribute {
+                    offset: 164,
+                    shader_location: 14,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 15: stop_colour_d vec4f
+                wgpu::VertexAttribute {
+                    offset: 180,
+                    shader_location: 15,
+                    format: wgpu::VertexFormat::Float32x4,
                 },
             ],
         }
@@ -1413,10 +1435,19 @@ pub(crate) struct OverlayShapeTexVertex {
     pub shadow_colour: [f32; 4],
     /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y, w = border_mode.
     pub shadow_params: [f32; 4],
-    /// Per-shape flags. x = is_backdrop_blur (0.0 = regular texture sample
-    /// gets tinted; 1.0 = the bound texture is the scene-blur output and the
-    /// tint is composited over it). Other slots reserved.
+    /// Per-shape flags.
+    /// - `x` = is_backdrop_blur (0.0 = regular tinted sample; 1.0 = the bound
+    ///   texture is the scene-blur output composited under the tint).
+    /// - `y` = nine-slice centre tile mode (0 = stretch, 1 = tile).
+    /// - `z` = nine-slice edge tile mode (0 = stretch, 1 = tile).
+    /// - `w` = nine-slice enabled flag (0 = disabled, 1 = enabled).
     pub extras: [f32; 4],
+    /// Nine-slice insets in texture UV space, `[top, right, bottom, left]`.
+    /// Unused when `extras.w == 0`.
+    pub nine_slice_uv: [f32; 4],
+    /// Nine-slice insets as fractions of the shape's bounding box,
+    /// `[top, right, bottom, left]`. Unused when `extras.w == 0`.
+    pub nine_slice_frac: [f32; 4],
 }
 
 impl OverlayShapeTexVertex {
@@ -1491,10 +1522,22 @@ impl OverlayShapeTexVertex {
                     shader_location: 10,
                     format: wgpu::VertexFormat::Float32x4,
                 },
-                // location 11: extras vec4f (x = is_backdrop_blur flag, rest reserved)
+                // location 11: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
                 wgpu::VertexAttribute {
                     offset: 120,
                     shader_location: 11,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 12: nine_slice_uv vec4f
+                wgpu::VertexAttribute {
+                    offset: 136,
+                    shader_location: 12,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 13: nine_slice_frac vec4f
+                wgpu::VertexAttribute {
+                    offset: 152,
+                    shader_location: 13,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],

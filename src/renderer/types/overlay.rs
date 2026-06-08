@@ -488,7 +488,7 @@ impl Default for OverlayRectItem {
 /// `Solid` is the default and matches the previous single-colour behaviour.
 /// `LinearGradient`, `RadialGradient`, and `ConicalGradient` interpolate
 /// between two colours across the shape's bounding box.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OverlayFill {
     /// Uniform solid colour in linear RGBA float format.
     Solid([f32; 4]),
@@ -531,6 +531,31 @@ pub enum OverlayFill {
         /// Rotation offset in radians. `0.0` places the seam to the right.
         offset_angle: f32,
     },
+    /// Linear gradient with three or more colour stops at arbitrary
+    /// positions along the gradient axis. Use when a two-stop ramp is too
+    /// flat; designers commonly stack 3-5 stops for polished surfaces.
+    /// Stops outside `[0, 1]` are clamped; more than
+    /// [`OVERLAY_MAX_GRADIENT_STOPS`] entries are truncated.
+    LinearGradientMulti {
+        /// Stops in source order. Need not be pre-sorted by position; the
+        /// renderer sorts them at prepare time.
+        stops: Vec<GradientStop>,
+        /// Gradient direction in radians. `0.0` = left-to-right.
+        angle: f32,
+    },
+    /// Radial gradient with three or more colour stops between the shape
+    /// centre and its bounding-box edge.
+    RadialGradientMulti {
+        /// Stops along the centre-to-edge axis.
+        stops: Vec<GradientStop>,
+    },
+    /// Conical gradient with three or more colour stops along the sweep.
+    ConicalGradientMulti {
+        /// Stops along the `[0, 1]` sweep parameter.
+        stops: Vec<GradientStop>,
+        /// Rotation offset in radians.
+        offset_angle: f32,
+    },
 }
 
 impl Default for OverlayFill {
@@ -538,6 +563,67 @@ impl Default for OverlayFill {
         OverlayFill::Solid([0.0, 0.0, 0.0, 0.55])
     }
 }
+
+/// Nine-patch / 9-slice texture sampling parameters.
+///
+/// Treats the bound texture as a panel with four corner regions that stay at
+/// their authored pixel size, four edge regions that tile or stretch along one
+/// axis, and a centre region that follows both axes. The standard way to ship
+/// resizable button, dialog, and scrollbar art without the corners stretching.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NineSlice {
+    /// Inset in *texture pixels* from each edge to the centre region:
+    /// `[top, right, bottom, left]`. Defines where the four corner regions end.
+    pub insets_px: [f32; 4],
+    /// Sampling for the centre region (between all four insets).
+    pub centre_mode: TileMode,
+    /// Sampling for the four edge regions (between two opposing insets).
+    pub edge_mode: TileMode,
+}
+
+impl Default for NineSlice {
+    fn default() -> Self {
+        Self {
+            insets_px: [0.0; 4],
+            centre_mode: TileMode::Stretch,
+            edge_mode: TileMode::Stretch,
+        }
+    }
+}
+
+/// How a 9-slice region remaps its UV coordinate before sampling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TileMode {
+    /// Linear stretch across the region. Default; matches non-9-slice
+    /// behaviour for backwards compatibility.
+    #[default]
+    Stretch,
+    /// Repeat the source region at its native pixel size.
+    Tile,
+}
+
+/// A single colour stop in a multi-stop gradient.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GradientStop {
+    /// Position along the gradient axis, in `[0, 1]`. Stops outside the
+    /// range are clamped at evaluation time.
+    pub position: f32,
+    /// Linear RGBA colour at this stop.
+    pub colour: [f32; 4],
+}
+
+impl GradientStop {
+    /// Construct a stop at the given position and colour.
+    pub const fn new(position: f32, colour: [f32; 4]) -> Self {
+        Self { position, colour }
+    }
+}
+
+/// Maximum number of stops carried in a single multi-stop gradient. Stops
+/// beyond this cap are truncated at prepare time. Covers the vast majority
+/// of UI gradient use cases; can be raised by widening the vertex layout
+/// if a consumer needs more.
+pub const OVERLAY_MAX_GRADIENT_STOPS: usize = 4;
 
 /// Border placement relative to the shape edge.
 ///
@@ -827,6 +913,9 @@ pub struct OverlayShapeItem {
     /// the bounding box (`position` + `size`) stays axis-aligned, so the
     /// rotated shape is drawn inside the unrotated box.
     pub rotation: f32,
+    /// 9-slice texture sampling for the shape's `texture` fill. When `None`
+    /// the texture stretches to fill the bounding box (default).
+    pub nine_slice: Option<NineSlice>,
 }
 
 impl Default for OverlayShapeItem {
@@ -850,6 +939,7 @@ impl Default for OverlayShapeItem {
             clip_mask_id: None,
             clip_id: None,
             rotation: 0.0,
+            nine_slice: None,
         }
     }
 }
@@ -1083,7 +1173,13 @@ impl OverlayShapeItem {
         let hh = self.size[1] * 0.5;
         let cx = self.position[0] + hw;
         let cy = self.position[1] + hh;
-        let p = [point[0] - cx, point[1] - cy];
+        let dx = point[0] - cx;
+        let dy = point[1] - cy;
+        // Rotate the query point by -rotation around the shape centre so the
+        // SDF evaluates in the unrotated frame, matching the fragment shader.
+        let c = (-self.rotation).cos();
+        let s = (-self.rotation).sin();
+        let p = [c * dx - s * dy, s * dx + c * dy];
         let hs = [hw, hh];
 
         match self.shape {
@@ -1491,6 +1587,22 @@ mod tests {
         );
         assert!(s.distance([50.0, 50.0]) < 0.0);
         assert!(s.distance([0.0, 0.0]) > 0.0);
+    }
+
+    #[test]
+    fn rotation_affects_hit_test() {
+        // 100x40 capsule. Without rotation, (50, 80) sits below the shape
+        // (outside). Rotated 90 degrees, the capsule's long axis becomes
+        // vertical and that point is inside the body.
+        let mut s = OverlayShapeItem {
+            position: [0.0, 30.0],
+            size: [100.0, 40.0],
+            shape: OverlayShape::Capsule,
+            ..Default::default()
+        };
+        assert!(!s.contains([50.0, 80.0]));
+        s.rotation = std::f32::consts::FRAC_PI_2;
+        assert!(s.contains([50.0, 80.0]));
     }
 }
 

@@ -19,7 +19,9 @@ struct VertexInput {
     @location(8) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
     @location(9) shadow_colour: vec4<f32>,  // RGBA shadow colour
     @location(10) shadow_params: vec4<f32>, // x=radius, y=offset_x, z=offset_y, w=border_mode
-    @location(11) extras:        vec4<f32>, // x = is_backdrop_blur flag (0=regular tex, 1=scene-blur output)
+    @location(11) extras:        vec4<f32>, // x=blur, y=ns_centre_mode, z=ns_edge_mode, w=ns_enabled
+    @location(12) nine_slice_uv:   vec4<f32>, // texture-uv insets: top,right,bottom,left
+    @location(13) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
 };
 
 struct VertexOutput {
@@ -35,6 +37,8 @@ struct VertexOutput {
     @location(8) shadow_colour: vec4<f32>,
     @location(9) shadow_params: vec4<f32>,
     @location(10) extras:       vec4<f32>,
+    @location(11) @interpolate(flat) nine_slice_uv:   vec4<f32>,
+    @location(12) @interpolate(flat) nine_slice_frac: vec4<f32>,
 };
 
 @vertex
@@ -52,7 +56,51 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.shadow_colour = in.shadow_colour;
     out.shadow_params = in.shadow_params;
     out.extras        = in.extras;
+    out.nine_slice_uv   = in.nine_slice_uv;
+    out.nine_slice_frac = in.nine_slice_frac;
     return out;
+}
+
+// Remap one component of the shape UV through the 9-slice piecewise function.
+//   shape_uv : 0..1 across the shape's bounding box along this axis
+//   start_frac, end_frac : insets as shape fraction (left/right or top/bottom)
+//   start_uv, end_uv     : matching insets in texture UV
+//   edge_mode            : 0=stretch, 1=tile (for the corner/edge bands)
+//   centre_mode          : 0=stretch, 1=tile (for the centre band)
+// Returns the texture UV component to sample.
+fn ninepatch_axis(
+    shape_uv: f32,
+    start_frac: f32,
+    end_frac: f32,
+    start_uv: f32,
+    end_uv: f32,
+    edge_mode: f32,
+    centre_mode: f32,
+) -> f32 {
+    // Three regions along this axis: [0, start_frac), [start_frac, 1 - end_frac), [1 - end_frac, 1].
+    if (shape_uv < start_frac) {
+        // Leading edge band: shape_uv * (start_uv / start_frac) for stretch,
+        // or (shape_uv * (1/start_frac) modulo 1) * start_uv for tile.
+        let s = max(start_frac, 0.00001);
+        let t = shape_uv / s;
+        let tiled = fract(t);
+        let used_t = mix(t, tiled, edge_mode);
+        return used_t * start_uv;
+    } else if (shape_uv > 1.0 - end_frac) {
+        let e = max(end_frac, 0.00001);
+        let t = (shape_uv - (1.0 - end_frac)) / e;
+        let tiled = fract(t);
+        let used_t = mix(t, tiled, edge_mode);
+        return (1.0 - end_uv) + used_t * end_uv;
+    } else {
+        // Centre band.
+        let span_shape = max(1.0 - start_frac - end_frac, 0.00001);
+        let span_tex = max(1.0 - start_uv - end_uv, 0.00001);
+        let t = (shape_uv - start_frac) / span_shape;
+        let tiled = fract(t * (span_shape / span_tex));
+        let used_t = mix(t, tiled, centre_mode);
+        return start_uv + used_t * span_tex;
+    }
 }
 
 // Signed distance to a rounded box with per-corner radii.
@@ -223,7 +271,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Composite textured fill on top of shadow.
     if (fill_alpha > 0.0) {
-        let tex_sample = textureSample(t_fill, s_fill, in.uv);
+        // 9-slice remap when enabled: rebuild the sample UV by remapping
+        // each axis through the piecewise function so corners stay at
+        // their authored size and edges/centre tile or stretch per mode.
+        var sample_uv = in.uv;
+        if (in.extras.w > 0.5) {
+            let u = ninepatch_axis(
+                in.uv.x,
+                in.nine_slice_frac.w,   // left frac
+                in.nine_slice_frac.y,   // right frac
+                in.nine_slice_uv.w,     // left uv
+                in.nine_slice_uv.y,     // right uv
+                in.extras.z,            // edge mode
+                in.extras.y,            // centre mode
+            );
+            let v = ninepatch_axis(
+                in.uv.y,
+                in.nine_slice_frac.x,   // top frac
+                in.nine_slice_frac.z,   // bottom frac
+                in.nine_slice_uv.x,     // top uv
+                in.nine_slice_uv.z,     // bottom uv
+                in.extras.z,
+                in.extras.y,
+            );
+            sample_uv = vec2<f32>(u, v);
+        }
+        let tex_sample = textureSample(t_fill, s_fill, sample_uv);
         var fc: vec4<f32>;
         if (in.extras.x > 0.5) {
             // Backdrop blur: bound texture is the scene-blur output (opaque
