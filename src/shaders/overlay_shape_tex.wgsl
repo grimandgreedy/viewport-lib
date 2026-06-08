@@ -22,6 +22,8 @@ struct VertexInput {
     @location(11) extras:        vec4<f32>, // x=blur, y=ns_centre_mode, z=ns_edge_mode, w=ns_enabled
     @location(12) nine_slice_uv:   vec4<f32>, // texture-uv insets: top,right,bottom,left
     @location(13) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
+    @location(14) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
+    @location(15) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
 };
 
 struct VertexOutput {
@@ -39,6 +41,8 @@ struct VertexOutput {
     @location(10) extras:       vec4<f32>,
     @location(11) @interpolate(flat) nine_slice_uv:   vec4<f32>,
     @location(12) @interpolate(flat) nine_slice_frac: vec4<f32>,
+    @location(13) @interpolate(flat) texture_transform_a: vec4<f32>,
+    @location(14) @interpolate(flat) texture_transform_b: vec4<f32>,
 };
 
 @vertex
@@ -58,6 +62,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.extras        = in.extras;
     out.nine_slice_uv   = in.nine_slice_uv;
     out.nine_slice_frac = in.nine_slice_frac;
+    out.texture_transform_a = in.texture_transform_a;
+    out.texture_transform_b = in.texture_transform_b;
     return out;
 }
 
@@ -251,11 +257,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let aa = 1.0;
 
-    // Shadow/glow behind the fill.
+    // Decode shadow_params.w: combined = border_mode + 3 * inset_shadow.
+    let combined_w = i32(in.shadow_params.w + 0.5);
+    let inset_shadow = combined_w >= 3;
+    let border_mode = combined_w % 3;
+
+    // Outer shadow behind the fill (only when inset_shadow is off).
     let shadow_r = in.shadow_params.x;
     let shadow_off = vec2<f32>(in.shadow_params.y, in.shadow_params.z);
     var shadow_a = 0.0;
-    if (shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
+    if (!inset_shadow && shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
         let sd = eval_sdf(p - shadow_off, hs, in.shape_type, in.radii);
         shadow_a = in.shadow_colour.a * (1.0 - smoothstep(0.0, shadow_r, sd));
     }
@@ -295,6 +306,46 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 in.extras.y,
             );
             sample_uv = vec2<f32>(u, v);
+        } else {
+            // Texture transform path: scale + rotate around (0.5, 0.5),
+            // translate, flip, then apply tile_mode. Identity transform
+            // (scale=1, no rotation/offset/flip, Stretch) is a no-op.
+            let off = in.texture_transform_a.xy;
+            let scl = in.texture_transform_a.zw;
+            let rot = in.texture_transform_b.x;
+            let tile = i32(in.texture_transform_b.y + 0.5);
+            let flip_x = in.texture_transform_b.z > 0.5;
+            let flip_y = in.texture_transform_b.w > 0.5;
+            var uvc = in.uv - vec2<f32>(0.5, 0.5);
+            // Scale: multiply the UV by `scale`. `scale = 1.0` is 1:1.
+            // Larger scale widens the sampled range (more tiles with Tile
+            // mode, or sees more of the texture with Stretch/Mirror).
+            uvc = uvc * scl;
+            // Rotate around the centre.
+            if (abs(rot) > 0.000001) {
+                let c = cos(rot);
+                let s = sin(rot);
+                uvc = vec2<f32>(c * uvc.x - s * uvc.y, s * uvc.x + c * uvc.y);
+            }
+            var uvt = uvc + vec2<f32>(0.5, 0.5) + off;
+            if (flip_x) { uvt.x = 1.0 - uvt.x; }
+            if (flip_y) { uvt.y = 1.0 - uvt.y; }
+            // Apply tile mode for sample lookup.
+            if (tile == 1) {
+                // Tile: wrap.
+                uvt = fract(uvt - floor(uvt));
+            } else if (tile == 2) {
+                // Mirror: ping-pong.
+                let m = uvt - 2.0 * floor(uvt * 0.5);
+                uvt = vec2<f32>(
+                    select(m.x, 2.0 - m.x, m.x > 1.0),
+                    select(m.y, 2.0 - m.y, m.y > 1.0),
+                );
+            } else {
+                // Stretch: clamp.
+                uvt = clamp(uvt, vec2<f32>(0.0), vec2<f32>(1.0));
+            }
+            sample_uv = uvt;
         }
         let tex_sample = textureSample(t_fill, s_fill, sample_uv);
         var fc: vec4<f32>;
@@ -317,11 +368,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
     }
 
+    // Inner shadow: composite on top of the textured fill, under the border.
+    if (inset_shadow && shadow_r > 0.0 && in.shadow_colour.a > 0.0 && d < 0.0) {
+        let inner_sd = eval_sdf(p - shadow_off, hs, in.shape_type, in.radii);
+        let inner_alpha = in.shadow_colour.a * smoothstep(0.0, shadow_r, inner_sd);
+        if (inner_alpha > 0.0) {
+            let ic = vec4<f32>(in.shadow_colour.rgb, inner_alpha);
+            colour = vec4<f32>(
+                mix(colour.rgb, ic.rgb, ic.a),
+                ic.a + colour.a * (1.0 - ic.a),
+            );
+        }
+    }
+
     // Border: blend border colour in a band near d = 0.
-    // border_mode (shadow_params.w): 0=inset, 1=outer, 2=center.
+    // border_mode (low part of shadow_params.w): 0=inset, 1=outer, 2=center.
     if (in.border_width > 0.0) {
         let bw = in.border_width;
-        let bm = i32(in.shadow_params.w + 0.5);
+        let bm = border_mode;
         var lo: f32;
         var hi: f32;
         if (bm == 1) {

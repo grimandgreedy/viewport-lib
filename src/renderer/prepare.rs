@@ -6195,11 +6195,15 @@ impl ViewportRenderer {
                         crate::renderer::types::BorderMode::Outer => 1.0,
                         crate::renderer::types::BorderMode::Center => 2.0,
                     };
+                    // Pack the inset-shadow flag alongside border_mode in
+                    // shadow_params.w. The shader decodes via (combined % 3)
+                    // for border_mode and (combined >= 3) for inset.
+                    let inset_flag = if shape.shadow_inset { 3.0 } else { 0.0 };
                     let shadow_params = [
                         shape.shadow_radius,
                         shape.shadow_offset[0],
                         shape.shadow_offset[1],
-                        border_mode_f,
+                        border_mode_f + inset_flag,
                     ];
 
                     // Emit 6 vertices (two triangles) for the bounding quad.
@@ -6256,20 +6260,21 @@ impl ViewportRenderer {
                                     (ns.insets_px[2] / shape_h).clamp(0.0, 0.5),
                                     (ns.insets_px[3] / shape_w).clamp(0.0, 0.5),
                                 ];
-                                let centre =
-                                    match ns.centre_mode {
-                                        crate::renderer::types::TileMode::Stretch => 0.0_f32,
-                                        crate::renderer::types::TileMode::Tile => 1.0,
-                                    };
-                                let edge = match ns.edge_mode {
-                                    crate::renderer::types::TileMode::Stretch => 0.0_f32,
-                                    crate::renderer::types::TileMode::Tile => 1.0,
-                                };
+                                let centre = tile_mode_to_f(ns.centre_mode);
+                                let edge = tile_mode_to_f(ns.edge_mode);
                                 (inset_uv, inset_frac, [centre, edge, 1.0])
                             } else {
                                 ([0.0; 4], [0.0; 4], [0.0, 0.0, 0.0])
                             };
 
+                        let tt = shape.texture_transform;
+                        let tt_a = [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]];
+                        let tt_b = [
+                            tt.rotation,
+                            tile_mode_to_f(tt.tile_mode),
+                            if tt.flip_x { 1.0 } else { 0.0 },
+                            if tt.flip_y { 1.0 } else { 0.0 },
+                        ];
                         for (px, py, lx, ly) in corners_px {
                             group_verts.push(crate::resources::OverlayShapeTexVertex {
                                 position: px_to_ndc(px, py, vp_w, vp_h),
@@ -6291,6 +6296,8 @@ impl ViewportRenderer {
                                 ],
                                 nine_slice_uv: nine_uv,
                                 nine_slice_frac: nine_frac,
+                                texture_transform_a: tt_a,
+                                texture_transform_b: tt_b,
                             });
                         }
                     } else if shape.backdrop_blur > 0.0 {
@@ -6312,6 +6319,8 @@ impl ViewportRenderer {
                                 extras: [1.0, 0.0, 0.0, 0.0],
                                 nine_slice_uv: [0.0; 4],
                                 nine_slice_frac: [0.0; 4],
+                                texture_transform_a: [0.0, 0.0, 1.0, 1.0],
+                                texture_transform_b: [0.0, 0.0, 0.0, 0.0],
                             });
                         }
                     } else {
@@ -7219,6 +7228,15 @@ fn project_to_screen(
 #[inline]
 fn px_to_ndc(px_x: f32, px_y: f32, vp_w: f32, vp_h: f32) -> [f32; 2] {
     [px_x / vp_w * 2.0 - 1.0, 1.0 - px_y / vp_h * 2.0]
+}
+
+/// Encode `TileMode` as the float flag the texture shader consumes.
+fn tile_mode_to_f(m: crate::renderer::types::TileMode) -> f32 {
+    match m {
+        crate::renderer::types::TileMode::Stretch => 0.0,
+        crate::renderer::types::TileMode::Tile => 1.0,
+        crate::renderer::types::TileMode::Mirror => 2.0,
+    }
 }
 
 /// Pack a multi-stop gradient stop list into the fixed-cap vertex arrays.

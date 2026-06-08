@@ -553,6 +553,49 @@ pub(crate) fn build_overlay_frame(
                     texture: Some(tid),
                     ..Default::default()
                 });
+                x2 += 140.0 + gap;
+            }
+
+            // Texture-transform: the demo colour-wheel rotating *inside* a
+            // static circle. The shape stays still; the texture spins.
+            if let Some(tid) = app.ovl_state.tex_id {
+                let sz = 90.0_f32;
+                let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+                shapes.push(OverlayShapeItem {
+                    position: [x2, y2_mid - sz * 0.5],
+                    size: [sz, sz],
+                    shape: OverlayShape::Circle,
+                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
+                    border_colour: [1.0, 1.0, 1.0, 0.9],
+                    border_width: bw2,
+                    texture: Some(tid),
+                    texture_transform: viewport_lib::TextureTransform {
+                        rotation: t * 0.5,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+                x2 += sz + gap;
+            }
+
+            // Texture-transform: same colour-wheel tiled 3x3 across a wider
+            // rect using TileMode::Tile and scale = 1/3.
+            if let Some(tid) = app.ovl_state.tex_id {
+                shapes.push(OverlayShapeItem {
+                    position: [x2, y2_mid - row2_h * 0.5],
+                    size: [180.0, row2_h],
+                    shape: OverlayShape::Rect { corner_radius: cr },
+                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
+                    border_colour: [1.0, 1.0, 1.0, 0.9],
+                    border_width: bw2,
+                    texture: Some(tid),
+                    texture_transform: viewport_lib::TextureTransform {
+                        scale: [3.0, 3.0],
+                        tile_mode: viewport_lib::TileMode::Tile,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
             }
         }
 
@@ -840,6 +883,23 @@ pub(crate) fn build_overlay_frame(
                 shadow_colour: [0.1, 0.8, 0.2, 0.5],
                 shadow_radius: 14.0,
                 shadow_offset: [0.0, 0.0],
+                ..Default::default()
+            });
+            x4 += 60.0 + gap + 16.0;
+
+            // Pressed-button effect using shadow_inset: a dark inner shadow
+            // offset slightly down makes the surface read as recessed.
+            shapes.push(OverlayShapeItem {
+                position: [x4, y4_mid - row4_h * 0.5],
+                size: [120.0, row4_h],
+                shape: OverlayShape::Rect { corner_radius: cr },
+                fill: OverlayFill::Solid([0.22, 0.24, 0.30, 1.0]),
+                border_colour: [0.05, 0.07, 0.12, 0.9],
+                border_width: 1.0,
+                shadow_colour: [0.0, 0.0, 0.0, 0.7],
+                shadow_radius: 14.0,
+                shadow_offset: [0.0, 4.0],
+                shadow_inset: true,
                 ..Default::default()
             });
             let _ = x4;

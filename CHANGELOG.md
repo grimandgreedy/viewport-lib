@@ -44,6 +44,14 @@ HDR path only; the direct LDR `paint_to` cannot resolve scene colour for samplin
 
 `OverlayShapeItem` gains `nine_slice: Option<NineSlice>` for resizable panel art. Insets are given in texture pixels and converted to UV / shape-fraction ratios at prepare time. `TileMode::{Stretch, Tile}` is picked independently for the centre and edge regions, so a button graphic keeps crisp corners while the middle and edges stretch or repeat with the panel size.
 
+#### Overlay texture transform
+
+`OverlayShapeItem` gains `texture_transform: TextureTransform { offset, scale, rotation, tile_mode, flip_x, flip_y }`. The fragment shader scales and rotates the bounding-box UV around the centre, translates, flips, and resolves out-of-range UVs through the chosen tile mode. `TileMode` gains a `Mirror` variant alongside the existing `Stretch` and `Tile`. When `nine_slice` is also set on the same shape, 9-slice takes precedence and the transform is ignored.
+
+#### Inner overlay shadows
+
+`OverlayShapeItem` gains `shadow_inset: bool`. When `true`, the existing `shadow_*` fields render as an inset (inner) shadow that fades from the edge inward, used for pressed buttons, dropdowns, and recessed surfaces. The flag is packed alongside `border_mode` into a single vertex slot. A shape currently carries either an outer or an inner shadow, not both at once; stackable multi-shadow layers are a planned follow-up.
+
 ### Improvements
 
 - `RibbonItem` gains optional texturing. A `texture_id` and per-vertex `u_attribute` let lightning, slash arcs, laser beams, and similar effects multiply a streak texture into the resolved ribbon colour. Per-vertex `u` is optional; when empty it derives from cumulative arc length so the texture stretches evenly across each strip.

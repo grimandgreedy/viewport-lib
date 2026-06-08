@@ -361,16 +361,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Anti-aliasing: 1 pixel smoothstep at the boundary.
     let aa = 1.0;
 
-    // Shadow/glow: draw behind the fill using a separate SDF evaluation at
-    // the offset position. The shadow fades from shadow_colour at the shape
-    // edge to transparent at shadow_radius pixels out.
+    // Decode the combined shadow_params.w slot:
+    //   combined = border_mode + 3 * inset_shadow_flag
+    // border_mode: 0=inset border, 1=outer border, 2=centre border
+    // inset_shadow_flag: 0=outer shadow (legacy), 1=inner shadow (Phase 19).
+    let combined_w = i32(in.shadow_params.w + 0.5);
+    let inset_shadow = combined_w >= 3;
+    let border_mode = combined_w % 3;
+
+    // Outer shadow only draws when inset_shadow is off. Inner shadow is
+    // composited later, on top of the fill but under the border.
     let shadow_r = in.shadow_params.x;
     let shadow_off = vec2<f32>(in.shadow_params.y, in.shadow_params.z);
     var shadow_a = 0.0;
-    if (shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
-        // Shadow offset is in screen space, so evaluate the shadow SDF in
-        // the unrotated local frame: subtract the offset there, then
-        // rotate the result into the SDF frame.
+    if (!inset_shadow && shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
         let sp = in.local_pos - shadow_off;
         let sp_r = vec2<f32>(_rc * sp.x - _rs * sp.y, _rs * sp.x + _rc * sp.y);
         let sd = eval_sdf(sp_r, hs, in.shape_type, in.radii);
@@ -456,11 +460,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
     }
 
+    // Inner shadow: composite on top of the fill (so it tints the body)
+    // but under the border (so the border still sits clean on top). Sample
+    // the SDF at (p - shadow_off) in the rotated frame; positive sd means
+    // the offset point lies outside the shape and the current fragment is
+    // in the shadow band, with darkness fading over `shadow_r`. Only
+    // contributes where the current fragment is itself inside the shape.
+    if (inset_shadow && shadow_r > 0.0 && in.shadow_colour.a > 0.0 && d < 0.0) {
+        let sp_i = in.local_pos - shadow_off;
+        let sp_ir = vec2<f32>(_rc * sp_i.x - _rs * sp_i.y, _rs * sp_i.x + _rc * sp_i.y);
+        let inner_sd = eval_sdf(sp_ir, hs, in.shape_type, in.radii);
+        let inner_alpha = in.shadow_colour.a * smoothstep(0.0, shadow_r, inner_sd);
+        if (inner_alpha > 0.0) {
+            let ic = vec4<f32>(in.shadow_colour.rgb, inner_alpha);
+            colour = vec4<f32>(
+                mix(colour.rgb, ic.rgb, ic.a),
+                ic.a + colour.a * (1.0 - ic.a),
+            );
+        }
+    }
+
     // Border: blend border colour in a band near d = 0.
-    // border_mode (shadow_params.w): 0=inset, 1=outer, 2=center.
+    // border_mode (low part of shadow_params.w): 0=inset, 1=outer, 2=center.
     if (in.border_width > 0.0) {
         let bw = in.border_width;
-        let bm = i32(in.shadow_params.w + 0.5);
+        let bm = border_mode;
         var lo: f32;
         var hi: f32;
         if (bm == 1) {

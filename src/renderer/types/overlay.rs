@@ -591,7 +591,9 @@ impl Default for NineSlice {
     }
 }
 
-/// How a 9-slice region remaps its UV coordinate before sampling.
+/// How a texture region remaps its UV coordinate before sampling.
+///
+/// Shared by [`NineSlice`] and [`TextureTransform`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TileMode {
     /// Linear stretch across the region. Default; matches non-9-slice
@@ -600,6 +602,69 @@ pub enum TileMode {
     Stretch,
     /// Repeat the source region at its native pixel size.
     Tile,
+    /// Repeat the source region with every other tile flipped along the
+    /// matching axis, so the seam between tiles is mirrored. Smoothes the
+    /// repeat for symmetric textures.
+    Mirror,
+}
+
+/// Affine transform applied to the texture sample before lookup.
+///
+/// Lets a single texture pan, scale, rotate, tile, and flip independently
+/// of the shape it fills. Use for scrolling marquees inside a shape, zooming
+/// detail, rotating an icon without rotating the shape, repeating tile art,
+/// and mirroring asymmetric assets.
+///
+/// The transform applies to the bounding-box UV in [0, 1] coordinates,
+/// centred at (0.5, 0.5) for scale and rotation. When [`NineSlice`] is also
+/// set on the same shape, the 9-slice remap wins and the texture transform
+/// is ignored.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextureTransform {
+    /// UV offset added after scale and rotation. `[0.0, 0.0]` keeps the
+    /// sample centred. Drives panning / scrolling.
+    pub offset: [f32; 2],
+    /// UV scale multiplier applied around the centre. `[1.0, 1.0]` is
+    /// 1:1. Larger values widen the sampled UV range (more tiles with
+    /// [`TileMode::Tile`], or a wider view of the source with `Stretch`
+    /// or `Mirror`). Smaller values zoom in.
+    pub scale: [f32; 2],
+    /// Rotation around the UV centre `(0.5, 0.5)` in radians, CCW in math
+    /// coordinates.
+    pub rotation: f32,
+    /// Sampling mode for UV values outside `[0, 1]`. `Stretch` clamps to
+    /// the edge (default), `Tile` wraps, `Mirror` ping-pongs.
+    pub tile_mode: TileMode,
+    /// Flip the sample horizontally before lookup.
+    pub flip_x: bool,
+    /// Flip the sample vertically before lookup.
+    pub flip_y: bool,
+}
+
+impl Default for TextureTransform {
+    fn default() -> Self {
+        Self {
+            offset: [0.0, 0.0],
+            scale: [1.0, 1.0],
+            rotation: 0.0,
+            tile_mode: TileMode::Stretch,
+            flip_x: false,
+            flip_y: false,
+        }
+    }
+}
+
+impl TextureTransform {
+    /// Returns `true` when the transform is the identity (no offset, unit
+    /// scale, no rotation, no flips, `Stretch` mode).
+    pub fn is_identity(&self) -> bool {
+        self.offset == [0.0, 0.0]
+            && self.scale == [1.0, 1.0]
+            && self.rotation == 0.0
+            && matches!(self.tile_mode, TileMode::Stretch)
+            && !self.flip_x
+            && !self.flip_y
+    }
 }
 
 /// A single colour stop in a multi-stop gradient.
@@ -916,6 +981,22 @@ pub struct OverlayShapeItem {
     /// 9-slice texture sampling for the shape's `texture` fill. When `None`
     /// the texture stretches to fill the bounding box (default).
     pub nine_slice: Option<NineSlice>,
+    /// Affine transform applied to the texture sample before lookup. Lets a
+    /// single texture pan, scale, rotate, tile, and flip independently of
+    /// the shape it fills. Ignored when `nine_slice` is also set on the
+    /// same shape.
+    pub texture_transform: TextureTransform,
+    /// When `true`, the existing `shadow_*` fields render as an *inset*
+    /// (inner) shadow that fades from the edge inward instead of an outer
+    /// drop shadow. Default `false` (outer shadow, the legacy behaviour).
+    ///
+    /// Use for pressed buttons, dropdowns, text inputs, scroll wells, and
+    /// other recessed UI surfaces.
+    ///
+    /// A shape currently carries either an outer or an inner shadow, not
+    /// both at once. Stackable outer + inner shadow layers are planned for
+    /// a follow-up phase.
+    pub shadow_inset: bool,
 }
 
 impl Default for OverlayShapeItem {
@@ -940,6 +1021,8 @@ impl Default for OverlayShapeItem {
             clip_id: None,
             rotation: 0.0,
             nine_slice: None,
+            shadow_inset: false,
+            texture_transform: TextureTransform::default(),
         }
     }
 }

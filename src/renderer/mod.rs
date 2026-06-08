@@ -31,7 +31,7 @@ pub use self::types::{
     GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
     LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
     LoadingBarItem, MeshInstanceItem, GradientStop, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
-    OverlayShape, OverlayShapeItem, OverlayTextureId, TileMode, PickId, PointCloudItem, PointRenderMode,
+    OverlayShape, OverlayShapeItem, OverlayTextureId, TextureTransform, TileMode, PickId, PointCloudItem, PointRenderMode,
     PointCloudRefItem, GlyphSetRefItem, TensorGlyphSetRefItem,
     PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RibbonItem, RibbonRefItem,
     RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,

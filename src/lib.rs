@@ -211,7 +211,7 @@ pub use renderer::{
     LoadingBarItem, MeshInstanceItem, GradientStop, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
     OverlayAnimation, OverlayFill, OverlayFrame, OverlayImageItem, OverlayRectItem,
     OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, PassPath, PassView, PickId,
-    TileMode,
+    TextureTransform, TileMode,
     PickRectResult, PointCloudItem, PointCloudRefItem, PointRenderMode, PolylineItem,
     PolylineRefItem, PostProcessSettings,
     RenderCamera, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,

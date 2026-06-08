@@ -1448,6 +1448,12 @@ pub(crate) struct OverlayShapeTexVertex {
     /// Nine-slice insets as fractions of the shape's bounding box,
     /// `[top, right, bottom, left]`. Unused when `extras.w == 0`.
     pub nine_slice_frac: [f32; 4],
+    /// Texture transform part A: `[offset_x, offset_y, scale_x, scale_y]`.
+    /// `scale = 1.0` is 1:1. Applies when 9-slice is disabled.
+    pub texture_transform_a: [f32; 4],
+    /// Texture transform part B:
+    /// `[rotation_radians, tile_mode (0/1/2), flip_x (0/1), flip_y (0/1)]`.
+    pub texture_transform_b: [f32; 4],
 }
 
 impl OverlayShapeTexVertex {
@@ -1538,6 +1544,18 @@ impl OverlayShapeTexVertex {
                 wgpu::VertexAttribute {
                     offset: 152,
                     shader_location: 13,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 14: texture_transform_a vec4f (offset.xy, scale.xy)
+                wgpu::VertexAttribute {
+                    offset: 168,
+                    shader_location: 14,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 15: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
+                wgpu::VertexAttribute {
+                    offset: 184,
+                    shader_location: 15,
                     format: wgpu::VertexFormat::Float32x4,
                 },
             ],
