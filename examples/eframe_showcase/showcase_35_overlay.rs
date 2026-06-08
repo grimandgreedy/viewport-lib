@@ -947,58 +947,63 @@ pub(crate) fn build_overlay_frame(
             let _ = x6;
         }
 
-        // Clipping group: a rounded-rect "panel" acts as a mask that clips
-        // any shape sharing its clip_id. The mask itself is invisible; the
-        // child shapes (a tiled pattern of small squares) are visible only
-        // where they overlap the mask's bounding box. This demonstrates how
-        // `clip_mask_id` / `clip_id` work for scroll containers and masked
-        // panels.
+        // Clipping group: a rotating decagon whose right half is hidden by
+        // a half-shape clip mask. As the polygon spins, vertices sweep
+        // across the cut line, making the clip edge obvious in a small
+        // footprint. The mask itself is invisible; a thin white outline
+        // marks the clip rect.
         {
-            let cx0 = 20.0_f32;
-            let cy0 = 470.0_f32;
-            let cw = 220.0_f32;
-            let ch = 70.0_f32;
-            // Mask shape: not drawn, only defines the clip rect.
+            let poly_size = 70.0_f32;
+            let px = 20.0_f32;
+            // Sit one row below row 6 (new shape types row). Row spacing
+            // matches the 24px gap used between the other rows.
+            let py = 20.0
+                + row_h
+                + 24.0
+                + 90.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0;
+            // Mask: the left half of the decagon's bounding box. Anything
+            // with clip_id == 7 is only visible inside this rect.
             shapes.push(OverlayShapeItem {
-                position: [cx0, cy0],
-                size: [cw, ch],
+                position: [px, py],
+                size: [poly_size * 0.5, poly_size],
                 shape: OverlayShape::Rect { corner_radius: 0.0 },
                 clip_mask_id: Some(7),
                 ..Default::default()
             });
-            // A visible outline so the clip area is easy to see.
+            // Outline so the clip edge is visible.
             shapes.push(OverlayShapeItem {
-                position: [cx0, cy0],
-                size: [cw, ch],
+                position: [px, py],
+                size: [poly_size * 0.5, poly_size],
                 shape: OverlayShape::Rect { corner_radius: 0.0 },
                 fill: OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]),
-                border_colour: [1.0, 1.0, 1.0, 0.6],
+                border_colour: [1.0, 1.0, 1.0, 0.5],
                 border_width: 1.0,
                 border_mode: BorderMode::Outer,
                 ..Default::default()
             });
-            // Tile a row of squares that extends beyond the mask on both
-            // sides; only the squares inside the rect should be visible.
-            let tile = 30.0_f32;
-            let n_tiles = 14;
-            let row_y = cy0 + (ch - tile) * 0.5;
-            for i in 0..n_tiles {
-                let tx = cx0 - 40.0 + i as f32 * (tile + 6.0);
-                let hue = i as f32 / n_tiles as f32;
-                shapes.push(OverlayShapeItem {
-                    position: [tx, row_y],
-                    size: [tile, tile],
-                    shape: OverlayShape::Rect { corner_radius: 6.0 },
-                    fill: OverlayFill::Solid([
-                        0.3 + 0.6 * hue,
-                        0.4 + 0.3 * (1.0 - hue),
-                        0.9 - 0.4 * hue,
-                        0.95,
-                    ]),
-                    clip_id: Some(7),
-                    ..Default::default()
-                });
-            }
+            // The rotating decagon, sized to the full square. Only the
+            // left half passes the clip.
+            let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+            shapes.push(OverlayShapeItem {
+                position: [px, py],
+                size: [poly_size, poly_size],
+                shape: OverlayShape::RegularPolygon { sides: 10 },
+                rotation: t * 0.6,
+                fill: OverlayFill::Solid([0.9, 0.55, 0.2, 0.95]),
+                border_colour: [1.0, 0.8, 0.3, 0.9],
+                border_width: bw,
+                clip_id: Some(7),
+                ..Default::default()
+            });
         }
 
         // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).

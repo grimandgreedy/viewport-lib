@@ -5963,16 +5963,18 @@ impl ViewportRenderer {
                 let overlay_time = frame.overlays.time;
 
                 // First pass: collect clip-mask bounding rects keyed by
-                // clip_mask_id. Shape positions are in the same pixel space
-                // as the fragment shader's `clip_position.xy`.
+                // clip_mask_id. Shape positions are logical pixels; the
+                // fragment shader's `clip_position.xy` reports framebuffer
+                // (physical) pixels, so the rect is scaled by ppp here.
+                let ppp = frame.camera.pixels_per_point;
                 let mut clip_rects: std::collections::HashMap<u32, [f32; 4]> =
                     std::collections::HashMap::new();
                 for shape in &sorted {
                     if let Some(id) = shape.clip_mask_id {
-                        let x0 = shape.position[0];
-                        let y0 = shape.position[1];
-                        let x1 = x0 + shape.size[0];
-                        let y1 = y0 + shape.size[1];
+                        let x0 = shape.position[0] * ppp;
+                        let y0 = shape.position[1] * ppp;
+                        let x1 = (shape.position[0] + shape.size[0]) * ppp;
+                        let y1 = (shape.position[1] + shape.size[1]) * ppp;
                         clip_rects.insert(id, [x0, y0, x1, y1]);
                     }
                 }
@@ -6234,6 +6236,8 @@ impl ViewportRenderer {
                                 shadow_colour: sc,
                                 shadow_params,
                                 clip_rect,
+                                rotation: shape.rotation,
+                                _pad: [0.0; 3],
                             });
                         }
                     }

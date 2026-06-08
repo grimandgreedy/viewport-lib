@@ -32,6 +32,10 @@ HDR path only; the direct LDR `paint_to` cannot resolve scene colour for samplin
 
 `OverlayShapeItem` gains `clip_mask_id: Option<u32>` and `clip_id: Option<u32>`. A shape with `clip_mask_id` is not drawn; its bounding box defines a clip rectangle for any shape whose `clip_id` matches. Fragments outside the rect are discarded. Solid (non-textured, non-backdrop-blur) shapes only. The clip is the mask's axis-aligned bounding box.
 
+#### Overlay shape rotation
+
+`OverlayShapeItem` gains `rotation: f32` (radians, CCW). Applies to fill, border, shadow, and gradient direction across every SDF shape. The bounding box (`position` + `size`) stays axis-aligned, so the rotated shape draws inside the unrotated box.
+
 ### Improvements
 
 - `RibbonItem` gains optional texturing. A `texture_id` and per-vertex `u_attribute` let lightning, slash arcs, laser beams, and similar effects multiply a streak texture into the resolved ribbon colour. Per-vertex `u` is optional; when empty it derives from cumulative arc length so the texture stretches evenly across each strip.
@@ -39,7 +43,7 @@ HDR path only; the direct LDR `paint_to` cannot resolve scene colour for samplin
 
 ### Bug fixes
 
-_None yet._
+- Overlay clip rectangle scaled by `pixels_per_point`. The Phase 13 clip-group implementation built rects in logical pixels but the fragment shader's `clip_position.xy` is in framebuffer pixels, so on any display with `pixels_per_point != 1.0` clipped shapes were discarded entirely instead of showing the clipped portion.
 
 
 ## [0.17.0]

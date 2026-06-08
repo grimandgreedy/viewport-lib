@@ -821,6 +821,12 @@ pub struct OverlayShapeItem {
     /// unclipped. If no mask with the matching id is present in the frame,
     /// the shape is also drawn unclipped.
     pub clip_id: Option<u32>,
+    /// Rotation around the shape centre in radians. Positive rotates
+    /// counter-clockwise in math coordinates. `0.0` keeps the default
+    /// orientation. Applies to fill, border, shadow, and gradient direction;
+    /// the bounding box (`position` + `size`) stays axis-aligned, so the
+    /// rotated shape is drawn inside the unrotated box.
+    pub rotation: f32,
 }
 
 impl Default for OverlayShapeItem {
@@ -843,6 +849,7 @@ impl Default for OverlayShapeItem {
             backdrop_blur: 0.0,
             clip_mask_id: None,
             clip_id: None,
+            rotation: 0.0,
         }
     }
 }

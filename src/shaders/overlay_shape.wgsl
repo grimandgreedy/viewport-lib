@@ -18,6 +18,7 @@ struct VertexInput {
     @location(10) shadow_colour:  vec4<f32>,  // RGBA shadow colour
     @location(11) shadow_params:  vec4<f32>,  // x=radius, y=offset_x, z=offset_y
     @location(12) clip_rect:      vec4<f32>,  // framebuffer-pixel clip rect (x0,y0,x1,y1); all zero = no clip
+    @location(13) rotation:       f32,        // radians; applied to local_pos before SDF eval
 };
 
 struct VertexOutput {
@@ -34,6 +35,7 @@ struct VertexOutput {
     @location(9) shadow_colour:   vec4<f32>,
     @location(10) shadow_params:  vec4<f32>,
     @location(11) @interpolate(flat) clip_rect: vec4<f32>,
+    @location(12) @interpolate(flat) rotation:  f32,
 };
 
 @vertex
@@ -52,6 +54,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.shadow_colour   = in.shadow_colour;
     out.shadow_params   = in.shadow_params;
     out.clip_rect       = in.clip_rect;
+    out.rotation        = in.rotation;
     return out;
 }
 
@@ -306,7 +309,8 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
             return sd_star_n(p, r, radii.x, radii.y);
         }
         case 9: {
-            // RegularPolygon: radii.x = n (sides).
+            // RegularPolygon: radii.x = n (sides). The top-level
+            // `rotation` on the item rotates p before this case is reached.
             let r = min(hs.x, hs.y);
             return sd_ngon(p, r, radii.x);
         }
@@ -333,7 +337,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
     }
-    let p = in.local_pos;
+    // Rotate local position by -rotation so the SDF evaluates in the
+    // shape's unrotated frame; the visible result is the shape rotated by
+    // `rotation`. Shadow uses the same rotated frame with its own offset.
+    let _rc = cos(-in.rotation);
+    let _rs = sin(-in.rotation);
+    let p = vec2<f32>(
+        _rc * in.local_pos.x - _rs * in.local_pos.y,
+        _rs * in.local_pos.x + _rc * in.local_pos.y,
+    );
     let hs = in.half_size;
 
     let d = eval_sdf(p, hs, in.shape_type, in.radii);
@@ -348,7 +360,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let shadow_off = vec2<f32>(in.shadow_params.y, in.shadow_params.z);
     var shadow_a = 0.0;
     if (shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
-        let sd = eval_sdf(p - shadow_off, hs, in.shape_type, in.radii);
+        // Shadow offset is in screen space, so evaluate the shadow SDF in
+        // the unrotated local frame: subtract the offset there, then
+        // rotate the result into the SDF frame.
+        let sp = in.local_pos - shadow_off;
+        let sp_r = vec2<f32>(_rc * sp.x - _rs * sp.y, _rs * sp.x + _rc * sp.y);
+        let sd = eval_sdf(sp_r, hs, in.shape_type, in.radii);
         shadow_a = in.shadow_colour.a * (1.0 - smoothstep(0.0, shadow_r, sd));
     }
 

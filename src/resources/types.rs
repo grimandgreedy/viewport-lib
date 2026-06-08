@@ -1280,6 +1280,11 @@ pub(crate) struct OverlayShapeVertex {
     /// Clip rectangle in framebuffer pixels (x0, y0, x1, y1). All-zero means
     /// no clipping. Fragments outside the rect are discarded.
     pub clip_rect: [f32; 4],
+    /// Rotation around the shape centre in radians. Applied to `local_pos`
+    /// before SDF evaluation so the shape rotates inside its axis-aligned
+    /// bounding box.
+    pub rotation: f32,
+    pub _pad: [f32; 3],
 }
 
 impl OverlayShapeVertex {
@@ -1365,6 +1370,12 @@ impl OverlayShapeVertex {
                     offset: 136,
                     shader_location: 12,
                     format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 13: rotation f32 (radians)
+                wgpu::VertexAttribute {
+                    offset: 152,
+                    shader_location: 13,
+                    format: wgpu::VertexFormat::Float32,
                 },
             ],
         }
