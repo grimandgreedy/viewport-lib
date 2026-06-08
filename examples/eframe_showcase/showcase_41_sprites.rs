@@ -20,9 +20,9 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId, GpuParticleSystemItem,
-    LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem, ParticleRender,
-    PolylineItem, RibbonItem, SceneRenderItem, SpawnShape, SpriteBlend, SpriteItem,
+    BackfacePolicy, ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId,
+    GpuParticleSystemItem, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
+    ParticleRender, PolylineItem, RibbonItem, SceneRenderItem, SpawnShape, SpriteBlend, SpriteItem,
     SpriteOrientation, SpriteSizeMode, VelocityDist, ViewportRenderer, primitives,
 };
 
@@ -57,6 +57,9 @@ pub(crate) enum SpriteSubMode {
     /// markers, a swarm of velocity-stretched sparks, and a row of grass
     /// cards locked to the world up axis.
     Orientations,
+    /// Refractive sprites: an expanding shockwave ring distorts the textured
+    /// scene behind it, demonstrating `SpriteItem::refraction_strength`.
+    Distortion,
 }
 
 pub(crate) struct TrailEmitter {
@@ -137,6 +140,15 @@ pub(crate) struct SpriteState {
     /// Flame texture: tall taper with hot inner gradient. Used by the
     /// axis-locked candle flames in the Orientations sub-mode.
     pub flame_tex: u64,
+    /// Shockwave ring texture: a thin ring whose R/G channels encode outward
+    /// displacement (heat-haze direction). Drives the refractive sprite in
+    /// the Distortion sub-mode.
+    pub shockwave_tex: u64,
+    /// Flat plane mesh used as the three corner walls in the Distortion
+    /// sub-mode.
+    pub wall_id: MeshId,
+    /// Strength slider for the Distortion sub-mode (NDC pixels).
+    pub distortion_strength: f32,
 
     // Orientations sub-mode toggles which orientation gets exclusive focus
     // (so the user can see one mode at a time at a useful scale).
@@ -212,6 +224,9 @@ impl Default for SpriteState {
             streak_tex: 0,
             trail_streak_enabled: false,
             flame_tex: 0,
+            shockwave_tex: 0,
+            wall_id: MeshId::from_index(0),
+            distortion_strength: 60.0,
             orientation_focus: SpriteOrientation::VelocityStretched,
             rain_positions: Vec::new(),
             rain_velocities: Vec::new(),
@@ -293,6 +308,40 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .resources_mut()
             .upload_texture(&app.device, &app.queue, w, h, &pixels)
             .expect("flame tex")
+    };
+
+    // Shockwave texture (96x96): a ring whose R/G channels encode outward
+    // radial displacement and whose alpha gates the ring intensity. Centred
+    // at (0.5, 0.5) of the texture; R/G are mapped from [-1, 1] outward
+    // direction into [0, 1] storage.
+    let shockwave_tex = {
+        let (w, h) = (96u32, 96u32);
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        let cx = w as f32 * 0.5;
+        let cy = h as f32 * 0.5;
+        for y in 0..h {
+            for x in 0..w {
+                let dx = (x as f32 - cx) / (w as f32 * 0.5);
+                let dy = (y as f32 - cy) / (h as f32 * 0.5);
+                let r = (dx * dx + dy * dy).sqrt();
+                // Ring profile centred at r=0.7 with a narrow falloff.
+                let ring = (1.0 - ((r - 0.7).abs() * 5.0)).clamp(0.0, 1.0);
+                if ring <= 0.0 || r < 1e-4 {
+                    continue;
+                }
+                let dir_x = dx / r;
+                let dir_y = dy / r;
+                let i = ((y * w + x) * 4) as usize;
+                pixels[i]     = ((dir_x * 0.5 + 0.5) * 255.0) as u8;
+                pixels[i + 1] = ((dir_y * 0.5 + 0.5) * 255.0) as u8;
+                pixels[i + 2] = 128;
+                pixels[i + 3] = (ring * 255.0) as u8;
+            }
+        }
+        renderer
+            .resources_mut()
+            .upload_texture(&app.device, &app.queue, w, h, &pixels)
+            .expect("shockwave tex")
     };
 
     // Streak texture (128x16): a horizontal lengthwise stripe with soft edges
@@ -412,6 +461,15 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         })
         .collect();
 
+    // Wall mesh for the Distortion sub-mode: a flat plane that draws as a
+    // clean rectangle rather than the disc cross-section a flattened sphere
+    // would give at the corner.
+    let wall_mesh = primitives::plane(12.0, 12.0);
+    let wall_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &wall_mesh)
+        .expect("distortion wall");
+
     // Mesh particles: small unit cube reused at every instance.
     let cube_mesh = primitives::cube(0.18);
     let cube_id = renderer
@@ -469,6 +527,8 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
 
     app.sprite_state.streak_tex = streak_tex;
     app.sprite_state.flame_tex = flame_tex;
+    app.sprite_state.shockwave_tex = shockwave_tex;
+    app.sprite_state.wall_id = wall_id;
 
     // Rain field for the Orientations demo: 600 drops scattered in a column
     // above the ground, each with a roughly downward velocity. The host
@@ -649,6 +709,11 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             SpriteSubMode::Orientations,
             "Orientations",
         );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
+            SpriteSubMode::Distortion,
+            "Distortion",
+        );
     });
     ui.separator();
 
@@ -742,6 +807,23 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
                 "Streak texture (modulates ribbon colour along its length)",
             );
         }
+        SpriteSubMode::Distortion => {
+            ui.label("Expanding shockwave ring distorts the textured scene behind it.");
+            ui.label("`SpriteItem::refraction_strength` routes the sprite through a post-pass");
+            ui.label("that samples the resolved scene colour at an offset driven by the");
+            ui.label("sprite's own texture (R/G channels as signed displacement, alpha as mask).");
+            ui.separator();
+            ui.label("Refraction strength (NDC pixels):");
+            ui.add(
+                egui::Slider::new(&mut app.sprite_state.distortion_strength, 0.0..=200.0)
+                    .step_by(1.0),
+            );
+            ui.separator();
+            ui.label("Note: refractive sprites distort whatever is actually behind them.");
+            ui.label("Orbit the camera so the shockwave overlaps one of the textured walls;");
+            ui.label("from angles where the wall is to the side, the ring shows the empty");
+            ui.label("background instead -- the same behaviour as game-engine heat haze.");
+        }
         SpriteSubMode::Orientations => {
             ui.label("Three sprite orientation modes side by side. Pick which one");
             ui.label("the demo draws so it stays at a useful scale.");
@@ -834,6 +916,9 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
         SpriteSubMode::Soft
         | SpriteSubMode::MeshParticles
         | SpriteSubMode::GpuParticles => {
+            app.sprite_state.demo_time += dt;
+        }
+        SpriteSubMode::Distortion => {
             app.sprite_state.demo_time += dt;
         }
         SpriteSubMode::Orientations => {
@@ -1120,6 +1205,30 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 
         SpriteSubMode::Orientations => orientation_demo_items(app),
 
+        SpriteSubMode::Distortion => {
+            // Single shockwave sprite expanding in front of the textured
+            // wall. World-space sizing keeps the ring at a physical diameter
+            // so the distortion looks anchored in the scene; the wall sits
+            // at z=-2.5 and the shockwave at z=0 stays in front of it as
+            // long as the camera is on the +Z side of the wall.
+            let t = app.sprite_state.demo_time;
+            let cycle = (t % 3.0) / 3.0;
+            // Radius grows from 1.5 to 7 world units over the cycle so the
+            // ring covers a good chunk of the textured backdrop even at the
+            // head-on view distance.
+            let radius = 1.5 + cycle * 5.5;
+            let fade = (1.0 - cycle).clamp(0.0, 1.0);
+            let mut item = SpriteItem::default();
+            item.texture_id = Some(app.sprite_state.shockwave_tex);
+            item.positions = vec![[0.0, 0.0, 0.0]];
+            item.colours = vec![[1.0, 1.0, 1.0, fade]];
+            item.sizes = vec![radius * 2.0];
+            item.size_mode = SpriteSizeMode::WorldSpace;
+            item.depth_write = false;
+            item.refraction_strength = Some(app.sprite_state.distortion_strength);
+            vec![item]
+        }
+
         SpriteSubMode::Trails => {
             // A small glowing dot at the head of each emitter makes the
             // ribbon read as a comet rather than a free-floating brushstroke.
@@ -1188,6 +1297,41 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             item.material.base_colour = [0.3, 0.45, 0.7];
             item.material.specular = 0.2;
             vec![item]
+        }
+        SpriteSubMode::Distortion => {
+            // Three flat textured planes meeting at the (-X, -Y, -Z) corner.
+            // Each plane primitive sits in the XY plane facing +Z by default;
+            // the rotations move two of them into the XZ and YZ planes so the
+            // three meet at a clean corner without the disc cross-sections a
+            // flattened sphere would produce.
+            let walls = [
+                // Floor (XY plane at z=-2.5, normal +Z).
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.5)),
+                // Back wall (XZ plane at y=-2.5, normal +Y).
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, -2.5, 0.0))
+                    * glam::Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+                // Side wall (YZ plane at x=-2.5, normal +X).
+                glam::Mat4::from_translation(glam::Vec3::new(-2.5, 0.0, 0.0))
+                    * glam::Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            ];
+            walls
+                .iter()
+                .map(|m| {
+                    let mut item = SceneRenderItem::default();
+                    item.mesh_id = app.sprite_state.wall_id;
+                    item.model = m.to_cols_array_2d();
+                    item.material.base_colour = [0.85, 0.85, 0.85];
+                    item.material.specular = 0.1;
+                    item.material.texture_id = Some(app.sprite_state.atlas_tex);
+                    // Render both sides of each wall so the textured surface
+                    // is visible from every orbit angle, not just the side
+                    // the primitive normal points toward. Without this the
+                    // shockwave sees an empty scene behind it from half the
+                    // orbit and the distortion samples the clear colour.
+                    item.material.backface_policy = BackfacePolicy::Identical;
+                    item
+                })
+                .collect()
         }
         SpriteSubMode::Orientations => match app.sprite_state.orientation_focus {
             // Scatter plot doesn't need backdrop geometry; the cluster

@@ -212,6 +212,17 @@ struct GpuMcPickItem {
 }
 
 /// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
+/// Per-viewport scene-colour resolve sampled by the refractive sprite pass.
+///
+/// Lazily allocated on the first frame containing a refractive sprite; resized
+/// whenever the HDR target dimensions change. The bind group is rebuilt with
+/// the resolve when either changes.
+struct SpriteRefractionResolve {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    size: [u32; 2],
+}
+
 pub struct ViewportRenderer {
     resources: ViewportGpuResources,
     /// Instanced batches prepared for the current frame. Empty when using per-object path.
@@ -303,6 +314,10 @@ pub struct ViewportRenderer {
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
     /// Per-frame GPU particle systems, dispatched in prepare(), consumed in paint().
     particle_gpu_data: Vec<crate::resources::gpu_particles::ParticleFrameData>,
+    /// Scene-colour resolve textures for the refractive sprite pass, indexed
+    /// alongside `viewport_slots`. Lazily allocated when the first refractive
+    /// sprite appears for a viewport.
+    sprite_refraction_resolves: Vec<Option<SpriteRefractionResolve>>,
     /// Per-frame Gaussian splat draw data, rebuilt in prepare_viewport_internal(), consumed in paint().
     gaussian_splat_draw_data: Vec<crate::resources::GaussianSplatDrawData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
@@ -567,6 +582,7 @@ impl ViewportRenderer {
             sprite_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
             particle_gpu_data: Vec::new(),
+            sprite_refraction_resolves: Vec::new(),
             gaussian_splat_draw_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),

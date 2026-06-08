@@ -284,6 +284,107 @@ impl ViewportGpuResources {
                 "sprite_pipeline_premultiplied_depth_write",
             ),
         });
+
+        // -----------------------------------------------------------------
+        // Refractive sprite pipeline.
+        //
+        // Group 0: shared camera bindings.
+        // Group 1: shared sprite BGL (uniform / texture / sampler / instance buf).
+        // Group 2: scene-colour resolve texture + sampler.
+        //
+        // Available only on the HDR path. The LDR `paint_to` route has no
+        // resolvable scene-colour texture to sample, mirroring the
+        // soft-particle constraint.
+        let refraction_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sprite_refraction_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let refraction_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("sprite_refraction_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let refraction_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sprite_refraction_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/sprite_refraction.wgsl")).into(),
+            ),
+        });
+
+        let bgl_ref = self.sprite_bgl.as_ref().unwrap();
+        let refraction_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sprite_refraction_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, bgl_ref, &refraction_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let refraction_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("sprite_refraction_pipeline"),
+                layout: Some(&refraction_layout),
+                vertex: wgpu::VertexState {
+                    module: &refraction_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffers,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &refraction_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: hdr,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        self.sprite_refraction_bgl = Some(refraction_bgl);
+        self.sprite_refraction_sampler = Some(refraction_sampler);
+        self.sprite_refraction_pipeline = Some(refraction_pipeline);
     }
 
     /// Upload one [`SpriteItem`] to the GPU and return draw data.
@@ -368,7 +469,8 @@ impl ViewportGpuResources {
         });
         queue.write_buffer(&instance_buf, 0, instance_bytes);
 
-        // Uniform buffer: model matrix + flags + soft-particle distance + orientation.
+        // Uniform buffer: model matrix + flags + soft-particle distance + orientation
+        // + refraction strength.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SpriteUniformData {
@@ -378,7 +480,7 @@ impl ViewportGpuResources {
             soft_particle_distance: f32,
             orientation: u32,
             axis: [f32; 3],
-            _pad0: u32,
+            refraction_strength: f32,
         }
 
         let (texture_view, has_texture): (&wgpu::TextureView, u32) =
@@ -412,7 +514,10 @@ impl ViewportGpuResources {
                 .unwrap_or(0.0),
             orientation,
             axis: item.axis,
-            _pad0: 0,
+            refraction_strength: item
+                .refraction_strength
+                .filter(|s| *s > 0.0)
+                .unwrap_or(0.0),
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprite_uniform_buf"),
@@ -457,6 +562,10 @@ impl ViewportGpuResources {
             depth_write: item.depth_write,
             blend: item.blend,
             wireframe: false,
+            refraction_strength: item
+                .refraction_strength
+                .filter(|s| *s > 0.0)
+                .unwrap_or(0.0),
             _uniform_buf: uniform_buf,
             _instance_buf: instance_buf,
         }

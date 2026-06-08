@@ -62,7 +62,7 @@ struct ClipVolumeUB {
 //   soft_particle_distance: f32          ( 4 bytes at offset 72)
 //   orientation:            u32          ( 4 bytes at offset 76) -- 0=CameraFacing, 1=VelocityStretched, 2=AxisLocked
 //   axis:                   vec3<f32>    (12 bytes at offset 80) -- AxisLocked direction
-//   _pad0:                  u32          ( 4 bytes at offset 92)
+//   refraction_strength:    f32          ( 4 bytes at offset 92) -- 0 disables refractive draw
 struct SpriteUniform {
     model:                  mat4x4<f32>,
     world_space:            u32,
@@ -70,7 +70,7 @@ struct SpriteUniform {
     soft_particle_distance: f32,
     orientation:            u32,
     axis:                   vec3<f32>,
-    _pad0:                  u32,
+    refraction_strength:    f32,
 };
 
 // Per-sprite instance data (64 bytes):

@@ -1790,6 +1790,10 @@ pub struct SpriteGpuData {
     pub(crate) blend: crate::renderer::SpriteBlend,
     /// When true, skip the billboard draw; the wireframe overlay polyline is rendered instead.
     pub(crate) wireframe: bool,
+    /// Refractive distortion strength in NDC pixels; `0.0` means a regular
+    /// sprite. Routes the draw through the sprite refraction post-pass
+    /// instead of the normal sprite pass.
+    pub(crate) refraction_strength: f32,
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: wgpu::Buffer,
     pub(crate) _instance_buf: wgpu::Buffer,
@@ -3102,6 +3106,14 @@ pub struct ViewportGpuResources {
     pub(crate) sprite_pipeline_premultiplied: Option<DualPipeline>,
     /// Sprite pipeline, premultiplied, depth_write_enabled: true.
     pub(crate) sprite_pipeline_premultiplied_depth_write: Option<DualPipeline>,
+    /// Refractive sprite pipeline (HDR target only). Samples the scene-colour
+    /// resolve at an offset driven by the sprite's texture and writes back
+    /// with alpha-blend modulated by the texture's alpha channel.
+    pub(crate) sprite_refraction_pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 2 BGL for the refraction pipeline: scene-colour texture + sampler.
+    pub(crate) sprite_refraction_bgl: Option<wgpu::BindGroupLayout>,
+    /// Sampler used by the refraction shader to read the scene-colour resolve.
+    pub(crate) sprite_refraction_sampler: Option<wgpu::Sampler>,
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
     pub(crate) sprite_bgl: Option<wgpu::BindGroupLayout>,
     /// Bind group layout for the per-pass scene-depth resolve bound at group 2.

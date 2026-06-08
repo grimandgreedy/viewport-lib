@@ -2201,12 +2201,14 @@ impl ViewportGpuResources {
         };
 
         // HDR scene colour and depth -- at scene resolution (render_scale * output).
+        // COPY_SRC enables the refractive sprite pass to copy the resolved
+        // scene colour into its sample texture before drawing distortion.
         let hdr_tex = make_tex(
             "hdr_texture",
             wgpu::TextureFormat::Rgba16Float,
             scene_w,
             scene_h,
-            wgpu::TextureUsages::empty(),
+            wgpu::TextureUsages::COPY_SRC,
         );
         let hdr_view = hdr_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let hdr_depth_tex = make_tex(

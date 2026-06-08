@@ -2245,6 +2245,7 @@ impl ViewportRenderer {
                             if sprite.wireframe
                                 || !sprite.depth_write
                                 || sprite.blend != *blend
+                                || sprite.refraction_strength > 0.0
                             {
                                 continue;
                             }
@@ -2317,6 +2318,7 @@ impl ViewportRenderer {
                             if sprite.wireframe
                                 || sprite.depth_write
                                 || sprite.blend != *blend
+                                || sprite.refraction_strength > 0.0
                             {
                                 continue;
                             }
@@ -2408,6 +2410,147 @@ impl ViewportRenderer {
                 pass.set_pipeline(dual.for_format(true));
                 pass.set_bind_group(1, &system.draw_bg, &[]);
                 pass.draw(0..6, 0..system.capacity);
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Refractive sprite pass.
+        //
+        // Sprites flagged with `refraction_strength` skip the normal sprite
+        // pass and draw here instead. The renderer copies the HDR colour into
+        // a separate resolve texture, then each refractive sprite samples
+        // that texture at an offset driven by its own texture (R/G channels
+        // as signed displacement, alpha as mask).
+        //
+        // Non-SSAA HDR path only: SSAA would need a resolve at supersampled
+        // resolution and the soft-particle post-pass machinery does not yet
+        // share its resolve. This matches the soft-particle constraint.
+        // -----------------------------------------------------------------------
+        let has_refractive = self
+            .sprite_gpu_data
+            .iter()
+            .any(|s| s.refraction_strength > 0.0 && !s.wireframe);
+        if has_refractive && ssaa_factor == 1 {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
+            let resources = &self.resources;
+            let physical_w = slot_hdr.hdr_texture.size().width;
+            let physical_h = slot_hdr.hdr_texture.size().height;
+
+            // Allocate or resize the resolve texture so it matches the HDR
+            // attachment exactly. The copy depends on identical dimensions
+            // and format (Rgba16Float). Lives in side-storage indexed by
+            // viewport so the outer borrows on `viewport_slots` stay
+            // immutable.
+            while self.sprite_refraction_resolves.len() <= vp_idx {
+                self.sprite_refraction_resolves.push(None);
+            }
+            let need_realloc = match self.sprite_refraction_resolves[vp_idx].as_ref() {
+                Some(r) => r.size != [physical_w, physical_h],
+                None => true,
+            };
+            if need_realloc {
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("sprite_refraction_resolve"),
+                    size: wgpu::Extent3d {
+                        width: physical_w.max(1),
+                        height: physical_h.max(1),
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    usage: wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                self.sprite_refraction_resolves[vp_idx] = Some(SpriteRefractionResolve {
+                    texture: tex,
+                    view,
+                    size: [physical_w, physical_h],
+                });
+            }
+            let resolve = self.sprite_refraction_resolves[vp_idx].as_ref().unwrap();
+            let resolve_tex = &resolve.texture;
+            let resolve_view = &resolve.view;
+
+            // Copy current HDR colour -> resolve texture so the refraction
+            // shader can sample the scene without reading from its render
+            // attachment.
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &slot_hdr.hdr_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: resolve_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: physical_w.max(1),
+                    height: physical_h.max(1),
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            // Build the group-2 bind group: sampled resolve view + sampler.
+            let refraction_bgl = resources.sprite_refraction_bgl.as_ref().unwrap();
+            let refraction_sampler = resources.sprite_refraction_sampler.as_ref().unwrap();
+            let refraction_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sprite_refraction_bg"),
+                layout: refraction_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(resolve_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(refraction_sampler),
+                    },
+                ],
+            });
+
+            if let Some(pipeline) = resources.sprite_refraction_pipeline.as_ref() {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("sprite_refraction_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &slot_hdr.hdr_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &slot_hdr.hdr_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, camera_bg, &[]);
+                pass.set_bind_group(2, &refraction_bg, &[]);
+                for sprite in self.sprite_gpu_data.iter() {
+                    if sprite.refraction_strength <= 0.0 || sprite.wireframe {
+                        continue;
+                    }
+                    pass.set_bind_group(1, &sprite.bind_group, &[]);
+                    pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+                    pass.draw(0..6, 0..sprite.sprite_count);
+                }
             }
         }
 

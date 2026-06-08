@@ -1491,6 +1491,18 @@ pub struct SpriteItem {
     /// lines against walls and ground. Requires a sampleable scene depth resolve;
     /// see crate docs for current support status.
     pub soft_particle_distance: Option<f32>,
+    /// If `Some(d)`, the sprite is drawn as a refractive distortion rather
+    /// than a normal alpha-blended billboard: the renderer samples the
+    /// already-resolved scene colour at an offset driven by the sprite's
+    /// texture (red/green channels as signed displacement, alpha as mask)
+    /// and writes the distorted result back to the scene. `d` scales the
+    /// displacement in NDC pixels. Use for heat haze, shockwaves,
+    /// force-field hits, water-splash droplets.
+    ///
+    /// Available on the HDR path only; the direct LDR `paint_to` cannot
+    /// resolve scene colour for sampling (same constraint as soft particles).
+    /// `None` disables refraction and the sprite draws normally.
+    pub refraction_strength: Option<f32>,
     /// How each billboard is oriented in world space. Default
     /// [`SpriteOrientation::CameraFacing`] matches the historical behaviour:
     /// every quad turns to face the camera.
@@ -1544,6 +1556,7 @@ impl Default for SpriteItem {
             depth_write: false,
             blend: SpriteBlend::AlphaBlend,
             soft_particle_distance: None,
+            refraction_strength: None,
             orientation: SpriteOrientation::default(),
             velocities: Vec::new(),
             axis: [0.0, 0.0, 1.0],
