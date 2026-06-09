@@ -1524,8 +1524,65 @@ pub struct SpriteItem {
     /// quad's long axis. Ignored in other orientation modes. Default
     /// `[0, 0, 1]` (world up).
     pub axis: [f32; 3],
+    /// When `true`, the batch runs through the lit sprite pipeline and
+    /// participates in the scene's hemisphere ambient and direct lighting.
+    /// Default `false` preserves the emissive billboard look.
+    pub lit: bool,
+    /// Lighting parameters used when `lit` is `true`. Ignored otherwise.
+    pub lit_params: SpriteLitParams,
+    /// Texture sampled as a tangent-space normal map when `lit_params.normal_mode`
+    /// is [`SpriteNormalMode::NormalMap`]. `None` falls back to the spherical
+    /// normal even when the mode requests a map.
+    pub normal_texture_id: Option<u64>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
+}
+
+/// How a lit sprite recovers a per-fragment normal for shading.
+///
+/// Picked per batch; affects sprites whose [`SpriteItem::lit`] is true.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpriteNormalMode {
+    /// Treat the quad as the cross-section of a sphere. The normal points from
+    /// the quad centre outward through the fragment, giving a soft round
+    /// falloff. The standard pick for smoke, dust, and fog.
+    #[default]
+    Spherical,
+    /// Use the quad's screen-facing normal. Cheapest; suits grass cards and
+    /// other already-oriented art.
+    Flat,
+    /// Sample a tangent-space normal map. The map's RGB encodes the perturbed
+    /// normal; the quad's local right/up axes serve as the tangent basis.
+    /// Falls back to `Spherical` when no normal map is bound.
+    NormalMap,
+}
+
+/// Lighting parameters for a lit sprite batch.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpriteLitParams {
+    /// Surface roughness in `[0, 1]`. Used to attenuate the specular response;
+    /// `1.0` is fully diffuse. Smoke and dust look right near `0.9`.
+    pub roughness: f32,
+    /// How per-fragment normals are derived.
+    pub normal_mode: SpriteNormalMode,
+    /// Whether the batch samples the directional shadow map. Currently a
+    /// reserved flag: the lit sprite shader leaves shadows unsampled and the
+    /// hemisphere ambient + direct light contributions handle the look.
+    pub receive_shadows: bool,
+    /// Multiplier on the hemisphere ambient term, `1.0` matches the mesh
+    /// shading path. Lower values darken the unlit side of smoke.
+    pub ambient_scale: f32,
+}
+
+impl Default for SpriteLitParams {
+    fn default() -> Self {
+        Self {
+            roughness: 0.9,
+            normal_mode: SpriteNormalMode::default(),
+            receive_shadows: false,
+            ambient_scale: 1.0,
+        }
+    }
 }
 
 /// How a sprite batch's billboards are oriented in world space.
@@ -1569,6 +1626,9 @@ impl Default for SpriteItem {
             orientation: SpriteOrientation::default(),
             velocities: Vec::new(),
             axis: [0.0, 0.0, 1.0],
+            lit: false,
+            lit_params: SpriteLitParams::default(),
+            normal_texture_id: None,
             settings: ItemSettings::default(),
         }
     }
@@ -2071,5 +2131,55 @@ impl Default for DecalItem {
             projection: DecalProjection::Planar,
             settings: ItemSettings::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod lit_sprite_tests {
+    use super::*;
+
+    #[test]
+    fn sprite_lit_defaults_match_emissive_behaviour() {
+        let s = SpriteItem::default();
+        assert!(!s.lit);
+        assert!(s.normal_texture_id.is_none());
+        // Default lit_params should be the safe set: spherical normals, no
+        // shadow sampling, neutral roughness, full ambient.
+        assert_eq!(s.lit_params.normal_mode, SpriteNormalMode::Spherical);
+        assert!(!s.lit_params.receive_shadows);
+        assert!((s.lit_params.ambient_scale - 1.0).abs() < 1e-6);
+        assert!(s.lit_params.roughness >= 0.0 && s.lit_params.roughness <= 1.0);
+    }
+
+    #[test]
+    fn sprite_lit_fields_compose_with_other_options() {
+        // A reasonably exotic configuration: lit + velocity-stretched +
+        // soft-particle fade + per-instance distances + a normal map.
+        let item = SpriteItem {
+            lit: true,
+            lit_params: SpriteLitParams {
+                roughness: 0.4,
+                normal_mode: SpriteNormalMode::NormalMap,
+                receive_shadows: true,
+                ambient_scale: 0.2,
+            },
+            normal_texture_id: Some(7),
+            orientation: SpriteOrientation::VelocityStretched,
+            velocities: vec![[1.0, 0.0, 0.0]],
+            positions: vec![[0.0, 0.0, 0.0]],
+            soft_particle_distance: Some(0.5),
+            soft_particle_distances: vec![1.2],
+            ..SpriteItem::default()
+        };
+        assert!(item.lit);
+        assert_eq!(item.lit_params.normal_mode, SpriteNormalMode::NormalMap);
+        assert!(item.lit_params.receive_shadows);
+        assert_eq!(item.normal_texture_id, Some(7));
+        assert_eq!(item.orientation, SpriteOrientation::VelocityStretched);
+    }
+
+    #[test]
+    fn sprite_normal_mode_default_is_spherical() {
+        assert_eq!(SpriteNormalMode::default(), SpriteNormalMode::Spherical);
     }
 }

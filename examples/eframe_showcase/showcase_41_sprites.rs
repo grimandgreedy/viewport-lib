@@ -19,6 +19,10 @@
 
 use crate::App;
 use eframe::egui;
+#[allow(unused_imports)]
+use viewport_lib::renderer::{SpriteLitParams, SpriteNormalMode};
+use viewport_lib::scene::{Scene, build_light_glyphs};
+use viewport_lib::Selection;
 use viewport_lib::{
     BackfacePolicy, ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId,
     GpuParticleSystemItem, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
@@ -60,6 +64,11 @@ pub(crate) enum SpriteSubMode {
     /// Refractive sprites: an expanding shockwave ring distorts the textured
     /// scene behind it, demonstrating `SpriteItem::refraction_strength`.
     Distortion,
+    /// Lit sprites: a slow-tumbling smoke cluster against a sphere, picking
+    /// up directional and hemisphere ambient light as the directional light
+    /// rotates. Toggling `lit` off shows the difference against the emissive
+    /// path.
+    Lit,
 }
 
 pub(crate) struct TrailEmitter {
@@ -149,6 +158,28 @@ pub(crate) struct SpriteState {
     pub wall_id: MeshId,
     /// Strength slider for the Distortion sub-mode (NDC pixels).
     pub distortion_strength: f32,
+    /// Current directional-light azimuth (radians around Z) for the Lit demo.
+    /// Advances each frame when `lit_auto_rotate` is on; otherwise driven by
+    /// the UI slider.
+    pub lit_angle: f32,
+    /// When true, the Lit demo's directional light slowly orbits the pillar.
+    pub lit_auto_rotate: bool,
+    /// Multiplier on the directional light intensity for the Lit demo.
+    pub lit_intensity: f32,
+    /// When true, both pillars use `lit: true`. When false, the right pillar
+    /// drops back to the emissive path so the demo collapses to a single
+    /// shading model for comparison against another scene.
+    pub lit_show_both: bool,
+    /// Scene-graph that owns the directional light driving the Lit demo. A
+    /// scene-graph light is required to render the built-in light glyph
+    /// (`build_light_glyphs`), so the rotating arrow shows up in the viewport.
+    pub lit_scene: Scene,
+    /// Node id for the directional light in `lit_scene`.
+    pub lit_light_id: u64,
+    /// When true, the right pillar requests `receive_shadows` and the scene
+    /// enables the cascade shadow map. A small occluder mesh between the
+    /// columns then casts a visible shadow gradient across the lit pillar.
+    pub lit_receive_shadows: bool,
 
     // Orientations sub-mode toggles which orientation gets exclusive focus
     // (so the user can see one mode at a time at a useful scale).
@@ -227,6 +258,13 @@ impl Default for SpriteState {
             shockwave_tex: 0,
             wall_id: MeshId::from_index(0),
             distortion_strength: 60.0,
+            lit_angle: 0.0,
+            lit_auto_rotate: true,
+            lit_intensity: 1.4,
+            lit_show_both: true,
+            lit_scene: Scene::new(),
+            lit_light_id: 0,
+            lit_receive_shadows: false,
             orientation_focus: SpriteOrientation::VelocityStretched,
             rain_positions: Vec::new(),
             rain_velocities: Vec::new(),
@@ -519,6 +557,9 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         blend: SpriteBlend::Additive,
         size_mode: SpriteSizeMode::ScreenSpace,
         depth_write: false,
+        lit: false,
+        lit_params: SpriteLitParams::default(),
+        normal_texture_id: None,
     };
     let particle_sys = renderer
         .resources_mut()
@@ -561,6 +602,18 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
     app.sprite_state.atlas_positions = atlas_positions;
     app.sprite_state.atlas_frame = 0;
     app.sprite_state.trails = trails;
+
+    // Lit sub-mode: one scene-graph directional light driving both the
+    // shading on the right pillar and the on-screen arrow glyph. Direction
+    // and intensity are rewritten in `submit_sprite_items` each frame.
+    let mut dir_light = LightSource::default();
+    dir_light.kind = LightKind::Directional {
+        direction: [1.0, 0.0, 0.55],
+    };
+    dir_light.colour = [1.0, 1.0, 1.0];
+    dir_light.intensity = 1.4;
+    app.sprite_state.lit_light_id = app.sprite_state.lit_scene.add_light(dir_light);
+
     app.sprite_state.built = true;
 }
 
@@ -714,6 +767,7 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             SpriteSubMode::Distortion,
             "Distortion",
         );
+        ui.selectable_value(&mut app.sprite_state.sub_mode, SpriteSubMode::Lit, "Lit");
     });
     ui.separator();
 
@@ -806,6 +860,35 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             ui.checkbox(
                 &mut app.sprite_state.trail_streak_enabled,
                 "Streak texture (modulates ribbon colour along its length)",
+            );
+        }
+        SpriteSubMode::Lit => {
+            ui.label("Two smoke pillars side by side under a single directional light.");
+            ui.label("Left pillar: `lit: false` (the emissive baseline).");
+            ui.label("Right pillar: `lit: true`, spherical normals; the bright side tracks");
+            ui.label("the light direction so the pillar reads as a solid volume.");
+            ui.separator();
+            ui.checkbox(&mut app.sprite_state.lit_auto_rotate, "Auto-rotate light");
+            ui.label("Light azimuth (radians around Z):");
+            ui.add(
+                egui::Slider::new(
+                    &mut app.sprite_state.lit_angle,
+                    -std::f32::consts::PI..=std::f32::consts::PI,
+                )
+                .step_by(0.01),
+            );
+            ui.label("Directional intensity:");
+            ui.add(egui::Slider::new(
+                &mut app.sprite_state.lit_intensity,
+                0.0..=3.0,
+            ));
+            ui.checkbox(
+                &mut app.sprite_state.lit_show_both,
+                "Right pillar lit (uncheck to make both emissive)",
+            );
+            ui.checkbox(
+                &mut app.sprite_state.lit_receive_shadows,
+                "Receive shadows (lit pillar darkens behind the wall)",
             );
         }
         SpriteSubMode::Distortion => {
@@ -921,6 +1004,15 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
         }
         SpriteSubMode::Distortion => {
             app.sprite_state.demo_time += dt;
+        }
+        SpriteSubMode::Lit => {
+            app.sprite_state.demo_time += dt;
+            if app.sprite_state.lit_auto_rotate {
+                app.sprite_state.lit_angle += dt * 1.2;
+                if app.sprite_state.lit_angle > std::f32::consts::PI {
+                    app.sprite_state.lit_angle -= std::f32::consts::TAU;
+                }
+            }
         }
         SpriteSubMode::Orientations => {
             app.sprite_state.demo_time += dt;
@@ -1219,6 +1311,70 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 
         SpriteSubMode::Orientations => orientation_demo_items(app),
 
+        SpriteSubMode::Lit => {
+            // Two rising smoke columns, side by side, sharing one directional
+            // light. Each puff is parameterised by a phase that wraps over a
+            // fixed cycle: as `demo_time` advances the puff drifts upward,
+            // spreads laterally, swells slightly, and fades in/out so the
+            // wrap at the top of the column is invisible. The left column is
+            // emissive (`lit: false`); the right is lit, so its bright side
+            // tracks the rotating directional light while the left stays flat.
+            const PUFFS_PER_PILLAR: usize = 40;
+            const CYCLE: f32 = 6.0;        // seconds for a puff to rise and recycle
+            const RISE_HEIGHT: f32 = 4.5;  // metres travelled per cycle
+            const BASE_Z: f32 = -0.6;
+            let t = app.sprite_state.demo_time;
+            let pillar_x = 1.8;
+            let build_pillar = |x_offset: f32, lit: bool, seed: f32| {
+                let mut positions = Vec::with_capacity(PUFFS_PER_PILLAR);
+                let mut colours = Vec::with_capacity(PUFFS_PER_PILLAR);
+                let mut sizes = Vec::with_capacity(PUFFS_PER_PILLAR);
+                for i in 0..PUFFS_PER_PILLAR {
+                    let stagger = (i as f32 / PUFFS_PER_PILLAR as f32) * CYCLE;
+                    let age = (t + stagger + seed).rem_euclid(CYCLE);
+                    let u = age / CYCLE;                       // 0..1 over one cycle
+                    let h = BASE_Z + u * RISE_HEIGHT;
+
+                    // Lateral spread grows with age: a sharp jet at the base
+                    // billows out as it rises, like a real smoke plume.
+                    let spread = 0.1 + u * 0.6;
+                    let swirl = (i as f32 * 1.7 + age * 1.3 + seed * 4.1).sin();
+                    let swirl2 = (i as f32 * 2.3 + age * 0.9 + seed * 2.7).cos();
+                    let dx = swirl * spread;
+                    let dy = swirl2 * spread;
+                    positions.push([x_offset + dx, dy, h]);
+
+                    // Cosine-shaped alpha hides the recycle: fade in at birth,
+                    // fade out near the top of the rise.
+                    let fade = (u * std::f32::consts::PI).sin();
+                    colours.push([0.92, 0.90, 0.86, 0.55 * fade]);
+                    sizes.push(1.0 + u * 1.2);
+                }
+                let mut item = SpriteItem::default();
+                item.texture_id = Some(app.sprite_state.glow_tex);
+                item.positions = positions;
+                item.colours = colours;
+                item.sizes = sizes;
+                item.default_size = 1.5;
+                item.size_mode = SpriteSizeMode::WorldSpace;
+                item.blend = SpriteBlend::AlphaBlend;
+                item.depth_write = false;
+                item.lit = lit;
+                item.lit_params = SpriteLitParams {
+                    roughness: 0.95,
+                    normal_mode: SpriteNormalMode::Spherical,
+                    receive_shadows: app.sprite_state.lit_receive_shadows,
+                    ambient_scale: 0.7,
+                };
+                item
+            };
+            // Different seeds so the two columns churn out of sync.
+            vec![
+                build_pillar(-pillar_x, false, 0.0),
+                build_pillar(pillar_x, app.sprite_state.lit_show_both, 1.7),
+            ]
+        }
+
         SpriteSubMode::Distortion => {
             // Single shockwave sprite expanding in front of the textured
             // wall. World-space sizing keeps the ring at a physical diameter
@@ -1310,6 +1466,27 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             item.mesh_id = app.sprite_state.sphere_id;
             item.material.base_colour = [0.3, 0.45, 0.7];
             item.material.specular = 0.2;
+            vec![item]
+        }
+        SpriteSubMode::Lit => {
+            // A small slab between the two columns acts as a shadow caster.
+            // It sits at z=2 (mid-pillar) so the orbiting directional light
+            // throws a gradient across the right (lit) pillar but never
+            // touches the left (emissive) one. The slab is hidden when
+            // shadows are off because there's nothing for it to do.
+            if !app.sprite_state.lit_receive_shadows {
+                return vec![];
+            }
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = app.sprite_state.sphere_id;
+            item.model = glam::Mat4::from_scale_rotation_translation(
+                glam::Vec3::new(0.05, 1.4, 1.0),
+                glam::Quat::IDENTITY,
+                glam::Vec3::new(0.0, 0.0, 2.0),
+            )
+            .to_cols_array_2d();
+            item.material.base_colour = [0.35, 0.3, 0.25];
+            item.material.specular = 0.1;
             vec![item]
         }
         SpriteSubMode::Distortion => {
@@ -1431,31 +1608,43 @@ pub(crate) fn mesh_instance_items(app: &App) -> Vec<MeshInstanceItem> {
 // Lighting
 // ---------------------------------------------------------------------------
 
-pub(crate) fn sprite_lighting() -> LightingSettings {
-    {
-        let mut _t = LightingSettings::default();
-        _t.lights = vec![{
-            let mut _t = LightSource::default();
-            _t.kind = LightKind::Directional {
+pub(crate) fn sprite_lighting(app: &App) -> LightingSettings {
+    let mut settings = LightingSettings::default();
+    match app.sprite_state.sub_mode {
+        SpriteSubMode::Lit => {
+            // The Lit sub-mode owns its directional light on the scene graph
+            // (so the on-screen arrow glyph shows up). Here we only set the
+            // ambient sky/ground tint and leave `lights` empty so the
+            // scene-graph light is not duplicated. Shadows follow the demo's
+            // `receive_shadows` toggle.
+            settings.lights = vec![];
+            settings.shadows_enabled = app.sprite_state.lit_receive_shadows;
+            settings.hemisphere_intensity = 0.35;
+            settings.sky_colour = [0.65, 0.72, 0.85];
+            settings.ground_colour = [0.18, 0.16, 0.14];
+        }
+        _ => {
+            let mut light = LightSource::default();
+            light.kind = LightKind::Directional {
                 direction: [0.4, 0.7, 0.6],
             };
-            _t.colour = [1.0, 1.0, 1.0];
-            _t.intensity = 0.8;
-            _t
-        }];
-        _t.shadows_enabled = false;
-        _t.hemisphere_intensity = 0.4;
-        _t.sky_colour = [0.85, 0.9, 1.0];
-        _t.ground_colour = [0.4, 0.4, 0.5];
-        _t
+            light.colour = [1.0, 1.0, 1.0];
+            light.intensity = 0.8;
+            settings.lights = vec![light];
+            settings.shadows_enabled = false;
+            settings.hemisphere_intensity = 0.4;
+            settings.sky_colour = [0.85, 0.9, 1.0];
+            settings.ground_colour = [0.4, 0.4, 0.5];
+        }
     }
+    settings
 }
 
 // ---------------------------------------------------------------------------
 // Frame assembly
 // ---------------------------------------------------------------------------
 
-pub(crate) fn submit_sprite_items(app: &App, fd: &mut FrameData, dt: f32) {
+pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
     if !app.sprite_state.built {
         return;
     }
@@ -1465,6 +1654,49 @@ pub(crate) fn submit_sprite_items(app: &App, fd: &mut FrameData, dt: f32) {
     fd.scene.ribbon_items.extend(trail_ribbon_items(app));
     if let Some(item) = gpu_particle_item(app, dt) {
         fd.scene.gpu_particle_systems.push(item);
+    }
+
+    // Lit sub-mode: rewrite the scene-graph directional light each frame so
+    // it tracks the rotating azimuth and the chosen intensity, then collect
+    // the light into the frame and append its glyph so the arrow shows up.
+    if app.sprite_state.sub_mode == SpriteSubMode::Lit {
+        // Orbit the light around the smoke columns: the node sits on a
+        // horizontal ring of radius ~4.5 at half-column height, and its
+        // direction points from the centre of the columns up toward the
+        // node, so the bright side of the lit pillar tracks the glyph as it
+        // orbits.
+        let a = app.sprite_state.lit_angle;
+        let orbit_radius = 4.5;
+        let orbit_height = 2.5;
+        let target = glam::Vec3::new(0.0, 0.0, 1.5);
+        let light_pos = glam::Vec3::new(
+            a.cos() * orbit_radius,
+            a.sin() * orbit_radius,
+            orbit_height,
+        );
+        let dir = (light_pos - target).normalize_or_zero();
+
+        let mut src = LightSource::default();
+        src.kind = LightKind::Directional {
+            direction: dir.into(),
+        };
+        src.colour = [1.0, 1.0, 1.0];
+        src.intensity = app.sprite_state.lit_intensity;
+        app.sprite_state
+            .lit_scene
+            .set_light(app.sprite_state.lit_light_id, Some(src));
+        app.sprite_state.lit_scene.set_local_transform(
+            app.sprite_state.lit_light_id,
+            glam::Mat4::from_translation(light_pos),
+        );
+
+        fd.scene
+            .lights
+            .extend(app.sprite_state.lit_scene.collect_lights());
+        let (glyphs, polylines) =
+            build_light_glyphs(&app.sprite_state.lit_scene, &Selection::new());
+        fd.scene.glyphs.extend(glyphs);
+        fd.scene.polylines.extend(polylines);
     }
 }
 

@@ -222,6 +222,31 @@ impl ViewportGpuResources {
                 })
             };
 
+        // Group 3 BGL for the lit sprite path: optional tangent-space normal
+        // map + filtering sampler. Bound by every lit batch; a 1x1 default
+        // backs the binding when no map is supplied.
+        let lit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sprite_lit_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
         let ldr = self.target_format;
         let hdr = wgpu::TextureFormat::Rgba16Float;
         let alpha = wgpu::BlendState::ALPHA_BLENDING;
@@ -385,6 +410,154 @@ impl ViewportGpuResources {
         self.sprite_refraction_bgl = Some(refraction_bgl);
         self.sprite_refraction_sampler = Some(refraction_sampler);
         self.sprite_refraction_pipeline = Some(refraction_pipeline);
+
+        // -----------------------------------------------------------------
+        // Lit sprite pipelines.
+        //
+        // Group 0: shared camera + clip + lighting bindings (already provides
+        //          the lights uniform at binding 3 and the lights storage at
+        //          binding 13 via `camera_bind_group_layout`).
+        // Group 1: shared sprite BGL (uniform / texture / sampler / instance buf).
+        // Group 2: shared soft-particle BGL (depth + sampler). Lit sprites
+        //          honour the same per-instance soft-fade distance as the
+        //          emissive path.
+        // Group 3: new lit BGL (optional normal map + sampler).
+        let lit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sprite_lit_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/sprite_lit.wgsl")).into(),
+            ),
+        });
+
+        let sprite_bgl_ref = self.sprite_bgl.as_ref().unwrap();
+        let soft_bgl_ref = self.sprite_soft_bgl.as_ref().unwrap();
+        let lit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sprite_lit_pipeline_layout"),
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                sprite_bgl_ref,
+                soft_bgl_ref,
+                &lit_bgl,
+            ],
+            push_constant_ranges: &[],
+        });
+
+        let make_lit =
+            |fmt: wgpu::TextureFormat, depth_write: bool, blend: wgpu::BlendState, label: &str| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&lit_layout),
+                    vertex: wgpu::VertexState {
+                        module: &lit_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &vertex_buffers,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &lit_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: fmt,
+                            blend: Some(blend),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth24PlusStencil8,
+                        depth_write_enabled: depth_write,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState {
+                        count: sample_count,
+                        ..Default::default()
+                    },
+                    multiview: None,
+                    cache: None,
+                })
+            };
+
+        self.sprite_lit_pipeline = Some(DualPipeline {
+            ldr: make_lit(ldr, false, alpha, "sprite_lit_pipeline"),
+            hdr: make_lit(hdr, false, alpha, "sprite_lit_pipeline"),
+        });
+        self.sprite_lit_pipeline_depth_write = Some(DualPipeline {
+            ldr: make_lit(ldr, true, alpha, "sprite_lit_pipeline_depth_write"),
+            hdr: make_lit(hdr, true, alpha, "sprite_lit_pipeline_depth_write"),
+        });
+        self.sprite_lit_pipeline_additive = Some(DualPipeline {
+            ldr: make_lit(ldr, false, additive_blend, "sprite_lit_pipeline_additive"),
+            hdr: make_lit(hdr, false, additive_blend, "sprite_lit_pipeline_additive"),
+        });
+        self.sprite_lit_pipeline_additive_depth_write = Some(DualPipeline {
+            ldr: make_lit(
+                ldr,
+                true,
+                additive_blend,
+                "sprite_lit_pipeline_additive_depth_write",
+            ),
+            hdr: make_lit(
+                hdr,
+                true,
+                additive_blend,
+                "sprite_lit_pipeline_additive_depth_write",
+            ),
+        });
+        self.sprite_lit_pipeline_premultiplied = Some(DualPipeline {
+            ldr: make_lit(
+                ldr,
+                false,
+                premultiplied_blend,
+                "sprite_lit_pipeline_premultiplied",
+            ),
+            hdr: make_lit(
+                hdr,
+                false,
+                premultiplied_blend,
+                "sprite_lit_pipeline_premultiplied",
+            ),
+        });
+        self.sprite_lit_pipeline_premultiplied_depth_write = Some(DualPipeline {
+            ldr: make_lit(
+                ldr,
+                true,
+                premultiplied_blend,
+                "sprite_lit_pipeline_premultiplied_depth_write",
+            ),
+            hdr: make_lit(
+                hdr,
+                true,
+                premultiplied_blend,
+                "sprite_lit_pipeline_premultiplied_depth_write",
+            ),
+        });
+
+        // The fallback bind group reuses the crate-wide `fallback_normal_map`,
+        // already populated with `(128, 128, 255, 255)` for tangent-space `(0, 0, 1)`.
+        let lit_fallback_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sprite_lit_fallback_bg"),
+            layout: &lit_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.fallback_normal_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+            ],
+        });
+
+        self.sprite_lit_bgl = Some(lit_bgl);
+        self.sprite_lit_fallback_bg = Some(lit_fallback_bg);
     }
 
     /// Upload one [`SpriteItem`] to the GPU and return draw data.
@@ -474,7 +647,9 @@ impl ViewportGpuResources {
         queue.write_buffer(&instance_buf, 0, instance_bytes);
 
         // Uniform buffer: model matrix + flags + soft-particle distance + orientation
-        // + refraction strength.
+        // + refraction strength + lit parameters. Layout mirrors `SpriteUniform`
+        // in `sprite_lit.wgsl`; the emissive `sprite.wgsl` reads only the first
+        // half and ignores the trailing lit fields.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SpriteUniformData {
@@ -485,6 +660,14 @@ impl ViewportGpuResources {
             orientation: u32,
             axis: [f32; 3],
             refraction_strength: f32,
+            lit: u32,
+            normal_mode: u32,
+            has_normal_map: u32,
+            ambient_scale: f32,
+            roughness: f32,
+            receive_shadows: u32,
+            _pad_lit_b: u32,
+            _pad_lit_c: u32,
         }
 
         let (texture_view, has_texture): (&wgpu::TextureView, u32) =
@@ -504,6 +687,23 @@ impl ViewportGpuResources {
             crate::renderer::SpriteOrientation::AxisLocked => 2u32,
         };
 
+        let normal_mode = match item.lit_params.normal_mode {
+            crate::renderer::SpriteNormalMode::Spherical => 0u32,
+            crate::renderer::SpriteNormalMode::Flat => 1u32,
+            crate::renderer::SpriteNormalMode::NormalMap => 2u32,
+        };
+
+        let (normal_view, has_normal_map): (&wgpu::TextureView, u32) =
+            if let Some(id) = item.normal_texture_id {
+                if let Some(tex) = self.textures.get(id as usize) {
+                    (&tex.view, 1)
+                } else {
+                    (&self.fallback_normal_map_view, 0)
+                }
+            } else {
+                (&self.fallback_normal_map_view, 0)
+            };
+
         let uniform_data = SpriteUniformData {
             model: item.model,
             world_space: if item.size_mode == crate::renderer::SpriteSizeMode::WorldSpace {
@@ -522,6 +722,14 @@ impl ViewportGpuResources {
                 .refraction_strength
                 .filter(|s| *s > 0.0)
                 .unwrap_or(0.0),
+            lit: item.lit as u32,
+            normal_mode,
+            has_normal_map,
+            ambient_scale: item.lit_params.ambient_scale,
+            roughness: item.lit_params.roughness,
+            receive_shadows: item.lit_params.receive_shadows as u32,
+            _pad_lit_b: 0,
+            _pad_lit_c: 0,
         };
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprite_uniform_buf"),
@@ -559,6 +767,27 @@ impl ViewportGpuResources {
             ],
         });
 
+        let lit_normal_bg = if item.lit {
+            self.sprite_lit_bgl.as_ref().map(|lit_bgl| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("sprite_lit_normal_bg"),
+                    layout: lit_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(normal_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                        },
+                    ],
+                })
+            })
+        } else {
+            None
+        };
+
         SpriteGpuData {
             vertex_buffer,
             sprite_count: count,
@@ -570,6 +799,8 @@ impl ViewportGpuResources {
                 .refraction_strength
                 .filter(|s| *s > 0.0)
                 .unwrap_or(0.0),
+            lit: item.lit,
+            lit_normal_bg,
             _uniform_buf: uniform_buf,
             _instance_buf: instance_buf,
         }

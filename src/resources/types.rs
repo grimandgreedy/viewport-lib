@@ -1875,6 +1875,13 @@ pub struct SpriteGpuData {
     /// sprite. Routes the draw through the sprite refraction post-pass
     /// instead of the normal sprite pass.
     pub(crate) refraction_strength: f32,
+    /// When true, this batch was submitted with `SpriteItem::lit = true` and
+    /// is drawn through the lit sprite pipeline.
+    pub(crate) lit: bool,
+    /// Group 3 bind group for the lit normal-map binding. Always populated for
+    /// lit batches: a fallback texture is bound when no normal map is supplied
+    /// so the same pipeline layout is honoured.
+    pub(crate) lit_normal_bg: Option<wgpu::BindGroup>,
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: wgpu::Buffer,
     pub(crate) _instance_buf: wgpu::Buffer,
@@ -3212,6 +3219,29 @@ pub struct ViewportGpuResources {
     /// 1x1 Depth32Float texture backing the fallback bind group. Held to keep
     /// the underlying texture alive for the lifetime of the bind group.
     pub(crate) sprite_soft_fallback_tex: Option<wgpu::Texture>,
+    /// Lit sprite pipelines: one per (blend, depth_write) pair. Same pipeline
+    /// layout as the emissive sprite, but a different shader module that
+    /// samples the scene lighting and an optional tangent-space normal map.
+    pub(crate) sprite_lit_pipeline: Option<DualPipeline>,
+    /// Lit sprite pipeline, alpha-blend, depth_write_enabled: true.
+    pub(crate) sprite_lit_pipeline_depth_write: Option<DualPipeline>,
+    /// Lit sprite pipeline, additive, depth_write_enabled: false.
+    pub(crate) sprite_lit_pipeline_additive: Option<DualPipeline>,
+    /// Lit sprite pipeline, additive, depth_write_enabled: true.
+    pub(crate) sprite_lit_pipeline_additive_depth_write: Option<DualPipeline>,
+    /// Lit sprite pipeline, premultiplied, depth_write_enabled: false.
+    pub(crate) sprite_lit_pipeline_premultiplied: Option<DualPipeline>,
+    /// Lit sprite pipeline, premultiplied, depth_write_enabled: true.
+    pub(crate) sprite_lit_pipeline_premultiplied_depth_write: Option<DualPipeline>,
+    /// Bind group layout for the optional tangent-space normal map sampled by
+    /// the lit sprite shader. Group 3: texture + sampler.
+    pub(crate) sprite_lit_bgl: Option<wgpu::BindGroupLayout>,
+    /// Fallback bind group for the lit normal map binding. Backed by a 1x1
+    /// `(128, 128, 255)` texture so `NormalMap` mode falls back to a flat
+    /// normal when no map is supplied.
+    pub(crate) sprite_lit_fallback_bg: Option<wgpu::BindGroup>,
+    /// 1x1 RGBA8Unorm texture backing the lit fallback bind group.
+    pub(crate) sprite_lit_fallback_tex: Option<wgpu::Texture>,
     /// Sprite outline mask pipeline (R8Unorm, no texture sampling). None until first selected sprite.
     pub(crate) sprite_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
     /// Polyline outline mask pipeline (R8Unorm, same instance layout as polyline). None until first selected polyline.
@@ -3525,6 +3555,15 @@ pub struct ViewportGpuResources {
     pub(crate) particle_sprite_pipeline_alpha: Option<DualPipeline>,
     pub(crate) particle_sprite_pipeline_additive: Option<DualPipeline>,
     pub(crate) particle_sprite_pipeline_premultiplied: Option<DualPipeline>,
+    /// Lit variants of the GPU particle sprite pipelines.
+    pub(crate) particle_sprite_lit_pipeline_alpha: Option<DualPipeline>,
+    pub(crate) particle_sprite_lit_pipeline_additive: Option<DualPipeline>,
+    pub(crate) particle_sprite_lit_pipeline_premultiplied: Option<DualPipeline>,
+    /// Group 2 BGL for the lit particle path: optional tangent-space normal
+    /// map + filtering sampler.
+    pub(crate) particle_sprite_lit_bgl: Option<wgpu::BindGroupLayout>,
+    /// Fallback bind group for the lit particle normal-map binding (group 2).
+    pub(crate) particle_sprite_lit_fallback_bg: Option<wgpu::BindGroup>,
 
     // --- Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.

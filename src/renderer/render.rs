@@ -2171,37 +2171,81 @@ impl ViewportRenderer {
             let any_transparent = self.sprite_gpu_data.iter().any(|s| !s.depth_write);
 
             let buckets = [
+                // (depth_write, blend, lit, pipeline)
                 (
                     true,
                     crate::renderer::SpriteBlend::AlphaBlend,
+                    false,
                     resources.sprite_pipeline_depth_write.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::Additive,
+                    false,
                     resources.sprite_pipeline_additive_depth_write.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::Premultiplied,
+                    false,
                     resources.sprite_pipeline_premultiplied_depth_write.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::AlphaBlend,
+                    false,
                     resources.sprite_pipeline.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::Additive,
+                    false,
                     resources.sprite_pipeline_additive.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::Premultiplied,
+                    false,
                     resources.sprite_pipeline_premultiplied.as_ref(),
                 ),
+                (
+                    true,
+                    crate::renderer::SpriteBlend::AlphaBlend,
+                    true,
+                    resources.sprite_lit_pipeline_depth_write.as_ref(),
+                ),
+                (
+                    true,
+                    crate::renderer::SpriteBlend::Additive,
+                    true,
+                    resources.sprite_lit_pipeline_additive_depth_write.as_ref(),
+                ),
+                (
+                    true,
+                    crate::renderer::SpriteBlend::Premultiplied,
+                    true,
+                    resources.sprite_lit_pipeline_premultiplied_depth_write.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::AlphaBlend,
+                    true,
+                    resources.sprite_lit_pipeline.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::Additive,
+                    true,
+                    resources.sprite_lit_pipeline_additive.as_ref(),
+                ),
+                (
+                    false,
+                    crate::renderer::SpriteBlend::Premultiplied,
+                    true,
+                    resources.sprite_lit_pipeline_premultiplied.as_ref(),
+                ),
             ];
+            let lit_fallback_bg = resources.sprite_lit_fallback_bg.as_ref();
 
             let fallback_soft_bg = resources.sprite_soft_fallback_bg.as_ref();
 
@@ -2235,7 +2279,7 @@ impl ViewportRenderer {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
-                    for (depth_write, blend, pipeline) in &buckets {
+                    for (depth_write, blend, lit, pipeline) in &buckets {
                         if !*depth_write {
                             continue;
                         }
@@ -2245,6 +2289,7 @@ impl ViewportRenderer {
                             if sprite.wireframe
                                 || !sprite.depth_write
                                 || sprite.blend != *blend
+                                || sprite.lit != *lit
                                 || sprite.refraction_strength > 0.0
                             {
                                 continue;
@@ -2256,6 +2301,15 @@ impl ViewportRenderer {
                                 bound = true;
                             }
                             pass.set_bind_group(1, &sprite.bind_group, &[]);
+                            if *lit {
+                                let normal_bg = sprite
+                                    .lit_normal_bg
+                                    .as_ref()
+                                    .or(lit_fallback_bg);
+                                if let Some(bg) = normal_bg {
+                                    pass.set_bind_group(3, bg, &[]);
+                                }
+                            }
                             pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
                             pass.draw(0..6, 0..sprite.sprite_count);
                         }
@@ -2308,7 +2362,7 @@ impl ViewportRenderer {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
-                    for (depth_write, blend, pipeline) in &buckets {
+                    for (depth_write, blend, lit, pipeline) in &buckets {
                         if *depth_write {
                             continue;
                         }
@@ -2318,6 +2372,7 @@ impl ViewportRenderer {
                             if sprite.wireframe
                                 || sprite.depth_write
                                 || sprite.blend != *blend
+                                || sprite.lit != *lit
                                 || sprite.refraction_strength > 0.0
                             {
                                 continue;
@@ -2329,6 +2384,15 @@ impl ViewportRenderer {
                                 bound = true;
                             }
                             pass.set_bind_group(1, &sprite.bind_group, &[]);
+                            if *lit {
+                                let normal_bg = sprite
+                                    .lit_normal_bg
+                                    .as_ref()
+                                    .or(lit_fallback_bg);
+                                if let Some(bg) = normal_bg {
+                                    pass.set_bind_group(3, bg, &[]);
+                                }
+                            }
                             pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
                             pass.draw(0..6, 0..sprite.sprite_count);
                         }
@@ -2385,30 +2449,53 @@ impl ViewportRenderer {
                 occlusion_query_set: None,
             });
             pass.set_bind_group(0, camera_bg, &[]);
+            let particle_lit_fallback = resources.particle_sprite_lit_fallback_bg.as_ref();
             for pd in &self.particle_gpu_data {
                 if pd.hidden {
                     continue;
                 }
-                let dual = match pd.blend {
-                    crate::renderer::SpriteBlend::Additive => {
-                        resources.particle_sprite_pipeline_additive.as_ref()
-                    }
-                    crate::renderer::SpriteBlend::Premultiplied => {
-                        resources.particle_sprite_pipeline_premultiplied.as_ref()
-                    }
-                    crate::renderer::SpriteBlend::AlphaBlend => {
-                        resources.particle_sprite_pipeline_alpha.as_ref()
-                    }
-                };
-                let Some(dual) = dual else { continue };
                 let Some(system) = resources
                     .particle_systems
                     .get(pd.system_idx)
                     .and_then(|s| s.as_ref())
                     .filter(|s| s.alive)
                 else { continue };
+                let is_lit = matches!(
+                    &system.render,
+                    crate::resources::ParticleRender::Sprite { lit: true, .. }
+                );
+                let dual = match (pd.blend, is_lit) {
+                    (crate::renderer::SpriteBlend::Additive, false) => {
+                        resources.particle_sprite_pipeline_additive.as_ref()
+                    }
+                    (crate::renderer::SpriteBlend::Premultiplied, false) => {
+                        resources.particle_sprite_pipeline_premultiplied.as_ref()
+                    }
+                    (crate::renderer::SpriteBlend::AlphaBlend, false) => {
+                        resources.particle_sprite_pipeline_alpha.as_ref()
+                    }
+                    (crate::renderer::SpriteBlend::Additive, true) => {
+                        resources.particle_sprite_lit_pipeline_additive.as_ref()
+                    }
+                    (crate::renderer::SpriteBlend::Premultiplied, true) => {
+                        resources.particle_sprite_lit_pipeline_premultiplied.as_ref()
+                    }
+                    (crate::renderer::SpriteBlend::AlphaBlend, true) => {
+                        resources.particle_sprite_lit_pipeline_alpha.as_ref()
+                    }
+                };
+                let Some(dual) = dual else { continue };
                 pass.set_pipeline(dual.for_format(true));
                 pass.set_bind_group(1, &system.draw_bg, &[]);
+                if is_lit {
+                    let normal_bg = system
+                        .draw_lit_normal_bg
+                        .as_ref()
+                        .or(particle_lit_fallback);
+                    if let Some(bg) = normal_bg {
+                        pass.set_bind_group(2, bg, &[]);
+                    }
+                }
                 pass.draw(0..6, 0..system.capacity);
             }
         }

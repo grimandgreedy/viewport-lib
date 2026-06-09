@@ -21,7 +21,7 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::renderer::{SpriteBlend, SpriteSizeMode};
+use crate::renderer::{SpriteBlend, SpriteLitParams, SpriteSizeMode};
 
 /// Handle to a persistent GPU particle system.
 ///
@@ -74,6 +74,14 @@ pub enum ParticleRender {
         size_mode: SpriteSizeMode,
         /// Whether the draw writes to depth.
         depth_write: bool,
+        /// When `true`, the draw runs through the lit particle sprite pipeline
+        /// and picks up the scene lighting environment. Default `false`
+        /// preserves the emissive billboard look.
+        lit: bool,
+        /// Lighting parameters used when `lit` is `true`.
+        lit_params: SpriteLitParams,
+        /// Optional tangent-space normal map for the `NormalMap` mode.
+        normal_texture_id: Option<u64>,
     },
 }
 
@@ -84,6 +92,14 @@ impl Default for ParticleRender {
             blend: SpriteBlend::AlphaBlend,
             size_mode: SpriteSizeMode::ScreenSpace,
             depth_write: false,
+            lit: false,
+            lit_params: SpriteLitParams {
+                roughness: 0.9,
+                normal_mode: crate::renderer::SpriteNormalMode::Spherical,
+                receive_shadows: false,
+                ambient_scale: 1.0,
+            },
+            normal_texture_id: None,
         }
     }
 }
@@ -159,6 +175,9 @@ pub(crate) struct ParticleSystem {
     pub sim_bg: wgpu::BindGroup,
     /// Bind group for the draw pipeline (group 1).
     pub draw_bg: wgpu::BindGroup,
+    /// Group 2 bind group for the lit draw pipeline (normal map + sampler).
+    /// `None` when the system's render route is not lit.
+    pub draw_lit_normal_bg: Option<wgpu::BindGroup>,
     /// Sprite uniform (model, has_texture, size_mode) for the draw pipeline.
     pub _draw_uniform_buf: wgpu::Buffer,
     /// Whether the slot is in use. The slot is reused lazily by future creates.
@@ -220,12 +239,27 @@ impl crate::resources::ViewportGpuResources {
 
         // Draw-side uniform: same layout as `SpriteUniform` in sprite.wgsl, so
         // the particle-sprite shader can reuse the existing scaffolding.
-        let (texture_id, blend, size_mode, _depth_write) = match &config.render {
-            ParticleRender::Sprite {
-                texture_id, blend, size_mode, depth_write,
-            } => (*texture_id, *blend, *size_mode, *depth_write),
-        };
-        let _ = (blend,); // blend is consumed at draw time, not stored in the uniform
+        let (texture_id, blend, size_mode, _depth_write, lit, lit_params, normal_texture_id) =
+            match &config.render {
+                ParticleRender::Sprite {
+                    texture_id,
+                    blend,
+                    size_mode,
+                    depth_write,
+                    lit,
+                    lit_params,
+                    normal_texture_id,
+                } => (
+                    *texture_id,
+                    *blend,
+                    *size_mode,
+                    *depth_write,
+                    *lit,
+                    *lit_params,
+                    *normal_texture_id,
+                ),
+            };
+        let _ = (blend, lit, lit_params, normal_texture_id); // consumed below or at draw time
 
         #[repr(C)]
         #[derive(Copy, Clone, Pod, Zeroable)]
@@ -233,13 +267,26 @@ impl crate::resources::ViewportGpuResources {
             model: [[f32; 4]; 4],
             world_space: u32,
             has_texture: u32,
+            normal_mode: u32,
+            has_normal_map: u32,
+            ambient_scale: f32,
+            roughness: f32,
             _pad0: u32,
             _pad1: u32,
         }
+        let normal_mode_u32 = match lit_params.normal_mode {
+            crate::renderer::SpriteNormalMode::Spherical => 0u32,
+            crate::renderer::SpriteNormalMode::Flat => 1u32,
+            crate::renderer::SpriteNormalMode::NormalMap => 2u32,
+        };
         let draw_uniform = DrawUniform {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             world_space: matches!(size_mode, SpriteSizeMode::WorldSpace) as u32,
             has_texture: texture_id.is_some() as u32,
+            normal_mode: normal_mode_u32,
+            has_normal_map: normal_texture_id.is_some() as u32,
+            ambient_scale: lit_params.ambient_scale,
+            roughness: lit_params.roughness,
             _pad0: 0,
             _pad1: 0,
         };
@@ -284,6 +331,33 @@ impl crate::resources::ViewportGpuResources {
             ],
         });
 
+        let draw_lit_normal_bg = if lit {
+            let lit_bgl = self
+                .particle_sprite_lit_bgl
+                .as_ref()
+                .expect("ensure_particle_pipelines failed to create lit BGL");
+            let normal_view = match normal_texture_id {
+                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                _ => &self.fallback_normal_map_view,
+            };
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gpu_particle_lit_normal_bg"),
+                layout: lit_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(normal_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                    },
+                ],
+            }))
+        } else {
+            None
+        };
+
         let system = ParticleSystem {
             capacity,
             render: config.render.clone(),
@@ -291,6 +365,7 @@ impl crate::resources::ViewportGpuResources {
             emit_counter_buf,
             sim_bg,
             draw_bg,
+            draw_lit_normal_bg,
             _draw_uniform_buf: draw_uniform_buf,
             alive: true,
             frame_counter: 0,
@@ -558,6 +633,116 @@ impl crate::resources::ViewportGpuResources {
             ldr: make_draw(ldr, premul, "particle_sprite_premultiplied"),
             hdr: make_draw(hdr, premul, "particle_sprite_premultiplied"),
         });
+
+        // Lit GPU particle sprite pipelines. Same vertex inputs and draw BGL
+        // as the emissive path; group 2 adds the optional normal-map binding
+        // and the shader pulls scene lighting via the camera bind group.
+        let lit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gpu_particle_lit_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let lit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("particle_sprite_lit_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/particle_sprite_lit.wgsl")).into(),
+            ),
+        });
+
+        let lit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("particle_draw_lit_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, &draw_bgl, &lit_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let make_lit_draw = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, label: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&lit_layout),
+                vertex: wgpu::VertexState {
+                    module: &lit_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &lit_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
+        };
+
+        self.particle_sprite_lit_pipeline_alpha = Some(crate::resources::DualPipeline {
+            ldr: make_lit_draw(ldr, alpha, "particle_sprite_lit_alpha"),
+            hdr: make_lit_draw(hdr, alpha, "particle_sprite_lit_alpha"),
+        });
+        self.particle_sprite_lit_pipeline_additive = Some(crate::resources::DualPipeline {
+            ldr: make_lit_draw(ldr, additive, "particle_sprite_lit_additive"),
+            hdr: make_lit_draw(hdr, additive, "particle_sprite_lit_additive"),
+        });
+        self.particle_sprite_lit_pipeline_premultiplied = Some(crate::resources::DualPipeline {
+            ldr: make_lit_draw(ldr, premul, "particle_sprite_lit_premultiplied"),
+            hdr: make_lit_draw(hdr, premul, "particle_sprite_lit_premultiplied"),
+        });
+
+        let lit_fallback_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gpu_particle_lit_fallback_bg"),
+            layout: &lit_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.fallback_normal_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+            ],
+        });
+
+        self.particle_sprite_lit_bgl = Some(lit_bgl);
+        self.particle_sprite_lit_fallback_bg = Some(lit_fallback_bg);
 
         self.particle_params_bgl = Some(params_bgl);
         self.particle_sim_bgl = Some(sim_bgl);

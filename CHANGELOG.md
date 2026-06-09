@@ -4,6 +4,14 @@
 
 ### Features
 
+#### Lit sprites and lit GPU particles
+
+`SpriteItem` and `ParticleRender::Sprite` gain a `lit` flag and a `SpriteLitParams` block (`roughness`, `normal_mode`, `receive_shadows`, `ambient_scale`). Lit batches run through dedicated pipelines that pick up the scene's directional, point, spot, and hemisphere ambient lighting, so smoke, dust, fog, and other particles read with a clear lit and shaded side under any directional light, instead of looking flat. Default `lit = false` preserves the prior emissive billboard behaviour.
+
+Three normal modes: `Spherical` derives a per-fragment normal from the quad-centre offset for soft round particles (the default), `Flat` uses the quad's facing direction for grass cards and other already-oriented art, and `NormalMap` samples a tangent-space normal map supplied via `normal_texture_id`.
+
+When `receive_shadows` is on, the lit fragment samples the cascade shadow atlas with 16-tap PCF and collapses to hemisphere ambient where occluded, preserving full direct contribution where lit. Available on every sprite blend mode (alpha, additive, premultiplied) and on the GPU particle sprite path.
+
 #### GPU-simulated particle systems
 
 Particle effects can run end to end on the GPU. The host allocates a `GpuParticleSystemId` once with a capacity and a render route, then submits one `GpuParticleSystemItem` per frame carrying emitter settings (rate, lifetime, spawn shape, initial-velocity distribution) and a list of force fields. The renderer dispatches emit and sim compute passes and draws live particles through a sprite pipeline that sources positions and per-particle data directly from the GPU buffer.
