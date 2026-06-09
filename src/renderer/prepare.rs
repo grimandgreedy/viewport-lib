@@ -794,6 +794,12 @@ impl ViewportRenderer {
                 m.position_override_buffer.is_some() || m.normal_override_buffer.is_some()
             })
         });
+        // Skinned items are excluded from the batched-instanced path (the
+        // instanced shader does not consume the skin palette), so they need
+        // per-item object uniform writes too.
+        let has_skinned_items = scene_items
+            .iter()
+            .any(|i| i.skin_instance.is_some() && resources.is_skinned_mesh(i.mesh_id));
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
@@ -808,6 +814,7 @@ impl ViewportRenderer {
             || has_wireframe_items
             || has_normal_vis_items
             || has_override_items
+            || has_skinned_items
         {
             // Make sure the per-item object pool can index every scene item.
             // Pool entries for items that go through the instanced path stay None.
@@ -837,6 +844,8 @@ impl ViewportRenderer {
                 let mesh_has_override = resources.mesh_store.get(item.mesh_id).map_or(false, |m| {
                     m.position_override_buffer.is_some() || m.normal_override_buffer.is_some()
                 });
+                let item_is_skinned =
+                    item.skin_instance.is_some() && resources.is_skinned_mesh(item.mesh_id);
                 if self.use_instancing
                     && !frame.viewport.wireframe_mode
                     && item.active_attribute.is_none()
@@ -847,6 +856,7 @@ impl ViewportRenderer {
                     && item.warp_attribute.is_none()
                     && !item.show_normals
                     && !mesh_has_override
+                    && !item_is_skinned
                 {
                     continue;
                 }

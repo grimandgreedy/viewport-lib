@@ -1621,7 +1621,9 @@ impl ViewportRenderer {
                                 && (item.active_attribute.is_some()
                                     || item.material.is_two_sided()
                                     || item.material.matcap_id().is_some()
-                                    || item.material.param_vis.is_some())
+                                    || item.material.param_vis.is_some()
+                                    || (item.skin_instance.is_some()
+                                        && resources.is_skinned_mesh(item.mesh_id)))
                                 && resources.mesh_store.get(item.mesh_id).is_some()
                         })
                         .collect();
@@ -2846,7 +2848,9 @@ impl ViewportRenderer {
                         && (i.active_attribute.is_some()
                             || i.material.is_two_sided()
                             || i.material.matcap_id().is_some()
-                            || i.material.param_vis.is_some())
+                            || i.material.param_vis.is_some()
+                            || (i.skin_instance.is_some()
+                                && self.resources.is_skinned_mesh(i.mesh_id)))
                 })
         } else {
             scene_items

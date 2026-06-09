@@ -81,6 +81,7 @@ HDR path only; the direct LDR `paint_to` cannot resolve scene colour for samplin
 
 - Overlay clip rectangle scaled by `pixels_per_point`. The Phase 13 clip-group implementation built rects in logical pixels but the fragment shader's `clip_position.xy` is in framebuffer pixels, so on any display with `pixels_per_point != 1.0` clipped shapes were discarded entirely instead of showing the clipped portion.
 - `OverlayShapeItem::distance` and `contains` now honour `rotation`. The CPU hit-test had been evaluating the SDF in the unrotated frame, so clicks on rotated shapes resolved against the un-spun silhouette.
+- Single-sided skinned meshes (`BackfacePolicy::Cull` with a skin instance) are no longer silently dropped. The batched-instanced path intentionally skips skinned items (the instanced shader does not consume the skin palette), but the per-item path was not admitting them either, so no draw call was ever issued. Two-sided skinned meshes happened to slip through via `is_two_sided()`. Skinned items now reach the per-item render path, the OIT-trigger predicate, and the per-item object-uniform prepare loop, so single-sided skinned characters render correctly with normal backface culling.
 
 
 ## [0.17.0]
