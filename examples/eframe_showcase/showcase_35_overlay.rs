@@ -191,6 +191,62 @@ pub(crate) fn build_nine_slice_texture() -> (u32, u32, Vec<u8>) {
     (w, h, pixels)
 }
 
+/// Evaluate the row-5 demo's closed-Bezier "infinity" path at parameter
+/// `t ∈ [0, 1]`, centred on `(cx, cy)`. Four cubic Bezier segments stitched
+/// into a stylised figure-eight: the curve sweeps out, crosses through the
+/// centre, sweeps to the other side, and comes back. Used by both the
+/// `PathTrack` closure driving the moving dot and by the polyline trace
+/// overlay so the two stay in sync.
+fn infinity_bezier_point(t: f32, cx: f32, cy: f32) -> [f32; 2] {
+    // Four cubic segments. The curve passes through (cx, cy) at the start
+    // of segments 2 and 4, producing the crossing of the figure-eight.
+    let segment_count = 4.0_f32;
+    let raw = (t.clamp(0.0, 1.0) * segment_count).min(segment_count - 1e-6);
+    let seg = raw.floor() as usize;
+    let u = raw - seg as f32;
+    let lobe_w = 80.0_f32;
+    let lobe_h = 50.0_f32;
+    let (p0, p1, p2, p3) = match seg {
+        0 => (
+            // From centre, sweep up-and-right out to the right lobe's tip.
+            [cx, cy],
+            [cx + lobe_w * 0.4, cy - lobe_h * 1.4],
+            [cx + lobe_w * 1.2, cy - lobe_h * 0.9],
+            [cx + lobe_w * 1.2, cy],
+        ),
+        1 => (
+            // From right tip, swing down-and-back through the centre.
+            [cx + lobe_w * 1.2, cy],
+            [cx + lobe_w * 1.2, cy + lobe_h * 0.9],
+            [cx + lobe_w * 0.4, cy + lobe_h * 1.4],
+            [cx, cy],
+        ),
+        2 => (
+            // From centre, sweep down-and-left out to the left lobe's tip.
+            [cx, cy],
+            [cx - lobe_w * 0.4, cy + lobe_h * 1.4],
+            [cx - lobe_w * 1.2, cy + lobe_h * 0.9],
+            [cx - lobe_w * 1.2, cy],
+        ),
+        _ => (
+            // From left tip, swing up-and-back through the centre.
+            [cx - lobe_w * 1.2, cy],
+            [cx - lobe_w * 1.2, cy - lobe_h * 0.9],
+            [cx - lobe_w * 0.4, cy - lobe_h * 1.4],
+            [cx, cy],
+        ),
+    };
+    let one = 1.0 - u;
+    let w0 = one * one * one;
+    let w1 = 3.0 * one * one * u;
+    let w2 = 3.0 * one * u * u;
+    let w3 = u * u * u;
+    [
+        w0 * p0[0] + w1 * p1[0] + w2 * p2[0] + w3 * p3[0],
+        w0 * p0[1] + w1 * p1[1] + w2 * p2[1] + w3 * p3[1],
+    ]
+}
+
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
     let i = (h * 6.0).floor() as u32 % 6;
     let f = h * 6.0 - (h * 6.0).floor();
@@ -355,6 +411,7 @@ pub(crate) fn build_overlay_frame(
     Vec<LabelItem>,
     ScalarBarItem,
     Option<RulerItem>,
+    Vec<viewport_lib::OverlayPolylineItem>,
 ) {
     let colourmap_id = ColourmapId(app.ovl_state.colourmap as usize);
 
@@ -415,6 +472,7 @@ pub(crate) fn build_overlay_frame(
     // SDF overlay shapes: a row of five shapes, vertically centred on a
     // common midline with equal spacing between them.
     let mut shapes = Vec::new();
+    let mut polylines: Vec<viewport_lib::OverlayPolylineItem> = Vec::new();
     if app.ovl_state.show_shapes {
         let cr = app.ovl_state.shape_corner_radius;
         let bw = app.ovl_state.shape_border_width;
@@ -1138,6 +1196,50 @@ pub(crate) fn build_overlay_frame(
                 },
                 ..Default::default()
             });
+            x5 += row5_h + gap;
+
+            // Phase 27 + 28: a small circle following a closed cubic Bezier
+            // figure-eight, with the path itself traced underneath using
+            // the new OverlayPolylineItem primitive.
+            {
+                let cx = x5 + 130.0;
+                let cy = y5_mid;
+                let dot_size = 22.0_f32;
+
+                let path = viewport_lib::PathTrack::<[f32; 2]>::new(0.0, 4.5, move |t| {
+                    let p = infinity_bezier_point(t, cx, cy);
+                    [p[0] - dot_size * 0.5, p[1] - dot_size * 0.5]
+                })
+                .with_repeat(viewport_lib::RepeatMode::Loop);
+
+                // Sample the same Bezier closure into the polyline trace.
+                let trace = viewport_lib::OverlayPolylineItem::from_path(
+                    |t| infinity_bezier_point(t, cx, cy),
+                    160,
+                    2.0,
+                    [1.0, 1.0, 1.0, 0.45],
+                );
+                polylines.push(viewport_lib::OverlayPolylineItem {
+                    closed: true,
+                    z_order: -1,
+                    ..trace
+                });
+
+                shapes.push(OverlayShapeItem {
+                    position: [cx - dot_size * 0.5, cy - dot_size * 0.5],
+                    size: [dot_size, dot_size],
+                    shape: OverlayShape::Circle,
+                    fill: OverlayFill::Solid([0.95, 0.45, 0.85, 1.0]),
+                    border_colour: [1.0, 0.7, 0.95, 0.9],
+                    border_width: bw,
+                    animations: viewport_lib::OverlayAnimations {
+                        position_path: Some(path),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+                x5 += 260.0 + gap;
+            }
             let _ = x5;
         }
 
@@ -1402,5 +1504,5 @@ pub(crate) fn build_overlay_frame(
         }
     }
 
-    (shapes, labels, bar, ruler)
+    (shapes, labels, bar, ruler, polylines)
 }

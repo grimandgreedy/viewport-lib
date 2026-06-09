@@ -825,7 +825,7 @@ impl<T: Copy + Default> Default for AnimTrack<T> {
 ///
 /// Animation resolution is CPU-side in `prepare()`; the host must request
 /// continuous repaints while any track is active.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct OverlayAnimations {
     /// Drives the item's overall opacity multiplier. Takes precedence over
     /// the legacy [`OverlayShapeItem::animation`] field when both are set.
@@ -841,6 +841,24 @@ pub struct OverlayAnimations {
     pub border: Option<AnimTrack<[f32; 4]>>,
     /// Drives `rotation` in radians.
     pub rotation: Option<AnimTrack<f32>>,
+    /// Arbitrary path channel driving `opacity`. Overrides the linear
+    /// `opacity` track and the legacy `animation` field when set.
+    pub opacity_path: Option<PathTrack<f32>>,
+    /// Arbitrary path channel driving `position`. Overrides the linear
+    /// `position` track when set.
+    pub position_path: Option<PathTrack<[f32; 2]>>,
+    /// Arbitrary path channel driving `size`. Overrides the linear
+    /// `size` track when set.
+    pub size_path: Option<PathTrack<[f32; 2]>>,
+    /// Arbitrary path channel driving the solid fill colour. Overrides
+    /// the linear `fill` track when set.
+    pub fill_path: Option<PathTrack<[f32; 4]>>,
+    /// Arbitrary path channel driving `border_colour`. Overrides the
+    /// linear `border` track when set.
+    pub border_path: Option<PathTrack<[f32; 4]>>,
+    /// Arbitrary path channel driving `rotation`. Overrides the linear
+    /// `rotation` track when set.
+    pub rotation_path: Option<PathTrack<f32>>,
 }
 
 /// Trait used by [`AnimTrack`] resolution to interpolate between `from`
@@ -885,29 +903,170 @@ impl<T: Copy + LerpAnim> AnimTrack<T> {
             return self.to;
         }
         let raw = ((time - self.start_time) as f32) / self.duration;
-        let phase = match self.repeat {
-            RepeatMode::Once => raw.clamp(0.0, 1.0),
-            RepeatMode::Loop => {
-                let f = raw - raw.floor();
-                if f < 0.0 { f + 1.0 } else { f }
-            }
-            RepeatMode::PingPong => {
-                let two = (raw * 0.5).floor() * 2.0;
-                let r = raw - two;
-                if r > 1.0 { 2.0 - r } else { r }
-            }
-        };
-        let t = match self.easing {
-            OverlayEasing::Linear => phase,
-            OverlayEasing::EaseIn => phase * phase,
-            OverlayEasing::EaseOut => {
-                let inv = 1.0 - phase;
-                1.0 - inv * inv
-            }
-            OverlayEasing::EaseInOut => phase * phase * (3.0 - 2.0 * phase),
-            OverlayEasing::Pulse => (phase * std::f32::consts::PI).sin(),
-        };
+        let phase = resolve_phase(raw, self.repeat);
+        let t = apply_easing(phase, self.easing);
         T::lerp(self.from, self.to, t)
+    }
+}
+
+/// Map a raw normalised parameter (number of cycles since `start_time`) into
+/// the canonical `[0, 1]` phase using the given repeat mode.
+fn resolve_phase(raw: f32, repeat: RepeatMode) -> f32 {
+    match repeat {
+        RepeatMode::Once => raw.clamp(0.0, 1.0),
+        RepeatMode::Loop => {
+            let f = raw - raw.floor();
+            if f < 0.0 { f + 1.0 } else { f }
+        }
+        RepeatMode::PingPong => {
+            let two = (raw * 0.5).floor() * 2.0;
+            let r = raw - two;
+            if r > 1.0 { 2.0 - r } else { r }
+        }
+    }
+}
+
+/// Apply an easing curve to a `[0, 1]` phase.
+fn apply_easing(phase: f32, easing: OverlayEasing) -> f32 {
+    match easing {
+        OverlayEasing::Linear => phase,
+        OverlayEasing::EaseIn => phase * phase,
+        OverlayEasing::EaseOut => {
+            let inv = 1.0 - phase;
+            1.0 - inv * inv
+        }
+        OverlayEasing::EaseInOut => phase * phase * (3.0 - 2.0 * phase),
+        OverlayEasing::Pulse => (phase * std::f32::consts::PI).sin(),
+    }
+}
+
+/// Arbitrary-path animation track. `path` is a closure called with the eased
+/// parameter `t ∈ [0, 1]` and returns the value for the channel.
+///
+/// Use for any motion that's more than a straight line: Bezier arcs,
+/// polylines, lissajous, custom shapes. The `bezier` and `polyline` helpers
+/// cover the common cases without the consumer writing the curve math.
+///
+/// The closure is stored in an `Arc`, so cloning the track is cheap (one
+/// atomic bump). The `Send + Sync + 'static` bound is satisfied by closures
+/// that capture only owned/by-value data.
+#[derive(Clone)]
+pub struct PathTrack<T: Copy + LerpAnim> {
+    /// Absolute time at which the track starts.
+    pub start_time: f64,
+    /// Length of one cycle in seconds.
+    pub duration: f32,
+    /// Curve applied to the normalised parameter before the closure runs.
+    pub easing: OverlayEasing,
+    /// What happens past the end of one cycle.
+    pub repeat: RepeatMode,
+    /// Evaluator for the path. Called with `t ∈ [0, 1]` after easing and
+    /// repeat resolution. The closure is shared via `Arc` so the track is
+    /// cheap to clone.
+    pub path: std::sync::Arc<dyn Fn(f32) -> T + Send + Sync>,
+}
+
+impl<T: Copy + LerpAnim> std::fmt::Debug for PathTrack<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PathTrack")
+            .field("start_time", &self.start_time)
+            .field("duration", &self.duration)
+            .field("easing", &self.easing)
+            .field("repeat", &self.repeat)
+            .field("path", &"<closure>")
+            .finish()
+    }
+}
+
+impl<T: Copy + LerpAnim> PathTrack<T> {
+    /// Construct a track that evaluates the supplied closure at each frame.
+    /// Defaults to `Linear` easing and `Once` repeat; chain `with_easing`
+    /// or `with_repeat` to override.
+    pub fn new(
+        start_time: f64,
+        duration: f32,
+        path: impl Fn(f32) -> T + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            start_time,
+            duration,
+            easing: OverlayEasing::Linear,
+            repeat: RepeatMode::Once,
+            path: std::sync::Arc::new(path),
+        }
+    }
+
+    /// Builder-style easing setter.
+    pub fn with_easing(mut self, easing: OverlayEasing) -> Self {
+        self.easing = easing;
+        self
+    }
+
+    /// Builder-style repeat-mode setter.
+    pub fn with_repeat(mut self, repeat: RepeatMode) -> Self {
+        self.repeat = repeat;
+        self
+    }
+
+    /// Resolve the track at the given absolute time.
+    pub fn sample(&self, time: f64) -> T {
+        if self.duration <= 0.0 {
+            return (self.path)(1.0);
+        }
+        let raw = ((time - self.start_time) as f32) / self.duration;
+        let phase = resolve_phase(raw, self.repeat);
+        let t = apply_easing(phase, self.easing);
+        (self.path)(t)
+    }
+}
+
+impl PathTrack<[f32; 2]> {
+    /// Construct a 2D track that walks a single cubic Bezier from `p0` to
+    /// `p3` with control handles `p1` and `p2`. Evaluates the standard
+    /// Bernstein form at the eased parameter.
+    pub fn bezier(
+        start_time: f64,
+        duration: f32,
+        control_points: [[f32; 2]; 4],
+    ) -> Self {
+        let [p0, p1, p2, p3] = control_points;
+        Self::new(start_time, duration, move |t| {
+            let one_t = 1.0 - t;
+            let w0 = one_t * one_t * one_t;
+            let w1 = 3.0 * one_t * one_t * t;
+            let w2 = 3.0 * one_t * t * t;
+            let w3 = t * t * t;
+            [
+                w0 * p0[0] + w1 * p1[0] + w2 * p2[0] + w3 * p3[0],
+                w0 * p0[1] + w1 * p1[1] + w2 * p2[1] + w3 * p3[1],
+            ]
+        })
+    }
+
+    /// Construct a 2D track that walks a polyline at uniform per-segment
+    /// parameter. With `N` points the path spans `N - 1` equal-length
+    /// parameter segments; consumers wanting arc-length-uniform motion
+    /// should subdivide their polyline ahead of time.
+    pub fn polyline(start_time: f64, duration: f32, points: Vec<[f32; 2]>) -> Self {
+        Self::new(start_time, duration, move |t| {
+            let n = points.len();
+            if n == 0 {
+                return [0.0, 0.0];
+            }
+            if n == 1 {
+                return points[0];
+            }
+            let seg_count = n - 1;
+            let scaled = t.clamp(0.0, 1.0) * seg_count as f32;
+            let seg = (scaled as usize).min(seg_count - 1);
+            let local = scaled - seg as f32;
+            let a = points[seg];
+            let b = points[seg + 1];
+            [
+                a[0] * (1.0 - local) + b[0] * local,
+                a[1] * (1.0 - local) + b[1] * local,
+            ]
+        })
     }
 }
 
@@ -1007,6 +1166,92 @@ pub enum TriangleDirection {
     Left,
     /// Apex points right.
     Right,
+}
+
+/// How an [`OverlayPolylineItem`] handles each joint between segments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum LineJoin {
+    /// Mitre join: extend both segment edges until they meet. Falls back to
+    /// `Bevel` automatically when the join would exceed `mitre_limit`.
+    /// Default.
+    #[default]
+    Mitre,
+    /// Bevel join: cut the outer corner flat between the two segments.
+    Bevel,
+}
+
+/// A stroked polyline rendered as a screen-space overlay.
+///
+/// Constructed from a list of waypoints in logical pixels. Tessellated on
+/// the CPU into a triangle list each frame; rendered through the same
+/// pipeline as overlay rects and labels (no SDF, no shader changes).
+///
+/// Use `OverlayPolylineItem::from_path` to construct from a closure that
+/// samples a curve at N points (Bezier traces, lissajous, custom paths).
+#[derive(Debug, Clone)]
+pub struct OverlayPolylineItem {
+    /// Waypoints in logical pixels from the viewport top-left.
+    pub points: Vec<[f32; 2]>,
+    /// Stroke thickness in logical pixels.
+    pub thickness: f32,
+    /// RGBA colour in linear float format.
+    pub colour: [f32; 4],
+    /// How segment joints are drawn.
+    pub join: LineJoin,
+    /// Mitre limit: when the mitre extension exceeds this multiple of
+    /// `thickness`, the joint auto-falls back to a bevel.
+    pub mitre_limit: f32,
+    /// When `true`, the last point connects back to the first.
+    pub closed: bool,
+    /// Overall opacity multiplier in `[0, 1]`.
+    pub opacity: f32,
+    /// Draw order relative to other overlay rects, polylines, and labels.
+    /// Lower values render first (further back).
+    pub z_order: i32,
+}
+
+impl Default for OverlayPolylineItem {
+    fn default() -> Self {
+        Self {
+            points: Vec::new(),
+            thickness: 2.0,
+            colour: [1.0, 1.0, 1.0, 1.0],
+            join: LineJoin::Mitre,
+            mitre_limit: 4.0,
+            closed: false,
+            opacity: 1.0,
+            z_order: 0,
+        }
+    }
+}
+
+impl OverlayPolylineItem {
+    /// Construct a polyline by sampling the given closure at `samples + 1`
+    /// evenly-spaced parameter values across `[0, 1]`. The closure is called
+    /// once per sample at construction time; the resulting points are stored
+    /// in `self.points`.
+    ///
+    /// Consumers wanting non-uniform sample density (denser around tight
+    /// curvature) should sample manually and build the item via the regular
+    /// struct literal.
+    pub fn from_path(
+        path: impl Fn(f32) -> [f32; 2],
+        samples: u32,
+        thickness: f32,
+        colour: [f32; 4],
+    ) -> Self {
+        let n = samples.max(1);
+        let points: Vec<[f32; 2]> = (0..=n)
+            .map(|i| path(i as f32 / n as f32))
+            .collect();
+        Self {
+            points,
+            thickness,
+            colour,
+            ..Default::default()
+        }
+    }
 }
 
 /// End-cap style for `OverlayShape::Line`.
@@ -1892,6 +2137,52 @@ mod tests {
     }
 
     #[test]
+    fn bezier_path_hits_endpoints() {
+        // Cubic with p0 = (0,0), p3 = (100, 0) and arched control handles.
+        let track = PathTrack::<[f32; 2]>::bezier(
+            0.0,
+            1.0,
+            [[0.0, 0.0], [25.0, -40.0], [75.0, -40.0], [100.0, 0.0]],
+        );
+        let a = track.sample(0.0);
+        let b = track.sample(1.0);
+        assert!((a[0] - 0.0).abs() < 1e-3 && (a[1] - 0.0).abs() < 1e-3);
+        assert!((b[0] - 100.0).abs() < 1e-3 && (b[1] - 0.0).abs() < 1e-3);
+        // Midpoint should sit on the arch above the baseline.
+        let m = track.sample(0.5);
+        assert!((m[0] - 50.0).abs() < 1e-3);
+        assert!(m[1] < -20.0);
+    }
+
+    #[test]
+    fn polyline_path_hits_waypoints() {
+        let track = PathTrack::<[f32; 2]>::polyline(
+            0.0,
+            1.0,
+            vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+        );
+        let a = track.sample(0.0);
+        let mid = track.sample(0.5);
+        let end = track.sample(1.0);
+        assert!((a[0] - 0.0).abs() < 1e-3 && (a[1] - 0.0).abs() < 1e-3);
+        assert!((mid[0] - 10.0).abs() < 1e-3 && (mid[1] - 0.0).abs() < 1e-3);
+        assert!((end[0] - 10.0).abs() < 1e-3 && (end[1] - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn path_track_custom_closure_loops() {
+        // A non-curve path: harmonic motion via a custom closure.
+        let track = PathTrack::<f32>::new(0.0, 1.0, |t| (t * std::f32::consts::TAU).sin())
+            .with_repeat(RepeatMode::Loop);
+        let a = track.sample(0.0);
+        let b = track.sample(0.25);
+        let c = track.sample(0.5);
+        assert!(a.abs() < 1e-3);
+        assert!((b - 1.0).abs() < 1e-3);
+        assert!(c.abs() < 1e-3);
+    }
+
+    #[test]
     fn rotation_affects_hit_test() {
         // 100x40 capsule. Without rotation, (50, 80) sits below the shape
         // (outside). Rotated 90 degrees, the capsule's long axis becomes
@@ -1935,4 +2226,7 @@ pub struct OverlayFrame {
     pub images: Vec<OverlayImageItem>,
     /// Progress bar overlays (loading indicators, progress feedback).
     pub loading_bars: Vec<LoadingBarItem>,
+    /// Stroked polylines. Rendered through the same pipeline as overlay
+    /// rects and labels; share their z-order space.
+    pub polylines: Vec<OverlayPolylineItem>,
 }

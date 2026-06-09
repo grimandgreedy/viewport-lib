@@ -2974,7 +2974,7 @@ impl App {
                 (
                     items,
                     Some(BG_COLOUR),
-                    showcase_41_sprites::sprite_lighting(),
+                    showcase_41_sprites::sprite_lighting(self),
                     0,
                     0,
                 )
@@ -3453,7 +3453,9 @@ impl App {
         }
         if self.mode == ShowcaseMode::Overlay {
             fd.overlays.time = self.ovl_state.start_time.elapsed().as_secs_f64();
-            let (shapes, labels, bar, ruler) = showcase_35_overlay::build_overlay_frame(self);
+            let (shapes, labels, bar, ruler, polylines) =
+                showcase_35_overlay::build_overlay_frame(self);
+            fd.overlays.polylines = polylines;
             // Enable HDR callback path so the renderer owns the encoder and can
             // run backdrop blur passes.
             if shapes.iter().any(|s| s.backdrop_blur > 0.0) {

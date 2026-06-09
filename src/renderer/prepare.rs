@@ -5086,7 +5086,9 @@ impl ViewportRenderer {
         // but above HUD labels at 0).
         self.label_gpu_data = None;
         self.overlay_rect_gpu_data = None;
-        let has_overlay = !frame.overlays.labels.is_empty() || !frame.overlays.rects.is_empty();
+        let has_overlay = !frame.overlays.labels.is_empty()
+            || !frame.overlays.rects.is_empty()
+            || !frame.overlays.polylines.is_empty();
         if has_overlay {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
@@ -5144,6 +5146,28 @@ impl ViewportRenderer {
                     );
 
                     batches.push((rect.z_order, batch));
+                }
+
+                // --- Polylines (between rects and labels in z order) ---
+                for poly in &frame.overlays.polylines {
+                    if poly.points.len() < 2 || poly.opacity <= 0.0 || poly.thickness <= 0.0 {
+                        continue;
+                    }
+                    let mut colour = poly.colour;
+                    colour[3] *= poly.opacity;
+                    let verts = tessellate_polyline(
+                        &poly.points,
+                        poly.thickness,
+                        poly.closed,
+                        poly.join,
+                        poly.mitre_limit,
+                        colour,
+                        vp_w,
+                        vp_h,
+                    );
+                    if !verts.is_empty() {
+                        batches.push((poly.z_order, verts));
+                    }
                 }
 
                 // --- Labels ---
@@ -6012,6 +6036,32 @@ impl ViewportRenderer {
                         owned.border_colour = track.sample(overlay_time);
                     }
                     if let Some(track) = owned.animations.rotation {
+                        owned.rotation = track.sample(overlay_time);
+                    }
+                    // Path tracks override the matching linear track when
+                    // both are set. `opacity_path` also takes precedence
+                    // over the legacy `animation` field.
+                    if let Some(track) = owned.animations.opacity_path.clone() {
+                        owned.opacity = track.sample(overlay_time);
+                        owned.animation = crate::renderer::types::OverlayAnimation::None;
+                    }
+                    if let Some(track) = owned.animations.position_path.clone() {
+                        owned.position = track.sample(overlay_time);
+                    }
+                    if let Some(track) = owned.animations.size_path.clone() {
+                        owned.size = track.sample(overlay_time);
+                    }
+                    if let Some(track) = owned.animations.fill_path.clone() {
+                        if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
+                            owned.fill = crate::renderer::types::OverlayFill::Solid(
+                                track.sample(overlay_time),
+                            );
+                        }
+                    }
+                    if let Some(track) = owned.animations.border_path.clone() {
+                        owned.border_colour = track.sample(overlay_time);
+                    }
+                    if let Some(track) = owned.animations.rotation_path.clone() {
                         owned.rotation = track.sample(overlay_time);
                     }
                     let shape = &owned;
@@ -7258,6 +7308,143 @@ fn project_to_screen(
 #[inline]
 fn px_to_ndc(px_x: f32, px_y: f32, vp_w: f32, vp_h: f32) -> [f32; 2] {
     [px_x / vp_w * 2.0 - 1.0, 1.0 - px_y / vp_h * 2.0]
+}
+
+/// Tessellate a polyline into a triangle list of `OverlayTextVertex`s.
+///
+/// At each interior point the stroke is extruded along the bisector of the
+/// two adjacent segment normals, scaled by `1 / cos(half_angle)` so the
+/// outer edge stays at constant `thickness / 2` from the centreline. When
+/// that scale exceeds `mitre_limit`, or when `join` is `Bevel`, the joint
+/// emits two separate ribs and a connecting triangle.
+///
+/// Open polylines use butt caps (perpendicular to the end segment). Closed
+/// polylines wrap the last point back to the first.
+#[allow(clippy::too_many_arguments)]
+fn tessellate_polyline(
+    points: &[[f32; 2]],
+    thickness: f32,
+    closed: bool,
+    join: crate::renderer::types::LineJoin,
+    mitre_limit: f32,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) -> Vec<crate::resources::OverlayTextVertex> {
+    let n = points.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let half_t = thickness * 0.5;
+
+    let get = |i: i32| -> Option<[f32; 2]> {
+        if closed {
+            let idx = i.rem_euclid(n as i32);
+            Some(points[idx as usize])
+        } else if i >= 0 && (i as usize) < n {
+            Some(points[i as usize])
+        } else {
+            None
+        }
+    };
+
+    let normalize = |v: [f32; 2]| -> [f32; 2] {
+        let len = (v[0] * v[0] + v[1] * v[1]).sqrt();
+        if len < 1e-6 {
+            [0.0, 0.0]
+        } else {
+            [v[0] / len, v[1] / len]
+        }
+    };
+    let sub = |a: [f32; 2], b: [f32; 2]| -> [f32; 2] { [a[0] - b[0], a[1] - b[1]] };
+    let add = |a: [f32; 2], b: [f32; 2]| -> [f32; 2] { [a[0] + b[0], a[1] + b[1]] };
+    let scale = |a: [f32; 2], k: f32| -> [f32; 2] { [a[0] * k, a[1] * k] };
+    let perp_left = |t: [f32; 2]| -> [f32; 2] { [-t[1], t[0]] };
+    let dot = |a: [f32; 2], b: [f32; 2]| -> f32 { a[0] * b[0] + a[1] * b[1] };
+
+    // Build "ribs": for each logical join, one or two (left, right) pairs.
+    let mut ribs: Vec<([f32; 2], [f32; 2])> = Vec::with_capacity(n + 4);
+
+    let iter_count = if closed { n + 1 } else { n };
+    for i in 0..iter_count {
+        let cur_idx = if closed { i % n } else { i };
+        let cur = points[cur_idx];
+        let prev = get(cur_idx as i32 - 1);
+        let next = if closed {
+            Some(points[(cur_idx + 1) % n])
+        } else if cur_idx + 1 < n {
+            Some(points[cur_idx + 1])
+        } else {
+            None
+        };
+
+        let in_t = prev.map(|p| normalize(sub(cur, p)));
+        let out_t = next.map(|q| normalize(sub(q, cur)));
+
+        match (in_t, out_t) {
+            (Some(t1), Some(t2)) => {
+                let n1 = perp_left(t1);
+                let n2 = perp_left(t2);
+                let bisect = normalize(add(n1, n2));
+                let cos_half = dot(n1, bisect).abs().max(1e-4);
+                let mitre_scale = 1.0 / cos_half;
+                let use_mitre = match join {
+                    crate::renderer::types::LineJoin::Mitre => mitre_scale <= mitre_limit,
+                    crate::renderer::types::LineJoin::Bevel => false,
+                };
+                if use_mitre {
+                    let off = scale(bisect, half_t * mitre_scale);
+                    ribs.push((add(cur, off), sub(cur, off)));
+                } else {
+                    // Bevel: two ribs at this point, one per adjacent segment.
+                    let off1 = scale(n1, half_t);
+                    let off2 = scale(n2, half_t);
+                    ribs.push((add(cur, off1), sub(cur, off1)));
+                    ribs.push((add(cur, off2), sub(cur, off2)));
+                }
+            }
+            (Some(t1), None) => {
+                let n1 = perp_left(t1);
+                let off = scale(n1, half_t);
+                ribs.push((add(cur, off), sub(cur, off)));
+            }
+            (None, Some(t2)) => {
+                let n2 = perp_left(t2);
+                let off = scale(n2, half_t);
+                ribs.push((add(cur, off), sub(cur, off)));
+            }
+            (None, None) => {}
+        }
+    }
+
+    if ribs.len() < 2 {
+        return Vec::new();
+    }
+
+    // Convert rib pairs to triangle list. Each pair of consecutive ribs
+    // forms a quad split into two triangles.
+    let mut verts: Vec<crate::resources::OverlayTextVertex> =
+        Vec::with_capacity((ribs.len() - 1) * 6);
+    let mut emit = |px: [f32; 2]| {
+        verts.push(crate::resources::OverlayTextVertex {
+            position: px_to_ndc(px[0], px[1], vp_w, vp_h),
+            uv: [0.0, 0.0],
+            colour,
+            use_texture: 0.0,
+            _pad: 0.0,
+        });
+    };
+    for w in ribs.windows(2) {
+        let (l0, r0) = w[0];
+        let (l1, r1) = w[1];
+        emit(l0);
+        emit(r0);
+        emit(l1);
+        emit(r0);
+        emit(r1);
+        emit(l1);
+    }
+    verts
 }
 
 /// Encode `TileMode` as the float flag the texture shader consumes.

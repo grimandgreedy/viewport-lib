@@ -52,6 +52,18 @@ HDR path only; the direct LDR `paint_to` cannot resolve scene colour for samplin
 
 `OverlayShapeItem` gains `shadow_inset: bool`. When `true`, the existing `shadow_*` fields render as an inset (inner) shadow that fades from the edge inward, used for pressed buttons, dropdowns, and recessed surfaces. The flag is packed alongside `border_mode` into a single vertex slot. A shape currently carries either an outer or an inner shadow, not both at once; stackable multi-shadow layers are a planned follow-up.
 
+#### Multi-channel overlay animations
+
+`OverlayShapeItem` gains an `animations: OverlayAnimations` field with six independent tracks: `opacity`, `position`, `size`, `fill`, `border`, and `rotation`. Each `AnimTrack<T>` carries `start_time`, `duration`, `from`, `to`, an `OverlayEasing` curve (`Linear`, `EaseIn`, `EaseOut`, `EaseInOut`, `Pulse`), and a `RepeatMode` (`Once`, `Loop`, `PingPong`). Resolution runs in `prepare()` against `OverlayFrame::time`. The opacity track takes precedence over the legacy `OverlayShapeItem::animation` field.
+
+#### Closure-driven animation paths
+
+`PathTrack<T>` complements `AnimTrack<T>` for non-linear motion: it stores an `Arc<dyn Fn(f32) -> T + Send + Sync>` and calls the closure once per frame at the eased `t`. The shared `Arc` makes the track cheap to clone. `PathTrack::<[f32; 2]>::bezier` and `polyline` constructors cover the common 2D cases; anything else is `PathTrack::new(start, dur, closure).with_easing(...).with_repeat(...)`. `OverlayAnimations` gains parallel `*_path` channels (`position_path`, `size_path`, `fill_path`, `border_path`, `rotation_path`, `opacity_path`); each overrides the matching linear track when set.
+
+#### Stroked polyline overlay primitive
+
+`OverlayPolylineItem` joins `OverlayShapeItem` and `OverlayRectItem` as a sibling overlay item: a list of waypoints, a thickness, a colour, a `LineJoin` mode (`Mitre` with auto-fallback to `Bevel` on sharp corners, or always-`Bevel`), and a `closed` flag. CPU-tessellated into a triangle list in `prepare()` and rendered through the existing overlay text/rect pipeline — no new shader, pipeline, or render-site wiring. `OverlayPolylineItem::from_path` samples a closure at N+1 points for the common case of tracing a generated path.
+
 ### Improvements
 
 - `RibbonItem` gains optional texturing. A `texture_id` and per-vertex `u_attribute` let lightning, slash arcs, laser beams, and similar effects multiply a streak texture into the resolved ribbon colour. Per-vertex `u` is optional; when empty it derives from cumulative arc length so the texture stretches evenly across each strip.
