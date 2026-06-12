@@ -332,6 +332,18 @@ pub struct Material {
     /// surfaces. Use [`BackfacePolicy::DifferentColour`] to highlight back faces in a
     /// distinct colour : helpful for diagnosing mesh orientation errors.
     pub backface_policy: BackfacePolicy,
+    /// Per-material UV offset applied to all texture samples (albedo, normal,
+    /// AO, metallic-roughness, emissive). Default `[0.0, 0.0]`.
+    ///
+    /// Sampled as `uv = mesh_uv * uv_scale + uv_offset` in the fragment shader.
+    /// Lets one mesh be shared between multiple atlas-region materials without
+    /// duplicating vertex buffers : an asset pack with a single tree atlas can
+    /// pick the trunk or leaves region per material instance.
+    pub uv_offset: [f32; 2],
+    /// Per-material UV scale. Default `[1.0, 1.0]`.
+    ///
+    /// See [`uv_offset`](Self::uv_offset) for the full sampling formula.
+    pub uv_scale: [f32; 2],
 }
 
 impl Default for Material {
@@ -354,6 +366,8 @@ impl Default for Material {
             shading_model: ShadingModel::Phong,
             param_vis: None,
             backface_policy: BackfacePolicy::Cull,
+            uv_offset: [0.0, 0.0],
+            uv_scale: [1.0, 1.0],
         }
     }
 }

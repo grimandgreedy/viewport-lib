@@ -481,7 +481,10 @@ pub type LightUniform = LightsUniform;
 /// - alpha_cutoff:               f32      =  4 bytes  offset 244
 /// - has_metallic_roughness_tex: u32      =  4 bytes  offset 248
 /// - has_emissive_tex:           u32      =  4 bytes  offset 252
-/// Total: 256 bytes
+/// - uv_transform:               [f32;4]  = 16 bytes  offset 256  (offset.xy, scale.xy)
+/// - deform_flags:               u32      =  4 bytes  offset 272  (bit i = deformer slot i active)
+/// - _deform_pad:                [u32;3]  = 12 bytes  offset 276  (struct tail padding to 16B)
+/// Total: 288 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
@@ -531,9 +534,17 @@ pub(crate) struct ObjectUniform {
     pub(crate) alpha_cutoff: f32,    //   4 bytes, offset 244
     pub(crate) has_metallic_roughness_tex: u32, //   4 bytes, offset 248
     pub(crate) has_emissive_tex: u32, //   4 bytes, offset 252
+    /// Per-material UV transform applied to every texture sample.
+    /// `[offset_x, offset_y, scale_x, scale_y]`. Defaults to `(0, 0, 1, 1)`
+    /// (identity). Lets atlas-packed materials share one mesh instance.
+    pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 256
+    /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
+    /// no deformer registry has attached data for this mesh.
+    pub(crate) deform_flags: u32,    //   4 bytes, offset 272
+    pub(crate) _deform_pad: [u32; 3], //  12 bytes, offset 276 (tail pad to 16B)
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 256);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 288);
 
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
@@ -562,6 +573,9 @@ pub(crate) struct InstanceData {
     /// `world_pos` (`ShadingModel::Flat`).
     pub(crate) use_flat: u32, //   4 bytes, offset 136
     pub(crate) _pad_inst: u32,       //   4 bytes, offset 140
+    /// Per-material UV transform; mirrors `ObjectUniform::uv_transform`.
+    /// `[offset_x, offset_y, scale_x, scale_y]`.
+    pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 144
 }
 
 /// Per-instance GPU data for the object-ID pick pass.
@@ -1115,7 +1129,12 @@ pub(crate) struct ShadowAtlasUniform {
     pub(crate) cascade_splits: [f32; 4], //  16 bytes
     /// Number of active cascades (1–4).
     pub(crate) cascade_count: u32, //   4 bytes
-    /// Atlas texture size in pixels (e.g. 4096.0).
+    /// Backing atlas texture size in pixels (always `SHADOW_ATLAS_SIZE`).
+    ///
+    /// Shaders derive everything from this plus the atlas rects: one texel in
+    /// UV space is `1.0 / atlas_size`, and a tile's pixel width is
+    /// `atlas_size * (rect.z - rect.x)`. When the requested shadow resolution
+    /// is below `SHADOW_ATLAS_SIZE`, the rects shrink but this value does not.
     pub(crate) atlas_size: f32, //   4 bytes
     /// Shadow filter mode: 0=PCF, 1=PCSS.
     pub(crate) shadow_filter: u32, //   4 bytes
@@ -2524,7 +2543,11 @@ pub struct ViewportGpuResources {
     pub(crate) mesh_store: crate::resources::mesh_store::MeshStore,
     /// GPU skinning sidecar storage: per-mesh skin weights and per-instance
     /// joint palette buffers. Empty for static meshes.
-    pub(crate) skinning: crate::resources::skin::SkinningState,
+    pub(crate) skinning: crate::resources::mesh_sidecar::skin::SkinningState,
+    /// Vertex displacement sidecar storage: per-mesh sway-mask buffers plus
+    /// the host-installed displacement uniform. Empty for non-displaceable
+    /// meshes.
+    pub(crate) displacement: crate::resources::mesh_sidecar::displacement::DisplacementState,
     /// Skinned variant of [`Self::solid_pipeline`]. Same fragment stage as the
     /// non-skinned pipeline; vertex stage applies LBS from the skinning
     /// sidecar storage buffers.

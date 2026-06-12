@@ -1004,6 +1004,14 @@ impl ViewportRenderer {
                     } else {
                         0
                     },
+                    uv_transform: [
+                        m.uv_offset[0],
+                        m.uv_offset[1],
+                        m.uv_scale[0],
+                        m.uv_scale[1],
+                    ],
+                    deform_flags: 0,
+                    _deform_pad: [0; 3],
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -1045,6 +1053,9 @@ impl ViewportRenderer {
                     alpha_cutoff: 0.5,
                     has_metallic_roughness_tex: 0,
                     has_emissive_tex: 0,
+                    uv_transform: [0.0, 0.0, 1.0, 1.0],
+                    deform_flags: 0,
+                    _deform_pad: [0; 3],
                 };
 
                 // Collect per-item uniform for wireframe per-item bind groups.
@@ -1426,6 +1437,12 @@ impl ViewportRenderer {
                                     },
                                     use_flat: if m.is_flat() { 1 } else { 0 },
                                     _pad_inst: 0,
+                                    uv_transform: [
+                                        m.uv_offset[0],
+                                        m.uv_offset[1],
+                                        m.uv_scale[0],
+                                        m.uv_scale[1],
+                                    ],
                                 });
                                 if let Some(mesh) = batch_mesh {
                                     let model = glam::Mat4::from_cols_array_2d(&item.model);

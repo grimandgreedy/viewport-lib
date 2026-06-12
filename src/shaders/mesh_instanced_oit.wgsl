@@ -20,6 +20,9 @@ struct Camera {
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.
 // #include "scene_lighting.wgsl"
 
+// Per-vertex deformation hook contract.
+// #include "deform.wgsl"
+
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
     count: u32,
@@ -57,6 +60,7 @@ struct InstanceData {
     receive_shadows: u32,
     use_flat: u32,
     _pad_inst1: u32,
+    uv_transform: vec4<f32>,
 };
 
 struct ClipVolumeEntry {
@@ -136,6 +140,7 @@ struct VertexIn {
     @location(2) colour:    vec4<f32>,
     @location(3) uv:       vec2<f32>,
     @location(4) tangent:  vec4<f32>,
+    @builtin(vertex_index) vertex_index: u32,
 };
 
 struct VertexOut {
@@ -157,16 +162,23 @@ struct OitOut {
 fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     let inst = instances[idx];
     var out: VertexOut;
-    let world_pos = inst.model * vec4<f32>(in.position, 1.0);
-    out.clip_pos = camera.view_proj * world_pos;
-    out.colour = in.colour;
-    out.world_pos = world_pos.xyz;
+    var dv = DeformVertex(in.position, in.normal, in.vertex_index);
+    let dctx = DeformContext(inst.model, inst.model[3].xyz, 0.0, 0u);
+    dv = viewport_deform_object_space(dv, dctx);
     let model3 = mat3x3<f32>(
         inst.model[0].xyz,
         inst.model[1].xyz,
         inst.model[2].xyz,
     );
-    out.world_normal = normalize(model3 * in.normal);
+    let world_pos4 = inst.model * vec4<f32>(dv.position, 1.0);
+    dv.position = world_pos4.xyz;
+    dv.normal = normalize(model3 * dv.normal);
+    dv = viewport_deform_world_space(dv, dctx);
+    let world_pos = vec4<f32>(dv.position, 1.0);
+    out.clip_pos = camera.view_proj * world_pos;
+    out.colour = in.colour;
+    out.world_pos = world_pos.xyz;
+    out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
     out.instance_idx = idx;
@@ -180,16 +192,23 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     let actual_idx = visibility_indices[idx];
     let inst = instances[actual_idx];
     var out: VertexOut;
-    let world_pos = inst.model * vec4<f32>(in.position, 1.0);
-    out.clip_pos = camera.view_proj * world_pos;
-    out.colour = in.colour;
-    out.world_pos = world_pos.xyz;
+    var dv = DeformVertex(in.position, in.normal, in.vertex_index);
+    let dctx = DeformContext(inst.model, inst.model[3].xyz, 0.0, 0u);
+    dv = viewport_deform_object_space(dv, dctx);
     let model3 = mat3x3<f32>(
         inst.model[0].xyz,
         inst.model[1].xyz,
         inst.model[2].xyz,
     );
-    out.world_normal = normalize(model3 * in.normal);
+    let world_pos4 = inst.model * vec4<f32>(dv.position, 1.0);
+    dv.position = world_pos4.xyz;
+    dv.normal = normalize(model3 * dv.normal);
+    dv = viewport_deform_world_space(dv, dctx);
+    let world_pos = vec4<f32>(dv.position, 1.0);
+    out.clip_pos = camera.view_proj * world_pos;
+    out.colour = in.colour;
+    out.world_pos = world_pos.xyz;
+    out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
     out.instance_idx = actual_idx;
@@ -299,8 +318,10 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
+    let mat_uv = in.uv * inst.uv_transform.zw + inst.uv_transform.xy;
+
     var tex_colour = vec4<f32>(1.0);
-    if inst.has_texture == 1u { tex_colour = textureSample(obj_texture, obj_sampler, in.uv); }
+    if inst.has_texture == 1u { tex_colour = textureSample(obj_texture, obj_sampler, mat_uv); }
     let obj_colour = vec4<f32>(
         inst.colour.rgb * in.colour.rgb * tex_colour.rgb,
         inst.colour.a   * in.colour.a   * tex_colour.a,
@@ -325,7 +346,7 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if inst.has_normal_map != 0u {
-        let nm_sample = textureSample(normal_map, obj_sampler, in.uv).rgb;
+        let nm_sample = textureSample(normal_map, obj_sampler, mat_uv).rgb;
         let ts_normal = normalize(nm_sample * 2.0 - vec3<f32>(1.0));
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
@@ -338,7 +359,7 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
     }
 
     var ao_factor = 1.0;
-    if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, in.uv).r; }
+    if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, mat_uv).r; }
 
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0);

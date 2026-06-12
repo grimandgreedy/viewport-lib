@@ -34,6 +34,9 @@ struct Camera {
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.
 // #include "scene_lighting.wgsl"
 
+// Per-vertex deformation hook contract.
+// #include "deform.wgsl"
+
 // Clip planes uniform : 112 bytes.
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
@@ -94,6 +97,7 @@ struct Object {
     alpha_cutoff: f32,                     // offset 244
     has_metallic_roughness_tex: u32,       // offset 248
     has_emissive_tex: u32,                 // offset 252
+    uv_transform: vec4<f32>,               // offset 256 : (offset.xy, scale.xy)
 };
 
 struct ClipVolumeEntry {
@@ -242,16 +246,23 @@ fn vs_main(in: VertexIn) -> VertexOut {
             );
         }
     }
-    let world_pos = object.model * vec4<f32>(local_pos, 1.0);
-    out.clip_pos = camera.view_proj * world_pos;
-    out.colour = in.colour;
-    out.world_pos = world_pos.xyz;
+    var dv = DeformVertex(local_pos, local_normal, in.vertex_index);
+    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, 0u);
+    dv = viewport_deform_object_space(dv, dctx);
     let model3 = mat3x3<f32>(
         object.model[0].xyz,
         object.model[1].xyz,
         object.model[2].xyz,
     );
-    out.world_normal = normalize(model3 * local_normal);
+    let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
+    dv.position = world_pos4.xyz;
+    dv.normal = normalize(model3 * dv.normal);
+    dv = viewport_deform_world_space(dv, dctx);
+    let world_pos = vec4<f32>(dv.position, 1.0);
+    out.clip_pos = camera.view_proj * world_pos;
+    out.colour = in.colour;
+    out.world_pos = world_pos.xyz;
+    out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
     // Read scalar attribute value for this vertex, guarded by has_attribute and buffer length.
@@ -620,10 +631,14 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         return vec4<f32>(0.75, 0.75, 0.75, 1.0);
     }
 
+    // Per-material UV transform: atlas region / tiling selection. Identity
+    // (offset 0,0 scale 1,1) passes the authored UV through unchanged.
+    let mat_uv = in.uv * object.uv_transform.zw + object.uv_transform.xy;
+
     // Sample texture if one is assigned; fallback texture is 1x1 white (neutral multiply).
     var tex_colour = vec4<f32>(1.0);
     if object.has_texture == 1u {
-        tex_colour = textureSample(obj_texture, obj_sampler, in.uv);
+        tex_colour = textureSample(obj_texture, obj_sampler, mat_uv);
     }
     let obj_colour = vec4<f32>(object.colour.rgb * in.colour.rgb * tex_colour.rgb,
                                object.colour.a   * in.colour.a   * tex_colour.a);
@@ -681,7 +696,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if object.has_normal_map != 0u {
-        let nm_sample = textureSample(normal_map, obj_sampler, in.uv).rgb;
+        let nm_sample = textureSample(normal_map, obj_sampler, mat_uv).rgb;
         let ts_normal = normalize(nm_sample * 2.0 - vec3<f32>(1.0));
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
@@ -731,7 +746,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     // AO factor from AO map.
     var ao_factor = 1.0;
     if object.has_ao_map != 0u {
-        ao_factor = textureSample(ao_map, obj_sampler, in.uv).r;
+        ao_factor = textureSample(ao_map, obj_sampler, mat_uv).r;
     }
 
     // Matcap shading : the matcap texture encodes material appearance as a sphere-space lookup.
@@ -797,7 +812,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         var roughness = max(object.roughness, 0.04);
         if object.has_metallic_roughness_tex != 0u {
             // glTF ORM texture: G=roughness factor, B=metallic factor.
-            let mr = textureSample(metallic_roughness_tex, obj_sampler, in.uv);
+            let mr = textureSample(metallic_roughness_tex, obj_sampler, mat_uv);
             metallic  = clamp(mr.b * metallic,  0.0, 1.0);
             roughness = max(mr.g * roughness, 0.04);
         }
@@ -943,7 +958,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     var emissive = object.emissive;
     if object.has_emissive_tex != 0u {
-        emissive = emissive * textureSample(emissive_tex, obj_sampler, in.uv).rgb;
+        emissive = emissive * textureSample(emissive_tex, obj_sampler, mat_uv).rgb;
     }
     final_rgb += emissive;
     dbg_emissive_lum = dot(emissive, lum_weights);
