@@ -1010,7 +1010,7 @@ impl ViewportRenderer {
                         m.uv_scale[0],
                         m.uv_scale[1],
                     ],
-                    deform_flags: 0,
+                    deform_flags: resources.deform.flag_bits(item.mesh_id),
                     _deform_pad: [0; 3],
                 };
 

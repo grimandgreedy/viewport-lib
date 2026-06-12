@@ -127,6 +127,33 @@ pub enum ViewportError {
         /// Short description of why the result is unavailable.
         reason: &'static str,
     },
+
+    /// No deformer slots remain. The registry has a fixed budget set by the
+    /// vertex-stage storage-buffer limit; once all slots are taken, callers
+    /// must release one with `unregister_deformer` (when implemented) before
+    /// registering another.
+    #[error("deformer registry exhausted: {max} slots in use")]
+    DeformSlotsExhausted {
+        /// Total number of slots the registry exposes.
+        max: usize,
+    },
+
+    /// A deformer with this name is already registered.
+    #[error("deformer name '{name}' already registered")]
+    DeformNameTaken {
+        /// The duplicate name that was rejected.
+        name: String,
+    },
+
+    /// The composed mesh-family shader failed validation, either because the
+    /// supplied `wgsl_body` is malformed or because composition produced an
+    /// invalid module. The reason carries the underlying validator message
+    /// and identifies which shader failed.
+    #[error("deformer shader invalid: {reason}")]
+    DeformShaderInvalid {
+        /// Validator message prefixed by the shader name that failed.
+        reason: String,
+    },
 }
 
 /// Convenience alias for `Result<T, ViewportError>`.

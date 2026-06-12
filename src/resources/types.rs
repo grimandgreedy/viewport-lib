@@ -2548,6 +2548,11 @@ pub struct ViewportGpuResources {
     /// the host-installed displacement uniform. Empty for non-displaceable
     /// meshes.
     pub(crate) displacement: crate::resources::mesh_sidecar::displacement::DisplacementState,
+    /// Per-vertex deformation sidecar storage: header uniform, dummy fallback
+    /// buffers, and per-mesh slot bind groups. Every mesh-family pipeline
+    /// binds `@group(2)` from this state; meshes without attached deformer
+    /// data fall back to the renderer-owned dummy bind group.
+    pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
     /// Skinned variant of [`Self::solid_pipeline`]. Same fragment stage as the
     /// non-skinned pipeline; vertex stage applies LBS from the skinning
     /// sidecar storage buffers.

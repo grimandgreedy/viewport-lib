@@ -23,6 +23,9 @@ struct Camera {
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.
 // #include "scene_lighting.wgsl"
 
+// Per-vertex deformation hook contract.
+// #include "deform.wgsl"
+
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
     count: u32,
@@ -196,16 +199,23 @@ fn vs_main(in: VertexIn) -> VertexOut {
             local_pos += vec3<f32>(warp_buffer[wi], warp_buffer[wi + 1u], warp_buffer[wi + 2u]) * object.warp_scale;
         }
     }
-    let world_pos = object.model * vec4<f32>(local_pos, 1.0);
-    out.clip_pos = camera.view_proj * world_pos;
-    out.colour = in.colour;
-    out.world_pos = world_pos.xyz;
+    var dv = DeformVertex(local_pos, in.normal, in.vertex_index);
+    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, 0u);
+    dv = viewport_deform_object_space(dv, dctx);
     let model3 = mat3x3<f32>(
         object.model[0].xyz,
         object.model[1].xyz,
         object.model[2].xyz,
     );
-    out.world_normal = normalize(model3 * in.normal);
+    let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
+    dv.position = world_pos4.xyz;
+    dv.normal = normalize(model3 * dv.normal);
+    dv = viewport_deform_world_space(dv, dctx);
+    let world_pos = vec4<f32>(dv.position, 1.0);
+    out.clip_pos = camera.view_proj * world_pos;
+    out.colour = in.colour;
+    out.world_pos = world_pos.xyz;
+    out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
     let buf_len = arrayLength(&scalar_buffer);

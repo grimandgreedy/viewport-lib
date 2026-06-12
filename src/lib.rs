@@ -233,6 +233,10 @@ pub use quantities::{
 pub use resources::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
+pub use resources::{
+    DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,
+    DEFORM_SLOT_COUNT_PUB as DEFORM_SLOT_COUNT, DeformStage, DeformerDesc, DeformerId,
+};
 pub use resources::mesh_store::MeshId;
 pub use resources::sparse_volume::SparseVolumeGridData;
 pub use resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};

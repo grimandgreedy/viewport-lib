@@ -35,7 +35,7 @@ mod postprocess;
 /// Scatter-volume participating-media pipeline state and uploads.
 pub mod scatter_volume;
 mod scivis;
-mod skin;
+pub(crate) mod mesh_sidecar;
 /// Sparse voxel grid topology processing (boundary face extraction).
 pub mod sparse_volume;
 mod textures;
@@ -67,6 +67,9 @@ pub use self::scivis::curve_store::{
 pub(crate) use self::scivis::curve_store::{
     GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
+};
+pub use self::mesh_sidecar::registry::{
+    DEFORM_PARAMS_PER_SLOT_PUB, DEFORM_SLOT_COUNT_PUB, DeformStage, DeformerDesc, DeformerId,
 };
 pub use self::sparse_volume::SparseVolumeGridData;
 pub use self::types::BatchMeta;

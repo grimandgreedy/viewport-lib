@@ -2310,7 +2310,9 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         // GPU skinning pipelines
         // ------------------------------------------------------------------
-        let skinning = crate::resources::skin::SkinningState::new(device);
+        let skinning = crate::resources::mesh_sidecar::skin::SkinningState::new(device);
+        let displacement = crate::resources::mesh_sidecar::displacement::DisplacementState::new(device);
+        let deform = crate::resources::mesh_sidecar::deform::DeformationState::new(device);
 
         // Skinned variants require bind group index 2 (the skinning sidecar).
         // iced_wgpu (and any framework that hardcodes max_bind_groups = 2) cannot
@@ -2657,6 +2659,8 @@ impl ViewportGpuResources {
             sample_count,
             solid_pipeline,
             skinning,
+            displacement,
+            deform,
             skinned_solid_pipeline,
             skinned_solid_two_sided_pipeline,
             skinned_transparent_pipeline,
