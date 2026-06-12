@@ -314,9 +314,14 @@ fn sample_shadow_factor(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3
 
     // Normal-aware bias scaled to the cascade's world-space texel size, so
     // near cascades take a small bias and far cascades take a larger one.
+    // The ortho x-scale is the length of the matrix's first row: element
+    // [0][0] alone includes the light rotation's right.x and varies with
+    // light azimuth.
     let n_dot_l = dot(normal, light_dir);
+    let vp = shadow_atlas.cascade_vp[cascade_idx];
+    let ortho_scale_x = length(vec3<f32>(vp[0][0], vp[1][0], vp[2][0]));
     let texel_world = 2.0
-        / (shadow_atlas.cascade_vp[cascade_idx][0][0] * shadow_atlas.atlas_size * (rect.z - rect.x));
+        / (ortho_scale_x * shadow_atlas.atlas_size * (rect.z - rect.x));
     let normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));
     let offset_world = world_pos + normal * normal_bias * select(-1.0, 1.0, n_dot_l >= 0.0);
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);

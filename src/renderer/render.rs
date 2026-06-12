@@ -1415,7 +1415,10 @@ impl ViewportRenderer {
                                 glam::Vec3::from(direction).normalize()
                             }
                             LightKind::Spot { direction, .. } => {
-                                glam::Vec3::from(direction).normalize()
+                                // Spot::direction is the shining direction
+                                // (light -> scene); the march needs the
+                                // surface -> light direction, so negate.
+                                -glam::Vec3::from(direction).normalize()
                             }
                             _ => glam::Vec3::new(0.0, -1.0, 0.0),
                         }

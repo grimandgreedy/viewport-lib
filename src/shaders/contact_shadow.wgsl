@@ -99,12 +99,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Self-shadow guard: the occluder must be meaningfully closer to the
         // camera than the *fragment* itself, not just the march position.
         // On convex surfaces (spheres), the march moves deeper each step while
-        // the depth buffer still shows the same surface at neighbouring UVs :
+        // the depth buffer still shows the same surface at neighbouring UVs:
         // depth_diff vs march_pos grows positive even though no real occluder
-        // exists.  Requiring the sample to be > 0.05 m shallower than view_pos
-        // rejects same-surface hits while keeping valid contact shadows (where
-        // the caster is a genuinely different, closer object).
-        if sample_view_pos.z - view_pos.z < 0.10 {
+        // exists. The threshold scales with step_size so the guard tracks the
+        // user's contact-shadow range setting: a fixed 0.10 m value (the
+        // previous constant) rejected the close occluders that contact shadows
+        // are specifically meant to catch.
+        let self_shadow_guard = max(step_size * 0.5, 0.005);
+        if sample_view_pos.z - view_pos.z < self_shadow_guard {
             continue;
         }
 

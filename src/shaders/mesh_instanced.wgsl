@@ -252,7 +252,15 @@ fn sample_shadow_csm(
 
     let n_dot_l = dot(surface_normal, light_dir);
     let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
-    let texel_world = 2.0 / (shadow_atlas.cascade_vp[cascade_idx][0][0] * shadow_atlas.atlas_size * (rect.z - rect.x));
+    // World-space texel size of this cascade. The ortho x-scale must be
+    // recovered as the length of the matrix's first row: element [0][0] alone
+    // is ortho_scale * right.x of the light rotation, which varies with light
+    // azimuth and hits zero when the light-up vector switches axes.
+    let vp = shadow_atlas.cascade_vp[cascade_idx];
+    let vp_row0 = vec3<f32>(vp[0][0], vp[1][0], vp[2][0]);
+    let vp_row1 = vec3<f32>(vp[0][1], vp[1][1], vp[2][1]);
+    let vp_row2 = vec3<f32>(vp[0][2], vp[1][2], vp[2][2]);
+    let texel_world = 2.0 / (length(vp_row0) * shadow_atlas.atlas_size * (rect.z - rect.x));
     let normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));
     let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
@@ -263,6 +271,27 @@ fn sample_shadow_csm(
        ndc.z < 0.0 || ndc.z > 1.0 {
         return ShadowSample(1.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
+
+    // Receiver-plane depth bias: tilt the comparison reference for each filter
+    // tap to follow the receiver surface's depth gradient in light space. With
+    // a flat reference, taps on the up-slope side of a tilted receiver read as
+    // lit whenever the depth margin to the caster is thin (e.g. objects
+    // resting on a surface), producing speckled self-shadowing. The ortho
+    // light map is affine (ndc = A * world + b), so the plane normal in NDC is
+    // m_i = dot(row_i(A), n) / |row_i(A)|^2.
+    let n_ndc = vec3<f32>(
+        dot(vp_row0, surface_normal) / dot(vp_row0, vp_row0),
+        dot(vp_row1, surface_normal) / dot(vp_row1, vp_row1),
+        dot(vp_row2, surface_normal) / dot(vp_row2, vp_row2),
+    );
+    let nz_sign = select(-1.0, 1.0, n_ndc.z >= 0.0);
+    let nz = nz_sign * max(abs(n_ndc.z), 1e-4);
+    // Depth change per atlas-UV step. Tile V runs opposite to NDC Y, which
+    // flips the sign of the Y term.
+    let depth_grad = vec2<f32>(
+        -n_ndc.x / nz * 2.0 / (rect.z - rect.x),
+        n_ndc.y / nz * 2.0 / (rect.w - rect.y),
+    );
 
     let texel_size = 1.0 / shadow_atlas.atlas_size;
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
@@ -298,7 +327,9 @@ fn sample_shadow_csm(
             let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
             let sample_uv = atlas_uv + rd * filter_radius;
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
-            shadow += textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, biased_depth);
+            let tap_depth = biased_depth
+                + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
+            shadow += textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, tap_depth);
         }
         return ShadowSample(shadow / 32.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     } else {
@@ -309,7 +340,9 @@ fn sample_shadow_csm(
             let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
             let sample_uv = atlas_uv + rd * pcf_radius;
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
-            shadow += textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, biased_depth);
+            let tap_depth = biased_depth
+                + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
+            shadow += textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, tap_depth);
         }
         return ShadowSample(shadow / 32.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
@@ -492,8 +525,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             if i == 0u && lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
                 last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
                 shadow_factor = last_shadow_sample.factor;
-                let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, L));
-                shadow_factor = mix(1.0, shadow_factor, terminator);
             }
             radiance *= shadow_factor;
             Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
@@ -544,8 +575,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             if i == 0u && lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
                 last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
                 shadow = last_shadow_sample.factor;
-                let terminator = smoothstep(0.0, 0.75, dot(shadow_normal, light_dir));
-                shadow = mix(1.0, shadow, terminator);
             }
             let H = normalize(light_dir + V);
             let n_dot_l = max(dot(N, light_dir), 0.0);

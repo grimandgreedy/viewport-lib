@@ -534,7 +534,11 @@ impl ViewportRenderer {
                 cascade_view_proj: vp_data,
                 cascade_splits: cascade_split_distances,
                 cascade_count: effective_cascade_count as u32,
-                atlas_size: atlas_res as f32,
+                // The backing texture size, not the requested resolution: shader
+                // texel math (PCF radius, texel_world, blocker-search coords) is
+                // relative to the real texture. The requested resolution enters
+                // through the atlas rects, which shrink when it is lowered.
+                atlas_size: crate::resources::SHADOW_ATLAS_SIZE as f32,
                 shadow_filter: match lighting.shadow_filter {
                     ShadowFilter::Pcf => 0,
                     ShadowFilter::Pcss => 1,
@@ -556,6 +560,10 @@ impl ViewportRenderer {
                     bytemuck::cast_slice(&[shadow_atlas_uniform]),
                 );
             }
+            // Cache for viewport slots created later in the frame: a new slot's
+            // buffer is seeded from this so its first frame does not sample
+            // shadows through a zeroed uniform (see ensure_viewport_slot).
+            self.last_shadow_atlas_uniform = shadow_atlas_uniform;
         }
 
         // The primary shadow matrix is still stored in lights[0].light_view_proj for

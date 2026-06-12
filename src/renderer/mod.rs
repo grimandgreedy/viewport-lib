@@ -528,6 +528,11 @@ pub struct ViewportRenderer {
     /// Most recent cluster build readback. Populated when a frame's
     /// `ViewportFrame::cluster_stats_request` was true.
     pub(crate) last_cluster_stats: Option<crate::resources::clustered::ClusterStats>,
+    /// Shadow atlas uniform from the last prepare_scene_internal call. Seeds
+    /// the shadow buffer of viewport slots created after the scene prepare has
+    /// already written existing slots, so a new viewport's first frame does
+    /// not sample shadows through a zeroed uniform.
+    pub(crate) last_shadow_atlas_uniform: crate::resources::ShadowAtlasUniform,
 }
 
 impl ViewportRenderer {
@@ -661,6 +666,7 @@ impl ViewportRenderer {
             last_logged_cascade_splits: [f32::MAX; 4],
             last_frustum_culled_lights: 0,
             last_cluster_stats: None,
+            last_shadow_atlas_uniform: bytemuck::Zeroable::zeroed(),
         }
     }
 
@@ -1736,12 +1742,22 @@ impl ViewportRenderer {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            // Seeded with the latest shadow atlas uniform rather than zeros:
+            // prepare_scene_internal writes shadow info only to slots that
+            // exist at that point, so a slot created later in the same frame
+            // would otherwise render its first frame with zeroed cascade
+            // matrices (NaN shadow UVs, everything shadowed).
             let shadow_info_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_shadow_info_buf"),
                 size: std::mem::size_of::<ShadowAtlasUniform>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
+                mapped_at_creation: true,
             });
+            shadow_info_buf
+                .slice(..)
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(&[self.last_shadow_atlas_uniform]));
+            shadow_info_buf.unmap();
             let grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_grid_buf"),
                 size: std::mem::size_of::<GridUniform>() as u64,

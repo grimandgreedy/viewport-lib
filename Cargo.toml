@@ -54,6 +54,10 @@ name = "eframe-lighting-shadows"
 path = "examples/eframe_lighting_shadows/main.rs"
 
 [[example]]
+name = "headless-shadow-debug"
+path = "examples/headless_shadow_debug/main.rs"
+
+[[example]]
 name = "eframe-testing"
 path = "examples/eframe_testing/main.rs"
 
