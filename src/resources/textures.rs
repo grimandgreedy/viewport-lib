@@ -193,8 +193,7 @@ impl ViewportGpuResources {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_DST,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 });
                 q.write_texture(
@@ -282,15 +281,17 @@ impl ViewportGpuResources {
                     sampler,
                     bind_group,
                 };
-                Ok(crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
-                    submission,
-                    Box::new(move |resources: &mut ViewportGpuResources| {
-                        let tex_id = resources.textures.len() as u64;
-                        resources.textures.push(gpu_texture);
-                        resources.texture_allocated_bytes += data_bytes;
-                        slot_for_apply.set(tex_id);
-                    }),
-                ))
+                Ok(
+                    crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
+                        submission,
+                        Box::new(move |resources: &mut ViewportGpuResources| {
+                            let tex_id = resources.textures.len() as u64;
+                            resources.textures.push(gpu_texture);
+                            resources.texture_allocated_bytes += data_bytes;
+                            slot_for_apply.set(tex_id);
+                        }),
+                    ),
+                )
             })
         };
 
@@ -642,7 +643,10 @@ impl ViewportGpuResources {
             albedo_id.unwrap_or(u64::MAX).hash(&mut h);
             normal_map_id.unwrap_or(u64::MAX).hash(&mut h);
             ao_map_id.unwrap_or(u64::MAX).hash(&mut h);
-            lut_id.map(|id| id.0 as u64).unwrap_or(u64::MAX).hash(&mut h);
+            lut_id
+                .map(|id| id.0 as u64)
+                .unwrap_or(u64::MAX)
+                .hash(&mut h);
             attr_hash.hash(&mut h);
             matcap_id
                 .map(|id| id.index as u64)
@@ -1127,7 +1131,10 @@ mod async_texture_tests {
             .expect_err("invalid size should error");
         assert!(matches!(
             err,
-            crate::error::ViewportError::InvalidTextureData { expected: 16, actual: 12 }
+            crate::error::ViewportError::InvalidTextureData {
+                expected: 16,
+                actual: 12
+            }
         ));
         assert_eq!(resources.uploads_pending(), 0);
     }

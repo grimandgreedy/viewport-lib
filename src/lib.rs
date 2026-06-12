@@ -200,33 +200,28 @@ pub use renderer::ShadowDebugStats;
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{FrameStats, PerformancePolicy, QualityPreset, RuntimeMode};
 pub use renderer::{
-    AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape, ComputeFilterItem,
-    ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation,
-    DecalBlendMode, DecalItem, DecalProjection, EffectsFrame, EnvironmentMap, FilterMode,
-    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem,
-    GlyphType,
-    EmitterConfig, ForceField, GpuParticleSystemItem,
-    GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
-    LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
-    LoadingBarItem, MeshInstanceItem, AnimTrack, GradientStop, LerpAnim, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayImageItem, OverlayRectItem, OverlayShape, OverlayShapeItem,
-    LineJoin, OverlayPolylineItem, OverlayTextureId, OwnedPath, PassPath, PassView, PathTrack,
-    PickId, RepeatMode, TextureTransform, TileMode,
-    PickRectResult, PointCloudItem, PointCloudRefItem, PointRenderMode, PolylineItem,
-    PolylineRefItem, PostProcessSettings,
-    RenderCamera, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
-    ScalarBarOrientation,
-    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend,
-    SpriteInstanceSetRefItem, SpriteItem, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
-    VelocityDist,
-    StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem,
-    TensorGlyphSetRefItem, ToneMapping, TransparentVolumeMeshItem, TriangleDirection, TubeItem,
-    TubeRefItem,
-    ViewportEffects, ViewportFrame,
-    ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
-    aabb_wireframe_polyline, sphere_wireframe_polyline,
+    AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape,
+    ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity,
+    DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, EffectsFrame,
+    EmitterConfig, EnvironmentMap, FilterMode, ForceField, FrameData, GaussianSplatData,
+    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType,
+    GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
+    InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
+    LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MeshInstanceItem,
+    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing,
+    OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
+    OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, PassPath, PassView, PathTrack,
+    PickId, PickRectResult, PointCloudItem, PointCloudRefItem, PointRenderMode, PolylineItem,
+    PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem, RibbonRefItem,
+    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
+    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
+    ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
+    SpriteItem, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
+    StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem,
+    TextureTransform, TileMode, ToneMapping, TransparentVolumeMeshItem, TriangleDirection,
+    TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame, ViewportId,
+    ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, aabb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 
 pub use quantities::{
@@ -239,10 +234,6 @@ pub use resources::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
 pub use resources::mesh_store::MeshId;
-pub use resources::{
-    GlyphSetId, GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender, PointCloudId,
-    PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
-};
 pub use resources::sparse_volume::SparseVolumeGridData;
 pub use resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};
 pub use resources::{
@@ -252,6 +243,10 @@ pub use resources::{
     ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform, MatcapId, MeshData,
     ProgressHandle, ProjectedTetId, SingleLightUniform, SkinWeights, TextureMemoryStats,
     UploadStatus, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
+};
+pub use resources::{
+    GlyphSetId, GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender, PointCloudId,
+    PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
 };
 
 pub use runtime::{

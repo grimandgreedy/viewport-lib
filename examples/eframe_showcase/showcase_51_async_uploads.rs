@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use viewport_lib::{
-    ColourmapId, GaussianSplatData, GaussianSplatId, GlyphItem, GlyphSetId, GlyphSetRefItem,
-    JobId, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, OverlayTextureId,
+    ColourmapId, GaussianSplatData, GaussianSplatId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId,
+    LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, OverlayTextureId,
     PointCloudId, PointCloudItem, PointCloudRefItem, PolylineId, PolylineItem, PolylineRefItem,
     RibbonId, RibbonItem, RibbonRefItem, SceneRenderItem, SkinWeights, SpriteInstanceSetId,
     SpriteItem, SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
@@ -121,7 +121,6 @@ pub(crate) struct AsyncUploadsState {
     /// `set_upload_budget`. Useful for taming the end-of-batch fat
     /// frame when many heavy completions land together.
     pub upload_budget_ms: Option<u32>,
-
 
     /// Base mesh uploaded synchronously on first build so the viewport is
     /// never empty.
@@ -332,10 +331,8 @@ impl App {
         }
 
         // Env map: status only, no typed result to take.
-        let env_just_loaded = advance_status_only(
-            &mut self.async_uploads_state.env_state,
-            renderer,
-        );
+        let env_just_loaded =
+            advance_status_only(&mut self.async_uploads_state.env_state, renderer);
 
         // Mesh: when Ready, take the MeshId.
         if let AssetState::InFlight { job, started, .. } =
@@ -346,8 +343,7 @@ impl App {
                     Ok(mesh_id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_mesh_id = Some(mesh_id);
-                        self.async_uploads_state.mesh_state =
-                            AssetState::Loaded { duration_ms };
+                        self.async_uploads_state.mesh_state = AssetState::Loaded { duration_ms };
                     }
                     Err(e) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
@@ -387,8 +383,7 @@ impl App {
                     Ok(tex_id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_texture_id = Some(tex_id);
-                        self.async_uploads_state.texture_state =
-                            AssetState::Loaded { duration_ms };
+                        self.async_uploads_state.texture_state = AssetState::Loaded { duration_ms };
                     }
                     Err(e) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
@@ -420,10 +415,8 @@ impl App {
         }
 
         // Skin: status only, but also flip the installed flag when Ready.
-        let skin_just_loaded = advance_status_only(
-            &mut self.async_uploads_state.skin_state,
-            renderer,
-        );
+        let skin_just_loaded =
+            advance_status_only(&mut self.async_uploads_state.skin_state, renderer);
         if skin_just_loaded {
             self.async_uploads_state.skin_installed = true;
         }
@@ -528,8 +521,7 @@ impl App {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_tube_id = Some(id);
-                        self.async_uploads_state.tube_state =
-                            AssetState::Loaded { duration_ms };
+                        self.async_uploads_state.tube_state = AssetState::Loaded { duration_ms };
                     }
                     Err(e) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
@@ -569,8 +561,7 @@ impl App {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_ribbon_id = Some(id);
-                        self.async_uploads_state.ribbon_state =
-                            AssetState::Loaded { duration_ms };
+                        self.async_uploads_state.ribbon_state = AssetState::Loaded { duration_ms };
                     }
                     Err(e) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
@@ -606,22 +597,23 @@ impl App {
             self.async_uploads_state.point_cloud_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.resources_mut().upload_result_point_cloud(job)
-                {
-                    Ok(id) => {
-                        let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.loaded_point_cloud_id = Some(id);
-                        self.async_uploads_state.point_cloud_state =
-                            AssetState::Loaded { duration_ms };
+                UploadStatus::Ready => {
+                    match renderer.resources_mut().upload_result_point_cloud(job) {
+                        Ok(id) => {
+                            let duration_ms = take_job_duration_ms(renderer, job, &started);
+                            self.async_uploads_state.loaded_point_cloud_id = Some(id);
+                            self.async_uploads_state.point_cloud_state =
+                                AssetState::Loaded { duration_ms };
+                        }
+                        Err(e) => {
+                            let duration_ms = take_job_duration_ms(renderer, job, &started);
+                            self.async_uploads_state.point_cloud_state = AssetState::Failed {
+                                reason: format!("{e}"),
+                                duration_ms,
+                            };
+                        }
                     }
-                    Err(e) => {
-                        let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.point_cloud_state = AssetState::Failed {
-                            reason: format!("{e}"),
-                            duration_ms,
-                        };
-                    }
-                },
+                }
                 UploadStatus::Failed(e) => {
                     let duration_ms = take_job_duration_ms(renderer, job, &started);
                     self.async_uploads_state.point_cloud_state = AssetState::Failed {
@@ -648,21 +640,23 @@ impl App {
             self.async_uploads_state.glyph_set_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.resources_mut().upload_result_glyph_set(job) {
-                    Ok(id) => {
-                        let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.loaded_glyph_set_id = Some(id);
-                        self.async_uploads_state.glyph_set_state =
-                            AssetState::Loaded { duration_ms };
+                UploadStatus::Ready => {
+                    match renderer.resources_mut().upload_result_glyph_set(job) {
+                        Ok(id) => {
+                            let duration_ms = take_job_duration_ms(renderer, job, &started);
+                            self.async_uploads_state.loaded_glyph_set_id = Some(id);
+                            self.async_uploads_state.glyph_set_state =
+                                AssetState::Loaded { duration_ms };
+                        }
+                        Err(e) => {
+                            let duration_ms = take_job_duration_ms(renderer, job, &started);
+                            self.async_uploads_state.glyph_set_state = AssetState::Failed {
+                                reason: format!("{e}"),
+                                duration_ms,
+                            };
+                        }
                     }
-                    Err(e) => {
-                        let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.glyph_set_state = AssetState::Failed {
-                            reason: format!("{e}"),
-                            duration_ms,
-                        };
-                    }
-                },
+                }
                 UploadStatus::Failed(e) => {
                     let duration_ms = take_job_duration_ms(renderer, job, &started);
                     self.async_uploads_state.glyph_set_state = AssetState::Failed {
@@ -689,24 +683,23 @@ impl App {
             self.async_uploads_state.tensor_glyph_set_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer
-                    .resources_mut()
-                    .upload_result_tensor_glyph_set(job)
-                {
-                    Ok(id) => {
-                        let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.loaded_tensor_glyph_set_id = Some(id);
-                        self.async_uploads_state.tensor_glyph_set_state =
-                            AssetState::Loaded { duration_ms };
+                UploadStatus::Ready => {
+                    match renderer.resources_mut().upload_result_tensor_glyph_set(job) {
+                        Ok(id) => {
+                            let duration_ms = take_job_duration_ms(renderer, job, &started);
+                            self.async_uploads_state.loaded_tensor_glyph_set_id = Some(id);
+                            self.async_uploads_state.tensor_glyph_set_state =
+                                AssetState::Loaded { duration_ms };
+                        }
+                        Err(e) => {
+                            let duration_ms = take_job_duration_ms(renderer, job, &started);
+                            self.async_uploads_state.tensor_glyph_set_state = AssetState::Failed {
+                                reason: format!("{e}"),
+                                duration_ms,
+                            };
+                        }
                     }
-                    Err(e) => {
-                        let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.tensor_glyph_set_state = AssetState::Failed {
-                            reason: format!("{e}"),
-                            duration_ms,
-                        };
-                    }
-                },
+                }
                 UploadStatus::Failed(e) => {
                     let duration_ms = take_job_duration_ms(renderer, job, &started);
                     self.async_uploads_state.tensor_glyph_set_state = AssetState::Failed {
@@ -737,8 +730,7 @@ impl App {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_volume_id = Some(id);
-                        self.async_uploads_state.volume_state =
-                            AssetState::Loaded { duration_ms };
+                        self.async_uploads_state.volume_state = AssetState::Loaded { duration_ms };
                     }
                     Err(e) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
@@ -910,11 +902,10 @@ impl App {
                     }
                     Err(e) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.sprite_instance_set_state =
-                            AssetState::Failed {
-                                reason: format!("{e}"),
-                                duration_ms,
-                            };
+                        self.async_uploads_state.sprite_instance_set_state = AssetState::Failed {
+                            reason: format!("{e}"),
+                            duration_ms,
+                        };
                     }
                 },
                 UploadStatus::Failed(e) => {
@@ -990,9 +981,8 @@ fn collect_terminal_durations_ms(state: &AsyncUploadsState) -> Vec<u64> {
 }
 
 fn all_assets_terminal(state: &AsyncUploadsState) -> bool {
-    let is_terminal = |s: &AssetState| {
-        matches!(s, AssetState::Loaded { .. } | AssetState::Failed { .. })
-    };
+    let is_terminal =
+        |s: &AssetState| matches!(s, AssetState::Loaded { .. } | AssetState::Failed { .. });
     is_terminal(&state.env_state)
         && is_terminal(&state.mesh_state)
         && is_terminal(&state.texture_state)
@@ -1085,8 +1075,8 @@ impl App {
         if let Some(id) = state.loaded_mesh_id {
             let mut item = SceneRenderItem::default();
             item.mesh_id = id;
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0))
-                .to_cols_array_2d();
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
             item.material = Material::flat([0.4, 0.8, 0.4]);
             items.push(item);
         }
@@ -1096,8 +1086,8 @@ impl App {
             material.texture_id = Some(tex_id);
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0))
-                .to_cols_array_2d();
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).to_cols_array_2d();
             item.material = material;
             items.push(item);
         }
@@ -1105,8 +1095,8 @@ impl App {
         if let Some(id) = state.skin_target_mesh_id {
             let mut item = SceneRenderItem::default();
             item.mesh_id = id;
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0))
-                .to_cols_array_2d();
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(-2.0, 0.0, 0.0)).to_cols_array_2d();
             let colour = if state.skin_installed {
                 [0.9, 0.4, 0.9]
             } else {
@@ -1131,7 +1121,10 @@ impl App {
         lighting.ground_colour = [0.3, 0.3, 0.32];
         // When the env-map has landed, drop hemisphere a bit so the IBL
         // contribution is visible.
-        if matches!(self.async_uploads_state.env_state, AssetState::Loaded { .. }) {
+        if matches!(
+            self.async_uploads_state.env_state,
+            AssetState::Loaded { .. }
+        ) {
             lighting.hemisphere_intensity = 0.1;
         }
         lighting
@@ -1319,7 +1312,11 @@ fn demo_gaussian_splats(size: PayloadSize) -> GaussianSplatData {
     for i in 0..n {
         let theta = (i as f32) / (n as f32) * std::f32::consts::TAU * 4.0;
         let r = 0.4 + (i as f32) / (n as f32) * 0.8;
-        positions.push([r * theta.cos(), (i as f32) / (n as f32) * 1.5 - 0.75, r * theta.sin()]);
+        positions.push([
+            r * theta.cos(),
+            (i as f32) / (n as f32) * 1.5 - 0.75,
+            r * theta.sin(),
+        ]);
     }
     let mut data = GaussianSplatData::default();
     data.positions = positions;
@@ -1465,7 +1462,10 @@ impl App {
         let data = demo_mesh(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            match renderer.resources_mut().upload_mesh_data(&self.device, &data) {
+            match renderer
+                .resources_mut()
+                .upload_mesh_data(&self.device, &data)
+            {
                 Ok(mesh_id) => {
                     self.async_uploads_state.loaded_mesh_id = Some(mesh_id);
                     self.async_uploads_state.mesh_state = AssetState::Loaded {
@@ -1510,10 +1510,13 @@ impl App {
         let rgba = checker_rgba(dim, dim);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            match renderer
-                .resources_mut()
-                .upload_texture(&self.device, &self.queue, dim, dim, &rgba)
-            {
+            match renderer.resources_mut().upload_texture(
+                &self.device,
+                &self.queue,
+                dim,
+                dim,
+                &rgba,
+            ) {
                 Ok(tex_id) => {
                     self.async_uploads_state.loaded_texture_id = Some(tex_id);
                     self.async_uploads_state.texture_state = AssetState::Loaded {
@@ -1565,9 +1568,10 @@ impl App {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer
-                .resources_mut()
-                .begin_upload_skin_weights(&self.device, mesh_id, weights);
+            let job =
+                renderer
+                    .resources_mut()
+                    .begin_upload_skin_weights(&self.device, mesh_id, weights);
             self.async_uploads_state.skin_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1682,11 +1686,10 @@ impl App {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.resources_mut().begin_upload_point_cloud(
-                &self.device,
-                &self.queue,
-                item,
-            );
+            let job =
+                renderer
+                    .resources_mut()
+                    .begin_upload_point_cloud(&self.device, &self.queue, item);
             self.async_uploads_state.point_cloud_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1707,11 +1710,10 @@ impl App {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.resources_mut().begin_upload_glyph_set(
-                &self.device,
-                &self.queue,
-                item,
-            );
+            let job =
+                renderer
+                    .resources_mut()
+                    .begin_upload_glyph_set(&self.device, &self.queue, item);
             self.async_uploads_state.glyph_set_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1724,9 +1726,10 @@ impl App {
         let item = demo_tensor_glyph_set();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer
-                .resources_mut()
-                .upload_tensor_glyph_set(&self.device, &self.queue, &item);
+            let id =
+                renderer
+                    .resources_mut()
+                    .upload_tensor_glyph_set(&self.device, &self.queue, &item);
             self.async_uploads_state.loaded_tensor_glyph_set_id = Some(id);
             self.async_uploads_state.tensor_glyph_set_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
@@ -1749,10 +1752,9 @@ impl App {
         let (data, dims) = demo_volume(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id =
-                renderer
-                    .resources_mut()
-                    .upload_volume(&self.device, &self.queue, &data, dims);
+            let id = renderer
+                .resources_mut()
+                .upload_volume(&self.device, &self.queue, &data, dims);
             self.async_uploads_state.loaded_volume_id = Some(id);
             self.async_uploads_state.volume_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
@@ -1820,17 +1822,19 @@ impl App {
         let (data, w, h) = demo_overlay_texture();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer
-                .resources_mut()
-                .upload_overlay_texture(&self.device, &self.queue, w, h, &data);
+            let id = renderer.resources_mut().upload_overlay_texture(
+                &self.device,
+                &self.queue,
+                w,
+                h,
+                &data,
+            );
             self.async_uploads_state.loaded_overlay_texture_id = Some(id);
             self.async_uploads_state.overlay_texture_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            match renderer
-                .begin_upload_overlay_texture(&self.device, &self.queue, w, h, data)
-            {
+            match renderer.begin_upload_overlay_texture(&self.device, &self.queue, w, h, data) {
                 Ok(job) => {
                     self.async_uploads_state.overlay_texture_state = AssetState::InFlight {
                         job,
@@ -1860,11 +1864,10 @@ impl App {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.resources_mut().begin_upload_sprite_set(
-                &self.device,
-                &self.queue,
-                item,
-            );
+            let job =
+                renderer
+                    .resources_mut()
+                    .begin_upload_sprite_set(&self.device, &self.queue, item);
             self.async_uploads_state.sprite_set_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1887,9 +1890,11 @@ impl App {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer
-                .resources_mut()
-                .begin_upload_sprite_instance_set(&self.device, &self.queue, item);
+            let job = renderer.resources_mut().begin_upload_sprite_instance_set(
+                &self.device,
+                &self.queue,
+                item,
+            );
             self.async_uploads_state.sprite_instance_set_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1934,10 +1939,7 @@ impl App {
 // Pushes per-frame reference items for any pre-uploaded curves into the
 // scene frame. Each curve is positioned in front of the camera, fanned out
 // horizontally so all four can be loaded at once.
-pub(crate) fn submit_async_uploads_items(
-    app: &mut crate::App,
-    fd: &mut viewport_lib::FrameData,
-) {
+pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut viewport_lib::FrameData) {
     if !app.async_uploads_state.built {
         return;
     }
@@ -1998,11 +2000,7 @@ pub(crate) fn submit_async_uploads_items(
 // Controls
 // ---------------------------------------------------------------------------
 
-pub(crate) fn controls_async_uploads(
-    app: &mut App,
-    ui: &mut egui::Ui,
-    frame: &eframe::Frame,
-) {
+pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Frame) {
     ui.heading("Upload mode");
     let mut new_mode = app.async_uploads_state.use_sync;
     ui.horizontal(|ui| {
@@ -2302,20 +2300,22 @@ pub(crate) fn controls_async_uploads(
                 .color(egui::Color32::from_rgb(120, 220, 120)),
         );
         ui.label(
-            egui::RichText::new(format!("Main thread blocked: {main_ms} ms"))
-                .color(if main_ms < total_ms / 2 {
+            egui::RichText::new(format!("Main thread blocked: {main_ms} ms")).color(
+                if main_ms < total_ms / 2 {
                     egui::Color32::from_rgb(120, 220, 120)
                 } else {
                     egui::Color32::from_rgb(220, 140, 120)
-                }),
+                },
+            ),
         );
         ui.label(
-            egui::RichText::new(format!("Worst frame during load: {max_frame:.1} ms"))
-                .color(if max_frame < 50.0 {
+            egui::RichText::new(format!("Worst frame during load: {max_frame:.1} ms")).color(
+                if max_frame < 50.0 {
                     egui::Color32::from_rgb(120, 220, 120)
                 } else {
                     egui::Color32::from_rgb(220, 140, 120)
-                }),
+                },
+            ),
         );
         ui.label(
             egui::RichText::new(

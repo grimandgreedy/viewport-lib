@@ -1075,7 +1075,9 @@ pub(crate) fn build_overlay_frame(
             shapes.push(OverlayShapeItem {
                 position: [x5, y5_mid - row5_h * 0.5],
                 size: [row5_h, row5_h],
-                shape: OverlayShape::Cross { arm_width_frac: 0.35 },
+                shape: OverlayShape::Cross {
+                    arm_width_frac: 0.35,
+                },
                 fill: OverlayFill::Solid([0.3, 0.8, 0.5, 0.9]),
                 rotation: -t * 1.2,
                 border_colour: [0.5, 1.0, 0.7, 0.9],

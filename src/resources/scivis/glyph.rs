@@ -1036,11 +1036,8 @@ impl ViewportGpuResources {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let gid = resources.upload_glyph_set(
-                            &device_for_apply,
-                            &queue_for_apply,
-                            &item,
-                        );
+                        let gid =
+                            resources.upload_glyph_set(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(gid);
                     }),
                 ))
@@ -1175,7 +1172,6 @@ impl ViewportGpuResources {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::ViewportGpuResources;
@@ -1277,9 +1273,12 @@ mod tests {
         };
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_tensor_glyph_set(&device, &queue, sample_tensor_glyph_set());
+        let job =
+            resources.begin_upload_tensor_glyph_set(&device, &queue, sample_tensor_glyph_set());
         drive_until_ready(&mut resources, &device, &queue, job, "tensor_glyph_set");
-        let id = resources.upload_result_tensor_glyph_set(job).expect("ready");
+        let id = resources
+            .upload_result_tensor_glyph_set(job)
+            .expect("ready");
         assert!(resources.tensor_glyph_set_store.contains(id));
     }
 }

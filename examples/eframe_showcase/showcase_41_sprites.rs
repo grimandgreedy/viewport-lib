@@ -19,10 +19,10 @@
 
 use crate::App;
 use eframe::egui;
+use viewport_lib::Selection;
 #[allow(unused_imports)]
 use viewport_lib::renderer::{SpriteLitParams, SpriteNormalMode};
 use viewport_lib::scene::{Scene, build_light_glyphs};
-use viewport_lib::Selection;
 use viewport_lib::{
     BackfacePolicy, ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId,
     GpuParticleSystemItem, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
@@ -336,7 +336,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
                 let b = (core * 0.5).clamp(0.0, 1.0);
                 let a = (core.powf(1.1) * 255.0).clamp(0.0, 255.0) as u8;
                 let i = ((y * w + x) * 4) as usize;
-                pixels[i]     = (r * 255.0) as u8;
+                pixels[i] = (r * 255.0) as u8;
                 pixels[i + 1] = (g * 255.0) as u8;
                 pixels[i + 2] = (b * 255.0) as u8;
                 pixels[i + 3] = a;
@@ -370,7 +370,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
                 let dir_x = dx / r;
                 let dir_y = dy / r;
                 let i = ((y * w + x) * 4) as usize;
-                pixels[i]     = ((dir_x * 0.5 + 0.5) * 255.0) as u8;
+                pixels[i] = ((dir_x * 0.5 + 0.5) * 255.0) as u8;
                 pixels[i + 1] = ((dir_y * 0.5 + 0.5) * 255.0) as u8;
                 pixels[i + 2] = 128;
                 pixels[i + 3] = (ring * 255.0) as u8;
@@ -561,9 +561,10 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         lit_params: SpriteLitParams::default(),
         normal_texture_id: None,
     };
-    let particle_sys = renderer
-        .resources_mut()
-        .create_gpu_particle_system(&app.device, &app.queue, &particle_cfg);
+    let particle_sys =
+        renderer
+            .resources_mut()
+            .create_gpu_particle_system(&app.device, &app.queue, &particle_cfg);
     app.sprite_state.gpu_particle_system = Some(particle_sys);
 
     app.sprite_state.streak_tex = streak_tex;
@@ -737,11 +738,7 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             SpriteSubMode::Blend,
             "Blend",
         );
-        ui.selectable_value(
-            &mut app.sprite_state.sub_mode,
-            SpriteSubMode::Soft,
-            "Soft",
-        );
+        ui.selectable_value(&mut app.sprite_state.sub_mode, SpriteSubMode::Soft, "Soft");
         ui.selectable_value(
             &mut app.sprite_state.sub_mode,
             SpriteSubMode::MeshParticles,
@@ -787,18 +784,26 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
         }
         SpriteSubMode::Blend => {
             ui.label("Three columns of overlapping sprites against a solid sphere.");
-            ui.label("Left: SpriteBlend::AlphaBlend (default). Middle: Additive. Right: Premultiplied.");
+            ui.label(
+                "Left: SpriteBlend::AlphaBlend (default). Middle: Additive. Right: Premultiplied.",
+            );
             ui.label("Additive columns brighten where sprites overlap; alpha columns do not.");
         }
         SpriteSubMode::Soft => {
             ui.label("Two rows of sprites sweep horizontally through the sphere.");
             ui.label("Lower (blue) row uses the batch default `soft_particle_distance = 0.3`.");
-            ui.label("Upper (orange) row overrides via `soft_particle_distances = 2.5` per instance.");
-            ui.label("The wider fade on the upper row shows per-instance distance taking precedence.");
+            ui.label(
+                "Upper (orange) row overrides via `soft_particle_distances = 2.5` per instance.",
+            );
+            ui.label(
+                "The wider fade on the upper row shows per-instance distance taking precedence.",
+            );
         }
         SpriteSubMode::MeshParticles => {
             ui.label("A swarm of cubes orbiting like leaves, drawn through `MeshInstanceItem`.");
-            ui.label("Each blend bucket renders as one indexed draw call, additive blending picked");
+            ui.label(
+                "Each blend bucket renders as one indexed draw call, additive blending picked",
+            );
             ui.label("here so overlapping cubes glow brighter at their intersections.");
         }
         SpriteSubMode::GpuParticles => {
@@ -813,8 +818,14 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             );
             ui.label("Lifetime (min, max seconds):");
             ui.horizontal(|ui| {
-                ui.add(egui::Slider::new(&mut app.sprite_state.gpu_lifetime.0, 0.1..=4.0));
-                ui.add(egui::Slider::new(&mut app.sprite_state.gpu_lifetime.1, 0.1..=8.0));
+                ui.add(egui::Slider::new(
+                    &mut app.sprite_state.gpu_lifetime.0,
+                    0.1..=4.0,
+                ));
+                ui.add(egui::Slider::new(
+                    &mut app.sprite_state.gpu_lifetime.1,
+                    0.1..=8.0,
+                ));
             });
             if app.sprite_state.gpu_lifetime.1 < app.sprite_state.gpu_lifetime.0 {
                 app.sprite_state.gpu_lifetime.1 = app.sprite_state.gpu_lifetime.0;
@@ -825,20 +836,18 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             );
         }
         SpriteSubMode::Trails => {
-            ui.label("Four orbiters trace figure-eights and leave fading ribbon trails behind them.");
-            ui.label("Each trail is a `RibbonItem` whose `colour_attribute` ramps alpha from 0 at the");
+            ui.label(
+                "Four orbiters trace figure-eights and leave fading ribbon trails behind them.",
+            );
+            ui.label(
+                "Each trail is a `RibbonItem` whose `colour_attribute` ramps alpha from 0 at the",
+            );
             ui.label("tail to 1 at the head, and whose `width_attribute` tapers the same way.");
             ui.separator();
             ui.label("Trail length:");
-            ui.add(
-                egui::Slider::new(&mut app.sprite_state.trail_length, 10..=200)
-                    .step_by(1.0),
-            );
+            ui.add(egui::Slider::new(&mut app.sprite_state.trail_length, 10..=200).step_by(1.0));
             ui.label("Head width:");
-            ui.add(
-                egui::Slider::new(&mut app.sprite_state.trail_width, 0.02..=0.5)
-                    .step_by(0.01),
-            );
+            ui.add(egui::Slider::new(&mut app.sprite_state.trail_width, 0.02..=0.5).step_by(0.01));
             ui.label("Blend mode:");
             ui.horizontal(|ui| {
                 ui.selectable_value(
@@ -997,9 +1006,7 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
             let fps = 10.0_f32;
             app.sprite_state.atlas_frame = (app.sprite_state.atlas_time * fps) as u32 % 16;
         }
-        SpriteSubMode::Soft
-        | SpriteSubMode::MeshParticles
-        | SpriteSubMode::GpuParticles => {
+        SpriteSubMode::Soft | SpriteSubMode::MeshParticles | SpriteSubMode::GpuParticles => {
             app.sprite_state.demo_time += dt;
         }
         SpriteSubMode::Distortion => {
@@ -1026,9 +1033,9 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
                 p[2] += v[2] * dt;
                 if p[2] < -0.5 {
                     // Recycle to the top with a fresh xy.
-                    let mut seed = 0xabad_u64.wrapping_add(i as u64).wrapping_add(
-                        (app.sprite_state.demo_time * 9173.0) as u64,
-                    );
+                    let mut seed = 0xabad_u64
+                        .wrapping_add(i as u64)
+                        .wrapping_add((app.sprite_state.demo_time * 9173.0) as u64);
                     let mut r = || -> f32 {
                         seed = seed
                             .wrapping_mul(6364136223846793005)
@@ -1320,8 +1327,8 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             // emissive (`lit: false`); the right is lit, so its bright side
             // tracks the rotating directional light while the left stays flat.
             const PUFFS_PER_PILLAR: usize = 40;
-            const CYCLE: f32 = 6.0;        // seconds for a puff to rise and recycle
-            const RISE_HEIGHT: f32 = 4.5;  // metres travelled per cycle
+            const CYCLE: f32 = 6.0; // seconds for a puff to rise and recycle
+            const RISE_HEIGHT: f32 = 4.5; // metres travelled per cycle
             const BASE_Z: f32 = -0.6;
             let t = app.sprite_state.demo_time;
             let pillar_x = 1.8;
@@ -1332,7 +1339,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 for i in 0..PUFFS_PER_PILLAR {
                     let stagger = (i as f32 / PUFFS_PER_PILLAR as f32) * CYCLE;
                     let age = (t + stagger + seed).rem_euclid(CYCLE);
-                    let u = age / CYCLE;                       // 0..1 over one cycle
+                    let u = age / CYCLE; // 0..1 over one cycle
                     let h = BASE_Z + u * RISE_HEIGHT;
 
                     // Lateral spread grows with age: a sharp jet at the base
@@ -1589,12 +1596,7 @@ pub(crate) fn mesh_instance_items(app: &App) -> Vec<MeshInstanceItem> {
         transforms.push(model.to_cols_array_2d());
         let hue = (frac + t * 0.05) % 1.0;
         let (r, g, b) = hsl_to_rgb(hue, 0.85, 0.55);
-        colours.push([
-            r as f32 / 255.0,
-            g as f32 / 255.0,
-            b as f32 / 255.0,
-            0.8,
-        ]);
+        colours.push([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 0.8]);
     }
     let mut item = MeshInstanceItem::default();
     item.mesh_id = app.sprite_state.cube_id.index() as u64;
@@ -1669,11 +1671,8 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
         let orbit_radius = 4.5;
         let orbit_height = 2.5;
         let target = glam::Vec3::new(0.0, 0.0, 1.5);
-        let light_pos = glam::Vec3::new(
-            a.cos() * orbit_radius,
-            a.sin() * orbit_radius,
-            orbit_height,
-        );
+        let light_pos =
+            glam::Vec3::new(a.cos() * orbit_radius, a.sin() * orbit_radius, orbit_height);
         let dir = (light_pos - target).normalize_or_zero();
 
         let mut src = LightSource::default();
@@ -1752,11 +1751,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             // markers sample three different cells of the atlas texture so
             // they read as distinct categories; small data points use the
             // glow texture tinted per cluster.
-            let cluster_centres = [
-                [ 2.4_f32,  0.0,  1.0_f32],
-                [-1.8,       2.0,  0.5],
-                [ 0.0,      -2.4, -0.5],
-            ];
+            let cluster_centres = [[2.4_f32, 0.0, 1.0_f32], [-1.8, 2.0, 0.5], [0.0, -2.4, -0.5]];
             let cluster_rgb = [
                 [0.30, 0.65, 1.00], // blue
                 [1.00, 0.55, 0.20], // orange
@@ -1782,11 +1777,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
                     let ny = (rand() + rand() + rand()) / 3.0 - 0.5;
                     let nz = (rand() + rand() + rand()) / 3.0 - 0.5;
                     let spread = 1.2;
-                    positions.push([
-                        c[0] + nx * spread,
-                        c[1] + ny * spread,
-                        c[2] + nz * spread,
-                    ]);
+                    positions.push([c[0] + nx * spread, c[1] + ny * spread, c[2] + nz * spread]);
                     colours.push([r, g, b, 0.65]);
                 }
             }
@@ -1927,7 +1918,12 @@ pub(crate) fn trail_ribbon_items(app: &App) -> Vec<RibbonItem> {
                 // k=0 is the oldest point (tail), k=n-1 is the newest (head).
                 let t = k as f32 / (n - 1) as f32;
                 let alpha = t * t;
-                colours.push([emitter.colour[0], emitter.colour[1], emitter.colour[2], alpha]);
+                colours.push([
+                    emitter.colour[0],
+                    emitter.colour[1],
+                    emitter.colour[2],
+                    alpha,
+                ]);
                 widths.push(head_width * t);
             }
             let mut item = RibbonItem::default();

@@ -486,7 +486,10 @@ pub(crate) fn controls_sl(app: &mut App, ui: &mut egui::Ui) {
     );
 
     ui.separator();
-    ui.checkbox(&mut app.sl_state.show_cluster_stats, "Show cluster build stats");
+    ui.checkbox(
+        &mut app.sl_state.show_cluster_stats,
+        "Show cluster build stats",
+    );
     if app.sl_state.show_cluster_stats {
         draw_cluster_stats(app, ui);
     }
@@ -505,7 +508,11 @@ fn draw_cluster_stats(app: &App, ui: &mut egui::Ui) {
             ui.label(format!("{}", s.active_light_count));
             ui.end_row();
             ui.label("Cluster path:");
-            ui.label(if s.fallback_active { "FALLBACK (straight loop)" } else { "clustered" });
+            ui.label(if s.fallback_active {
+                "FALLBACK (straight loop)"
+            } else {
+                "clustered"
+            });
             ui.end_row();
             ui.label("Non-empty cells:");
             ui.label(format!("{} / {}", s.non_empty_cells, s.total_cells));

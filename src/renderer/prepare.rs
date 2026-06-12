@@ -316,8 +316,9 @@ impl ViewportRenderer {
         // Dropping off-screen lights here keeps the cluster build pass and
         // the per-fragment iteration both bounded by what is actually visible.
         // Directional lights always survive : they affect every fragment.
-        let cull_frustum =
-            crate::camera::frustum::Frustum::from_view_proj(&frame.camera.render_camera.view_proj());
+        let cull_frustum = crate::camera::frustum::Frustum::from_view_proj(
+            &frame.camera.render_camera.view_proj(),
+        );
         let mut frustum_culled = 0u32;
         let raw_lights: Vec<&LightSource> = raw_lights_unculled
             .into_iter()
@@ -341,8 +342,12 @@ impl ViewportRenderer {
                     if axis.length_squared() < 1e-8 {
                         return true;
                     }
-                    let keep =
-                        !cull_frustum.cull_cone(glam::Vec3::from(position), axis, outer_angle, range);
+                    let keep = !cull_frustum.cull_cone(
+                        glam::Vec3::from(position),
+                        axis,
+                        outer_angle,
+                        range,
+                    );
                     if !keep {
                         frustum_culled += 1;
                     }
@@ -627,8 +632,8 @@ impl ViewportRenderer {
         // camera bind group.
         {
             use crate::resources::clustered::{
-                ActiveLightView, CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES,
-                CLUSTER_COUNT, ClusterGridUniform,
+                ActiveLightView, CLUSTER_COUNT, CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES,
+                ClusterGridUniform,
             };
 
             let view_mat = frame.camera.render_camera.view;
@@ -653,7 +658,12 @@ impl ViewportRenderer {
                 && active_count > crate::resources::clustered::SMALL_N_THRESHOLD;
             let fallback_flag = if use_clusters { 0.0 } else { 1.0 };
             let grid_uniform = ClusterGridUniform {
-                dimensions: [CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES, CLUSTER_COUNT],
+                dimensions: [
+                    CLUSTER_X_TILES,
+                    CLUSTER_Y_TILES,
+                    CLUSTER_Z_SLICES,
+                    CLUSTER_COUNT,
+                ],
                 depth: [near, far, (far / near).ln(), active_count as f32],
                 screen: [
                     frame.camera.render_camera.aspect.max(0.01),
@@ -664,9 +674,7 @@ impl ViewportRenderer {
                 proj_scale: [tan_half_fov_x, tan_half_fov_y, 0.0, 0.0],
                 view: view_mat.to_cols_array_2d(),
             };
-            resources
-                .clustered
-                .write_grid_uniform(queue, &grid_uniform);
+            resources.clustered.write_grid_uniform(queue, &grid_uniform);
 
             // Build the view-space ActiveLight array. Order matches
             // `lights_packed` / `light_storage_buf` so light_indices[j] from
@@ -677,14 +685,12 @@ impl ViewportRenderer {
                     let (view_pos, range, light_type, view_dir, cos_outer) = match l.kind {
                         LightKind::Directional { direction } => {
                             let world_dir = glam::Vec3::from(direction).normalize_or_zero();
-                            let view_dir = view_mat
-                                .transform_vector3(world_dir)
-                                .normalize_or_zero();
+                            let view_dir =
+                                view_mat.transform_vector3(world_dir).normalize_or_zero();
                             (glam::Vec3::ZERO, f32::INFINITY, 0u32, view_dir, 1.0)
                         }
                         LightKind::Point { position, range } => {
-                            let view_pos = view_mat
-                                .transform_point3(glam::Vec3::from(position));
+                            let view_pos = view_mat.transform_point3(glam::Vec3::from(position));
                             (view_pos, range, 1u32, glam::Vec3::ZERO, 1.0)
                         }
                         LightKind::Spot {
@@ -694,8 +700,7 @@ impl ViewportRenderer {
                             outer_angle,
                             ..
                         } => {
-                            let view_pos = view_mat
-                                .transform_point3(glam::Vec3::from(position));
+                            let view_pos = view_mat.transform_point3(glam::Vec3::from(position));
                             let view_dir = view_mat
                                 .transform_vector3(glam::Vec3::from(direction))
                                 .normalize_or_zero();
@@ -727,12 +732,10 @@ impl ViewportRenderer {
             // Optional host readback for the debug stats panel. Synchronous;
             // off by default.
             if frame.viewport.cluster_stats_request {
-                let stats = resources.clustered.read_stats(
-                    device,
-                    queue,
-                    active_count,
-                    !use_clusters,
-                );
+                let stats =
+                    resources
+                        .clustered
+                        .read_stats(device, queue, active_count, !use_clusters);
                 self.last_cluster_stats = Some(stats);
             }
         }
@@ -823,8 +826,7 @@ impl ViewportRenderer {
                     .resize_with(scene_items.len(), || None);
             }
             if self.per_item_object_cache_keys.len() < scene_items.len() {
-                self.per_item_object_cache_keys
-                    .resize(scene_items.len(), 0);
+                self.per_item_object_cache_keys.resize(scene_items.len(), 0);
             }
             for (item_idx, item) in scene_items.iter().enumerate() {
                 // When instancing is active, skip items that will be rendered
@@ -1679,11 +1681,7 @@ impl ViewportRenderer {
                     Some(e) => e.clone(),
                     None => continue,
                 };
-                queue.write_buffer(
-                    &entry._uniform_buf,
-                    0,
-                    bytemuck::bytes_of(&ref_item.model),
-                );
+                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 self.point_cloud_gpu_data.push(entry);
             }
         }
@@ -1714,14 +1712,9 @@ impl ViewportRenderer {
                     Some(e) => e.clone(),
                     None => continue,
                 };
-                queue.write_buffer(
-                    &entry._uniform_buf,
-                    0,
-                    bytemuck::bytes_of(&ref_item.model),
-                );
+                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 let mut gpu_data = entry;
-                gpu_data.wireframe =
-                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 self.glyph_gpu_data.push(gpu_data);
             }
         }
@@ -1813,7 +1806,8 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gd = resources.upload_tensor_glyph_set_per_frame(device, queue, item, wireframe);
+                let gd =
+                    resources.upload_tensor_glyph_set_per_frame(device, queue, item, wireframe);
                 self.tensor_glyph_gpu_data.push(gd);
             }
         }
@@ -1831,14 +1825,9 @@ impl ViewportRenderer {
                     Some(e) => e.clone(),
                     None => continue,
                 };
-                queue.write_buffer(
-                    &entry._uniform_buf,
-                    0,
-                    bytemuck::bytes_of(&ref_item.model),
-                );
+                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 let mut gpu_data = entry;
-                gpu_data.wireframe =
-                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 self.tensor_glyph_gpu_data.push(gpu_data);
             }
         }
@@ -1855,7 +1844,8 @@ impl ViewportRenderer {
                 if item.settings.hidden || item.positions.is_empty() {
                     continue;
                 }
-                let mut gpu_data = resources.upload_polyline_per_frame(device, queue, item, vp_size);
+                let mut gpu_data =
+                    resources.upload_polyline_per_frame(device, queue, item, vp_size);
                 gpu_data.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 if frame.interaction.outline_selected && item.settings.selected {
                     self.polyline_selected_gpu_indices
@@ -1906,15 +1896,10 @@ impl ViewportRenderer {
                     None => continue,
                 };
                 // Model matrix at offset 0.
-                queue.write_buffer(
-                    &entry._uniform_buf,
-                    0,
-                    bytemuck::bytes_of(&ref_item.model),
-                );
+                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 queue.write_buffer(&entry._uniform_buf, 96, bytemuck::bytes_of(&vp));
                 let mut gpu_data = entry;
-                gpu_data.wireframe =
-                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if frame.interaction.outline_selected && ref_item.settings.selected {
                     self.polyline_selected_gpu_indices
                         .push(self.polyline_gpu_data.len());
@@ -1955,7 +1940,8 @@ impl ViewportRenderer {
                         crate::renderer::sphere_wireframe_polyline(center, radius, 48, colour)
                     }
                 };
-                let mut gpu_data = resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
+                let mut gpu_data =
+                    resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
                 gpu_data.wireframe = true;
                 self.polyline_gpu_data.push(gpu_data);
             }
@@ -1984,7 +1970,8 @@ impl ViewportRenderer {
                     line_width: item.line_width,
                     ..Default::default()
                 };
-                let gpu_data = resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
+                let gpu_data =
+                    resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
                 self.polyline_gpu_data.push(gpu_data);
             }
         }
@@ -2139,7 +2126,8 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data = resources.upload_streamtube_per_frame(device, queue, item, wireframe);
+                let gpu_data =
+                    resources.upload_streamtube_per_frame(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
                         self.streamtube_selected_gpu_indices
@@ -2163,14 +2151,9 @@ impl ViewportRenderer {
                     Some(e) => e.clone(),
                     None => continue,
                 };
-                queue.write_buffer(
-                    &entry._uniform_buf,
-                    0,
-                    bytemuck::bytes_of(&ref_item.model),
-                );
+                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 let mut gpu_data = entry;
-                gpu_data.wireframe =
-                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
                         self.streamtube_selected_gpu_indices
@@ -2220,14 +2203,9 @@ impl ViewportRenderer {
                     Some(e) => e.clone(),
                     None => continue,
                 };
-                queue.write_buffer(
-                    &entry._uniform_buf,
-                    0,
-                    bytemuck::bytes_of(&ref_item.model),
-                );
+                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 let mut gpu_data = entry;
-                gpu_data.wireframe =
-                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
                         self.tube_selected_gpu_indices
@@ -2277,14 +2255,9 @@ impl ViewportRenderer {
                     Some(e) => e.clone(),
                     None => continue,
                 };
-                queue.write_buffer(
-                    &entry._uniform_buf,
-                    0,
-                    bytemuck::bytes_of(&ref_item.model),
-                );
+                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 let mut gpu_data = entry;
-                gpu_data.wireframe =
-                    frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
                         self.ribbon_selected_gpu_indices
@@ -6021,8 +5994,7 @@ impl ViewportRenderer {
                     }
                     // Clone so per-frame animation overrides are local and
                     // the input frame data stays untouched.
-                    let mut owned: crate::renderer::types::OverlayShapeItem =
-                        (*shape_orig).clone();
+                    let mut owned: crate::renderer::types::OverlayShapeItem = (*shape_orig).clone();
                     if let Some(track) = owned.animations.opacity {
                         // Multi-channel opacity track takes precedence over
                         // the legacy `animation` field.
@@ -7477,7 +7449,11 @@ fn pack_stops(
 ) -> f32 {
     let cap = crate::renderer::types::OVERLAY_MAX_GRADIENT_STOPS;
     let mut buf: Vec<crate::renderer::types::GradientStop> = stops.iter().copied().collect();
-    buf.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap_or(std::cmp::Ordering::Equal));
+    buf.sort_by(|a, b| {
+        a.position
+            .partial_cmp(&b.position)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     if buf.is_empty() {
         // Empty stops list: degrade to transparent black.
         let s = crate::renderer::types::GradientStop::new(0.0, [0.0; 4]);

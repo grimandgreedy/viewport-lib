@@ -83,7 +83,13 @@ impl Frustum {
     /// add the cone's spread at the far end.
     ///
     /// Conservative: cones partially inside the frustum are kept.
-    pub fn cull_cone(&self, apex: glam::Vec3, axis: glam::Vec3, half_angle: f32, range: f32) -> bool {
+    pub fn cull_cone(
+        &self,
+        apex: glam::Vec3,
+        axis: glam::Vec3,
+        half_angle: f32,
+        range: f32,
+    ) -> bool {
         let sin_a = half_angle.sin();
         let cos_a = half_angle.cos();
         // Far cap radius and centre.

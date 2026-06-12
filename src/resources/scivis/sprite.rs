@@ -367,45 +367,44 @@ impl ViewportGpuResources {
             push_constant_ranges: &[],
         });
 
-        let refraction_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("sprite_refraction_pipeline"),
-                layout: Some(&refraction_layout),
-                vertex: wgpu::VertexState {
-                    module: &refraction_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &vertex_buffers,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &refraction_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: hdr,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            });
+        let refraction_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sprite_refraction_pipeline"),
+            layout: Some(&refraction_layout),
+            vertex: wgpu::VertexState {
+                module: &refraction_shader,
+                entry_point: Some("vs_main"),
+                buffers: &vertex_buffers,
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &refraction_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: hdr,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
 
         self.sprite_refraction_bgl = Some(refraction_bgl);
         self.sprite_refraction_sampler = Some(refraction_sampler);
@@ -718,10 +717,7 @@ impl ViewportGpuResources {
                 .unwrap_or(0.0),
             orientation,
             axis: item.axis,
-            refraction_strength: item
-                .refraction_strength
-                .filter(|s| *s > 0.0)
-                .unwrap_or(0.0),
+            refraction_strength: item.refraction_strength.filter(|s| *s > 0.0).unwrap_or(0.0),
             lit: item.lit as u32,
             normal_mode,
             has_normal_map,
@@ -795,10 +791,7 @@ impl ViewportGpuResources {
             depth_write: item.depth_write,
             blend: item.blend,
             wireframe: false,
-            refraction_strength: item
-                .refraction_strength
-                .filter(|s| *s > 0.0)
-                .unwrap_or(0.0),
+            refraction_strength: item.refraction_strength.filter(|s| *s > 0.0).unwrap_or(0.0),
             lit: item.lit,
             lit_normal_bg,
             _uniform_buf: uniform_buf,
@@ -939,16 +932,13 @@ impl ViewportGpuResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(Box::new(
-                    move |resources: &mut ViewportGpuResources| {
-                        let sid = resources.upload_sprite_set(
-                            &device_for_apply,
-                            &queue_for_apply,
-                            &item,
-                        );
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
+                        let sid =
+                            resources.upload_sprite_set(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(sid);
-                    },
-                )))
+                    }),
+                ))
             })
         };
         self.job_sprite_set_results
@@ -1008,10 +998,7 @@ impl ViewportGpuResources {
     }
 
     /// Remove a pre-uploaded sprite instance set.
-    pub fn drop_sprite_instance_set(
-        &mut self,
-        id: crate::resources::SpriteInstanceSetId,
-    ) -> bool {
+    pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
         self.sprite_instance_set_store.remove(id)
     }
 
@@ -1047,16 +1034,16 @@ impl ViewportGpuResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(Box::new(
-                    move |resources: &mut ViewportGpuResources| {
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
                         let sid = resources.upload_sprite_instance_set(
                             &device_for_apply,
                             &queue_for_apply,
                             &item,
                         );
                         slot_for_apply.set(sid);
-                    },
-                )))
+                    }),
+                ))
             })
         };
         self.job_sprite_instance_set_results

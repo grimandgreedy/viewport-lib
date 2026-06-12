@@ -547,11 +547,7 @@ impl JobRunner {
     /// (only when `status` is `Ready`), then invoke the registered
     /// `callback` if present. Splitting these out lets the caller drop any
     /// external lock around the runner before mutating renderer state.
-    pub fn process(
-        &mut self,
-        device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-    ) -> Vec<Completion> {
+    pub fn process(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) -> Vec<Completion> {
         // Drop the previous frame's retention window. Callers that needed
         // those results have already taken them.
         self.finished.clear();
@@ -564,11 +560,7 @@ impl JobRunner {
         let ids: Vec<u64> = self.slots.keys().copied().collect();
         for id in ids {
             // Stage 1: pick up the worker result if we have not already.
-            if self
-                .slots
-                .get(&id)
-                .is_some_and(|s| s.awaiting.is_none())
-            {
+            if self.slots.get(&id).is_some_and(|s| s.awaiting.is_none()) {
                 let outcome = self
                     .slots
                     .get(&id)
@@ -580,12 +572,7 @@ impl JobRunner {
                         let JobProduct { gpu, apply } = product;
                         match gpu {
                             None => {
-                                self.finish(
-                                    id,
-                                    UploadStatus::Ready,
-                                    apply,
-                                    &mut completions,
-                                );
+                                self.finish(id, UploadStatus::Ready, apply, &mut completions);
                                 continue;
                             }
                             Some(sub) => {
@@ -597,12 +584,7 @@ impl JobRunner {
                     }
                     Ok(WorkerOutcome::Failed(e, worker_dur)) => {
                         self.durations.insert(id, worker_dur);
-                        self.finish(
-                            id,
-                            UploadStatus::Failed(e),
-                            None,
-                            &mut completions,
-                        );
+                        self.finish(id, UploadStatus::Failed(e), None, &mut completions);
                         continue;
                     }
                     Err(mpsc::TryRecvError::Empty) => continue,
@@ -635,8 +617,7 @@ impl JobRunner {
                     timeout: Some(Duration::from_millis(0)),
                 });
                 match result {
-                    Ok(wgpu::PollStatus::QueueEmpty)
-                    | Ok(wgpu::PollStatus::WaitSucceeded) => {
+                    Ok(wgpu::PollStatus::QueueEmpty) | Ok(wgpu::PollStatus::WaitSucceeded) => {
                         let apply = self
                             .slots
                             .get_mut(&id)
@@ -1279,7 +1260,12 @@ mod tests {
             }
         });
 
-        assert_eq!(seen_ready.len(), ids.len(), "stragglers: {}", runner.pending());
+        assert_eq!(
+            seen_ready.len(),
+            ids.len(),
+            "stragglers: {}",
+            runner.pending()
+        );
         assert!(runner.all_complete());
     }
 
@@ -1294,7 +1280,11 @@ mod tests {
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 });
-                queue.write_buffer(&buf, 0, &[1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+                queue.write_buffer(
+                    &buf,
+                    0,
+                    &[1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                );
                 let mut enc =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
                 // Force a non-trivial command buffer so the submission has
@@ -1328,7 +1318,11 @@ mod tests {
     // Plugin-facing facade
     // -----------------------------------------------------------------
 
-    fn make_resources_for_jobs() -> Option<(wgpu::Device, wgpu::Queue, super::super::ViewportGpuResources)> {
+    fn make_resources_for_jobs() -> Option<(
+        wgpu::Device,
+        wgpu::Queue,
+        super::super::ViewportGpuResources,
+    )> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
@@ -1543,10 +1537,7 @@ mod tests {
         // Ready.
         resources.process_uploads(&device, &queue);
         for &id in &ids {
-            assert!(matches!(
-                resources.upload_status(id),
-                UploadStatus::Ready
-            ));
+            assert!(matches!(resources.upload_status(id), UploadStatus::Ready));
         }
         assert!(resources.all_uploads_complete());
     }
@@ -1561,19 +1552,18 @@ mod tests {
             backends: wgpu::Backends::PRIMARY | wgpu::Backends::SECONDARY,
             ..Default::default()
         });
-        let adapter = match pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: false,
-            },
-        )) {
-            Ok(a) => a,
-            Err(_) => {
-                eprintln!("skipping GPU-gated test: no adapter available");
-                return;
-            }
-        };
+            })) {
+                Ok(a) => a,
+                Err(_) => {
+                    eprintln!("skipping GPU-gated test: no adapter available");
+                    return;
+                }
+            };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("upload_jobs_test_device"),
             required_features: wgpu::Features::empty(),
@@ -1586,4 +1576,3 @@ mod tests {
         f(&device, &queue);
     }
 }
-

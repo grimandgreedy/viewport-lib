@@ -199,7 +199,10 @@ impl CullResources {
         });
 
         let (pass1_label, pass2_label) = match cascade {
-            None => ("cull_instances_pass".to_string(), "write_indirect_args_pass".to_string()),
+            None => (
+                "cull_instances_pass".to_string(),
+                "write_indirect_args_pass".to_string(),
+            ),
             Some(c) => (
                 format!("shadow_cull_instances_pass_{c}"),
                 format!("shadow_write_indirect_args_pass_{c}"),

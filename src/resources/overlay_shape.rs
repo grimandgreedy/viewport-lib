@@ -322,16 +322,16 @@ impl super::ViewportGpuResources {
                 );
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 progress.set(0.95);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(Box::new(
-                    move |resources: &mut super::ViewportGpuResources| {
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut super::ViewportGpuResources| {
                         let id = resources.overlay_textures.len() as u64;
                         resources.overlay_textures.push(OverlayShapeTextureEntry {
                             _texture: texture,
                             view,
                         });
                         slot_for_apply.set(OverlayTextureId(id));
-                    },
-                )))
+                    }),
+                ))
             })
         };
 

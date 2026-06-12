@@ -1,15 +1,13 @@
+/// Clustered-shading GPU resources (cluster grid + light index list + clear pass).
+pub mod clustered;
 /// Built-in colourmap LUT data.
 pub mod colourmap_data;
 /// Screen-space decal pipeline (D1).
 pub(crate) mod decal;
 /// Dynamic resolution intermediate render target.
 pub(crate) mod dyn_res;
-/// Clustered-shading GPU resources (cluster grid + light index list + clear pass).
-pub mod clustered;
 /// IBL precomputation and environment map upload.
 pub mod environment;
-/// GPU compute path for IBL precomputation (selected at runtime when supported).
-mod ibl_compute;
 mod extra_impls;
 /// Font atlas and single-line text layout for overlay rendering.
 pub(crate) mod font;
@@ -18,6 +16,8 @@ pub mod gpu_marching_cubes;
 /// GPU particle systems: compute-driven emit + sim with sprite draw.
 pub mod gpu_particles;
 mod highlight;
+/// GPU compute path for IBL precomputation (selected at runtime when supported).
+mod ibl_compute;
 /// GPU implicit surface types and pipeline.
 pub mod implicit;
 mod init;
@@ -60,32 +60,6 @@ pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
     SHADOW_DEPTH_FORMAT,
 };
-pub use self::sparse_volume::SparseVolumeGridData;
-#[allow(deprecated)]
-pub use self::types::ClipVolumeUniform;
-pub(crate) use self::types::ScatterViewportState;
-pub use self::types::BatchMeta;
-pub(crate) use self::types::{
-    AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform,
-    ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,
-    FrustumUniform, GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh,
-    GridUniform, GroundPlaneUniform, ImageSliceGpuData, InstanceAabb, InstanceData, LabelGpuData,
-    LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, ObjectUniform, OutlineEdgeUniform,
-    OutlineObjectBuffers, OutlineUniform, OverlayShapeGpuData, OverlayShapeTexBatch,
-    OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex, OverlayUniform, PickInstance,
-    ProjectedTetUniform, RawGeomOutlineBuffers, SHADOW_ATLAS_SIZE, ScreenRectOutlineBuffers,
-    MeshInstanceGpuData, ShadowAtlasUniform, SplatOutlineBuffers, SplatOutlineMaskUniform,
-    SpriteGpuData, SsaoUniform,
-    StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData, ToneMapUniform, ViewportHdrState,
-    VolumeSurfaceSliceGpuData,
-};
-pub use self::types::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
-    LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
-    PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
-    SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
-};
 pub use self::scivis::curve_store::{
     GlyphSetId, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,
     TensorGlyphSetId, TubeId,
@@ -94,9 +68,34 @@ pub(crate) use self::scivis::curve_store::{
     GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
-pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
+pub use self::sparse_volume::SparseVolumeGridData;
+pub use self::types::BatchMeta;
+#[allow(deprecated)]
+pub use self::types::ClipVolumeUniform;
+pub(crate) use self::types::ScatterViewportState;
+pub(crate) use self::types::{
+    AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ContactShadowUniform,
+    CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
+    GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh, GridUniform,
+    GroundPlaneUniform, ImageSliceGpuData, InstanceAabb, InstanceData, LabelGpuData,
+    LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
+    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShapeGpuData,
+    OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
+    OverlayUniform, PickInstance, ProjectedTetUniform, RawGeomOutlineBuffers, SHADOW_ATLAS_SIZE,
+    ScreenRectOutlineBuffers, ShadowAtlasUniform, SplatOutlineBuffers, SplatOutlineMaskUniform,
+    SpriteGpuData, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData,
+    ToneMapUniform, ViewportHdrState, VolumeSurfaceSliceGpuData,
+};
+pub use self::types::{
+    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
+    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
+    LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
+    PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
+    SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
+};
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
+pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
 #[allow(deprecated)]
 pub use self::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,

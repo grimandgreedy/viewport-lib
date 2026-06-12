@@ -172,7 +172,11 @@ impl App {
             for &n in &item.strip_lengths {
                 let n = n as usize;
                 for k in 0..n {
-                    let t = if n > 1 { k as f32 / (n - 1) as f32 } else { 1.0 };
+                    let t = if n > 1 {
+                        k as f32 / (n - 1) as f32
+                    } else {
+                        1.0
+                    };
                     colours.push([rgb[0], rgb[1], rgb[2], t]);
                 }
             }
@@ -249,7 +253,10 @@ pub(crate) fn controls_streamlines(app: &mut App, ui: &mut egui::Ui) {
         StreamRenderMode::Ribbon => {
             ui.label("Ribbon half-width:");
             ui.add(egui::Slider::new(&mut s.ribbon_width, 0.02..=0.5).step_by(0.01));
-            ui.checkbox(&mut s.ribbon_trail_fade, "Trail fade (alpha ramp head -> tail)");
+            ui.checkbox(
+                &mut s.ribbon_trail_fade,
+                "Trail fade (alpha ramp head -> tail)",
+            );
             ui.label("Blend mode:");
             ui.horizontal(|ui| {
                 if ui
@@ -265,7 +272,10 @@ pub(crate) fn controls_streamlines(app: &mut App, ui: &mut egui::Ui) {
                     s.ribbon_blend = SpriteBlend::Additive;
                 }
                 if ui
-                    .radio(s.ribbon_blend == SpriteBlend::Premultiplied, "Premultiplied")
+                    .radio(
+                        s.ribbon_blend == SpriteBlend::Premultiplied,
+                        "Premultiplied",
+                    )
                     .clicked()
                 {
                     s.ribbon_blend = SpriteBlend::Premultiplied;

@@ -643,8 +643,8 @@ impl ViewportGpuResources {
 
                 progress.set(0.95);
 
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(Box::new(
-                    move |resources: &mut ViewportGpuResources| {
+                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
+                    Box::new(move |resources: &mut ViewportGpuResources| {
                         let gpu_set = GaussianSplatGpuSet {
                             position_buf,
                             scale_buf,
@@ -659,8 +659,8 @@ impl ViewportGpuResources {
                         };
                         let store_index = resources.gaussian_splat_store.insert(gpu_set);
                         slot_for_apply.set(crate::renderer::GaussianSplatId(store_index));
-                    },
-                )))
+                    }),
+                ))
             })
         };
 
@@ -1076,7 +1076,6 @@ impl ViewportGpuResources {
         }
     }
 }
-
 
 #[cfg(test)]
 mod async_tests {

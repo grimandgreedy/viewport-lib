@@ -975,10 +975,7 @@ macro_rules! emit_scivis_draw_calls {
         // Mesh-instance pass: one draw call per host-built batch, routed by
         // blend mode. Reuses the scene-graph instanced mesh pipeline family.
         if !$mesh_instance_gpu_data.is_empty() {
-            let mesh_buckets: [(
-                crate::renderer::SpriteBlend,
-                Option<&wgpu::RenderPipeline>,
-            ); 3] = [
+            let mesh_buckets: [(crate::renderer::SpriteBlend, Option<&wgpu::RenderPipeline>); 3] = [
                 (
                     crate::renderer::SpriteBlend::AlphaBlend,
                     resources.hdr_transparent_instanced_pipeline.as_ref(),
@@ -1012,10 +1009,8 @@ macro_rules! emit_scivis_draw_calls {
                     }
                     render_pass.set_bind_group(1, &batch.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        mesh.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instance_count);
                 }
             }

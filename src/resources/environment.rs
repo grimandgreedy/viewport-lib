@@ -38,14 +38,8 @@ pub fn upload_environment_map(
     width: u32,
     height: u32,
 ) -> crate::error::ViewportResult<()> {
-    let id = begin_upload_environment_map(
-        resources,
-        device,
-        queue,
-        pixels.to_vec(),
-        width,
-        height,
-    )?;
+    let id =
+        begin_upload_environment_map(resources, device, queue, pixels.to_vec(), width, height)?;
     loop {
         resources.process_uploads(device, queue);
         match resources.upload_status(id) {
@@ -92,16 +86,12 @@ pub fn begin_upload_environment_map(
     let compute_supported = super::ibl_compute::compute_supported(device);
     let needs_brdf = resources.ibl_brdf_lut_texture.is_none();
 
-    let mut runner = resources
-        .jobs
-        .lock()
-        .expect("upload job runner poisoned");
+    let mut runner = resources.jobs.lock().expect("upload job runner poisoned");
     let id = if compute_supported {
         runner.submit_with_gpu(device, queue, move |dev, q, progress| {
             progress.set(0.1);
-            let result = super::ibl_compute::compute_ibl(
-                dev, q, &pixels, width, height, needs_brdf,
-            );
+            let result =
+                super::ibl_compute::compute_ibl(dev, q, &pixels, width, height, needs_brdf);
             progress.set(1.0);
             Ok(JobProduct::with_gpu_and_apply(
                 result.submission.clone(),
@@ -201,8 +191,9 @@ fn run_cpu_path(
 
     // 5. Flush so the runner has a submission to gate on. Implicit writes
     // queued above are folded into this submit by wgpu.
-    let encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ibl_flush") });
+    let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("ibl_flush"),
+    });
     let submission = queue.submit(std::iter::once(encoder.finish()));
 
     progress.set(1.0);

@@ -237,7 +237,6 @@ impl ViewportRenderer {
             render_pass.set_bind_group(0, &self.resources.shadow_atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);
         }
-
     }
 
     /// Render the scene into an intermediate dyn-res texture for the LDR callback
@@ -1760,9 +1759,11 @@ impl ViewportRenderer {
                         // items inline (including transparent ones) using the transparent
                         // pipeline -- an intentional divergence since HDR uses OIT for
                         // transparency throughout.
-                        for (item_idx, item) in excluded_items.iter().copied().filter(|(_, item)| {
-                            item.settings.opacity >= 1.0 && !item.material.is_blend()
-                        }) {
+                        for (item_idx, item) in
+                            excluded_items.iter().copied().filter(|(_, item)| {
+                                item.settings.opacity >= 1.0 && !item.material.is_blend()
+                            })
+                        {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
@@ -1996,7 +1997,14 @@ impl ViewportRenderer {
                             } else {
                                 hdr_solid
                             };
-                            draw_item_hdr(&mut render_pass, *item_idx, item, solid_pl, hdr_trans, hdr_wf);
+                            draw_item_hdr(
+                                &mut render_pass,
+                                *item_idx,
+                                item,
+                                solid_pl,
+                                hdr_trans,
+                                hdr_wf,
+                            );
                         }
                     }
                 }
@@ -2226,7 +2234,9 @@ impl ViewportRenderer {
                     true,
                     crate::renderer::SpriteBlend::Premultiplied,
                     true,
-                    resources.sprite_lit_pipeline_premultiplied_depth_write.as_ref(),
+                    resources
+                        .sprite_lit_pipeline_premultiplied_depth_write
+                        .as_ref(),
                 ),
                 (
                     false,
@@ -2304,10 +2314,7 @@ impl ViewportRenderer {
                             }
                             pass.set_bind_group(1, &sprite.bind_group, &[]);
                             if *lit {
-                                let normal_bg = sprite
-                                    .lit_normal_bg
-                                    .as_ref()
-                                    .or(lit_fallback_bg);
+                                let normal_bg = sprite.lit_normal_bg.as_ref().or(lit_fallback_bg);
                                 if let Some(bg) = normal_bg {
                                     pass.set_bind_group(3, bg, &[]);
                                 }
@@ -2387,10 +2394,7 @@ impl ViewportRenderer {
                             }
                             pass.set_bind_group(1, &sprite.bind_group, &[]);
                             if *lit {
-                                let normal_bg = sprite
-                                    .lit_normal_bg
-                                    .as_ref()
-                                    .or(lit_fallback_bg);
+                                let normal_bg = sprite.lit_normal_bg.as_ref().or(lit_fallback_bg);
                                 if let Some(bg) = normal_bg {
                                     pass.set_bind_group(3, bg, &[]);
                                 }
@@ -2461,7 +2465,9 @@ impl ViewportRenderer {
                     .get(pd.system_idx)
                     .and_then(|s| s.as_ref())
                     .filter(|s| s.alive)
-                else { continue };
+                else {
+                    continue;
+                };
                 let is_lit = matches!(
                     &system.render,
                     crate::resources::ParticleRender::Sprite { lit: true, .. }
@@ -2479,9 +2485,9 @@ impl ViewportRenderer {
                     (crate::renderer::SpriteBlend::Additive, true) => {
                         resources.particle_sprite_lit_pipeline_additive.as_ref()
                     }
-                    (crate::renderer::SpriteBlend::Premultiplied, true) => {
-                        resources.particle_sprite_lit_pipeline_premultiplied.as_ref()
-                    }
+                    (crate::renderer::SpriteBlend::Premultiplied, true) => resources
+                        .particle_sprite_lit_pipeline_premultiplied
+                        .as_ref(),
                     (crate::renderer::SpriteBlend::AlphaBlend, true) => {
                         resources.particle_sprite_lit_pipeline_alpha.as_ref()
                     }
@@ -2490,10 +2496,7 @@ impl ViewportRenderer {
                 pass.set_pipeline(dual.for_format(true));
                 pass.set_bind_group(1, &system.draw_bg, &[]);
                 if is_lit {
-                    let normal_bg = system
-                        .draw_lit_normal_bg
-                        .as_ref()
-                        .or(particle_lit_fallback);
+                    let normal_bg = system.draw_lit_normal_bg.as_ref().or(particle_lit_fallback);
                     if let Some(bg) = normal_bg {
                         pass.set_bind_group(2, bg, &[]);
                     }
@@ -2550,8 +2553,7 @@ impl ViewportRenderer {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: wgpu::TextureFormat::Rgba16Float,
-                    usage: wgpu::TextureUsages::COPY_DST
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 });
                 let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -3287,10 +3289,8 @@ impl ViewportRenderer {
             // entirely when no volume has `refraction = Some(...)`.
             // -----------------------------------------------------------------
             if !self.prepared_refraction_volumes.is_empty() {
-                self.resources.ensure_scatter_refraction_pipeline(
-                    device,
-                    wgpu::TextureFormat::Rgba16Float,
-                );
+                self.resources
+                    .ensure_scatter_refraction_pipeline(device, wgpu::TextureFormat::Rgba16Float);
                 self.resources.ensure_scatter_refraction_blit_pipeline(
                     device,
                     wgpu::TextureFormat::Rgba16Float,
@@ -3337,14 +3337,12 @@ impl ViewportRenderer {
                 }
 
                 let time_seconds = self.start_instant.elapsed().as_secs_f32();
-                let n_ref = self
-                    .resources
-                    .write_scatter_refraction_per_volume_buffer(
-                        device,
-                        queue,
-                        &self.prepared_refraction_volumes,
-                        time_seconds,
-                    );
+                let n_ref = self.resources.write_scatter_refraction_per_volume_buffer(
+                    device,
+                    queue,
+                    &self.prepared_refraction_volumes,
+                    time_seconds,
+                );
                 let ref_stride = self.resources.scatter_refraction_per_volume_stride();
 
                 if n_ref > 0 {

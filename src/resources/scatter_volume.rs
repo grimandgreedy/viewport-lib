@@ -888,9 +888,9 @@ impl crate::resources::ViewportGpuResources {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
-                    min_binding_size: std::num::NonZeroU64::new(
-                        std::mem::size_of::<GpuRefractionVolume>() as u64,
-                    ),
+                    min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                        GpuRefractionVolume,
+                    >() as u64),
                 },
                 count: None,
             }],

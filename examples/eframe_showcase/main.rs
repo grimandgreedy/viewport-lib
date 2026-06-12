@@ -1471,9 +1471,7 @@ impl eframe::App for App {
                 // ----- Async uploads (51): advance per-asset state machines
                 // from upload_status, and keep repainting so the orbit camera
                 // animates even while no input is happening.
-                if self.mode == ShowcaseMode::AsyncUploads
-                    && self.async_uploads_state.built
-                {
+                if self.mode == ShowcaseMode::AsyncUploads && self.async_uploads_state.built {
                     let rs = frame.wgpu_render_state().expect("wgpu");
                     let mut guard = rs.renderer.write();
                     let renderer = guard

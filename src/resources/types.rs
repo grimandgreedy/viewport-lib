@@ -2768,20 +2768,14 @@ pub struct ViewportGpuResources {
     pub(crate) job_volume_mesh_results: std::sync::Mutex<
         std::collections::HashMap<
             super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<(
-                super::mesh_store::MeshId,
-                Vec<u32>,
-            )>,
+            super::upload_jobs::ResultSlot<(super::mesh_store::MeshId, Vec<u32>)>,
         >,
     >,
     /// Typed result slots for async clipped-volume-mesh uploads.
     pub(crate) job_clipped_volume_mesh_results: std::sync::Mutex<
         std::collections::HashMap<
             super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<(
-                super::mesh_store::MeshId,
-                Vec<u32>,
-            )>,
+            super::upload_jobs::ResultSlot<(super::mesh_store::MeshId, Vec<u32>)>,
         >,
     >,
     /// Typed result slots for async sparse-volume-grid uploads.
@@ -3538,8 +3532,7 @@ pub struct ViewportGpuResources {
     // --- GPU particle systems ---
     /// Live particle systems indexed by `GpuParticleSystemId`. Slots can be
     /// reused after `drop_gpu_particle_system`.
-    pub(crate) particle_systems:
-        Vec<Option<crate::resources::gpu_particles::ParticleSystem>>,
+    pub(crate) particle_systems: Vec<Option<crate::resources::gpu_particles::ParticleSystem>>,
     /// Bind group layout for the emit + sim compute pipelines (group 1:
     /// particle buffer + free-list buffer; emit/sim params are group 0).
     pub(crate) particle_sim_bgl: Option<wgpu::BindGroupLayout>,

@@ -153,46 +153,47 @@ impl ViewportGpuResources {
         // Additive and premultiplied ribbons are typically used for emissive
         // trails; depth write is disabled so successive segments accumulate
         // rather than clipping each other when they overlap.
-        let make_ribbon = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, depth_write: bool, label: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&ribbon_layout),
-                vertex: wgpu::VertexState {
-                    module: &ribbon_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &ribbon_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: depth_write,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
+        let make_ribbon =
+            |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, depth_write: bool, label: &str| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&ribbon_layout),
+                    vertex: wgpu::VertexState {
+                        module: &ribbon_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[Vertex::buffer_layout()],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &ribbon_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: fmt,
+                            blend: Some(blend),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth24PlusStencil8,
+                        depth_write_enabled: depth_write,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState {
+                        count: sample_count,
+                        ..Default::default()
+                    },
+                    multiview: None,
+                    cache: None,
+                })
+            };
 
         // Wireframe pipeline: same shader and bind groups as the solid tube, but LineList
         // topology and no back-face culling so edges on both sides are visible.
@@ -301,8 +302,18 @@ impl ViewportGpuResources {
             hdr: make_ribbon(hdr, additive_blend, false, "ribbon_pipeline_additive"),
         });
         self.ribbon_pipeline_premultiplied = Some(DualPipeline {
-            ldr: make_ribbon(ldr, premultiplied_blend, false, "ribbon_pipeline_premultiplied"),
-            hdr: make_ribbon(hdr, premultiplied_blend, false, "ribbon_pipeline_premultiplied"),
+            ldr: make_ribbon(
+                ldr,
+                premultiplied_blend,
+                false,
+                "ribbon_pipeline_premultiplied",
+            ),
+            hdr: make_ribbon(
+                hdr,
+                premultiplied_blend,
+                false,
+                "ribbon_pipeline_premultiplied",
+            ),
         });
         self.ribbon_wireframe_pipeline = Some(DualPipeline {
             ldr: make_ribbon_wireframe(ldr),
@@ -956,23 +967,22 @@ impl ViewportGpuResources {
         let has_colour_attribute = !item.colour_attribute.is_empty();
 
         // Resolve LUT for scalar colouring.
-        let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
-            if has_colour_attribute {
-                (1, None)
-            } else if !item.scalars.is_empty() {
-                let lut = self
-                    .builtin_colourmap_ids
-                    .and_then(|ids| {
-                        let preset_id = item
-                            .colourmap_id
-                            .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                        self.colourmaps_cpu.get(preset_id.0).copied()
-                    })
-                    .unwrap_or([[128u8; 4]; 256]);
-                (1, Some(lut))
-            } else {
-                (0, None)
-            };
+        let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) = if has_colour_attribute {
+            (1, None)
+        } else if !item.scalars.is_empty() {
+            let lut = self
+                .builtin_colourmap_ids
+                .and_then(|ids| {
+                    let preset_id = item
+                        .colourmap_id
+                        .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
+                    self.colourmaps_cpu.get(preset_id.0).copied()
+                })
+                .unwrap_or([[128u8; 4]; 256]);
+            (1, Some(lut))
+        } else {
+            (0, None)
+        };
 
         let scalar_min = item
             .scalar_range
@@ -1308,11 +1318,8 @@ impl ViewportGpuResources {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let sid = resources.upload_streamtube(
-                            &device_for_apply,
-                            &queue_for_apply,
-                            &item,
-                        );
+                        let sid =
+                            resources.upload_streamtube(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(sid);
                     }),
                 ))
@@ -1369,11 +1376,7 @@ impl ViewportGpuResources {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let tid = resources.upload_tube(
-                            &device_for_apply,
-                            &queue_for_apply,
-                            &item,
-                        );
+                        let tid = resources.upload_tube(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(tid);
                     }),
                 ))
@@ -1430,11 +1433,8 @@ impl ViewportGpuResources {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let rid = resources.upload_ribbon(
-                            &device_for_apply,
-                            &queue_for_apply,
-                            &item,
-                        );
+                        let rid =
+                            resources.upload_ribbon(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(rid);
                     }),
                 ))

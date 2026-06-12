@@ -253,8 +253,7 @@ impl ViewportGpuResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let mesh_id =
-                            resources.assemble_mesh_data(&device_for_apply, &data, prep);
+                        let mesh_id = resources.assemble_mesh_data(&device_for_apply, &data, prep);
                         slot_for_apply.set(mesh_id);
                     }),
                 ))
@@ -874,10 +873,8 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         data: crate::resources::volume_mesh::VolumeMeshData,
     ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<(
-            crate::resources::mesh_store::MeshId,
-            Vec<u32>,
-        )>::new();
+        let slot =
+            crate::resources::ResultSlot::<(crate::resources::mesh_store::MeshId, Vec<u32>)>::new();
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
@@ -893,11 +890,8 @@ impl ViewportGpuResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let mesh_id = resources.assemble_mesh_data(
-                            &device_for_apply,
-                            &mesh_data,
-                            prep,
-                        );
+                        let mesh_id =
+                            resources.assemble_mesh_data(&device_for_apply, &mesh_data, prep);
                         slot_for_apply.set((mesh_id, face_to_cell));
                     }),
                 ))
@@ -947,10 +941,8 @@ impl ViewportGpuResources {
         data: crate::resources::volume_mesh::VolumeMeshData,
         clip_planes: Vec<[f32; 4]>,
     ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<(
-            crate::resources::mesh_store::MeshId,
-            Vec<u32>,
-        )>::new();
+        let slot =
+            crate::resources::ResultSlot::<(crate::resources::mesh_store::MeshId, Vec<u32>)>::new();
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
@@ -969,11 +961,8 @@ impl ViewportGpuResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let mesh_id = resources.assemble_mesh_data(
-                            &device_for_apply,
-                            &mesh_data,
-                            prep,
-                        );
+                        let mesh_id =
+                            resources.assemble_mesh_data(&device_for_apply, &mesh_data, prep);
                         slot_for_apply.set((mesh_id, face_to_cell));
                     }),
                 ))
@@ -1029,19 +1018,15 @@ impl ViewportGpuResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
-                let mesh_data =
-                    crate::resources::sparse_volume::extract_sparse_boundary(&data);
+                let mesh_data = crate::resources::sparse_volume::extract_sparse_boundary(&data);
                 progress.set(0.5);
                 ViewportGpuResources::validate_mesh_data(&mesh_data)?;
                 let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let mesh_id = resources.assemble_mesh_data(
-                            &device_for_apply,
-                            &mesh_data,
-                            prep,
-                        );
+                        let mesh_id =
+                            resources.assemble_mesh_data(&device_for_apply, &mesh_data, prep);
                         slot_for_apply.set(mesh_id);
                     }),
                 ))
@@ -2675,12 +2660,11 @@ mod async_upload_tests {
     }
 }
 
-
 #[cfg(test)]
 mod c4_volume_mesh_tests {
     use crate::ViewportGpuResources;
-    use crate::resources::{CELL_SENTINEL, ColourmapId, SparseVolumeGridData, UploadStatus};
     use crate::resources::volume_mesh::VolumeMeshData;
+    use crate::resources::{CELL_SENTINEL, ColourmapId, SparseVolumeGridData, UploadStatus};
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
@@ -2779,8 +2763,9 @@ mod c4_volume_mesh_tests {
             Vec::new(),
         );
         drive_until_ready(&mut resources, &device, &queue, job, "clipped_volume_mesh");
-        let (mesh_id, face_to_cell) =
-            resources.upload_result_clipped_volume_mesh(job).expect("ready");
+        let (mesh_id, face_to_cell) = resources
+            .upload_result_clipped_volume_mesh(job)
+            .expect("ready");
         assert!(resources.mesh_store.get(mesh_id).is_some());
         assert!(!face_to_cell.is_empty());
     }
@@ -2795,7 +2780,9 @@ mod c4_volume_mesh_tests {
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_sparse_volume_grid_data(&device, single_cell_sparse());
         drive_until_ready(&mut resources, &device, &queue, job, "sparse_volume_grid");
-        let mesh_id = resources.upload_result_sparse_volume_grid(job).expect("ready");
+        let mesh_id = resources
+            .upload_result_sparse_volume_grid(job)
+            .expect("ready");
         assert!(resources.mesh_store.get(mesh_id).is_some());
     }
 
@@ -2814,8 +2801,9 @@ mod c4_volume_mesh_tests {
             ColourmapId(0),
         );
         drive_until_ready(&mut resources, &device, &queue, job, "projected_tet_mesh");
-        let (_id, smin, smax) =
-            resources.upload_result_projected_tet_mesh(job).expect("ready");
+        let (_id, smin, smax) = resources
+            .upload_result_projected_tet_mesh(job)
+            .expect("ready");
         assert!(smin <= smax);
     }
 
@@ -2828,7 +2816,9 @@ mod c4_volume_mesh_tests {
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let vol = single_tet_volume();
-        let (_id, _ftc) = resources.upload_volume_mesh_data(&device, &vol).expect("sync ok");
+        let (_id, _ftc) = resources
+            .upload_volume_mesh_data(&device, &vol)
+            .expect("sync ok");
         let (_id2, _ftc2) = resources
             .upload_clipped_volume_mesh_data(&device, &vol, &[])
             .expect("clipped sync ok");

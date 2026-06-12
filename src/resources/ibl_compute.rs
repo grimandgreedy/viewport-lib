@@ -392,10 +392,7 @@ pub(crate) fn compute_ibl(
             contents: bytemuck::cast_slice(&params),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        debug_assert_eq!(
-            std::mem::size_of_val(&params) as u64,
-            PREFILTER_PARAMS_SIZE
-        );
+        debug_assert_eq!(std::mem::size_of_val(&params) as u64, PREFILTER_PARAMS_SIZE);
 
         let mip_view = prefilter_texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("ibl_prefilter_mip_view"),

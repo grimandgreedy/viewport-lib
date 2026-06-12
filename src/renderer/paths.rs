@@ -66,7 +66,8 @@ impl<'r> OwnedPath<'r> {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
-        self.renderer.prepare_scene(device, queue, frame, scene_effects);
+        self.renderer
+            .prepare_scene(device, queue, frame, scene_effects);
         ScenePreparedToken { _private: () }
     }
 
@@ -96,7 +97,8 @@ impl<'r> OwnedPath<'r> {
         id: ViewportId,
         frame: &FrameData,
     ) -> wgpu::CommandBuffer {
-        self.renderer.render_viewport(device, queue, output_view, id, frame)
+        self.renderer
+            .render_viewport(device, queue, output_view, id, frame)
     }
 }
 
@@ -136,7 +138,8 @@ impl<'r> PassPath<'r> {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
-        self.renderer.prepare_scene(device, queue, frame, scene_effects);
+        self.renderer
+            .prepare_scene(device, queue, frame, scene_effects);
         ScenePreparedToken { _private: () }
     }
 
@@ -183,7 +186,8 @@ impl<'r> PassPath<'r> {
         id: ViewportId,
         frame: &FrameData,
     ) -> wgpu::CommandBuffer {
-        self.renderer.prepare_hdr_callback_viewport(device, queue, id, frame)
+        self.renderer
+            .prepare_hdr_callback_viewport(device, queue, id, frame)
     }
 }
 
@@ -220,7 +224,11 @@ impl<'r> PassView<'r> {
     /// Use this when you create the blit render pass yourself (e.g. winit) and the pass
     /// has no depth attachment. The resulting blit is identical; only the pipeline variant
     /// differs to match the render pass format.
-    pub fn paint_hdr_blit_no_ds<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub fn paint_hdr_blit_no_ds<'rp>(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'rp>,
+        frame: &FrameData,
+    ) {
         self.renderer.paint_hdr_blit_no_ds(render_pass, frame);
     }
 }

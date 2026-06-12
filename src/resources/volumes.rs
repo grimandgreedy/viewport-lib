@@ -775,7 +775,6 @@ impl ViewportGpuResources {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::ViewportGpuResources;
@@ -908,6 +907,8 @@ mod tests {
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let vol = sample_volume_struct();
-        let _id = resources.upload_volume_for_mc(&device, &queue, &vol).expect("upload ok");
+        let _id = resources
+            .upload_volume_for_mc(&device, &queue, &vol)
+            .expect("upload ok");
     }
 }

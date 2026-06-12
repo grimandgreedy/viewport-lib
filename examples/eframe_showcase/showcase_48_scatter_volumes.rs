@@ -563,10 +563,7 @@ pub(crate) fn controls_svol(app: &mut App, ui: &mut egui::Ui) {
     if s.fire_refraction {
         ui.horizontal(|ui| {
             ui.label("Strength");
-            ui.add(
-                egui::Slider::new(&mut s.fire_refraction_strength, 0.0..=0.05)
-                    .step_by(0.0005),
-            );
+            ui.add(egui::Slider::new(&mut s.fire_refraction_strength, 0.0..=0.05).step_by(0.0005));
         });
     }
     ui.checkbox(&mut s.fire_animate, "Animate");

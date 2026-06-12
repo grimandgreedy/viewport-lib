@@ -877,10 +877,7 @@ impl LerpAnim for f32 {
 
 impl LerpAnim for [f32; 2] {
     fn lerp(from: Self, to: Self, t: f32) -> Self {
-        [
-            f32::lerp(from[0], to[0], t),
-            f32::lerp(from[1], to[1], t),
-        ]
+        [f32::lerp(from[0], to[0], t), f32::lerp(from[1], to[1], t)]
     }
 }
 
@@ -1024,11 +1021,7 @@ impl PathTrack<[f32; 2]> {
     /// Construct a 2D track that walks a single cubic Bezier from `p0` to
     /// `p3` with control handles `p1` and `p2`. Evaluates the standard
     /// Bernstein form at the eased parameter.
-    pub fn bezier(
-        start_time: f64,
-        duration: f32,
-        control_points: [[f32; 2]; 4],
-    ) -> Self {
+    pub fn bezier(start_time: f64, duration: f32, control_points: [[f32; 2]; 4]) -> Self {
         let [p0, p1, p2, p3] = control_points;
         Self::new(start_time, duration, move |t| {
             let one_t = 1.0 - t;
@@ -1242,9 +1235,7 @@ impl OverlayPolylineItem {
         colour: [f32; 4],
     ) -> Self {
         let n = samples.max(1);
-        let points: Vec<[f32; 2]> = (0..=n)
-            .map(|i| path(i as f32 / n as f32))
-            .collect();
+        let points: Vec<[f32; 2]> = (0..=n).map(|i| path(i as f32 / n as f32)).collect();
         Self {
             points,
             thickness,
@@ -2156,11 +2147,8 @@ mod tests {
 
     #[test]
     fn polyline_path_hits_waypoints() {
-        let track = PathTrack::<[f32; 2]>::polyline(
-            0.0,
-            1.0,
-            vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
-        );
+        let track =
+            PathTrack::<[f32; 2]>::polyline(0.0, 1.0, vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]);
         let a = track.sample(0.0);
         let mid = track.sample(0.5);
         let end = track.sample(1.0);
