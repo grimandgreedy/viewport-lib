@@ -111,9 +111,9 @@ impl Default for ParticleRender {
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(crate) struct GpuParticle {
     pub position: [f32; 3],
-    pub lifetime: f32,        // seconds remaining; <= 0 means dead
+    pub lifetime: f32, // seconds remaining; <= 0 means dead
     pub velocity: [f32; 3],
-    pub max_lifetime: f32,    // initial lifetime, used for fade ramps
+    pub max_lifetime: f32, // initial lifetime, used for fade ramps
     pub colour: [f32; 4],
     pub size: f32,
     pub _pad: [f32; 3],
@@ -123,14 +123,25 @@ pub(crate) struct GpuParticle {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(crate) struct EmitParamsGpu {
-    pub spawn_min:    [f32; 3], pub spawn_kind: u32,    // 0=Point, 1=Box, 2=Sphere
-    pub spawn_max:    [f32; 3], pub spawn_radius: f32,  // sphere radius (Sphere only)
-    pub vel_min:      [f32; 3], pub vel_kind: u32,      // 0=Fixed, 1=UniformBox, 2=UniformCone
-    pub vel_max:      [f32; 3], pub cone_half_angle: f32,
-    pub vel_axis:     [f32; 3], pub cone_min_speed: f32,
-    pub colour:       [f32; 4],
-    pub spawn_count:  u32, pub capacity: u32, pub rng_seed: u32, pub size: f32,
-    pub lifetime_min: f32, pub lifetime_max: f32, pub cone_max_speed: f32, pub _pad: f32,
+    pub spawn_min: [f32; 3],
+    pub spawn_kind: u32, // 0=Point, 1=Box, 2=Sphere
+    pub spawn_max: [f32; 3],
+    pub spawn_radius: f32, // sphere radius (Sphere only)
+    pub vel_min: [f32; 3],
+    pub vel_kind: u32, // 0=Fixed, 1=UniformBox, 2=UniformCone
+    pub vel_max: [f32; 3],
+    pub cone_half_angle: f32,
+    pub vel_axis: [f32; 3],
+    pub cone_min_speed: f32,
+    pub colour: [f32; 4],
+    pub spawn_count: u32,
+    pub capacity: u32,
+    pub rng_seed: u32,
+    pub size: f32,
+    pub lifetime_min: f32,
+    pub lifetime_max: f32,
+    pub cone_max_speed: f32,
+    pub _pad: f32,
 }
 
 /// Maximum number of forces in a single sim dispatch. Forces are inlined into
@@ -142,10 +153,10 @@ pub(crate) const MAX_FORCES: usize = 8;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(crate) struct GpuForce {
-    pub kind: u32,            // 0=Gravity, 1=Drag, 2=PointAttractor
+    pub kind: u32, // 0=Gravity, 1=Drag, 2=PointAttractor
     pub _pad: [u32; 3],
-    pub v0: [f32; 4],         // Gravity: xyz=acceleration / Drag: x=coefficient / Attractor: xyz=position, w=strength
-    pub v1: [f32; 4],         // Attractor: x=falloff
+    pub v0: [f32; 4], // Gravity: xyz=acceleration / Drag: x=coefficient / Attractor: xyz=position, w=strength
+    pub v1: [f32; 4], // Attractor: x=falloff
 }
 
 /// Uniform buffer matching `SimParams` in `particle_sim.wgsl`. Forces are
@@ -315,8 +326,14 @@ impl crate::resources::ViewportGpuResources {
             label: Some("gpu_particle_sim_bg"),
             layout: sim_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: particle_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: emit_counter_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: particle_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: emit_counter_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -324,10 +341,22 @@ impl crate::resources::ViewportGpuResources {
             label: Some("gpu_particle_draw_bg"),
             layout: draw_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: draw_uniform_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(texture_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.material_sampler) },
-                wgpu::BindGroupEntry { binding: 3, resource: particle_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: draw_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: particle_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -393,10 +422,15 @@ impl crate::resources::ViewportGpuResources {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn particle_system(&self, id: GpuParticleSystemId) -> Option<&ParticleSystem> {
-        self.particle_systems.get(id.0)?.as_ref().filter(|s| s.alive)
+        self.particle_systems
+            .get(id.0)?
+            .as_ref()
+            .filter(|s| s.alive)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn particle_system_mut(
         &mut self,
         id: GpuParticleSystemId,
@@ -797,7 +831,14 @@ impl crate::resources::ViewportGpuResources {
             let hidden = item.settings.hidden;
 
             // Pull mutable state out, build dispatch state outside the borrow.
-            let (capacity, particle_buf_binding, emit_counter_binding, sim_bg, spawn_count, frame_counter) = {
+            let (
+                capacity,
+                particle_buf_binding,
+                emit_counter_binding,
+                sim_bg,
+                spawn_count,
+                frame_counter,
+            ) = {
                 let system = self.particle_systems[idx].as_mut().unwrap();
                 let dt = item.time_step.max(0.0);
                 system.spawn_accumulator += item.emitter.rate * dt;
@@ -822,12 +863,16 @@ impl crate::resources::ViewportGpuResources {
             // ----- Emit -----
             if spawn_count > 0 {
                 queue.write_buffer(
-                    &self.particle_systems[idx].as_ref().unwrap().emit_counter_buf,
+                    &self.particle_systems[idx]
+                        .as_ref()
+                        .unwrap()
+                        .emit_counter_buf,
                     0,
                     bytemuck::bytes_of(&spawn_count),
                 );
 
-                let emit_params = build_emit_params(&item.emitter, capacity, spawn_count, frame_counter);
+                let emit_params =
+                    build_emit_params(&item.emitter, capacity, spawn_count, frame_counter);
                 let emit_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("particle_emit_params"),
                     contents: bytemuck::bytes_of(&emit_params),
@@ -899,14 +944,25 @@ fn build_emit_params(
     use crate::renderer::{SpawnShape, VelocityDist};
 
     let mut out = EmitParamsGpu {
-        spawn_min: [0.0; 3], spawn_kind: 0,
-        spawn_max: [0.0; 3], spawn_radius: 0.0,
-        vel_min:   [0.0; 3], vel_kind: 0,
-        vel_max:   [0.0; 3], cone_half_angle: 0.0,
-        vel_axis:  [0.0; 3], cone_min_speed: 0.0,
+        spawn_min: [0.0; 3],
+        spawn_kind: 0,
+        spawn_max: [0.0; 3],
+        spawn_radius: 0.0,
+        vel_min: [0.0; 3],
+        vel_kind: 0,
+        vel_max: [0.0; 3],
+        cone_half_angle: 0.0,
+        vel_axis: [0.0; 3],
+        cone_min_speed: 0.0,
         colour: e.colour,
-        spawn_count, capacity, rng_seed: frame_counter.wrapping_mul(0x9E3779B1), size: e.size,
-        lifetime_min: e.lifetime.0, lifetime_max: e.lifetime.1, cone_max_speed: 0.0, _pad: 0.0,
+        spawn_count,
+        capacity,
+        rng_seed: frame_counter.wrapping_mul(0x9E3779B1),
+        size: e.size,
+        lifetime_min: e.lifetime.0,
+        lifetime_max: e.lifetime.1,
+        cone_max_speed: 0.0,
+        _pad: 0.0,
     };
 
     match e.spawn_shape {
@@ -937,7 +993,10 @@ fn build_emit_params(
             out.vel_max = max;
         }
         VelocityDist::UniformCone {
-            axis, half_angle, min_speed, max_speed,
+            axis,
+            half_angle,
+            min_speed,
+            max_speed,
         } => {
             out.vel_kind = 2;
             out.vel_axis = axis;

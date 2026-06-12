@@ -59,7 +59,12 @@ pub struct ClusterGridUniform {
 impl Default for ClusterGridUniform {
     fn default() -> Self {
         Self {
-            dimensions: [CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES, CLUSTER_COUNT],
+            dimensions: [
+                CLUSTER_X_TILES,
+                CLUSTER_Y_TILES,
+                CLUSTER_Z_SLICES,
+                CLUSTER_COUNT,
+            ],
             depth: [0.1, 1000.0, (1000.0_f32 / 0.1_f32).ln(), 0.0],
             screen: [1.0, 1.0, 1.0, 0.0],
             proj_scale: [1.0, 1.0, 0.0, 0.0],
@@ -133,6 +138,8 @@ pub struct ClusterStats {
     pub fallback_active: bool,
 }
 
+/// One cell in the clustered light grid. Points into the global light index
+/// list and records how many lights of each kind affect the cluster.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ClusterCell {
@@ -191,8 +198,7 @@ impl ClusteredResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let cluster_grid_bytes =
-            (CLUSTER_COUNT as u64) * std::mem::size_of::<ClusterCell>() as u64;
+        let cluster_grid_bytes = (CLUSTER_COUNT as u64) * std::mem::size_of::<ClusterCell>() as u64;
         let cluster_grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cluster_grid_buf"),
             size: cluster_grid_bytes,
@@ -210,8 +216,8 @@ impl ClusteredResources {
             mapped_at_creation: false,
         });
 
-        let active_lights_bytes =
-            (crate::resources::MAX_SCENE_LIGHTS as u64) * std::mem::size_of::<ActiveLightView>() as u64;
+        let active_lights_bytes = (crate::resources::MAX_SCENE_LIGHTS as u64)
+            * std::mem::size_of::<ActiveLightView>() as u64;
         let active_lights_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cluster_active_lights_buf"),
             size: active_lights_bytes,
@@ -244,17 +250,16 @@ impl ClusteredResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let storage_entry =
-            |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            };
+        let storage_entry = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
         let uniform_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -335,11 +340,26 @@ impl ClusteredResources {
             label: Some("cluster_build_bind_group"),
             layout: &build_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: cluster_grid_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: light_index_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: global_offset_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: grid_uniform_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: active_lights_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: cluster_grid_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: light_index_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: global_offset_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: grid_uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: active_lights_buf.as_entire_binding(),
+                },
             ],
         });
         let build_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -388,18 +408,11 @@ impl ClusteredResources {
         active_light_count: u32,
         fallback_active: bool,
     ) -> ClusterStats {
-        let bytes =
-            (CLUSTER_COUNT as u64) * std::mem::size_of::<ClusterCell>() as u64;
+        let bytes = (CLUSTER_COUNT as u64) * std::mem::size_of::<ClusterCell>() as u64;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("cluster_stats_copy_encoder"),
         });
-        encoder.copy_buffer_to_buffer(
-            &self.cluster_grid_buf,
-            0,
-            &self.stats_staging_buf,
-            0,
-            bytes,
-        );
+        encoder.copy_buffer_to_buffer(&self.cluster_grid_buf, 0, &self.stats_staging_buf, 0, bytes);
         queue.submit(std::iter::once(encoder.finish()));
 
         let slice = self.stats_staging_buf.slice(..);

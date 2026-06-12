@@ -747,6 +747,7 @@ fn bind_pose_for_arm() -> Pose {
 /// One skinned mesh part loaded from a glTF character. Owns the bind data
 /// because SkeletonPlugin takes ownership when constructed.
 pub(crate) struct GltfMeshPart {
+    #[allow(dead_code)]
     pub name: String,
     pub mesh_data: MeshData,
     pub bind_positions: Vec<[f32; 3]>,

@@ -23,30 +23,27 @@ pub use shadow_debug_stats::ShadowDebugStats;
 mod hidden_tests;
 
 pub use self::types::{
-    AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape, ComputeFilterItem,
-    ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation,
-    DecalBlendMode, DecalItem, DecalProjection, EffectsFrame, EmitterConfig, EnvironmentMap, FilterMode,
-    ForceField, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem,
-    GpuParticleSystemItem, GlyphItem, GlyphType,
-    GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
-    LabelItem, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LoadingBarAnchor,
-    LoadingBarItem, MeshInstanceItem, AnimTrack, GradientStop, LerpAnim, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayImageItem, OverlayRectItem, OverlayShape, OverlayShapeItem,
-    LineJoin, OverlayPolylineItem, OverlayTextureId, PathTrack, RepeatMode, TextureTransform,
-    TileMode, PickId, PointCloudItem, PointRenderMode,
-    PointCloudRefItem, GlyphSetRefItem, TensorGlyphSetRefItem,
-    PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RibbonItem, RibbonRefItem,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
-    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
-    SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem,
-    SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, SurfaceLICConfig, VelocityDist,
-    SurfaceSubmission, TensorGlyphItem, ToneMapping,
-    TransparentVolumeMeshItem, TriangleDirection, TubeItem, TubeRefItem,
-    ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
-    aabb_wireframe_polyline, sphere_wireframe_polyline,
+    AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape,
+    ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity,
+    DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, EffectsFrame,
+    EmitterConfig, EnvironmentMap, FilterMode, ForceField, FrameData, GaussianSplatData,
+    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType,
+    GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
+    InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
+    LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MeshInstanceItem,
+    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing,
+    OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
+    OverlayShape, OverlayShapeItem, OverlayTextureId, PathTrack, PickId, PointCloudItem,
+    PointCloudRefItem, PointRenderMode, PolylineItem, PolylineRefItem, PostProcessSettings,
+    RenderCamera, RepeatMode, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
+    ScalarBarOrientation, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
+    SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape,
+    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
+    SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
+    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
+    TileMode, ToneMapping, TransparentVolumeMeshItem, TriangleDirection, TubeItem, TubeRefItem,
+    VelocityDist, ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem,
+    VolumeSurfaceSliceItem, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -227,6 +224,9 @@ struct SpriteRefractionResolve {
     size: [u32; 2],
 }
 
+/// Owns the GPU pipelines and per-frame state for rendering a scene. Call
+/// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
+/// issue draw calls.
 pub struct ViewportRenderer {
     resources: ViewportGpuResources,
     /// Instanced batches prepared for the current frame. Empty when using per-object path.
@@ -438,8 +438,7 @@ pub struct ViewportRenderer {
     /// Subset of the prepared scatter volumes that carry `RefractionParams`.
     /// Cleared and refilled each frame by `prepare_viewport`. The refraction
     /// pass walks this list; an empty list skips the pass entirely.
-    pub(crate) prepared_refraction_volumes:
-        Vec<(crate::scene::scatter_volume::ScatterVolume, f32)>,
+    pub(crate) prepared_refraction_volumes: Vec<(crate::scene::scatter_volume::ScatterVolume, f32)>,
     /// Per-viewport scatter intermediates and temporal history. Indexed by
     /// `vp_idx`. Grown lazily inside the scatter pass; each entry is
     /// reallocated when the requested scatter target size or downsample mode
@@ -876,7 +875,14 @@ impl ViewportRenderer {
             self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
         }
         let cull = self.cull_resources.as_ref().unwrap();
-        cull.dispatch(encoder, device, queue, cascade_frustum, Some(cascade_idx), sub);
+        cull.dispatch(
+            encoder,
+            device,
+            queue,
+            cascade_frustum,
+            Some(cascade_idx),
+            sub,
+        );
     }
 
     /// Convenience wrapper around [`submit_cull`](Self::submit_cull) for the
@@ -1358,10 +1364,7 @@ impl ViewportRenderer {
     }
 
     /// Current state of an in-flight upload job.
-    pub fn upload_status(
-        &self,
-        id: crate::resources::JobId,
-    ) -> crate::resources::UploadStatus {
+    pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.resources.upload_status(id)
     }
 
@@ -1372,10 +1375,7 @@ impl ViewportRenderer {
 
     /// Wall-clock work duration recorded for an async upload job. See
     /// [`ViewportGpuResources::job_duration`].
-    pub fn job_duration(
-        &self,
-        id: crate::resources::JobId,
-    ) -> Option<std::time::Duration> {
+    pub fn job_duration(&self, id: crate::resources::JobId) -> Option<std::time::Duration> {
         self.resources.job_duration(id)
     }
 
@@ -1394,7 +1394,8 @@ impl ViewportRenderer {
         data: Vec<f32>,
         dims: [u32; 3],
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources.begin_upload_volume(device, queue, data, dims)
+        self.resources
+            .begin_upload_volume(device, queue, data, dims)
     }
 
     /// Take the volume id produced by a completed
@@ -1414,7 +1415,8 @@ impl ViewportRenderer {
         queue: &wgpu::Queue,
         vol: crate::geometry::marching_cubes::VolumeData,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_volume_for_mc(device, queue, vol)
+        self.resources
+            .begin_upload_volume_for_mc(device, queue, vol)
     }
 
     /// Take the [`VolumeGpuId`](crate::resources::VolumeGpuId) produced by a

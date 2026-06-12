@@ -259,6 +259,7 @@ impl BuoyPlugin {
     }
 
     /// Adjust the lift above the wave surface at runtime.
+    #[allow(dead_code)]
     pub fn set_waterline_offset(&mut self, v: f32) {
         if (self.uniforms.waterline_offset - v).abs() > f32::EPSILON {
             self.uniforms.waterline_offset = v;

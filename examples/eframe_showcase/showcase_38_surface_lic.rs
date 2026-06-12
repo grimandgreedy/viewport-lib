@@ -398,7 +398,7 @@ pub(crate) fn submit_lic_items(app: &App, fd: &mut FrameData) {
     // Build a lookup from MeshId to LicOverlay.
     let mut lic_by_mesh: std::collections::HashMap<MeshId, LicOverlay> =
         std::collections::HashMap::new();
-    for (row, row_ids) in state.mesh_ids.iter().enumerate() {
+    for (_row, row_ids) in state.mesh_ids.iter().enumerate() {
         for (_col, maybe_id) in row_ids.iter().enumerate() {
             let Some(mesh_id) = *maybe_id else { continue };
             lic_by_mesh.insert(mesh_id, LicOverlay::new("flow", config.clone()));

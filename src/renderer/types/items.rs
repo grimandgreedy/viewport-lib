@@ -1697,13 +1697,22 @@ pub enum VelocityDist {
     /// Every particle gets the same velocity.
     Fixed([f32; 3]),
     /// Velocity is sampled uniformly inside an axis-aligned box.
-    UniformBox { min: [f32; 3], max: [f32; 3] },
+    UniformBox {
+        /// Minimum corner of the velocity box.
+        min: [f32; 3],
+        /// Maximum corner of the velocity box.
+        max: [f32; 3],
+    },
     /// Velocity direction is sampled uniformly inside a cone around `axis`,
     /// magnitude in `[min_speed, max_speed]`.
     UniformCone {
+        /// Cone axis direction.
         axis: [f32; 3],
+        /// Half-angle of the cone in radians.
         half_angle: f32,
+        /// Lower bound on sampled speed.
         min_speed: f32,
+        /// Upper bound on sampled speed.
         max_speed: f32,
     },
 }
@@ -1720,9 +1729,19 @@ pub enum SpawnShape {
     /// All particles spawn at the same point.
     Point([f32; 3]),
     /// Spawn uniformly inside an axis-aligned box.
-    Box { min: [f32; 3], max: [f32; 3] },
+    Box {
+        /// Minimum corner of the spawn box.
+        min: [f32; 3],
+        /// Maximum corner of the spawn box.
+        max: [f32; 3],
+    },
     /// Spawn uniformly inside a sphere.
-    Sphere { center: [f32; 3], radius: f32 },
+    Sphere {
+        /// Sphere center in world space.
+        center: [f32; 3],
+        /// Sphere radius.
+        radius: f32,
+    },
 }
 
 impl Default for SpawnShape {
@@ -1742,8 +1761,11 @@ pub enum ForceField {
     /// Pull toward a world-space point. Acceleration scales as
     /// `strength / (distance + falloff)^2`.
     PointAttractor {
+        /// World-space position of the attractor.
         position: [f32; 3],
+        /// Acceleration coefficient. Negative values repel.
         strength: f32,
+        /// Distance offset that softens the singularity at the center.
         falloff: f32,
     },
 }

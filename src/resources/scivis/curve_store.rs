@@ -70,6 +70,7 @@ macro_rules! curve_store {
                 self.get(id).is_some()
             }
 
+            #[allow(dead_code)]
             pub fn len(&self) -> usize {
                 self.slots.iter().filter(|s| s.is_some()).count()
             }
