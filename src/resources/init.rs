@@ -2028,10 +2028,9 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
-        // Mesh sidecars (skinning, displacement, deformer registry)
+        // Mesh sidecars (skinning marker + deformer registry)
         // ------------------------------------------------------------------
         let skinning = crate::resources::mesh_sidecar::skin::SkinningState::new(device);
-        let displacement = crate::resources::mesh_sidecar::displacement::DisplacementState::new(device);
         // `deform` is constructed earlier (before the mesh pipeline layout).
 
         let mut resources = Self {
@@ -2039,7 +2038,6 @@ impl ViewportGpuResources {
             sample_count,
             solid_pipeline,
             skinning,
-            displacement,
             deform,
             skinning_slot: None,
             solid_two_sided_pipeline,

@@ -14,6 +14,10 @@ Every mesh-family shader (`mesh.wgsl`, `mesh_oit.wgsl`, `mesh_instanced.wgsl`, `
 
 `register_deformer` now rebuilds the LDR and HDR `mesh.wgsl` pipeline families (solid, two-sided, transparent, wireframe) with a freshly composed shader module, so a registration takes effect at the next draw on those paths. The shared pipeline factories live in `resources/mesh_pipelines.rs` and run at both startup and rebuild time, so init and rebuild stay in lockstep. Other mesh-family pipelines (instanced, OIT, shadow, outline mask) continue to run the identity path until their factories migrate to the same rebuild flow.
 
+#### Vertex displacement folds into the deformer registry
+
+The standalone vertex displacement sidecar is gone. Hosts that previously planned to ship displacement (wind, water, snow) now register a deformer like any other: pack per-vertex sway-mask data into a per-mesh slot and the wind / water / snow uniform into the shared deform header. There were no external consumers of the prior API, so the removal is clean: `set_vertex_displacement_weights`, `set_displacement_uniform_buffer`, `is_displaceable_mesh`, `has_displacement_uniform`, `displacement_bind_group`, and `displacement_bind_group_layout` on `PluginBuilders` are all removed. `SHARED_DISPLACE_WGSL` is removed from `plugin_api::shared_wgsl`.
+
 #### GPU skinning runs through the deformer registry
 
 GPU skinning is now an internal deformer on a reserved slot rather than a parallel set of pipelines. The standard `mesh.wgsl`, `mesh_oit.wgsl`, `shadow.wgsl`, and `outline_mask.wgsl` pipelines pick up linear blend skinning by reading per-vertex weights and per-instance joint palettes through the deformer's slot helpers. `set_skin_weights` packs weights at the deformer's 24-byte stride and attaches them to the per-mesh slot. `set_skin_palette` writes the joint matrices to the per-instance slot through the new `attach_deform_slot_instance` API. The public skinning API (`set_skin_weights`, `set_skin_palette`, `is_skinned_mesh`, `supports_gpu_skinning`) keeps the same signatures.

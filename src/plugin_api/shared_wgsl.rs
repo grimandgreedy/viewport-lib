@@ -29,7 +29,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 3;
+pub const WGSL_VERSION: u32 = 4;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///

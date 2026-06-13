@@ -152,24 +152,7 @@ impl ViewportGpuResources {
         &self.deform.bind_group_layout
     }
 
-    /// Bind group layout for the vertex displacement sidecar.
-    ///
-    /// Plugins shipping displaceable variants of their geometry add this
-    /// layout to their pipeline's `extra_bind_group_layouts` list at
-    /// group 3, include
-    /// [`SHARED_DISPLACE_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DISPLACE_WGSL)
-    /// in their vertex shader, and supply their own helper string defining
-    /// `viewport_apply_vertex_displacement`.
-    ///
-    /// The host uploads per-vertex sway-mask buffers via
-    /// [`set_vertex_displacement_weights`](Self::set_vertex_displacement_weights)
-    /// and installs the displacement uniform via
-    /// [`set_displacement_uniform_buffer`](Self::set_displacement_uniform_buffer).
-    pub fn displacement_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.displacement.bind_group_layout
-    }
-
-    /// Number of live user-uploaded textures.
+/// Number of live user-uploaded textures.
     ///
     /// `id` values in `0..texture_count()` are addressable via
     /// [`texture_view`](Self::texture_view), with the caveat that promoted
