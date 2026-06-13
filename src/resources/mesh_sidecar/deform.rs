@@ -1326,9 +1326,13 @@ mod tests {
             wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    o.position.z = o.position.z + 0.001;\n    return o;\n}\n".to_string(),
             per_vertex_stride: 4,
         };
+        // Renderer construction already registered the internal skinning
+        // deformer on a reserved slot, so we record the baseline count and
+        // expect host slots to start at 0.
+        let baseline = resources.registered_deformer_count();
         let id = resources.register_deformer(&device, desc).expect("register");
         assert_eq!(id.slot(), 0);
-        assert_eq!(resources.registered_deformer_count(), 1);
+        assert_eq!(resources.registered_deformer_count(), baseline + 1);
 
         let dup = DeformerDesc {
             name: "wind",
@@ -1342,7 +1346,7 @@ mod tests {
             err,
             crate::error::ViewportError::DeformNameTaken { .. }
         ));
-        assert_eq!(resources.registered_deformer_count(), 1);
+        assert_eq!(resources.registered_deformer_count(), baseline + 1);
 
         let bad = DeformerDesc {
             name: "wave",
@@ -1356,6 +1360,6 @@ mod tests {
             err,
             crate::error::ViewportError::DeformShaderInvalid { .. }
         ));
-        assert_eq!(resources.registered_deformer_count(), 1);
+        assert_eq!(resources.registered_deformer_count(), baseline + 1);
     }
 }

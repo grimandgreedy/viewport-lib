@@ -123,6 +123,77 @@ impl SkinningState {
 }
 
 // ---------------------------------------------------------------------------
+// Internal skinning deformer
+// ---------------------------------------------------------------------------
+
+/// Priority assigned to the in-crate skinning deformer. Negative so
+/// morph-target and other object-space deformers, which register at the
+/// default priority of 0, run after it.
+pub const DEFORM_PRIORITY_SKINNING: i32 = -1000;
+
+/// Per-vertex stride of the skin-weights slot: four `f32` weights followed
+/// by two packed joint-index `u32`s.
+pub const SKIN_WEIGHT_STRIDE_BYTES: u32 = 24;
+
+/// Per-instance stride of the joint-palette slot: one `mat4x4<f32>` per
+/// joint.
+#[allow(dead_code)]
+pub const SKIN_PALETTE_STRIDE_BYTES: u32 = 64;
+
+const SKINNING_DEFORMER_NAME: &str = "viewport_skin";
+
+const SKINNING_DEFORMER_BODY: &str = r#"
+fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {
+    var out = v;
+    let slot = ctx.slot;
+    if deform_slot_stride(slot) == 0u {
+        return out;
+    }
+    let vi = v.vertex_index;
+    let w0 = deform_read_f32(slot, vi, 0u);
+    let w1 = deform_read_f32(slot, vi, 1u);
+    let w2 = deform_read_f32(slot, vi, 2u);
+    let w3 = deform_read_f32(slot, vi, 3u);
+    let j01 = deform_read_u32(slot, vi, 4u);
+    let j23 = deform_read_u32(slot, vi, 5u);
+    let j0 = j01 & 0xFFFFu;
+    let j1 = (j01 >> 16u) & 0xFFFFu;
+    let j2 = j23 & 0xFFFFu;
+    let j3 = (j23 >> 16u) & 0xFFFFu;
+    let m = deform_read_instance_mat4(slot, j0) * w0
+          + deform_read_instance_mat4(slot, j1) * w1
+          + deform_read_instance_mat4(slot, j2) * w2
+          + deform_read_instance_mat4(slot, j3) * w3;
+    out.position = (m * vec4<f32>(v.position, 1.0)).xyz;
+    let m3 = mat3x3<f32>(m[0].xyz, m[1].xyz, m[2].xyz);
+    out.normal = m3 * v.normal;
+    return out;
+}
+"#;
+
+/// Register the skinning deformer on its reserved internal slot. Called
+/// once at renderer construction. The slot is recorded on `resources` so
+/// `set_skin_weights` / `set_skin_palette` can route their uploads through
+/// the deformer registry.
+pub(crate) fn register_internal_skinning(
+    resources: &mut ViewportGpuResources,
+    device: &wgpu::Device,
+) {
+    use crate::resources::mesh_sidecar::registry::{DeformStage, DeformerDesc};
+    let desc = DeformerDesc {
+        name: SKINNING_DEFORMER_NAME,
+        stage: DeformStage::ObjectSpace,
+        priority: DEFORM_PRIORITY_SKINNING,
+        wgsl_body: SKINNING_DEFORMER_BODY.to_string(),
+        per_vertex_stride: SKIN_WEIGHT_STRIDE_BYTES,
+    };
+    let id = resources
+        .register_internal_deformer(device, desc)
+        .expect("internal skinning deformer must register on a reserved slot");
+    resources.skinning_slot = Some(id);
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 

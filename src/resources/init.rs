@@ -2383,13 +2383,14 @@ impl ViewportGpuResources {
             )
         }; // end three_bg guard
 
-        Self {
+        let mut resources = Self {
             target_format,
             sample_count,
             solid_pipeline,
             skinning,
             displacement,
             deform,
+            skinning_slot: None,
             skinned_solid_pipeline,
             skinned_solid_two_sided_pipeline,
             skinned_transparent_pipeline,
@@ -2857,6 +2858,11 @@ impl ViewportGpuResources {
             decal_sampler: None,
             decal_exclude_pipeline: None,
             decal_exclude_obj_bgl: None,
-        }
+        };
+        // Register the in-crate skinning deformer on a reserved internal
+        // slot. The body sits idle (returns identity) until a mesh attaches
+        // per-vertex weights and an instance attaches a joint palette.
+        crate::resources::mesh_sidecar::skin::register_internal_skinning(&mut resources, device);
+        resources
     }
 }

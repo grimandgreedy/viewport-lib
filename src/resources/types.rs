@@ -2553,6 +2553,11 @@ pub struct ViewportGpuResources {
     /// binds `@group(2)` from this state; meshes without attached deformer
     /// data fall back to the renderer-owned dummy bind group.
     pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
+    /// Slot assigned to the in-crate skinning deformer at renderer
+    /// construction. `set_skin_weights` and `set_skin_palette` route their
+    /// uploads through this slot.
+    pub(crate) skinning_slot:
+        Option<crate::resources::mesh_sidecar::registry::DeformerId>,
     /// Skinned variant of [`Self::solid_pipeline`]. Same fragment stage as the
     /// non-skinned pipeline; vertex stage applies LBS from the skinning
     /// sidecar storage buffers.
