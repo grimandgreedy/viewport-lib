@@ -210,7 +210,7 @@ pub use renderer::{
     GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
     InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
     LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing,
+    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, ParticleMeshAlign,
     OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
     OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, PassPath, PassView, PathTrack,
     PickId, PickRectResult, PointCloudItem, PointCloudRefItem, PointRenderMode, PolylineItem,

@@ -3527,6 +3527,12 @@ pub struct ViewportGpuResources {
     pub(crate) particle_sprite_lit_bgl: Option<wgpu::BindGroupLayout>,
     /// Fallback bind group for the lit particle normal-map binding (group 2).
     pub(crate) particle_sprite_lit_fallback_bg: Option<wgpu::BindGroup>,
+    /// Bind group layout for the mesh-route particle draw pipeline (group 1).
+    pub(crate) particle_mesh_draw_bgl: Option<wgpu::BindGroupLayout>,
+    /// Draw pipeline variants for the particle-mesh shader, keyed by blend.
+    pub(crate) particle_mesh_pipeline_alpha: Option<DualPipeline>,
+    pub(crate) particle_mesh_pipeline_additive: Option<DualPipeline>,
+    pub(crate) particle_mesh_pipeline_premultiplied: Option<DualPipeline>,
 
     // --- Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.

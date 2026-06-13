@@ -26,8 +26,9 @@ use viewport_lib::scene::{Scene, build_light_glyphs};
 use viewport_lib::{
     BackfacePolicy, ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId,
     GpuParticleSystemItem, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
-    ParticleRender, PolylineItem, RibbonItem, SceneRenderItem, SpawnShape, SpriteBlend, SpriteItem,
-    SpriteOrientation, SpriteSizeMode, VelocityDist, ViewportRenderer, primitives,
+    ParticleMeshAlign, ParticleRender, PolylineItem, RibbonItem, SceneRenderItem, SpawnShape,
+    SpriteBlend, SpriteItem, SpriteOrientation, SpriteSizeMode, VelocityDist, ViewportRenderer,
+    primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,10 @@ pub(crate) enum SpriteSubMode {
     /// the renderer runs the emitter, integrates forces (gravity + an
     /// orbiting attractor), and draws live particles each frame.
     GpuParticles,
+    /// A GPU-simulated debris emitter drawing through the mesh render route.
+    /// Each particle becomes one instance of a small mesh, tumbling either
+    /// along its velocity or with a stable random rotation seeded at spawn.
+    GpuMeshParticles,
     /// Sprite orientation modes side by side: a flock of camera-facing
     /// markers, a swarm of velocity-stretched sparks, and a row of grass
     /// cards locked to the world up axis.
@@ -197,6 +202,10 @@ pub(crate) struct SpriteState {
     pub gpu_lifetime: (f32, f32),
     pub gpu_attractor_enabled: bool,
 
+    // GPU mesh particles mode
+    pub gpu_mesh_particle_system: Option<GpuParticleSystemId>,
+    pub gpu_mesh_emit_rate: f32,
+
     // Trails mode
     pub trails: Vec<TrailEmitter>,
     /// Number of points held in each emitter's history ring buffer. Higher
@@ -272,6 +281,8 @@ impl Default for SpriteState {
             gpu_emit_rate: 20_000.0,
             gpu_lifetime: (1.5, 3.0),
             gpu_attractor_enabled: true,
+            gpu_mesh_particle_system: None,
+            gpu_mesh_emit_rate: 6_000.0,
         }
     }
 }
@@ -567,6 +578,24 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .create_gpu_particle_system(&app.device, &app.queue, &particle_cfg);
     app.sprite_state.gpu_particle_system = Some(particle_sys);
 
+    // Second GPU particle system, using the mesh render route. Each live
+    // particle becomes one instance of the cube uploaded above; rotation per
+    // instance comes from the align mode chosen at draw time.
+    let mut mesh_particle_cfg = GpuParticleSystemConfig::default();
+    mesh_particle_cfg.capacity = 30_000;
+    mesh_particle_cfg.render = ParticleRender::Mesh {
+        mesh_id: cube_id.index() as u64,
+        texture_id: None,
+        blend: SpriteBlend::AlphaBlend,
+        align: ParticleMeshAlign::Random,
+    };
+    let mesh_particle_sys = renderer.resources_mut().create_gpu_particle_system(
+        &app.device,
+        &app.queue,
+        &mesh_particle_cfg,
+    );
+    app.sprite_state.gpu_mesh_particle_system = Some(mesh_particle_sys);
+
     app.sprite_state.streak_tex = streak_tex;
     app.sprite_state.flame_tex = flame_tex;
     app.sprite_state.shockwave_tex = shockwave_tex;
@@ -756,6 +785,11 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
         );
         ui.selectable_value(
             &mut app.sprite_state.sub_mode,
+            SpriteSubMode::GpuMeshParticles,
+            "GPU Mesh Particles",
+        );
+        ui.selectable_value(
+            &mut app.sprite_state.sub_mode,
             SpriteSubMode::Orientations,
             "Orientations",
         );
@@ -833,6 +867,17 @@ pub(crate) fn controls_sprites(app: &mut App, ui: &mut egui::Ui) {
             ui.checkbox(
                 &mut app.sprite_state.gpu_attractor_enabled,
                 "Orbiting point attractor",
+            );
+        }
+        SpriteSubMode::GpuMeshParticles => {
+            ui.label("GPU-simulated debris: same emit + sim passes as the sprite route,");
+            ui.label("but each particle draws as one instance of an uploaded mesh.");
+            ui.label("Rotation is per-particle Random, seeded at spawn and held until death.");
+            ui.separator();
+            ui.label("Emit rate (particles/s):");
+            ui.add(
+                egui::Slider::new(&mut app.sprite_state.gpu_mesh_emit_rate, 0.0..=20_000.0)
+                    .step_by(250.0),
             );
         }
         SpriteSubMode::Trails => {
@@ -1006,7 +1051,10 @@ pub(crate) fn update_sprites(app: &mut App, dt: f32) {
             let fps = 10.0_f32;
             app.sprite_state.atlas_frame = (app.sprite_state.atlas_time * fps) as u32 % 16;
         }
-        SpriteSubMode::Soft | SpriteSubMode::MeshParticles | SpriteSubMode::GpuParticles => {
+        SpriteSubMode::Soft
+        | SpriteSubMode::MeshParticles
+        | SpriteSubMode::GpuParticles
+        | SpriteSubMode::GpuMeshParticles => {
             app.sprite_state.demo_time += dt;
         }
         SpriteSubMode::Distortion => {
@@ -1313,6 +1361,11 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
 
         SpriteSubMode::GpuParticles => {
             // GPU particles draw through their own pipeline; no sprite items here.
+            Vec::new()
+        }
+
+        SpriteSubMode::GpuMeshParticles => {
+            // Mesh-route GPU particles draw through their own pipeline.
             Vec::new()
         }
 
@@ -1657,6 +1710,9 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
     if let Some(item) = gpu_particle_item(app, dt) {
         fd.scene.gpu_particle_systems.push(item);
     }
+    if let Some(item) = gpu_mesh_particle_item(app, dt) {
+        fd.scene.gpu_particle_systems.push(item);
+    }
 
     // Lit sub-mode: rewrite the scene-graph directional light each frame so
     // it tracks the rotating azimuth and the chosen intensity, then collect
@@ -1735,6 +1791,37 @@ fn gpu_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
             falloff: 0.5,
         });
     }
+    Some(item)
+}
+
+/// Build a per-frame `GpuParticleSystemItem` for the GpuMeshParticles sub-mode.
+///
+/// Emits cubes upward from a small disc with gravity pulling them back down.
+/// The mesh route renders each particle as one cube instance; rotation comes
+/// from the system's `Random` align mode, seeded at spawn.
+fn gpu_mesh_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
+    if app.sprite_state.sub_mode != SpriteSubMode::GpuMeshParticles {
+        return None;
+    }
+    let sys = app.sprite_state.gpu_mesh_particle_system?;
+
+    let mut item = GpuParticleSystemItem::new(sys, dt);
+    item.emitter.rate = app.sprite_state.gpu_mesh_emit_rate;
+    item.emitter.lifetime = (2.0, 3.5);
+    item.emitter.initial_velocity = VelocityDist::UniformCone {
+        axis: [0.0, 0.0, 1.0],
+        half_angle: 0.7,
+        min_speed: 4.0,
+        max_speed: 7.0,
+    };
+    item.emitter.spawn_shape = SpawnShape::Sphere {
+        center: [0.0, 0.0, 0.0],
+        radius: 0.3,
+    };
+    item.emitter.colour = [0.85, 0.7, 0.5, 1.0];
+    item.emitter.size = 1.0;
+    item.forces.push(ForceField::Gravity([0.0, 0.0, -6.0]));
+    item.forces.push(ForceField::Drag(0.15));
     Some(item)
 }
 

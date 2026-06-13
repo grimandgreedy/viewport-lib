@@ -2486,40 +2486,75 @@ impl ViewportRenderer {
                 else {
                     continue;
                 };
-                let is_lit = matches!(
-                    &system.render,
-                    crate::resources::ParticleRender::Sprite { lit: true, .. }
-                );
-                let dual = match (pd.blend, is_lit) {
-                    (crate::renderer::SpriteBlend::Additive, false) => {
-                        resources.particle_sprite_pipeline_additive.as_ref()
+                match pd.route {
+                    crate::resources::gpu_particles::ParticleDrawRoute::Sprite { lit } => {
+                        let dual = match (pd.blend, lit) {
+                            (crate::renderer::SpriteBlend::Additive, false) => {
+                                resources.particle_sprite_pipeline_additive.as_ref()
+                            }
+                            (crate::renderer::SpriteBlend::Premultiplied, false) => {
+                                resources.particle_sprite_pipeline_premultiplied.as_ref()
+                            }
+                            (crate::renderer::SpriteBlend::AlphaBlend, false) => {
+                                resources.particle_sprite_pipeline_alpha.as_ref()
+                            }
+                            (crate::renderer::SpriteBlend::Additive, true) => {
+                                resources.particle_sprite_lit_pipeline_additive.as_ref()
+                            }
+                            (crate::renderer::SpriteBlend::Premultiplied, true) => resources
+                                .particle_sprite_lit_pipeline_premultiplied
+                                .as_ref(),
+                            (crate::renderer::SpriteBlend::AlphaBlend, true) => {
+                                resources.particle_sprite_lit_pipeline_alpha.as_ref()
+                            }
+                        };
+                        let Some(dual) = dual else { continue };
+                        let Some(draw_bg) = system.draw_bg.as_ref() else {
+                            continue;
+                        };
+                        pass.set_pipeline(dual.for_format(true));
+                        pass.set_bind_group(1, draw_bg, &[]);
+                        if lit {
+                            let normal_bg =
+                                system.draw_lit_normal_bg.as_ref().or(particle_lit_fallback);
+                            if let Some(bg) = normal_bg {
+                                pass.set_bind_group(2, bg, &[]);
+                            }
+                        }
+                        pass.draw(0..6, 0..system.capacity);
                     }
-                    (crate::renderer::SpriteBlend::Premultiplied, false) => {
-                        resources.particle_sprite_pipeline_premultiplied.as_ref()
-                    }
-                    (crate::renderer::SpriteBlend::AlphaBlend, false) => {
-                        resources.particle_sprite_pipeline_alpha.as_ref()
-                    }
-                    (crate::renderer::SpriteBlend::Additive, true) => {
-                        resources.particle_sprite_lit_pipeline_additive.as_ref()
-                    }
-                    (crate::renderer::SpriteBlend::Premultiplied, true) => resources
-                        .particle_sprite_lit_pipeline_premultiplied
-                        .as_ref(),
-                    (crate::renderer::SpriteBlend::AlphaBlend, true) => {
-                        resources.particle_sprite_lit_pipeline_alpha.as_ref()
-                    }
-                };
-                let Some(dual) = dual else { continue };
-                pass.set_pipeline(dual.for_format(true));
-                pass.set_bind_group(1, &system.draw_bg, &[]);
-                if is_lit {
-                    let normal_bg = system.draw_lit_normal_bg.as_ref().or(particle_lit_fallback);
-                    if let Some(bg) = normal_bg {
-                        pass.set_bind_group(2, bg, &[]);
+                    crate::resources::gpu_particles::ParticleDrawRoute::Mesh { mesh_id } => {
+                        let dual = match pd.blend {
+                            crate::renderer::SpriteBlend::Additive => {
+                                resources.particle_mesh_pipeline_additive.as_ref()
+                            }
+                            crate::renderer::SpriteBlend::Premultiplied => {
+                                resources.particle_mesh_pipeline_premultiplied.as_ref()
+                            }
+                            crate::renderer::SpriteBlend::AlphaBlend => {
+                                resources.particle_mesh_pipeline_alpha.as_ref()
+                            }
+                        };
+                        let Some(dual) = dual else { continue };
+                        let Some(draw_bg) = system.draw_bg_mesh.as_ref() else {
+                            continue;
+                        };
+                        let Some(mesh) = resources
+                            .mesh_store
+                            .get(crate::resources::mesh_store::MeshId::from_index(mesh_id as usize))
+                        else {
+                            continue;
+                        };
+                        pass.set_pipeline(dual.for_format(true));
+                        pass.set_bind_group(1, draw_bg, &[]);
+                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..mesh.index_count, 0, 0..system.capacity);
                     }
                 }
-                pass.draw(0..6, 0..system.capacity);
             }
         }
 

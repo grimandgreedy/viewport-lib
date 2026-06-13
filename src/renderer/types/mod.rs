@@ -978,6 +978,15 @@ macro_rules! emit_scivis_draw_calls {
                         set = true;
                     }
                     render_pass.set_bind_group(1, &batch.bind_group, &[]);
+                    // mesh_instanced.wgsl's pipeline layout includes the deform
+                    // bind group at index 2. MeshInstanceItem does not expose
+                    // per-instance deform handles, so bind the per-mesh
+                    // fallback (or the dummy group when the mesh has no
+                    // attached deform data).
+                    let deform_bg = resources
+                        .deform
+                        .instance_bind_group_for(batch.mesh_id, None);
+                    render_pass.set_bind_group(2, deform_bg, &[]);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     render_pass
                         .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

@@ -20,6 +20,10 @@ Skinning, wind, displacement, morph targets, ocean surfaces, and similar effects
 
 Particle effects can run end to end on the GPU. Upload a system once with a capacity and a render route, then submit one item per frame with emitter settings (rate, lifetime, spawn shape, initial velocity) and a list of force fields. The renderer handles emission, simulation, and rendering. Spawn shapes include point, box, and sphere; velocity distributions cover fixed, box, and cone; forces include gravity, drag, and point attractors. Per-particle CPU work on the host drops to zero.
 
+#### Mesh-rendered GPU particles
+
+GPU particle systems can draw their live particles as instanced meshes instead of sprites. Pick a mesh, a blend mode, and an alignment rule (identity, velocity-aligned, or stable random tumble seeded at spawn); the simulation path is unchanged and one draw call covers the whole system. Useful for debris, projectiles, gibs, casings, dropped collectibles, and anything else that doesn't want a billboard.
+
 #### Lit sprites and lit particles
 
 Sprites and GPU particles can opt into the scene lighting: directional, point, spot, and hemisphere ambient all apply, so smoke, dust, and fog read with a clear lit and shaded side instead of looking flat. Three normal modes (spherical for round soft particles, flat for camera-aligned art, normal-mapped for textured surfaces) and an optional cascade shadow tap with PCF filtering. Defaults preserve the previous emissive billboard behaviour.
@@ -63,6 +67,7 @@ Overlay shapes gain six independent animation tracks (opacity, position, size, f
 
 ### Bug fixes
 
+- Mesh-instance batches no longer crash on draw. The pass was missing the deform bind group that the instanced mesh pipeline expects.
 - Single-sided skinned characters render correctly with normal backface culling. They were previously silently dropped from the draw queue.
 - Shadow acne that shifted with the light direction is gone. Cascade bias is now stable for any light direction; previously certain orientations produced a band of acne or broad acne with the light below the horizon.
 - Removed a shadow-terminator fade that was hiding legitimate shadows. With lights below the horizon it produced bright stripes that read as acne; the new bias work above handles the original grazing-angle artifact it was masking.

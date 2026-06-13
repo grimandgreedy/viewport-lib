@@ -1774,6 +1774,22 @@ impl Default for MeshInstanceItem {
 // GPU particle simulation
 // ---------------------------------------------------------------------------
 
+/// Per-particle rotation rule used by the mesh render route.
+///
+/// Used by [`ParticleRender::Mesh`](crate::resources::ParticleRender::Mesh).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ParticleMeshAlign {
+    /// No rotation. The mesh keeps its authored orientation.
+    #[default]
+    Identity,
+    /// Rotation that maps the mesh's +Y axis onto the per-particle velocity
+    /// vector. Useful for projectiles, debris with tumble, casings.
+    Velocity,
+    /// Stable random rotation seeded at spawn and held until the particle dies.
+    /// Useful for tumbling debris, gibs, scattered leaves.
+    Random,
+}
+
 /// Distribution used to assign an initial velocity to a newly spawned particle.
 #[derive(Debug, Clone, Copy)]
 pub enum VelocityDist {

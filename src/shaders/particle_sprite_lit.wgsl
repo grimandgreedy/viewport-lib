@@ -44,7 +44,8 @@ struct Particle {
     max_lifetime: f32,
     colour:       vec4<f32>,
     size:         f32,
-    _pad:         vec3<f32>,
+    spawn_seed:   f32,
+    _pad:         vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform>       camera:         Camera;

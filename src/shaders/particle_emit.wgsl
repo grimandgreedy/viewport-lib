@@ -13,7 +13,8 @@ struct Particle {
     max_lifetime: f32,
     colour:       vec4<f32>,
     size:         f32,
-    _pad:         vec3<f32>,
+    spawn_seed:   f32,
+    _pad:         vec2<f32>,
 };
 
 struct EmitParams {
@@ -76,6 +77,11 @@ fn emit_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let velocity = spawn_velocity(&rng);
     let life     = mix(params.lifetime_min, params.lifetime_max, rand_f(&rng));
 
+    // Stable per-spawn seed used by the mesh draw route for `Random` align
+    // rotation. Held untouched by the sim until the slot is recycled.
+    let seed_bits = pcg(params.rng_seed ^ (tid * 0x68E31DA4u));
+    let spawn_seed = f32(seed_bits) / 4294967295.0;
+
     var p: Particle;
     p.position     = position;
     p.lifetime     = life;
@@ -83,6 +89,7 @@ fn emit_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     p.max_lifetime = life;
     p.colour       = params.colour;
     p.size         = params.size;
+    p.spawn_seed   = spawn_seed;
     particles[tid] = p;
 }
 

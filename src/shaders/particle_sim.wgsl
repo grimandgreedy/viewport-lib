@@ -12,7 +12,8 @@ struct Particle {
     max_lifetime: f32,
     colour:       vec4<f32>,
     size:         f32,
-    _pad:         vec3<f32>,
+    spawn_seed:   f32,
+    _pad:         vec2<f32>,
 };
 
 // `_pad0/_pad1/_pad2` are three plain u32s rather than a `vec3<u32>` so the
