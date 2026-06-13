@@ -572,6 +572,10 @@ impl ViewportGpuResources {
                     binding: 16,
                     resource: self.clustered.light_index_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: wgpu::BindingResource::TextureView(&self.point_shadow_cube_view),
+                },
             ],
         })
     }

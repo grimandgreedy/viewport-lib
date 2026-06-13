@@ -27,16 +27,19 @@
 //     `// #include "scene_lighting.wgsl"` near the top of the file instead.
 
 struct SingleLight {
-    light_view_proj: mat4x4<f32>,
-    pos_or_dir:      vec3<f32>,
-    light_type:      u32,
-    colour:           vec3<f32>,
-    intensity:       f32,
-    range:           f32,
-    inner_angle:     f32,
-    outer_angle:     f32,
-    spot_direction:  vec3<f32>,
-    _pad:            vec2<f32>,
+    light_view_proj:   mat4x4<f32>,
+    pos_or_dir:        vec3<f32>,
+    light_type:        u32,
+    colour:            vec3<f32>,
+    intensity:         f32,
+    range:             f32,
+    inner_angle:       f32,
+    outer_angle:       f32,
+    spot_direction:    vec3<f32>,
+    point_shadow_slot: i32,
+    point_shadow_near: f32,
+    _pad0:             f32,
+    _pad1:             f32,
 };
 
 struct Lights {
@@ -77,6 +80,8 @@ struct ClusterCell {
 @group(0) @binding(14) var<uniform>       cluster_grid_uniform:  ClusterGrid;
 @group(0) @binding(15) var<storage, read> cluster_cells:         array<ClusterCell>;
 @group(0) @binding(16) var<storage, read> cluster_light_indices: array<u32>;
+@group(0) @binding(17) var                point_shadow_cube_tex: texture_depth_cube_array;
+
 
 fn cluster_index_for(view_pos: vec3<f32>) -> u32 {
     let grid = cluster_grid_uniform;

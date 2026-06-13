@@ -243,6 +243,24 @@ struct ShadowSample {
     normal_bias_world: f32,
 }
 
+fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>) -> f32 {
+    if light.point_shadow_slot < 0 {
+        return 1.0;
+    }
+    let to_frag = world_pos - light.pos_or_dir;
+    let dist = length(to_frag);
+    let dir = to_frag / max(dist, 1e-5);
+    let normalised = clamp(dist / max(light.range, 1e-5), 0.0, 1.0);
+    let bias = 0.0015;
+    return textureSampleCompare(
+        point_shadow_cube_tex,
+        shadow_sampler,
+        dir,
+        light.point_shadow_slot,
+        normalised - bias,
+    );
+}
+
 fn sample_shadow_csm(
     world_pos: vec3<f32>,
     eye_pos: vec3<f32>,
@@ -551,9 +569,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                 radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
             var shadow_factor = 1.0;
-            if i == 0u && lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
-                last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
-                shadow_factor = last_shadow_sample.factor;
+            if lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
+                if i == 0u && lights_storage[0].light_type != 1u {
+                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, L);
+                    shadow_factor = last_shadow_sample.factor;
+                } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
+                    shadow_factor = sample_point_shadow(l, in.world_pos);
+                }
             }
             radiance *= shadow_factor;
             Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
@@ -601,9 +623,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                 attenuation = dist_falloff * dist_falloff * cone_att;
             }
             var shadow = 1.0;
-            if i == 0u && lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
-                last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
-                shadow = last_shadow_sample.factor;
+            if lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
+                if i == 0u && lights_storage[0].light_type != 1u {
+                    last_shadow_sample = sample_shadow_csm(in.world_pos, camera.eye_pos, shadow_normal, light_dir);
+                    shadow = last_shadow_sample.factor;
+                } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
+                    shadow = sample_point_shadow(l, in.world_pos);
+                }
             }
             let H = normalize(light_dir + V);
             let n_dot_l = max(dot(N, light_dir), 0.0);

@@ -26,6 +26,10 @@ Particle effects can run end to end on the GPU. Upload a system once with a capa
 
 GPU particle systems can draw their live particles as instanced meshes instead of sprites. Pick a mesh, a blend mode, and an alignment rule (identity, velocity-aligned, or stable random tumble seeded at spawn); the simulation path is unchanged and one draw call covers the whole system. Useful for debris, projectiles, gibs, casings, dropped collectibles, and anything else that doesn't want a billboard.
 
+#### Omnidirectional point-light shadows
+
+Point lights now cast shadows in every direction. The renderer keeps a cubemap-array depth texture and renders six faces per shadow-casting point light each frame, so a point light's cast shadow no longer cuts off at a 90 degree cone toward the scene centre. Up to eight point lights can cast shadows simultaneously; the rest get direct illumination only. Directional and spot shadow paths are unchanged.
+
 #### Lit sprites and lit particles
 
 Sprites and GPU particles can opt into the scene lighting: directional, point, spot, and hemisphere ambient all apply, so smoke, dust, and fog read with a clear lit and shaded side instead of looking flat. Three normal modes (spherical for round soft particles, flat for camera-aligned art, normal-mapped for textured surfaces) and an optional cascade shadow tap with PCF filtering. Defaults preserve the previous emissive billboard behaviour.
@@ -33,18 +37,6 @@ Sprites and GPU particles can opt into the scene lighting: directional, point, s
 #### Sprite orientation and refraction
 
 Sprites gain two new orientation modes alongside the default camera-facing: velocity-stretched (aligns the long axis with motion, length scales with speed) for sparks and rain streaks, and axis-locked (long axis pinned to a world direction) for vertical flames and grass cards. Sprites can also enable per-pixel scene refraction for heat haze, shockwaves, water splashes, and force-field hits; the renderer distorts the scene behind the sprite based on its texture. Refraction is HDR-path only.
-
-#### Per-material UV transform
-
-Materials can now shift and scale their texture UVs. Pick a sub-region of a texture, tile a wood or stone pattern at a different rate, or share one atlas across many materials without re-authoring meshes. Affects every texture the material samples (colour, normal, ambient occlusion, metallic-roughness, emissive). Works for single draws and instanced batches.
-
-#### Ribbon trails: colour and blend modes
-
-Ribbons can fade per vertex with an RGBA attribute and select between alpha, additive, and premultiplied blend modes. Useful for trails that go from invisible at the tail to bright at the head without a colourmap, and for additive streaks that brighten where segments overlap.
-
-#### Stroked polyline overlay
-
-A new screen-space polyline overlay primitive: a list of waypoints, a thickness, a colour, a join mode (mitre with auto-bevel fallback, or always-bevel), and an optional closed flag. Includes a path-sampling constructor for tracing a generated curve.
 
 #### Richer overlay shapes
 
@@ -60,6 +52,18 @@ Several extensions to screen-space overlay shapes:
 #### Overlay animation tracks
 
 Overlay shapes gain six independent animation tracks (opacity, position, size, fill, border, rotation) with five easing curves (linear, ease-in, ease-out, ease-in-out, pulse) and three repeat modes (once, loop, ping-pong). For non-linear motion, an alternate closure-driven path track stores a function called once per frame at the eased time; bezier and polyline constructors cover common 2D cases.
+
+#### Per-material UV transform
+
+Materials can now shift and scale their texture UVs. Pick a sub-region of a texture, tile a wood or stone pattern at a different rate, or share one atlas across many materials without re-authoring meshes. Affects every texture the material samples (colour, normal, ambient occlusion, metallic-roughness, emissive). Works for single draws and instanced batches.
+
+#### Ribbon trails: colour and blend modes
+
+Ribbons can fade per vertex with an RGBA attribute and select between alpha, additive, and premultiplied blend modes. Useful for trails that go from invisible at the tail to bright at the head without a colourmap, and for additive streaks that brighten where segments overlap.
+
+#### Stroked polyline overlay
+
+A new screen-space polyline overlay primitive: a list of waypoints, a thickness, a colour, a join mode (mitre with auto-bevel fallback, or always-bevel), and an optional closed flag. Includes a path-sampling constructor for tracing a generated curve.
 
 ### Improvements
 
@@ -78,6 +82,7 @@ Overlay shapes gain six independent animation tracks (opacity, position, size, f
 - Contact shadows now appear at close contact points instead of leaving a bright spot where objects meet a surface. Spot lights also get correct contact shadows.
 - Overlay clip rectangles now scale correctly on high-DPI displays. Clipped shapes previously vanished entirely on any display with a pixel ratio other than 1.
 - Overlay shape hit testing now honours rotation. Clicks on rotated shapes resolved against the un-rotated silhouette before.
+- Matcap, two-sided, attribute-driven, and override-driven meshes now cast shadows. The cascade shadow pass only drew skinned items from the per-item path; everything else excluded from instanced batches was silently dropped.
 
 
 ## [0.17.0]

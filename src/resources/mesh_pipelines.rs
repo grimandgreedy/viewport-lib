@@ -335,6 +335,67 @@ pub(crate) fn build_shadow_pipeline(
     })
 }
 
+/// `shadow_point.wgsl`: depth + fragment pipeline for point-light cubemap
+/// shadow faces. Writes linear distance-to-light to `frag_depth`.
+///
+/// Uses back-face culling (front faces visible to the light are rendered) so
+/// the cubemap stores the near-side distance of each occluder. With linear
+/// distance and front-face culling, the stored depth is the object's far
+/// side, which bakes in an implicit "bias = object thickness" and causes
+/// peter-panning on objects sitting flush against receivers. A small slope-
+/// scale bias offsets shadow acne on the lit side without re-introducing the
+/// gap.
+pub(crate) fn build_shadow_point_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("shadow_point_pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Vertex::buffer_layout()],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            // Y-flipped projection reverses triangle winding in screen space:
+            // a triangle that's CCW in world space rasterises as CW after the
+            // flip. Treating CW as the front face keeps back-face culling
+            // (cull_mode: Back) working in the original sense: the surfaces
+            // facing the light are kept, the surfaces facing away are culled.
+            front_face: wgpu::FrontFace::Cw,
+            cull_mode: Some(wgpu::Face::Back),
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
 /// `outline_mask.wgsl`: two pipelines that rasterise the selection
 /// silhouette into the R8 mask texture.
 pub(crate) struct OutlineMaskPipelines {
