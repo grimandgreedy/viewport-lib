@@ -335,8 +335,16 @@ pub struct SingleLightUniform {
     pub _pad_align: u32, //  4 bytes, offset 108 (aligns spot_direction to 112)
     /// World-space unit direction the spot cone points toward.
     pub spot_direction: [f32; 3], // 12 bytes, offset 112
+    /// Cubemap slot index for point-shadow sampling, or -1 if this light
+    /// does not have a slot allocated this frame. Only meaningful when
+    /// `light_type == 1` (point).
+    pub point_shadow_slot: i32, //  4 bytes, offset 124
+    /// Near plane for the point-shadow perspective projection (world units).
+    /// Used by the lit pass to map fragment distance back into the
+    /// normalised [0, 1] depth that was written into the cubemap.
+    pub point_shadow_near: f32, //  4 bytes, offset 128
     /// Tail padding to reach 144-byte struct size.
-    pub _pad: [f32; 5], // 20 bytes, offset 124 : total 144
+    pub _pad: [f32; 3], // 12 bytes, offset 132 : total 144
 }
 
 /// GPU-side lights header uniform (binding 3 of group 0).
@@ -2528,6 +2536,29 @@ pub struct ViewportGpuResources {
     pub shadow_map_view: wgpu::TextureView,
     /// Comparison sampler for PCF shadow filtering.
     pub shadow_sampler: wgpu::Sampler,
+    /// Cubemap-array depth texture for point-light shadows. Layered as
+    /// `MAX_POINT_SHADOW_LIGHTS * 6` faces of `POINT_SHADOW_FACE_SIZE` px.
+    pub point_shadow_cube_texture: wgpu::Texture,
+    /// `texture_depth_cube_array` view bound to the lit-pass bind group.
+    pub point_shadow_cube_view: wgpu::TextureView,
+    /// One 2D-array view per face, used as the depth attachment during the
+    /// shadow render pass. `len() == MAX_POINT_SHADOW_LIGHTS * 6`, indexed
+    /// as `slot * 6 + face`.
+    pub point_shadow_face_views: Vec<wgpu::TextureView>,
+    /// Render pipeline for the point-shadow depth pass. Same vertex layout
+    /// as the cascade shadow pipeline; writes linear distance-to-light.
+    pub shadow_point_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the point-shadow per-face uniform (group 0
+    /// of the point shadow pass). Kept for pipeline rebuilds.
+    pub(crate) shadow_point_face_bind_group_layout: wgpu::BindGroupLayout,
+    /// Per-face uniform buffer holding `view_proj`, `light_pos`, `range`
+    /// for every (slot, face) of the point shadow array. Sized as
+    /// `MAX_POINT_SHADOW_LIGHTS * 6 * 256` bytes (256-byte dynamic-offset
+    /// stride).
+    pub shadow_point_face_buf: wgpu::Buffer,
+    /// Bind group for the point-shadow per-face uniform. Stride is 256;
+    /// the per-face render pass sets a dynamic offset.
+    pub shadow_point_face_bind_group: wgpu::BindGroup,
     /// Render pipeline for the shadow depth pass (depth-only, no fragment output).
     pub shadow_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the shadow camera uniform (group 0 of the

@@ -271,7 +271,9 @@ impl ViewportRenderer {
                     outer_angle: 0.0,
                     _pad_align: 0,
                     spot_direction: [0.0, -1.0, 0.0],
-                    _pad: [0.0; 5],
+                    point_shadow_slot: -1,
+                    point_shadow_near: 0.1,
+                    _pad: [0.0; 3],
                 },
                 LightKind::Point { position, range } => SingleLightUniform {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
@@ -284,7 +286,9 @@ impl ViewportRenderer {
                     outer_angle: 0.0,
                     _pad_align: 0,
                     spot_direction: [0.0, -1.0, 0.0],
-                    _pad: [0.0; 5],
+                    point_shadow_slot: -1,
+                    point_shadow_near: 0.1,
+                    _pad: [0.0; 3],
                 },
                 LightKind::Spot {
                     position,
@@ -303,7 +307,9 @@ impl ViewportRenderer {
                     outer_angle: *outer_angle,
                     _pad_align: 0,
                     spot_direction: *direction,
-                    _pad: [0.0; 5],
+                    point_shadow_slot: -1,
+                    point_shadow_near: 0.1,
+                    _pad: [0.0; 3],
                 },
             }
         }
@@ -415,11 +421,101 @@ impl ViewportRenderer {
         let light_count = combined_lights.len() as u32;
 
         // Build the per-light entries that get uploaded to the storage buffer.
-        let lights_packed: Vec<SingleLightUniform> = combined_lights
+        let mut lights_packed: Vec<SingleLightUniform> = combined_lights
             .iter()
             .enumerate()
             .map(|(i, src)| build_single_light_uniform(src, shadow_center, shadow_extent, i == 0))
             .collect();
+
+        // ---------------------------------------------------------------
+        // Point-light shadow pool: allocate a cubemap slot per shadow-casting
+        // Point light, build the six per-face view-projection matrices, and
+        // mutate each light's `point_shadow_slot`/`near` so the lit pass can
+        // sample the cubemap. Faces are rendered later in this function once
+        // the cascade pass has finished.
+        // ---------------------------------------------------------------
+        const POINT_SHADOW_NEAR: f32 = 0.1;
+        const POINT_FACE_STRIDE: u64 = 256;
+        struct PointShadowFace {
+            slot: u32,
+            face: u32,
+            view_proj: glam::Mat4,
+            light_pos: glam::Vec3,
+            range: f32,
+        }
+        let mut point_shadow_faces: Vec<PointShadowFace> = Vec::new();
+        if matches!(lighting.point_shadow_mode, crate::renderer::types::PointShadowMode::Cube)
+            && lighting.shadows_enabled
+        {
+            self.point_shadow_frame = self.point_shadow_frame.wrapping_add(1);
+            self.point_shadow_pool.begin_frame(self.point_shadow_frame);
+            for (i, src) in combined_lights.iter().enumerate() {
+                if !src.cast_shadows {
+                    continue;
+                }
+                let (light_pos, range) = match src.kind {
+                    LightKind::Point { position, range } => (glam::Vec3::from(position), range),
+                    _ => continue,
+                };
+                let key = crate::renderer::point_shadow_pool::LightKey(i as u32);
+                let Some(slot) = self.point_shadow_pool.acquire(key) else {
+                    continue;
+                };
+                lights_packed[i].point_shadow_slot = slot as i32;
+                lights_packed[i].point_shadow_near = POINT_SHADOW_NEAR;
+                // Six standard cubemap face directions (forward, up). Order:
+                //   0:+X, 1:-X, 2:+Y, 3:-Y, 4:+Z, 5:-Z.
+                let faces: [(glam::Vec3, glam::Vec3); 6] = [
+                    (glam::Vec3::X,     glam::Vec3::NEG_Y),
+                    (glam::Vec3::NEG_X, glam::Vec3::NEG_Y),
+                    (glam::Vec3::Y,     glam::Vec3::Z),
+                    (glam::Vec3::NEG_Y, glam::Vec3::NEG_Z),
+                    (glam::Vec3::Z,     glam::Vec3::NEG_Y),
+                    (glam::Vec3::NEG_Z, glam::Vec3::NEG_Y),
+                ];
+                let proj = glam::Mat4::perspective_rh(
+                    std::f32::consts::FRAC_PI_2,
+                    1.0,
+                    POINT_SHADOW_NEAR,
+                    range.max(POINT_SHADOW_NEAR + 0.01),
+                );
+                for (f, (forward, up)) in faces.iter().enumerate() {
+                    let view = glam::Mat4::look_at_rh(light_pos, light_pos + *forward, *up);
+                    point_shadow_faces.push(PointShadowFace {
+                        slot,
+                        face: f as u32,
+                        view_proj: proj * view,
+                        light_pos,
+                        range,
+                    });
+                }
+            }
+
+            // Upload per-face uniforms (view_proj + light_pos + range,
+            // padded to 256-byte dynamic-offset stride).
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct PointFaceUniform {
+                view_proj: [[f32; 4]; 4], // 0..64
+                // Packed vec4: xyz = light_pos, w = range.
+                light_pos: [f32; 4],      // 64..80
+                _pad:      [f32; 44],     // pad to 256
+            }
+            for fc in &point_shadow_faces {
+                let entry = PointFaceUniform {
+                    view_proj: fc.view_proj.to_cols_array_2d(),
+                    light_pos: [fc.light_pos.x, fc.light_pos.y, fc.light_pos.z, fc.range],
+                    _pad: [0.0; 44],
+                };
+                let layer = fc.slot * 6 + fc.face;
+                let offset = layer as u64 * POINT_FACE_STRIDE;
+                queue.write_buffer(
+                    &resources.shadow_point_face_buf,
+                    offset,
+                    bytemuck::cast_slice(&[entry]),
+                );
+            }
+        }
 
         // -------------------------------------------------------------------
         // Compute CSM cascade matrices for lights[0] (directional).
@@ -3079,6 +3175,113 @@ impl ViewportRenderer {
                 self.last_stats.shadow_draw_calls = shadow_draws;
             }
             queue.submit(std::iter::once(encoder.finish()));
+        }
+
+        // ----------------------------------------------------------------
+        // Point-light cubemap shadow passes.
+        //
+        // One depth-only render pass per (slot, face). Reuses the cascade
+        // shadow rasterisation conventions (front-face culling, opaque
+        // casters only) but writes linear distance-to-light to frag_depth
+        // via `shadow_point_pipeline`. Per-face culling uses the standard
+        // CPU frustum from the face's view-projection.
+        // ----------------------------------------------------------------
+        if lighting.shadows_enabled && !scene_items.is_empty() && !point_shadow_faces.is_empty() {
+            // Make sure each casting item's `mesh.object_uniform_buf` carries
+            // the item's current world model matrix. When instancing is on,
+            // the per-item write-buffer pass earlier in `prepare_scene_internal`
+            // skips items that go through the instanced path, leaving the
+            // shared per-mesh uniform stale. The cascade shadow pass works
+            // around this by drawing instanced items through a different
+            // pipeline; the point shadow path here renders every caster
+            // through `shadow_point_pipeline` (non-instanced), so it needs
+            // a fresh per-mesh write here. Multi-item-per-mesh scenes need a
+            // dedicated per-item shadow uniform; the single-item case is the
+            // priority bug fix.
+            for item in scene_items.iter() {
+                if item.settings.hidden
+                    || !item.settings.cast_shadows
+                    || item.settings.opacity < 1.0
+                {
+                    continue;
+                }
+                let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                    continue;
+                };
+                // Only the model matrix (offset 0, 64 bytes) is read by
+                // `shadow_point.wgsl`. Write just that prefix so we don't
+                // clobber the rest of the per-mesh `ObjectUniform`.
+                queue.write_buffer(
+                    &mesh.object_uniform_buf,
+                    0,
+                    bytemuck::cast_slice(&item.model),
+                );
+            }
+
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("point_shadow_encoder"),
+            });
+            for fc in &point_shadow_faces {
+                let layer = fc.slot * 6 + fc.face;
+                let view = &resources.point_shadow_face_views[layer as usize];
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("point_shadow_face_pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&resources.shadow_point_pipeline);
+                let dyn_offset = layer * POINT_FACE_STRIDE as u32;
+                pass.set_bind_group(
+                    0,
+                    &resources.shadow_point_face_bind_group,
+                    &[dyn_offset],
+                );
+
+                let face_frustum =
+                    crate::camera::frustum::Frustum::from_view_proj(&fc.view_proj);
+
+                for item in scene_items.iter() {
+                    if item.settings.hidden
+                        || !item.settings.cast_shadows
+                        || item.settings.opacity < 1.0
+                    {
+                        continue;
+                    }
+                    let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                        continue;
+                    };
+                    let world_aabb = mesh
+                        .aabb
+                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
+                    if face_frustum.cull_aabb(&world_aabb) {
+                        continue;
+                    }
+                    pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                    pass.set_bind_group(
+                        2,
+                        resources
+                            .deform
+                            .instance_bind_group_for(item.mesh_id, item.deform_instance),
+                        &[],
+                    );
+                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        mesh.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                }
+            }
+            queue.submit(std::iter::once(enc.finish()));
         }
     }
 

@@ -11,6 +11,7 @@ mod paths;
 pub use paths::{OwnedPath, PassPath, PassView};
 mod picking;
 pub use picking::PickRectResult;
+mod point_shadow_pool;
 mod prepare;
 mod render;
 pub mod shader_hashes;
@@ -30,7 +31,8 @@ pub use self::types::{
     GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType,
     GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
     InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
-    LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MeshInstanceItem,
+    LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MAX_POINT_SHADOW_LIGHTS,
+    MeshInstanceItem, POINT_SHADOW_FACE_SIZE, PointShadowMode,
     NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, ParticleMeshAlign,
     OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
     OverlayShape, OverlayShapeItem, OverlayTextureId, PathTrack, PickId, PointCloudItem,
@@ -393,6 +395,11 @@ pub struct ViewportRenderer {
     /// Cascade-0 light-space view-projection matrix from the last shadow prepare.
     /// Cached here so `prepare_viewport_internal` can copy it into the ground plane uniform.
     last_cascade0_shadow_mat: glam::Mat4,
+    /// Slot allocator for the point-light cubemap shadow pool. One slot per
+    /// shadow-casting point light, evicted by LRU when capacity is exceeded.
+    point_shadow_pool: crate::renderer::point_shadow_pool::PointShadowPool,
+    /// Monotonic frame counter for point-shadow pool LRU bookkeeping.
+    point_shadow_frame: u64,
     /// Current runtime mode controlling internal default behavior.
     runtime_mode: crate::renderer::stats::RuntimeMode,
     /// Optional cap on how much main-thread time `prepare` is allowed to
@@ -615,6 +622,8 @@ impl ViewportRenderer {
             tvm_wireframe_buf: None,
             tvm_wireframe_bg: None,
             last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
+            point_shadow_pool: crate::renderer::point_shadow_pool::PointShadowPool::new(),
+            point_shadow_frame: 0,
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
             upload_budget: None,

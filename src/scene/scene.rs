@@ -273,6 +273,7 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
         colour: src.colour,
         intensity: src.intensity,
         importance: src.importance,
+        cast_shadows: src.cast_shadows,
     }
 }
 

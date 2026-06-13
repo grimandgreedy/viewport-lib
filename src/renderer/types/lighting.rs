@@ -58,6 +58,16 @@ pub struct LightSource {
     /// distance to the active camera. Directional lights are treated as
     /// infinitely close (proximity_weight = 1).
     pub importance: f32,
+    /// When true, this light contributes to shadow casting.
+    ///
+    /// Directional lights cast cascaded shadows into the shared atlas (only
+    /// the first directional light is treated as the CSM caster). Point
+    /// lights with `cast_shadows = true` acquire a slot in the cubemap
+    /// shadow pool, up to `MAX_POINT_SHADOW_LIGHTS` active casters. Spot
+    /// lights cast a single-face perspective shadow.
+    ///
+    /// Default: true. Disable per-light to skip the shadow render work.
+    pub cast_shadows: bool,
 }
 
 impl Default for LightSource {
@@ -71,9 +81,39 @@ impl Default for LightSource {
             colour: [1.0, 1.0, 1.0],
             intensity: 1.0,
             importance: 1.0,
+            cast_shadows: true,
         }
     }
 }
+
+/// Point-light shadow technique.
+///
+/// `Cube` (default) renders six cubemap faces per shadow-casting point light,
+/// giving omnidirectional coverage. `Cone` is the legacy single-perspective
+/// path: a 90 degree view from the light toward the scene centre. The cone
+/// path is kept temporarily for sanity comparison; objects outside the cone
+/// receive no shadow data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PointShadowMode {
+    /// Legacy single-face perspective from the light toward the scene centre.
+    Cone,
+    /// Cubemap-array point shadows. Default.
+    #[default]
+    Cube,
+}
+
+/// Maximum number of point lights that can cast shadows simultaneously.
+///
+/// Bounds the size of the cubemap shadow texture array. Lights beyond this
+/// count are evicted from the pool by LRU on `last_frame_used`.
+pub const MAX_POINT_SHADOW_LIGHTS: u32 = 8;
+
+/// Resolution of a single cubemap face for point-light shadows (pixels).
+///
+/// Total VRAM cost is `6 * MAX_POINT_SHADOW_LIGHTS * size^2 * 4` bytes for
+/// the Depth32Float format. Default 1024 -> 48 MB at MAX=8.
+pub const POINT_SHADOW_FACE_SIZE: u32 = 1024;
 
 /// Shadow filtering mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -120,6 +160,8 @@ pub struct LightingSettings {
     pub pcss_light_radius: f32,
     /// Debug visualization configuration. Off by default (zero overhead when inactive).
     pub debug_vis: crate::renderer::types::debug::DebugVis,
+    /// Point-light shadow technique. Default: cubemap.
+    pub point_shadow_mode: PointShadowMode,
 }
 
 impl Default for LightingSettings {
@@ -137,6 +179,7 @@ impl Default for LightingSettings {
             shadow_filter: ShadowFilter::Pcf,
             pcss_light_radius: 0.02,
             debug_vis: crate::renderer::types::debug::DebugVis::default(),
+            point_shadow_mode: PointShadowMode::default(),
         }
     }
 }

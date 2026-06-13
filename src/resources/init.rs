@@ -210,6 +210,17 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
+                // Binding 17: point-light shadow cubemap array (depth).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 17,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::CubeArray,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -543,6 +554,59 @@ impl ViewportGpuResources {
             ..Default::default()
         });
 
+        // ------------------------------------------------------------------
+        // Point-light cubemap shadow texture array.
+        //
+        // Stored as a 2D texture array of `MAX_POINT_SHADOW_LIGHTS * 6`
+        // layers and viewed two ways:
+        //  - Per-face 2D-array views (one per face) for shadow render passes.
+        //  - A `CubeArray` view bound to the lit pass for sampling.
+        // ------------------------------------------------------------------
+        let point_shadow_face_size = crate::renderer::POINT_SHADOW_FACE_SIZE;
+        let point_shadow_max_lights = crate::renderer::MAX_POINT_SHADOW_LIGHTS;
+        let point_shadow_layers = point_shadow_max_lights * 6;
+        let point_shadow_cube_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("point_shadow_cube_array"),
+            size: wgpu::Extent3d {
+                width: point_shadow_face_size,
+                height: point_shadow_face_size,
+                depth_or_array_layers: point_shadow_layers,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let point_shadow_cube_view =
+            point_shadow_cube_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("point_shadow_cube_view"),
+                dimension: Some(wgpu::TextureViewDimension::CubeArray),
+                aspect: wgpu::TextureAspect::DepthOnly,
+                base_array_layer: 0,
+                array_layer_count: Some(point_shadow_layers),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                format: Some(wgpu::TextureFormat::Depth32Float),
+                usage: None,
+            });
+        let point_shadow_face_views: Vec<wgpu::TextureView> = (0..point_shadow_layers)
+            .map(|layer| {
+                point_shadow_cube_texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("point_shadow_face_view"),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    aspect: wgpu::TextureAspect::DepthOnly,
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    base_mip_level: 0,
+                    mip_level_count: Some(1),
+                    format: Some(wgpu::TextureFormat::Depth32Float),
+                    usage: None,
+                })
+            })
+            .collect();
+
         let shadow_atlas_depth_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow_atlas_depth_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -695,6 +759,10 @@ impl ViewportGpuResources {
                     binding: 16,
                     resource: clustered.light_index_buf.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: wgpu::BindingResource::TextureView(&point_shadow_cube_view),
+                },
             ],
         });
 
@@ -768,6 +836,77 @@ impl ViewportGpuResources {
                 }),
             }],
         });
+
+        // ------------------------------------------------------------------
+        // Point-light cubemap shadow pipeline.
+        //
+        // One render pass per (light slot, face) writes linear distance to
+        // the light into a per-face depth attachment. The bind group layout
+        // mirrors the cascade pipeline (same object + deform bind groups)
+        // and carries a per-face uniform with view_proj + light_pos + range.
+        // ------------------------------------------------------------------
+        let shadow_point_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow_point_shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl")).into(),
+            ),
+        });
+        let shadow_point_face_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("shadow_point_face_bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let shadow_point_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("shadow_point_pipeline_layout"),
+                bind_group_layouts: &[
+                    &shadow_point_face_bgl,
+                    &object_bgl,
+                    &deform.bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
+        let shadow_point_pipeline =
+            crate::resources::mesh_pipelines::build_shadow_point_pipeline(
+                device,
+                &shadow_point_pipeline_layout,
+                &shadow_point_shader,
+            );
+
+        // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
+        // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
+        const SHADOW_POINT_FACE_STRIDE: u64 = 256;
+        let shadow_point_face_count = (point_shadow_max_lights * 6) as u64;
+        let shadow_point_face_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shadow_point_face_buf"),
+            size: shadow_point_face_count * SHADOW_POINT_FACE_STRIDE,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let shadow_point_face_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shadow_point_face_bind_group"),
+                layout: &shadow_point_face_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &shadow_point_face_buf,
+                        offset: 0,
+                        // Bind one PointFace slot worth (96 bytes rounded up
+                        // to 16-byte alignment is fine here).
+                        size: Some(wgpu::BufferSize::new(96).unwrap()),
+                    }),
+                }],
+            });
 
         // ------------------------------------------------------------------
         // Gizmo shader module
@@ -2052,6 +2191,13 @@ impl ViewportGpuResources {
             shadow_map_texture,
             shadow_map_view,
             shadow_sampler,
+            point_shadow_cube_texture,
+            point_shadow_cube_view,
+            point_shadow_face_views,
+            shadow_point_pipeline,
+            shadow_point_face_bind_group_layout: shadow_point_face_bgl,
+            shadow_point_face_buf,
+            shadow_point_face_bind_group,
             shadow_pipeline,
             shadow_camera_bind_group_layout: shadow_camera_bgl,
             shadow_uniform_buf,

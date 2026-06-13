@@ -29,7 +29,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 5;
+pub const WGSL_VERSION: u32 = 6;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///
@@ -56,6 +56,7 @@ pub const WGSL_VERSION: u32 = 5;
 /// | 11 | Skybox equirect | `skybox_tex` |
 /// | 12 | debug fragment storage buffer | `debug_frag` |
 /// | 13 | per-light array | `lights_storage` |
+/// | 17 | point-light shadow cubemap array | `point_shadow_cube` |
 pub const SHARED_BINDINGS_WGSL: &str = r#"
 // @viewport-wgsl-version: 1
 // Shared group-0 declarations. Do not re-declare these bindings in plugin
@@ -72,16 +73,19 @@ struct Camera {
 };
 
 struct SingleLight {
-    light_view_proj: mat4x4<f32>,
-    pos_or_dir:      vec3<f32>,
-    light_type:      u32,
-    colour:          vec3<f32>,
-    intensity:       f32,
-    range:           f32,
-    inner_angle:     f32,
-    outer_angle:     f32,
-    spot_direction:  vec3<f32>,
-    _pad:            vec2<f32>,
+    light_view_proj:   mat4x4<f32>,
+    pos_or_dir:        vec3<f32>,
+    light_type:        u32,
+    colour:            vec3<f32>,
+    intensity:         f32,
+    range:             f32,
+    inner_angle:       f32,
+    outer_angle:       f32,
+    spot_direction:    vec3<f32>,
+    point_shadow_slot: i32,
+    point_shadow_near: f32,
+    _pad0:             f32,
+    _pad1:             f32,
 };
 
 struct Lights {
@@ -148,6 +152,7 @@ struct ClipVolumeUB {
 @group(0) @binding(10) var          ibl_sampler:          sampler;
 @group(0) @binding(11) var          skybox_tex:           texture_2d<f32>;
 @group(0) @binding(13) var<storage, read> lights_storage: array<SingleLight>;
+@group(0) @binding(17) var          point_shadow_cube:    texture_depth_cube_array;
 
 // Section-view clip planes: returns false when `world_pos` is on the
 // clipped side of any active plane. Plugin fragment shaders call this and
