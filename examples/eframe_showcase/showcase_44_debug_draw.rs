@@ -78,7 +78,11 @@ impl RuntimePlugin for DebugOverlayPlugin {
         }
 
         // Contact normals and markers (dev layer).
-        for contact in &ctx.output.contact_events {
+        for contact in ctx
+            .output
+            .events
+            .read::<viewport_lib::plugins::physics_lite::ContactEvent>()
+        {
             let cp = contact.contact_point;
             let normal_tip = cp + contact.world_normal * 0.5;
             // Normal direction line.
@@ -236,7 +240,10 @@ pub(crate) fn update_dbg_draw(app: &mut App, dt: f32) {
         &frame_ctx,
     );
 
-    app.dbg_draw_state.contact_count = output.contact_events.len();
+    app.dbg_draw_state.contact_count = output
+        .events
+        .read::<viewport_lib::plugins::physics_lite::ContactEvent>()
+        .count();
 }
 
 // ---------------------------------------------------------------------------

@@ -100,7 +100,7 @@ pub use self::types::{
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
     LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
     PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
-    SkinWeights, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
+    TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;

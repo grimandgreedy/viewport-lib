@@ -14,10 +14,75 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::resources::SkinWeights;
 use crate::resources::ViewportGpuResources;
-use crate::resources::mesh_store::MeshId;
 use crate::resources::mesh_sidecar::registry::{DeformStage, DeformerDesc, DeformerId};
+use crate::resources::mesh_store::MeshId;
+
+/// A per-mesh deformation update produced by a skinning plugin on the CPU
+/// path. Apply by calling `write_mesh_positions_normals`:
+///
+/// ```rust,ignore
+/// for u in output.events.drain::<SkinnedMeshUpdate>() {
+///     renderer.resources_mut()
+///         .write_mesh_positions_normals(queue, u.mesh_id, &u.positions, &u.normals)
+///         .ok();
+/// }
+/// ```
+pub struct SkinnedMeshUpdate {
+    /// The mesh to deform.
+    pub mesh_id: MeshId,
+    /// Skinned vertex positions in local space.
+    pub positions: Vec<[f32; 3]>,
+    /// Skinned vertex normals.
+    pub normals: Vec<[f32; 3]>,
+}
+
+/// A per-instance joint palette update produced by a skinning plugin on the
+/// GPU path. Apply by calling [`SkinningPlugin::attach_palette`]:
+///
+/// ```rust,ignore
+/// for u in output.events.drain::<SkinnedPoseUpdate>() {
+///     skinning.attach_palette(
+///         renderer.resources_mut(), &device, &queue,
+///         u.mesh_id, u.instance_id, &u.joint_matrices,
+///     );
+/// }
+/// ```
+pub struct SkinnedPoseUpdate {
+    /// The skinned mesh to drive.
+    pub mesh_id: MeshId,
+    /// Which instance of the mesh this palette is for. Use `0` for single-
+    /// instance meshes.
+    pub instance_id: u32,
+    /// Per-joint skinning matrices in topological order, ready for upload to
+    /// the GPU joint palette storage buffer.
+    pub joint_matrices: Vec<glam::Mat4>,
+}
+
+/// Per-vertex joint influence data for linear blend skinning.
+///
+/// # Invariants
+///
+/// - `joint_indices.len() == joint_weights.len() == positions.len()` on the
+///   accompanying `MeshData`.
+/// - Each vertex carries up to four influences. Unused slots must have weight
+///   `0.0` and a valid (any in-range) index; the CPU path skips entries below
+///   `1e-6`.
+/// - Weights per vertex should sum to `1.0`. The CPU path does not renormalise,
+///   so a vertex whose weights sum to less than 1 will deform with reduced
+///   magnitude. Importers should normalise before constructing this.
+/// - There is no required ordering between the four slots.
+///
+/// Consumed by both paths: `plugins::skeleton::apply_skin` reads it on the
+/// CPU path; [`SkinningPlugin::attach_weights`] packs it into the
+/// deformer's per-mesh slot on the GPU path.
+#[derive(Clone)]
+pub struct SkinWeights {
+    /// Joint indices for each vertex: 4 per vertex, parallel to positions.
+    pub joint_indices: Vec<[u8; 4]>,
+    /// Blend weights for each vertex: 4 per vertex, normalised to sum 1.0.
+    pub joint_weights: Vec<[f32; 4]>,
+}
 
 // ---------------------------------------------------------------------------
 // Packed vertex format and stride constants
@@ -114,14 +179,19 @@ impl SkinningPlugin {
         resources: &mut ViewportGpuResources,
         device: &wgpu::Device,
     ) -> crate::error::ViewportResult<Self> {
-        let desc = DeformerDesc {
-            name: SKINNING_DEFORMER_NAME,
-            stage: DeformStage::ObjectSpace,
-            priority: DEFORM_PRIORITY_SKINNING,
-            wgsl_body: SKINNING_DEFORMER_BODY.to_string(),
-            per_vertex_stride: SKIN_WEIGHT_STRIDE_BYTES,
+        let deformer_id = match resources.deformer_id_by_name(SKINNING_DEFORMER_NAME) {
+            Some(id) => id,
+            None => {
+                let desc = DeformerDesc {
+                    name: SKINNING_DEFORMER_NAME,
+                    stage: DeformStage::ObjectSpace,
+                    priority: DEFORM_PRIORITY_SKINNING,
+                    wgsl_body: SKINNING_DEFORMER_BODY.to_string(),
+                    per_vertex_stride: SKIN_WEIGHT_STRIDE_BYTES,
+                };
+                resources.register_internal_deformer(device, desc)?
+            }
         };
-        let deformer_id = resources.register_internal_deformer(device, desc)?;
         Ok(Self {
             deformer_id,
             skinned_meshes: Arc::new(Mutex::new(HashMap::new())),
@@ -288,7 +358,8 @@ mod async_skin_tests {
     use super::SkinningPlugin;
     use crate::ViewportGpuResources;
     use crate::geometry::primitives;
-    use crate::resources::{SkinWeights, UploadStatus};
+    use super::SkinWeights;
+    use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());

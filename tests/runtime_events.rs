@@ -274,12 +274,10 @@ fn diagnostics_emitted_once_per_wall_frame_regardless_of_fixed_timestep() {
 }
 
 #[test]
-fn existing_output_fields_unaffected_by_event_bus() {
+fn default_output_fields_empty() {
     let mut runtime = ViewportRuntime::new();
     let output = step(&mut runtime);
-    assert!(output.contact_events.is_empty());
     assert!(output.selection_ops.is_empty());
     assert!(output.node_transform_ops.is_empty());
-    assert!(output.camera_follow_target.is_none());
     assert!(output.events.is_empty());
 }

@@ -23,10 +23,11 @@ use viewport_lib::{
     ColourmapId, GaussianSplatData, GaussianSplatId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId,
     LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, OverlayTextureId,
     PointCloudId, PointCloudItem, PointCloudRefItem, PolylineId, PolylineItem, PolylineRefItem,
-    RibbonId, RibbonItem, RibbonRefItem, SceneRenderItem, SkinWeights, SpriteInstanceSetId,
+    RibbonId, RibbonItem, RibbonRefItem, SceneRenderItem, SpriteInstanceSetId,
     SpriteItem, SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
     TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem, UploadStatus,
     ViewportRenderer, VolumeId, VolumeItem,
+    plugins::skinning::SkinWeights,
 };
 
 use crate::App;

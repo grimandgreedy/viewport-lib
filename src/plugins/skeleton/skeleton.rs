@@ -15,18 +15,18 @@
 //! // Each frame (in a plugin at phase::ANIMATE or later):
 //! ctx.resources.insert(my_pose); // write current pose
 //!
-//! // SkeletonPlugin at phase::POST_SIM reads the pose and pushes a
-//! // SkinnedMeshUpdate to ctx.output.skinned_mesh_updates.
+//! // SkeletonPlugin at phase::POST_SIM reads the pose and emits a
+//! // SkinnedMeshUpdate event onto ctx.output.events.
 //!
 //! // After runtime.step(), in the app:
-//! for u in &output.skinned_mesh_updates {
+//! for u in output.events.drain::<SkinnedMeshUpdate>() {
 //!     renderer.resources_mut()
 //!         .write_mesh_positions_normals(queue, u.mesh_id, &u.positions, &u.normals)
 //!         .ok();
 //! }
 //! ```
 
-use crate::resources::SkinWeights;
+use crate::plugins::skinning::SkinWeights;
 
 /// Maximum number of joints in a skeleton.
 pub const MAX_JOINTS: usize = 128;
@@ -214,7 +214,7 @@ pub fn apply_skin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resources::SkinWeights;
+    use crate::plugins::skinning::SkinWeights;
     use glam::{Affine3A, Vec3};
 
     fn two_joint_skeleton(joint_z: f32) -> Skeleton {

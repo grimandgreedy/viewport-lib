@@ -3,7 +3,6 @@
 use super::events::RuntimeEventBus;
 use crate::camera::camera::{Camera, CameraTarget};
 use crate::interaction::selection::{NodeId, Selection};
-use crate::resources::mesh_store::MeshId;
 
 /// Write buffer for transform changes produced by plugins.
 ///
@@ -107,40 +106,17 @@ impl SelectionOp {
     }
 }
 
-/// A contact event produced by a physics plugin during the `Simulate` phase.
-///
-/// Returned in [`RuntimeOutput::contact_events`] for the app to use in game logic,
-/// sound, or effects. Not applied to the scene by the runtime.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ContactEvent {
-    /// First node involved in the contact.
-    pub node_a: NodeId,
-    /// Second node involved in the contact.
-    pub node_b: NodeId,
-    /// Contact normal pointing from `node_a` toward `node_b`, in world space.
-    pub world_normal: glam::Vec3,
-    /// Magnitude of the impulse applied at the contact point.
-    pub impulse: f32,
-    /// World-space position of the contact point.
-    ///
-    /// Use this for placing sound sources, particle effects, or decals at the
-    /// collision site. Simple plugins that do not compute a contact point may
-    /// leave this as `Vec3::ZERO`.
-    pub contact_point: glam::Vec3,
-}
-
 /// A camera state change produced by a runtime plugin.
 ///
-/// Accumulated in [`RuntimeOutput::camera_commands`] and applied to the app-owned
-/// [`Camera`] by calling [`RuntimeOutput::apply_camera_commands`].
+/// Emitted by plugins onto [`RuntimeOutput::events`]; apply with
+/// [`apply_camera_commands`].
 ///
 /// Commands are applied in the order they were emitted (plugin priority order,
 /// then registration order within the same priority). Each command builds on the
 /// result of the previous one in the same frame.
 ///
-/// This is independent of [`super::CameraFollow`]: `camera_follow_target` and
-/// `camera_commands` coexist and the app decides which to apply.
+/// This is independent of [`super::CameraFollow`]: camera-follow targets and
+/// `CameraCommand`s coexist and the app decides which to apply.
 #[derive(Debug, Clone)]
 pub enum CameraCommand {
     /// Set the orbit center (pivot point) to an absolute world position.
@@ -163,62 +139,56 @@ pub enum CameraCommand {
     },
 }
 
-/// A per-mesh deformation update produced by a skinning plugin.
-///
-/// Returned in [`RuntimeOutput::skinned_mesh_updates`]. Apply after `step()`:
-///
-/// ```rust,ignore
-/// for u in &output.skinned_mesh_updates {
-///     renderer.resources_mut()
-///         .write_mesh_positions_normals(queue, u.mesh_id, &u.positions, &u.normals)
-///         .ok();
-/// }
-/// ```
-pub struct SkinnedMeshUpdate {
-    /// The mesh to deform.
-    pub mesh_id: MeshId,
-    /// Skinned vertex positions in local space.
-    pub positions: Vec<[f32; 3]>,
-    /// Skinned vertex normals.
-    pub normals: Vec<[f32; 3]>,
-}
+/// Suggested camera center computed from the active [`super::CameraFollow`]
+/// binding. Emitted onto [`RuntimeOutput::events`] when a follow target is
+/// resolved this step. Apply to `camera.center` for orbit-camera follow
+/// behavior.
+#[derive(Debug, Clone, Copy)]
+pub struct CameraFollowTarget(pub glam::Vec3);
 
-/// A per-instance joint palette update produced by a skinning plugin on the
-/// GPU path.
+/// Apply every [`CameraCommand`] currently in the event bus to `camera`, in
+/// emission order. Drains the bus.
 ///
-/// Returned in [`RuntimeOutput::skinned_pose_updates`]. Apply after `step()`
-/// by calling
-/// [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette):
-///
-/// ```rust,ignore
-/// for u in &output.skinned_pose_updates {
-///     skinning.attach_palette(
-///         renderer.resources_mut(), &device, &queue,
-///         u.mesh_id, u.instance_id, &u.joint_matrices,
-///     );
-/// }
-/// ```
-pub struct SkinnedPoseUpdate {
-    /// The skinned mesh to drive.
-    pub mesh_id: MeshId,
-    /// Which instance of the mesh this palette is for. Use `0` for single-
-    /// instance meshes.
-    pub instance_id: u32,
-    /// Per-joint skinning matrices in topological order, ready for upload to
-    /// the GPU joint palette storage buffer.
-    pub joint_matrices: Vec<glam::Mat4>,
+/// Commands are applied sequentially: each one builds on the result of the
+/// previous. A `BlendToward` command blends from whatever state the camera is
+/// in after all prior commands, not from the frame-start state.
+pub fn apply_camera_commands(events: &mut RuntimeEventBus, camera: &mut Camera) {
+    for cmd in events.drain::<CameraCommand>() {
+        match cmd {
+            CameraCommand::SetCenter(c) => {
+                camera.center = c;
+            }
+            CameraCommand::OffsetCenter(d) => {
+                camera.center += d;
+            }
+            CameraCommand::SetDistance(d) => {
+                camera.set_distance(d);
+            }
+            CameraCommand::SetOrientation(q) => {
+                camera.orientation = q.normalize();
+            }
+            CameraCommand::BlendToward { target, weight } => {
+                let w = weight.clamp(0.0, 1.0);
+                camera.center = camera.center.lerp(target.center, w);
+                camera.distance = camera.distance + (target.distance - camera.distance) * w;
+                camera.distance = camera.distance.max(0.001);
+                camera.orientation = camera
+                    .orientation
+                    .slerp(target.orientation.normalize(), w)
+                    .normalize();
+            }
+        }
+    }
 }
 
 /// Output produced by one call to [`super::ViewportRuntime::step`].
 ///
-/// `node_transform_ops` have already been applied to the scene and the snapshot
-/// table when this is returned. The other fields are for the app to read and
-/// act on as needed.
-///
-/// Plugin-authored events of any type are collected in `events`. Use
-/// `output.events.read::<T>()` or `output.events.drain::<T>()` to consume them.
-/// Plugin-authored camera changes are in `camera_commands`; apply them with
-/// `output.apply_camera_commands(&mut camera)`.
+/// `node_transform_ops` have already been applied to the scene and the
+/// snapshot table when this is returned; `selection_ops` are applied to the
+/// `Selection` argument. Everything else flows through the typed `events`
+/// bus: plugins emit via `ctx.output.events.emit(MyEvent { .. })`, and the
+/// app reads them after `step()` via `output.events.read::<MyEvent>()` or
+/// `output.events.drain::<MyEvent>()`.
 #[derive(Default)]
 #[non_exhaustive]
 pub struct RuntimeOutput {
@@ -227,69 +197,7 @@ pub struct RuntimeOutput {
     /// Selection changes produced by runtime plugins, already applied to the
     /// app-owned [`Selection`].
     pub selection_ops: Vec<SelectionOp>,
-    /// Contact events from physics plugins. Empty if no physics plugin is active.
-    pub contact_events: Vec<ContactEvent>,
-    /// Suggested camera center computed from the active [`super::CameraFollow`] binding.
-    ///
-    /// `Some` when a `CameraFollow::Node` target was resolved this step; `None`
-    /// when no follow binding is set or the target node was not found. Apply to
-    /// `camera.center` for orbit-camera follow behavior.
-    pub camera_follow_target: Option<glam::Vec3>,
-    /// Camera commands emitted by plugins this frame. Apply with
-    /// [`Self::apply_camera_commands`]. Empty when no camera plugin is active.
-    pub camera_commands: Vec<CameraCommand>,
-    /// Generic typed event bus. Plugins emit events via `ctx.output.events.emit(MyEvent { .. })`.
-    /// The app reads them after `step()` via `output.events.read::<MyEvent>()` or
-    /// `output.events.drain::<MyEvent>()`. Events are cleared each frame because
+    /// Generic typed event bus. Events are cleared each frame because
     /// `RuntimeOutput` is constructed fresh on every `step` call.
     pub events: RuntimeEventBus,
-    /// Per-mesh deformation updates from skinning plugins on the CPU path.
-    /// Apply after `step()` by calling `write_mesh_positions_normals` on each
-    /// entry. Empty when no [`super::plugins::SkeletonPlugin`] is active on the
-    /// CPU path.
-    pub skinned_mesh_updates: Vec<SkinnedMeshUpdate>,
-    /// Per-instance joint palette updates from skinning plugins on the GPU
-    /// path. Apply after `step()` by calling
-    /// [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette)
-    /// on each entry. Empty when no skinning plugin is active on the GPU path.
-    pub skinned_pose_updates: Vec<SkinnedPoseUpdate>,
-}
-
-impl RuntimeOutput {
-    /// Apply all camera commands in emission order to `camera`.
-    ///
-    /// Call this after [`super::ViewportRuntime::step`] returns, before rendering.
-    /// Has no effect if `camera_commands` is empty.
-    ///
-    /// Commands are applied sequentially: each one builds on the result of the
-    /// previous. A `BlendToward` command blends from whatever state the camera
-    /// is in after all prior commands, not from the frame-start state.
-    pub fn apply_camera_commands(&self, camera: &mut Camera) {
-        for cmd in &self.camera_commands {
-            match cmd {
-                CameraCommand::SetCenter(c) => {
-                    camera.center = *c;
-                }
-                CameraCommand::OffsetCenter(d) => {
-                    camera.center += *d;
-                }
-                CameraCommand::SetDistance(d) => {
-                    camera.set_distance(*d);
-                }
-                CameraCommand::SetOrientation(q) => {
-                    camera.orientation = q.normalize();
-                }
-                CameraCommand::BlendToward { target, weight } => {
-                    let w = weight.clamp(0.0, 1.0);
-                    camera.center = camera.center.lerp(target.center, w);
-                    camera.distance = camera.distance + (target.distance - camera.distance) * w;
-                    camera.distance = camera.distance.max(0.001);
-                    camera.orientation = camera
-                        .orientation
-                        .slerp(target.orientation.normalize(), w)
-                        .normalize();
-                }
-            }
-        }
-    }
 }

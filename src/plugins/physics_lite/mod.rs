@@ -2,4 +2,4 @@
 
 pub mod plugin;
 
-pub use plugin::{PhysicsBody, PhysicsLitePlugin};
+pub use plugin::{ContactEvent, PhysicsBody, PhysicsLitePlugin};

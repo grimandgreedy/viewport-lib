@@ -27,7 +27,7 @@
 //! let output = runtime.step(&mut scene, &mut selection, &frame_ctx);
 //!
 //! // Handle contact events in game logic:
-//! for event in &output.contact_events { /* ... */ }
+//! for event in output.events.read::<viewport_lib::plugins::physics_lite::ContactEvent>() { /* ... */ }
 //!
 //! // Render with interpolated transforms between fixed steps:
 //! let alpha = runtime.alpha();
@@ -68,8 +68,8 @@ pub use gpu_plugin::{GpuFrameContext, GpuPlugin, PostPaintTargets, gpu_phase};
 pub use jobs::{JobPoll, JobSender, JobSlot};
 pub use mode::SceneRuntimeMode;
 pub use output::{
-    CameraCommand, ContactEvent, NodeTransformOp, RuntimeOutput, SelectionOp, SkinnedMeshUpdate,
-    SkinnedPoseUpdate, TransformWriteback,
+    CameraCommand, CameraFollowTarget, NodeTransformOp, RuntimeOutput, SelectionOp,
+    TransformWriteback, apply_camera_commands,
 };
 pub use plugin::{RuntimeEvent, RuntimePhase, RuntimePlugin, phase};
 pub use resources::RuntimeResources;
@@ -820,7 +820,13 @@ mod tests {
             &mut sel,
             &make_frame(&camera, &input, 1.0 / 60.0),
         );
-        assert!(output.contact_events.is_empty());
+        assert_eq!(
+            output
+                .events
+                .read::<crate::plugins::physics_lite::ContactEvent>()
+                .count(),
+            0
+        );
         assert!(output.node_transform_ops.is_empty());
     }
 
@@ -997,15 +1003,11 @@ mod tests {
     }
 
     #[test]
-    fn test_existing_output_fields_unaffected() {
-        // Backward-compat: contact_events, selection_ops, node_transform_ops,
-        // and camera_follow_target continue to work with no changes.
+    fn test_default_output_is_empty() {
         let mut runtime = ViewportRuntime::new();
         let output = run_one_frame(&mut runtime);
-        assert!(output.contact_events.is_empty());
         assert!(output.selection_ops.is_empty());
         assert!(output.node_transform_ops.is_empty());
-        assert!(output.camera_follow_target.is_none());
         assert!(output.events.is_empty());
     }
 
@@ -1213,7 +1215,7 @@ mod tests {
 
     // ---- skeleton / skinning tests ------------------------------------------
 
-    use crate::resources::SkinWeights;
+    use crate::plugins::skinning::{SkinWeights, SkinnedMeshUpdate};
     use crate::plugins::skeleton::{Joint, JointMatrices, Pose, Skeleton, SkeletonPlugin, apply_skin};
 
     fn two_joint_skeleton() -> Skeleton {
@@ -1413,8 +1415,9 @@ mod tests {
         runtime.resources_mut().insert(Pose::identity(1));
 
         let output = run_one_frame(&mut runtime);
-        assert_eq!(output.skinned_mesh_updates.len(), 1);
-        assert_eq!(output.skinned_mesh_updates[0].mesh_id, mesh_id);
+        let updates: Vec<&SkinnedMeshUpdate> = output.events.read::<SkinnedMeshUpdate>().collect();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].mesh_id, mesh_id);
     }
 
     #[test]
@@ -1434,7 +1437,7 @@ mod tests {
         ));
         // No Pose inserted -> no update.
         let output = run_one_frame(&mut runtime);
-        assert!(output.skinned_mesh_updates.is_empty());
+        assert_eq!(output.events.read::<SkinnedMeshUpdate>().count(), 0);
     }
 
     #[test]
@@ -1457,7 +1460,7 @@ mod tests {
         run_one_frame(&mut runtime);
         let output2 = run_one_frame(&mut runtime);
         // Each frame produces exactly 1 update, not 2.
-        assert_eq!(output2.skinned_mesh_updates.len(), 1);
+        assert_eq!(output2.events.read::<SkinnedMeshUpdate>().count(), 1);
     }
 }
 
@@ -1784,7 +1787,8 @@ impl ViewportRuntime {
     /// Set a camera follow binding (builder style).
     ///
     /// Each call to [`step`](Self::step) will compute a suggested camera center
-    /// from the followed node and return it in [`RuntimeOutput::camera_follow_target`].
+    /// from the followed node and emit it as a [`CameraFollowTarget`] event on
+    /// [`RuntimeOutput::events`].
     pub fn with_camera_follow(mut self, follow: CameraFollow) -> Self {
         self.camera_follow = Some(follow);
         self
@@ -1795,8 +1799,8 @@ impl ViewportRuntime {
         self.camera_follow = Some(follow);
     }
 
-    /// Remove the camera follow binding. [`RuntimeOutput::camera_follow_target`]
-    /// will be `None` after this call.
+    /// Remove the camera follow binding. No [`CameraFollowTarget`] event
+    /// will be emitted after this call.
     pub fn clear_camera_follow(&mut self) {
         self.camera_follow = None;
     }
@@ -2044,7 +2048,9 @@ impl ViewportRuntime {
                         .map(|n| n.world_transform().col(3).truncate())
                 });
             if let Some(pos) = pos {
-                output.camera_follow_target = Some(pos + offset);
+                output
+                    .events
+                    .emit(crate::runtime::output::CameraFollowTarget(pos + offset));
             }
         }
 

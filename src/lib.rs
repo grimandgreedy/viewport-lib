@@ -248,7 +248,7 @@ pub use resources::{
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult,
     FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob,
     ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform, MatcapId, MeshData,
-    ProgressHandle, ProjectedTetId, SingleLightUniform, SkinWeights, TextureMemoryStats,
+    ProgressHandle, ProjectedTetId, SingleLightUniform, TextureMemoryStats,
     UploadStatus, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
 };
 pub use resources::{
@@ -257,10 +257,10 @@ pub use resources::{
 };
 
 pub use runtime::{
-    CameraFollow, ContactEvent, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,
+    CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,
     ManipulationSystem, NodeTransformOp, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
     RuntimePlugin, RuntimeStepContext, SceneRuntimeMode, SelectionOp, SelectionSystem,
-    SimulationStepContext, SkinnedMeshUpdate, SkinnedPoseUpdate, TransformSnapshot,
+    SimulationStepContext, TransformSnapshot,
     TransformSnapshotTable, TransformWriteback, ViewportRuntime,
 };
 

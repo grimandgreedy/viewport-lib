@@ -2,9 +2,31 @@
 
 use crate::interaction::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::output::ContactEvent;
 use crate::runtime::plugin::{RuntimePlugin, phase};
 use crate::scene::aabb::Aabb;
+
+/// A contact event produced by a physics plugin during the `Simulate` phase.
+///
+/// Emitted onto [`crate::RuntimeOutput::events`] for the app to use in game
+/// logic, sound, or effects. Not applied to the scene by the runtime.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ContactEvent {
+    /// First node involved in the contact.
+    pub node_a: NodeId,
+    /// Second node involved in the contact.
+    pub node_b: NodeId,
+    /// Contact normal pointing from `node_a` toward `node_b`, in world space.
+    pub world_normal: glam::Vec3,
+    /// Magnitude of the impulse applied at the contact point.
+    pub impulse: f32,
+    /// World-space position of the contact point.
+    ///
+    /// Use this for placing sound sources, particle effects, or decals at the
+    /// collision site. Simple plugins that do not compute a contact point may
+    /// leave this as `Vec3::ZERO`.
+    pub contact_point: glam::Vec3,
+}
 
 /// A single physics body managed by [`PhysicsLitePlugin`].
 #[derive(Debug, Clone)]
@@ -186,7 +208,7 @@ impl RuntimePlugin for PhysicsLitePlugin {
                 }
 
                 if bounced {
-                    ctx.output.contact_events.push(ContactEvent {
+                    ctx.output.events.emit(ContactEvent {
                         node_a: body.node_id,
                         node_b: NodeId::MAX,
                         world_normal: normal,

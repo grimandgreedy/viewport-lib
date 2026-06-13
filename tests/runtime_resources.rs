@@ -157,7 +157,7 @@ fn runtime_without_resources_works_unchanged() {
     let mut scene = Scene::new();
     let mut sel = Selection::new();
     let output = runtime.step(&mut scene, &mut sel, &make_frame(&camera, &input));
-    assert!(output.contact_events.is_empty());
+    assert!(output.events.is_empty());
     assert!(output.node_transform_ops.is_empty());
 }
 

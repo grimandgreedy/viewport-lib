@@ -1,10 +1,10 @@
 //! SkeletonPlugin: drives CPU linear blend skinning from a runtime Pose.
 
 use super::skeleton::{JointMatrices, Pose, Skeleton, apply_skin};
-use crate::resources::SkinWeights;
+use crate::plugins::skinning::SkinWeights;
 use crate::resources::mesh_store::MeshId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::output::{SkinnedMeshUpdate, SkinnedPoseUpdate};
+use crate::plugins::skinning::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::runtime::plugin::{RuntimePlugin, phase};
 
 /// Which deformation path a skinning plugin should emit each frame.
@@ -34,11 +34,11 @@ impl Default for SkinningPath {
 /// Store a [`Pose`] in [`super::super::resources::RuntimeResources`] (keyed by
 /// the `Pose` type) during the `ANIMATE` phase or earlier. `SkeletonPlugin`
 /// runs at `POST_SIM`, reads the pose, computes the skinning matrices, and
-/// pushes a [`SkinnedMeshUpdate`] to `ctx.output.skinned_mesh_updates`.
+/// emits a [`SkinnedMeshUpdate`] event onto `ctx.output.events`.
 ///
-/// After `step()`, iterate `output.skinned_mesh_updates` and call
-/// `renderer.resources_mut().write_mesh_positions_normals(queue, id, pos, nrm)`
-/// to upload the deformed geometry.
+/// After `step()`, drain `output.events.drain::<SkinnedMeshUpdate>()` and
+/// call `renderer.resources_mut().write_mesh_positions_normals(queue, id,
+/// pos, nrm)` to upload the deformed geometry.
 ///
 /// # Example
 ///
@@ -52,7 +52,7 @@ impl Default for SkinningPath {
 ///
 /// let output = runtime.step(&mut scene, &mut sel, &frame_ctx);
 ///
-/// for u in &output.skinned_mesh_updates {
+/// for u in output.events.drain::<SkinnedMeshUpdate>() {
 ///     renderer.resources_mut()
 ///         .write_mesh_positions_normals(queue, u.mesh_id, &u.positions, &u.normals)
 ///         .ok();
@@ -66,7 +66,8 @@ pub struct SkeletonPlugin {
     /// Which deformation path to emit each frame. Defaults to `Cpu` so existing
     /// consumers keep working unchanged. Set to `Gpu` when the host has
     /// uploaded skin weights for `mesh_id` and is draining
-    /// `output.skinned_pose_updates` into `SkinningPlugin::attach_palette`.
+    /// `output.events.drain::<SkinnedPoseUpdate>()` into
+    /// `SkinningPlugin::attach_palette`.
     pub path: SkinningPath,
     cpu_positions: Vec<[f32; 3]>,
     cpu_normals: Vec<[f32; 3]>,
@@ -121,7 +122,7 @@ impl RuntimePlugin for SkeletonPlugin {
                     &self.skin_weights,
                     &matrices,
                 );
-                ctx.output.skinned_mesh_updates.push(SkinnedMeshUpdate {
+                ctx.output.events.emit(SkinnedMeshUpdate {
                     mesh_id: self.mesh_id,
                     positions,
                     normals,
@@ -133,7 +134,7 @@ impl RuntimePlugin for SkeletonPlugin {
                     .iter()
                     .map(|m| glam::Mat4::from(*m))
                     .collect();
-                ctx.output.skinned_pose_updates.push(SkinnedPoseUpdate {
+                ctx.output.events.emit(SkinnedPoseUpdate {
                     mesh_id: self.mesh_id,
                     instance_id: 0,
                     joint_matrices,

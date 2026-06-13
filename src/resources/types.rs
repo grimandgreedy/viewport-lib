@@ -150,38 +150,6 @@ pub enum BuiltinColourmap {
     RdBu = 9,
 }
 
-/// Per-vertex joint influence data for linear blend skinning.
-///
-/// # Invariants
-///
-/// - `joint_indices.len() == joint_weights.len() == positions.len()` on the
-///   accompanying `MeshData`.
-/// - Each vertex carries up to four influences. Unused slots must have weight
-///   `0.0` and a valid (any in-range) index; the CPU path skips entries below
-///   `1e-6`.
-/// - Weights per vertex should sum to `1.0`. The CPU path does not renormalise,
-///   so a vertex whose weights sum to less than 1 will deform with reduced
-///   magnitude. Importers should normalise before constructing this.
-/// - There is no required ordering between the four slots. The CPU path is
-///   order-independent; a future GPU path will be too.
-///
-/// # GPU path
-///
-/// `SkinWeights` is uploaded to the renderer as a sidecar storage buffer
-/// keyed by `MeshId` via
-/// [`SkinningPlugin::attach_weights`](crate::plugins::skinning::SkinningPlugin::attach_weights).
-/// The mesh's vertex buffer is not modified. The registered skinning
-/// deformer reads the per-vertex joint indices and weights from the
-/// storage buffer using `@builtin(vertex_index)`. Calling `attach_weights`
-/// on a `mesh_id` is what marks the mesh as skinnable; the LBS body in
-/// the composed mesh shader takes over for that mesh on subsequent draws.
-#[derive(Clone)]
-pub struct SkinWeights {
-    /// Joint indices for each vertex: 4 per vertex, parallel to positions.
-    pub joint_indices: Vec<[u8; 4]>,
-    /// Blend weights for each vertex: 4 per vertex, normalised to sum 1.0.
-    pub joint_weights: Vec<[f32; 4]>,
-}
 
 /// Raw mesh data for upload to the GPU. Framework-agnostic representation.
 #[derive(Clone)]

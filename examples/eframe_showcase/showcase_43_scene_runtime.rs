@@ -344,8 +344,12 @@ fn step_simulation(app: &mut App, dt: f32) {
     );
 
     if app.rt_state.camera_follow {
-        if let Some(target) = output.camera_follow_target {
-            app.camera.center = target;
+        if let Some(target) = output
+            .events
+            .read::<viewport_lib::runtime::CameraFollowTarget>()
+            .next()
+        {
+            app.camera.center = target.0;
         }
     }
 }

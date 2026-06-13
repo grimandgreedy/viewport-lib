@@ -938,6 +938,16 @@ impl ViewportGpuResources {
         self.deform.registrations.len()
     }
 
+    /// Look up a registered deformer's id by its name. Returns `None` when
+    /// no deformer with that name has been registered.
+    pub fn deformer_id_by_name(&self, name: &str) -> Option<DeformerId> {
+        self.deform
+            .registrations
+            .iter()
+            .find(|r| r.desc.name == name)
+            .map(|r| DeformerId(r.slot))
+    }
+
     /// Build a [`DeformSlotHandle`] for the given deformer. Plugins stash
     /// the handle at registration time and use it to write that slot's
     /// `slot_params` block from contexts (e.g. a `GpuPlugin::pre_prepare`)

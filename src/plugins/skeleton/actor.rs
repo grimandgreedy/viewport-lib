@@ -20,10 +20,10 @@
 //! a later GPU-skinning path will turn into per-actor joint-palette uploads
 //! and per-part skinned draw calls, so callers should target this shape now.
 
-use crate::resources::SkinWeights;
+use crate::plugins::skinning::SkinWeights;
 use crate::resources::mesh_store::MeshId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::runtime::output::{SkinnedMeshUpdate, SkinnedPoseUpdate};
+use crate::plugins::skinning::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::runtime::plugin::{RuntimePlugin, phase};
 
 use super::clip::AnimationClip;
@@ -184,7 +184,7 @@ impl RuntimePlugin for SkinnedActorPlugin {
                             &part.skin_weights,
                             &matrices,
                         );
-                        ctx.output.skinned_mesh_updates.push(SkinnedMeshUpdate {
+                        ctx.output.events.emit(SkinnedMeshUpdate {
                             mesh_id: part.mesh_id,
                             positions,
                             normals,
@@ -198,7 +198,7 @@ impl RuntimePlugin for SkinnedActorPlugin {
                         .map(|m| glam::Mat4::from(*m))
                         .collect();
                     for part in &actor.parts {
-                        ctx.output.skinned_pose_updates.push(SkinnedPoseUpdate {
+                        ctx.output.events.emit(SkinnedPoseUpdate {
                             mesh_id: part.mesh_id,
                             instance_id: actor_idx as u32,
                             joint_matrices: joint_matrices.clone(),

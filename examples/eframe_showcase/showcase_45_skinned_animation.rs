@@ -19,13 +19,13 @@
 use eframe::egui;
 use viewport_lib::{
     BuiltinMatcap, MatcapId, Material, MeshData, MeshId, PickAccelerator, RuntimeFrameContext,
-    RuntimePlugin, RuntimeStepContext, SkinWeights, SkinnedMeshUpdate, SkinnedPoseUpdate,
-    ViewportRuntime,
+    RuntimePlugin, RuntimeStepContext, ViewportRuntime,
     plugins::skeleton::{
         AnimationClip, Channel, ClipPlayerPlugin, Interpolation, Joint, Pose, Sampler, Skeleton,
         SkeletonPlugin, SkinnedActor, SkinnedActorPart, SkinnedActorPlugin, SkinningPath, Track,
         TrackValues,
     },
+    plugins::skinning::{SkinWeights, SkinnedMeshUpdate, SkinnedPoseUpdate},
     runtime::plugin::phase,
     scene::{Scene, aabb::Aabb, material::BackfacePolicy},
     selection::Selection,
@@ -1029,7 +1029,7 @@ pub(crate) fn update_skin47(
     frame_ctx.viewport_size = glam::Vec2::new(800.0, 600.0);
 
     let t0 = std::time::Instant::now();
-    let output = app.skin_state.runtime.step(
+    let mut output = app.skin_state.runtime.step(
         &mut app.skin_state.scene,
         &mut app.skin_state.selection,
         &frame_ctx,
@@ -1040,8 +1040,8 @@ pub(crate) fn update_skin47(
     app.skin_state.last_step_us = alpha * step_us + (1.0 - alpha) * app.skin_state.last_step_us;
 
     // Hand the right update channel through to build_frame_data.
-    app.skin_state.pending_updates = output.skinned_mesh_updates;
-    app.skin_state.pending_pose_updates = output.skinned_pose_updates;
+    app.skin_state.pending_updates = output.events.drain::<SkinnedMeshUpdate>();
+    app.skin_state.pending_pose_updates = output.events.drain::<SkinnedPoseUpdate>();
 
     // Crowd picking: capture this frame's deformed positions (if any) so the
     // `RefreshPerFrame` strategy can test against them, then run a pick when
@@ -1640,7 +1640,7 @@ pub(crate) fn controls_skin47(app: &mut App, ui: &mut egui::Ui) {
                 ui.label("- Skeleton: 2 joints (root at origin, forearm at z=2.0).");
                 ui.label("- Pose: child joint rotates around X each frame.");
                 ui.label("- SkeletonPlugin: runs at POST_SIM, reads Pose, runs LBS.");
-                ui.label("- Output: SkinnedMeshUpdate pushed to output.skinned_mesh_updates.");
+                ui.label("- Output: SkinnedMeshUpdate emitted on output.events.");
                 ui.label("- App: calls write_mesh_positions_normals before rendering.");
             }
             Skin47Demo::ClipDrivenArm => {
