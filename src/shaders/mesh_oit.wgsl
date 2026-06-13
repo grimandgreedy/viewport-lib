@@ -200,7 +200,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
         }
     }
     var dv = DeformVertex(local_pos, in.normal, in.vertex_index);
-    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, 0u);
+    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, 0u, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let model3 = mat3x3<f32>(
         object.model[0].xyz,

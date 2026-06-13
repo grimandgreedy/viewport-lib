@@ -163,7 +163,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     let inst = instances[idx];
     var out: VertexOut;
     var dv = DeformVertex(in.position, in.normal, in.vertex_index);
-    let dctx = DeformContext(inst.model, inst.model[3].xyz, 0.0, 0u);
+    let dctx = DeformContext(inst.model, inst.model[3].xyz, 0.0, 0u, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let model3 = mat3x3<f32>(
         inst.model[0].xyz,
@@ -193,7 +193,7 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     let inst = instances[actual_idx];
     var out: VertexOut;
     var dv = DeformVertex(in.position, in.normal, in.vertex_index);
-    let dctx = DeformContext(inst.model, inst.model[3].xyz, 0.0, 0u);
+    let dctx = DeformContext(inst.model, inst.model[3].xyz, 0.0, 0u, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let model3 = mat3x3<f32>(
         inst.model[0].xyz,

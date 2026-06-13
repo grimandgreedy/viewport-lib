@@ -29,6 +29,10 @@ struct DeformContext {
     object_origin: vec3<f32>,
     time_seconds: f32,
     flags: u32,
+    // Slot index of the deformer reading this context. Set per call by the
+    // composer-emitted dispatch so a body can address `deform_data` and
+    // `deform_instance_data` without baking in a literal.
+    slot: u32,
 };
 
 struct DeformHeader {

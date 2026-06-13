@@ -130,7 +130,7 @@ fn build_stage_calls(stored: &[StoredDeformer], stage: DeformStage) -> String {
     let mut out = String::new();
     for d in entries {
         out.push_str(&format!(
-            "    if ((ctx.flags & (1u << {slot}u)) != 0u) {{\n        out = {name}__deform(out, ctx);\n    }}\n",
+            "    if ((ctx.flags & (1u << {slot}u)) != 0u) {{\n        var ctx_{name} = ctx;\n        ctx_{name}.slot = {slot}u;\n        out = {name}__deform(out, ctx_{name});\n    }}\n",
             slot = d.slot,
             name = d.desc.name,
         ));
@@ -515,8 +515,9 @@ mod tests {
         let composed = compose_shader(src, &std::slice::from_ref(&d));
         assert!(composed.contains("fn wind__deform("));
         // World marker wired, object marker still empty.
-        assert!(composed.contains("out = wind__deform(out, ctx);"));
+        assert!(composed.contains("out = wind__deform(out, ctx_wind);"));
         assert!(composed.contains("ctx.flags & (1u << 2u)"));
+        assert!(composed.contains("ctx_wind.slot = 2u;"));
         // Identifier of helper struct DeformVertex stays unprefixed.
         assert!(composed.contains("DeformVertex"));
     }
