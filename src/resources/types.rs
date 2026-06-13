@@ -2156,9 +2156,12 @@ pub(crate) struct ProjectedTetUniform {
     pub(crate) scalar_max: f32,
     pub(crate) threshold_min: f32,
     pub(crate) threshold_max: f32,
-    /// 1 = skip Beer-Lambert thickness modulation and emit the LUT colour at
-    /// `alpha = 1.0` per visible fragment. Wired from `ItemSettings.unlit`.
+    /// 1 = skip Beer-Lambert thickness modulation and emit a flat density-scaled
+    /// alpha per visible fragment. Wired from `ItemSettings.unlit`.
     pub(crate) unlit: u32,
+    /// Multiplied into the final alpha. Wired from `ItemSettings.opacity`.
+    pub(crate) opacity: f32,
+    pub(crate) _pad: f32,
 }
 
 /// One device-limit-bounded chunk of a projected-tet mesh.
@@ -3326,8 +3329,17 @@ pub struct ViewportGpuResources {
     // --- Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Render pipeline for the projected tetrahedra pass. None until first item submitted.
     pub(crate) pt_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for group 1 of the PT pipeline (uniforms + tet buffer + colourmap).
+    /// Bind group layout for group 1 of the PT pipeline (per-volume uniform + tet storage buffer).
     pub(crate) pt_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for group 2 of the PT pipeline (per-frame colourmap LUT + sampler).
+    pub(crate) pt_lut_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// Cache of LUT bind groups keyed by colourmap slot index. Rebuilt lazily as
+    /// new colourmaps are seen on transparent volume meshes; reset to empty when
+    /// new colourmaps are uploaded.
+    pub(crate) pt_lut_bind_groups: std::collections::HashMap<usize, wgpu::BindGroup>,
+    /// LUT bind group for the fallback colourmap (used when an item has no
+    /// `colourmap_id`). Lazily built on first use.
+    pub(crate) pt_fallback_lut_bind_group: Option<wgpu::BindGroup>,
     /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
     pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
 

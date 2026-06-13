@@ -27,9 +27,9 @@ use viewport_lib::{
     ColourmapId, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem,
     GlyphType, GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
     ItemSettings, LightSource, LightingSettings, Material, MeshId, PointCloudItem, PolylineItem,
-    ProjectedTetId, RibbonItem, SceneRenderItem, ShDegree, StreamtubeItem, TensorGlyphItem,
-    TransparentVolumeMeshItem, TubeItem, ViewportRenderer, VolumeId, VolumeItem,
-    VolumeSurfaceSliceItem,
+    RibbonItem, SceneRenderItem, ShDegree, StreamtubeItem, TensorGlyphItem, TubeItem,
+    ViewportRenderer, VolumeId, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
+    VolumeTransparency,
 };
 
 use crate::App;
@@ -45,8 +45,10 @@ pub(crate) struct LcState {
     pub disk_mesh_id: Option<MeshId>,
     pub splat_id: Option<GaussianSplatId>,
     pub volume_id: Option<VolumeId>,
-    pub tvm_id: Option<ProjectedTetId>,
-    pub tvm_boundary_mesh_id: Option<MeshId>,
+    /// Single-tet volume mesh used to demonstrate transparent volumetric
+    /// shading consistency. Carries both the boundary surface and the
+    /// projected-tet decomposition.
+    pub tvm_item: Option<VolumeMeshItem>,
     pub volume_scalar_range: (f32, f32),
 
     pub bcast_hidden: bool,
@@ -79,8 +81,7 @@ impl Default for LcState {
             disk_mesh_id: None,
             splat_id: None,
             volume_id: None,
-            tvm_id: None,
-            tvm_boundary_mesh_id: None,
+            tvm_item: None,
             volume_scalar_range: (0.0, 1.0),
             bcast_hidden: false,
             bcast_unlit: false,
@@ -215,7 +216,7 @@ impl App {
             }
         }
 
-        // --- Single-tet projected-tet mesh for `TransparentVolumeMeshItem` ---
+        // --- Single-tet projected-tet mesh for transparent volume rendering ---
         //
         // TVM carries no model matrix, so the tet is uploaded at its grid-cell
         // world position (row 2, col 2) by translating the vertices here.
@@ -243,21 +244,11 @@ impl App {
             renderer
                 .resources_mut()
                 .ensure_colourmaps_initialized(&self.device, &self.queue);
-            if let Ok((tid, _, _)) = renderer.resources_mut().upload_projected_tet_mesh(
-                &self.device,
-                &data,
-                "scalar",
-                ColourmapId(0),
-            ) {
-                self.lc_state.tvm_id = Some(tid);
-            }
-            // Boundary surface mesh: required by the selection outline pass so
-            // a selected TVM can render a silhouette ring.
-            if let Ok((mid, _)) = renderer
+            if let Ok(item) = renderer
                 .resources_mut()
-                .upload_volume_mesh_data(&self.device, &data)
+                .upload_volume_mesh_with_transparency(&self.device, data, "scalar")
             {
-                self.lc_state.tvm_boundary_mesh_id = Some(mid);
+                self.lc_state.tvm_item = Some(item);
             }
         }
 
@@ -653,14 +644,17 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
     // Cell (2, 2): transparent volume mesh (single tet). The projected-tet
     // pipeline has no per-fragment lighting calculation; `unlit` is wired to
     // skip the Beer-Lambert thickness modulation and emit a flat alpha instead.
-    // `boundary_mesh_id` references a surface mesh uploaded at scene-build time
-    // so the selection outline pass has geometry to trace.
-    if let Some(tvm_id) = s.tvm_id {
-        let mut tv = TransparentVolumeMeshItem::new(tvm_id);
-        tv.density = 3.0;
-        tv.scalar_range = Some((0.0, 1.0));
-        tv.boundary_mesh_id = s.tvm_boundary_mesh_id;
-        broadcast(s, &mut tv.settings);
-        fd.scene.transparent_volume_meshes.push(tv);
+    // The unified item already carries the boundary mesh, so the selection
+    // outline pass has geometry to trace without an extra handshake.
+    if let Some(template) = s.tvm_item.as_ref() {
+        let mut item = template.clone();
+        item.colourmap_id = Some(ColourmapId(0));
+        item.scalar_range = Some((0.0, 1.0));
+        item.transparency = Some(VolumeTransparency {
+            density: 3.0,
+            ..Default::default()
+        });
+        broadcast(s, &mut item.settings);
+        fd.scene.volume_meshes.push(item);
     }
 }

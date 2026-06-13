@@ -2368,6 +2368,9 @@ impl ViewportGpuResources {
             // Projected tetrahedra (lazily created).
             pt_pipeline: None,
             pt_bind_group_layout: None,
+            pt_lut_bind_group_layout: None,
+            pt_lut_bind_groups: std::collections::HashMap::new(),
+            pt_fallback_lut_bind_group: None,
             projected_tet_store: Vec::new(),
             // Scatter-volume (participating media) pipeline (lazily created).
             scatter_pipeline: None,

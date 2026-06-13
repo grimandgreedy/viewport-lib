@@ -7,7 +7,8 @@
 // (same targets as mesh_oit.wgsl).
 //
 // Group 0: Camera uniform (shared camera_bind_group_layout, only bindings 0 and 4 used).
-// Group 1: PT uniforms + tet storage buffer + colourmap LUT + sampler.
+// Group 1: per-volume PT uniforms + tet storage buffer.
+// Group 2: per-frame colourmap LUT + sampler (looked up by colourmap_id at draw time).
 //
 // Opaque-surface clipping: the OIT render pass loads the opaque depth buffer and
 // uses LessEqual depth compare without depth writes, so the hardware depth test
@@ -38,6 +39,8 @@ struct PtUniforms {
     threshold_min: f32,
     threshold_max: f32,
     unlit:         u32,
+    opacity:       f32,
+    _pad:          f32,
 };
 
 // One tetrahedron on the GPU: four vec4 slots (64 bytes, 16-byte aligned).
@@ -59,11 +62,13 @@ struct OitOut {
 @group(0) @binding(0) var<uniform> camera:      Camera;
 @group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 
-// Group 1: projected-tet specific.
+// Group 1: projected-tet per-volume state.
 @group(1) @binding(0) var<uniform>        uniforms:         PtUniforms;
 @group(1) @binding(1) var<storage, read>  tets:             array<GpuTet>;
-@group(1) @binding(2) var                 colourmap_lut:     texture_2d<f32>;
-@group(1) @binding(3) var                 colourmap_sampler: sampler;
+
+// Group 2: colourmap LUT (rebound per-draw from the renderer's LUT registry).
+@group(2) @binding(0) var                 colourmap_lut:     texture_2d<f32>;
+@group(2) @binding(1) var                 colourmap_sampler: sampler;
 
 struct VsOut {
     @builtin(position)              clip_pos: vec4<f32>,
@@ -242,11 +247,12 @@ fn fs_main(in: VsOut) -> OitOut {
     // The flat-alpha mode skips the per-fragment thickness modulation so the
     // mesh reads as a translucent solid LUT colour, matching the spirit of
     // `ItemSettings.unlit` on other item types (no per-fragment shading).
-    let alpha = select(
+    let alpha_raw = select(
         1.0 - exp(-uniforms.density * thickness),
         clamp(uniforms.density * 0.25, 0.05, 0.6),
         uniforms.unlit != 0u,
     );
+    let alpha = clamp(alpha_raw * uniforms.opacity, 0.0, 1.0);
 
     // Map scalar to [0,1] and sample colourmap LUT.
     let scalar = in.v0.w;

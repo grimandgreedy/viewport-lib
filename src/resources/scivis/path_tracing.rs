@@ -15,6 +15,10 @@ impl ViewportGpuResources {
             .pt_bind_group_layout
             .as_ref()
             .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
+        let lut_bgl = self
+            .pt_lut_bind_group_layout
+            .as_ref()
+            .expect("pt_lut_bind_group_layout must exist after ensure_pt_bind_group_layout");
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("projected_tet_shader"),
@@ -25,7 +29,7 @@ impl ViewportGpuResources {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pt_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, bgl],
+            bind_group_layouts: &[&self.camera_bind_group_layout, bgl, lut_bgl],
             push_constant_ranges: &[],
         });
 

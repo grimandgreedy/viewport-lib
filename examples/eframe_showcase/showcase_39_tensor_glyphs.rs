@@ -285,12 +285,12 @@ pub(crate) fn build_tensor_glyph_scene(app: &mut App, renderer: &mut ViewportRen
     let data = build_beam_mesh(Z_TOP);
     app.tg_state.beam_positions = data.positions.clone();
     app.tg_state.beam_cells = data.cells.clone();
-    if let Ok((id, f2c)) = renderer
+    if let Ok(item) = renderer
         .resources_mut()
-        .upload_volume_mesh_data(&app.device, &data)
+        .upload_volume_mesh(&app.device, &data)
     {
-        app.tg_state.mesh_id = Some(id);
-        app.tg_state.face_to_cell = f2c;
+        app.tg_state.mesh_id = Some(item.boundary_mesh_id);
+        app.tg_state.face_to_cell = item.face_to_cell;
     }
     app.tg_state.built = true;
 }
@@ -374,7 +374,7 @@ pub(crate) fn submit_beam_item(app: &App, fd: &mut FrameData) {
     item.colourmap_id = Some(ColourmapId(0)); // viridis
     item.material.backface_policy = BackfacePolicy::Identical;
     item.settings.pick_id = PickId(PICK_BEAM_MESH);
-    fd.scene.volume_mesh_items.push(item);
+    fd.scene.volume_meshes.push(item);
 }
 
 /// Surface render item for the beam (visual display).

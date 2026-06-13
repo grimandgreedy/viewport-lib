@@ -228,84 +228,6 @@ impl Default for SurfaceLICConfig {
     }
 }
 
-/// A transparent unstructured volume mesh rendered via projected tetrahedra.
-///
-/// Created by uploading a [`VolumeMeshData`](crate::resources::VolumeMeshData) with
-/// [`ViewportGpuResources::upload_projected_tet_mesh`] and submitting the returned
-/// [`ProjectedTetId`](crate::resources::ProjectedTetId) each frame.
-///
-/// # Picking
-///
-/// Set `pick_id` to a non-zero value and provide `volume_mesh_data` to enable cell-level
-/// picking via `renderer.pick()` and `renderer.pick_rect()`. `volume_mesh_data` must be
-/// the same data passed to `upload_projected_tet_mesh` for this item.
-///
-/// # Selection highlight
-///
-/// Set `selected = true` to draw an object-level outline ring around this mesh.
-/// Also supply `boundary_mesh_id` with the `MeshId` returned by
-/// [`upload_volume_mesh_data`](crate::resources::ViewportGpuResources::upload_volume_mesh_data)
-/// for the same geometry; the outline pass uses that boundary surface to compute
-/// the silhouette. Without `boundary_mesh_id` the `selected` flag has no visual effect.
-///
-/// # `ItemSettings.unlit`
-///
-/// Accepted but a no-op. The projected-tet pipeline has no lighting calculation
-/// to skip: fragment colour comes directly from the colourmap LUT and alpha
-/// comes from Beer-Lambert thickness. There is no diffuse, specular, ambient,
-/// or normal-based term that `unlit` could bypass. Setting `settings.unlit = true`
-/// compiles and renders identically to the default.
-#[derive(Clone)]
-#[non_exhaustive]
-pub struct TransparentVolumeMeshItem {
-    /// Handle to the uploaded projected-tet mesh.
-    pub id: crate::resources::ProjectedTetId,
-    /// CPU mesh data for cell picking.
-    ///
-    /// Must match the data passed to `upload_projected_tet_mesh` for `id`.
-    /// `None` disables cell-level picking regardless of `settings.pick_id`.
-    pub volume_mesh_data: Option<std::sync::Arc<crate::resources::volume_mesh::VolumeMeshData>>,
-    /// Beer-Lambert extinction coefficient (world-space units).
-    ///
-    /// Higher values make the volume more opaque.  Typical range: 0.1 to 5.0.
-    pub density: f32,
-    /// Override the auto-detected scalar range `[min, max]` used to normalize colourmap lookup.
-    ///
-    /// `None` uses the range computed at upload time.
-    pub scalar_range: Option<(f32, f32)>,
-    /// Scalar threshold range. Tetrahedra whose scalar value falls outside
-    /// `[threshold_min, threshold_max]` are discarded by the shader and not rendered.
-    ///
-    /// Operates on raw (un-normalized) scalar values, the same units as the data
-    /// passed to `upload_projected_tet_mesh`. Default: no clipping (all tets rendered).
-    pub threshold_min: f32,
-    /// Upper scalar threshold. See `threshold_min`.
-    pub threshold_max: f32,
-    /// Per-item render settings (visibility, appearance, pick identity, selection state).
-    pub settings: crate::scene::material::ItemSettings,
-    /// Boundary surface mesh used for the selection outline mask pass.
-    ///
-    /// Pass the `MeshId` returned by `upload_volume_mesh_data` for the same
-    /// geometry. The mesh positions are assumed to be in world space (identity
-    /// model matrix).
-    pub boundary_mesh_id: Option<crate::resources::mesh_store::MeshId>,
-}
-
-impl TransparentVolumeMeshItem {
-    /// Create a visible item with default density of 1.0 and auto scalar range.
-    pub fn new(id: crate::resources::ProjectedTetId) -> Self {
-        Self {
-            id,
-            volume_mesh_data: None,
-            density: 1.0,
-            scalar_range: None,
-            threshold_min: f32::NEG_INFINITY,
-            threshold_max: f32::INFINITY,
-            settings: crate::scene::material::ItemSettings::default(),
-            boundary_mesh_id: None,
-        }
-    }
-}
 
 /// World-space scene content for one frame.
 ///
@@ -349,18 +271,16 @@ pub struct SceneFrame {
     pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
     /// GPU marching cubes jobs to dispatch this frame.
     pub gpu_mc_jobs: Vec<crate::resources::GpuMarchingCubesJob>,
-    /// Transparent unstructured volume meshes rendered via projected tetrahedra.
-    pub transparent_volume_meshes: Vec<TransparentVolumeMeshItem>,
-    /// Opaque volume mesh items submitted for cell-level picking.
+    /// Unstructured volume meshes submitted this frame.
     ///
-    /// Each entry enables `SubObjectRef::Cell` hits from `renderer.pick()` and
-    /// `renderer.pick_rect()` for the mesh identified by `pick_id`. The item's
-    /// `face_to_cell` map (from `upload_volume_mesh_data`) converts surface
-    /// triangle hits to originating cell indices.
-    ///
-    /// Rendering still goes through `surfaces`; submit the `SceneRenderItem`
-    /// from `VolumeMeshItem::to_render_item()` there as normal.
-    pub volume_mesh_items: Vec<VolumeMeshItem>,
+    /// Each [`VolumeMeshItem`] renders either as a boundary surface (default,
+    /// through the standard mesh pipeline) or as a volumetric draw through
+    /// projected tetrahedra (when [`VolumeMeshItem::transparency`] is set and
+    /// the item was uploaded via
+    /// [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency)).
+    /// Cell-level picking, selection outlines, and wireframe overlays are
+    /// driven from this collection regardless of mode.
+    pub volume_meshes: Vec<VolumeMeshItem>,
     /// General tube items to render this frame.
     pub tube_items: Vec<TubeItem>,
     /// References to pre-uploaded tubes.
@@ -451,8 +371,7 @@ impl Default for SceneFrame {
             screen_images: Vec::new(),
             gpu_implicit: Vec::new(),
             gpu_mc_jobs: Vec::new(),
-            transparent_volume_meshes: Vec::new(),
-            volume_mesh_items: Vec::new(),
+            volume_meshes: Vec::new(),
             tube_items: Vec::new(),
             tube_refs: Vec::new(),
             image_slices: Vec::new(),

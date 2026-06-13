@@ -843,10 +843,22 @@ impl ViewportRenderer {
         vp_idx: usize,
         frame: &FrameData,
     ) -> wgpu::CommandBuffer {
-        // Read scene items from the surface submission.
-        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items.as_ref(),
+        // Read scene items from the surface submission, then extend with the
+        // boundary draws contributed by opaque volume meshes (see the matching
+        // construction in `prepare.rs`).
+        let scene_items_owned: Vec<SceneRenderItem> = {
+            let surfaces = match &frame.scene.surfaces {
+                SurfaceSubmission::Flat(items) => items.as_ref(),
+            };
+            let extra = frame
+                .scene
+                .volume_meshes
+                .iter()
+                .filter(|item| item.transparency.is_none())
+                .map(|item| item.to_render_item());
+            surfaces.iter().cloned().chain(extra).collect()
         };
+        let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         let bg_colour = frame.viewport.background_colour.unwrap_or([
             65.0 / 255.0,
@@ -1527,9 +1539,9 @@ impl ViewportRenderer {
                     .any(|i| !i.settings.hidden && i.settings.opacity < 1.0)
             } || frame
                 .scene
-                .transparent_volume_meshes
+                .volume_meshes
                 .iter()
-                .any(|i| !i.settings.hidden);
+                .any(|i| !i.settings.hidden && i.transparency.is_some());
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 let [sw, sh] = hdr.scene_size;
@@ -2868,9 +2880,9 @@ impl ViewportRenderer {
                 .any(|i| !i.settings.hidden && (i.settings.opacity < 1.0 || i.material.is_blend()))
         } || frame
             .scene
-            .transparent_volume_meshes
+            .volume_meshes
             .iter()
-            .any(|i| !i.settings.hidden);
+            .any(|i| !i.settings.hidden && i.transparency.is_some());
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
@@ -3089,38 +3101,76 @@ impl ViewportRenderer {
 
                 // -----------------------------------------------------------
                 // Projected tetrahedra transparent volume meshes.
+                // Items with `transparency: Some(_)` route here; opaque items
+                // already drew through the surface pipeline.
                 // -----------------------------------------------------------
-                if !frame.scene.transparent_volume_meshes.is_empty() {
+                let any_transparent = frame
+                    .scene
+                    .volume_meshes
+                    .iter()
+                    .any(|i| !i.settings.hidden && i.transparency.is_some());
+                if any_transparent {
                     self.resources.ensure_pt_pipeline(device);
+                    // Pre-build LUT bind groups for every unique colourmap the
+                    // current frame's transparent items reference, so the draw
+                    // loop below can borrow them immutably from the cache.
+                    for item in &frame.scene.volume_meshes {
+                        if item.settings.hidden || item.transparency.is_none() {
+                            continue;
+                        }
+                        self.resources
+                            .ensure_pt_lut_bind_group(device, item.colourmap_id);
+                    }
                     if let Some(pipeline) = self.resources.pt_pipeline.as_ref() {
                         oit_pass.set_pipeline(pipeline);
                         oit_pass.set_bind_group(0, camera_bg, &[]);
-                        for item in &frame.scene.transparent_volume_meshes {
+                        let resources = &self.resources;
+                        for item in &frame.scene.volume_meshes {
                             if item.settings.hidden {
                                 continue;
                             }
+                            let Some(transparency) = item.transparency else {
+                                continue;
+                            };
                             if item.settings.wireframe || frame.viewport.wireframe_mode {
                                 continue;
                             }
-                            let Some(gpu) = self.resources.projected_tet_store.get(item.id.0)
-                            else {
+                            let Some(pt_id) = item.projected_tet_id else {
+                                continue;
+                            };
+                            let Some(gpu) = resources.projected_tet_store.get(pt_id.0) else {
                                 continue;
                             };
                             let (scalar_min, scalar_max) =
                                 item.scalar_range.unwrap_or(gpu.scalar_range);
                             let uniform = crate::resources::ProjectedTetUniform {
-                                density: item.density,
+                                density: transparency.density,
                                 scalar_min,
                                 scalar_max,
-                                threshold_min: item.threshold_min,
-                                threshold_max: item.threshold_max,
+                                threshold_min: transparency.threshold_min,
+                                threshold_max: transparency.threshold_max,
                                 unlit: if item.settings.unlit { 1 } else { 0 },
+                                opacity: item.settings.opacity,
+                                _pad: 0.0,
                             };
                             queue.write_buffer(
                                 &gpu.uniform_buffer,
                                 0,
                                 bytemuck::bytes_of(&uniform),
                             );
+                            // Look up the pre-built LUT bind group (cache miss
+                            // is impossible because we populated it above).
+                            let lut_bg = item
+                                .colourmap_id
+                                .and_then(|id| {
+                                    resources
+                                        .colourmap_views
+                                        .get(id.0)
+                                        .and(resources.pt_lut_bind_groups.get(&id.0))
+                                })
+                                .or(resources.pt_fallback_lut_bind_group.as_ref());
+                            let Some(lut_bg) = lut_bg else { continue };
+                            oit_pass.set_bind_group(2, lut_bg, &[]);
                             for chunk in &gpu.chunks {
                                 oit_pass.set_bind_group(1, &chunk.bind_group, &[]);
                                 oit_pass.draw(0..6, 0..chunk.tet_count);

@@ -22,9 +22,9 @@ use viewport_lib::{
     GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
     GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
     LightingSettings, Material, MeshId, NodeId, PickId, PickMask, PickRectResult, PointCloudItem,
-    PolylineItem, PolylineSelectionInfo, ProjectedTetId, RibbonItem, SceneRenderItem,
+    PolylineItem, PolylineSelectionInfo, RibbonItem, SceneRenderItem,
     ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
-    TensorGlyphItem, TransparentVolumeMeshItem, TubeItem, ViewportRenderer, VolumeData,
+    TensorGlyphItem, TubeItem, ViewportRenderer, VolumeData,
     VolumeGpuId, VolumeMeshData, VolumeMeshItem, VolumeSurfaceSliceItem,
 };
 
@@ -306,12 +306,14 @@ pub(crate) struct PlState {
     pub splat_id: Option<GaussianSplatId>,
     /// Opaque mesh handle for TVM rendering (boundary surface).
     pub tvm_mesh_id: Option<MeshId>,
-    /// face_to_cell mapping from upload_volume_mesh_data for the capsule (pick_id=11).
+    /// face_to_cell mapping from upload_volume_mesh for the capsule (pick_id=11).
     pub tvm_face_to_cell: Vec<u32>,
     /// CPU-side volume mesh data (kept for per-type cell picking and highlighting).
     pub tvm_data: Option<VolumeMeshData>,
-    /// Projected-tet handle for the transparent tet mesh (pick_id=12).
-    pub tvm_tet_id: Option<ProjectedTetId>,
+    /// Projected-tet handle for the transparent tet mesh (pick_id=12). Held
+    /// separately from the `VolumeMeshItem` it lives on so the per-frame
+    /// submission stays readable.
+    pub tvm_tet_id: Option<viewport_lib::resources::ProjectedTetId>,
     /// Opaque boundary mesh for the hex cylinder so it renders on the LDR path.
     pub tvm_tet_mesh_id: Option<MeshId>,
     /// CPU-side tet mesh data for unified CELL picking and sub-selection highlighting.
@@ -614,39 +616,29 @@ impl App {
 
         // --- Volume mesh: capsule hex mesh, rendered as opaque boundary surface ---
         let tvm_data = make_pl_tvm_data();
-        if let Ok((mesh_id, face_to_cell)) = renderer
+        if let Ok(item) = renderer
             .resources_mut()
-            .upload_volume_mesh_data(&self.device, &tvm_data)
+            .upload_volume_mesh(&self.device, &tvm_data)
         {
-            self.pl_state.tvm_mesh_id = Some(mesh_id);
-            self.pl_state.tvm_face_to_cell = face_to_cell;
+            self.pl_state.tvm_mesh_id = Some(item.boundary_mesh_id);
+            self.pl_state.tvm_face_to_cell = item.face_to_cell;
         }
         self.pl_state.tvm_data = Some(tvm_data);
 
         // --- Hex cylinder at x=-7 (pick_id=12) ---
-        // Upload as both a projected-tet mesh (for cell picking) and an opaque
-        // boundary surface (for LDR rendering without the HDR/OIT path).
+        // Single upload via the transparency-capable helper: it produces both
+        // the boundary mesh (for the LDR draw) and the projected-tet
+        // decomposition (for the transparent overlay) in one call.
         renderer
             .resources_mut()
             .ensure_colourmaps_initialized(&self.device, &self.queue);
         let tet_data = make_pl_tvm_tet_data();
-        let tvm_tet_id = renderer
+        let tvm_item = renderer
             .resources_mut()
-            .upload_projected_tet_mesh(
-                &self.device,
-                &tet_data,
-                "scalar",
-                viewport_lib::ColourmapId(0),
-            )
-            .ok()
-            .map(|(id, _, _)| id);
-        let tvm_tet_mesh_id = renderer
-            .resources_mut()
-            .upload_volume_mesh_data(&self.device, &tet_data)
-            .ok()
-            .map(|(id, _)| id);
-        self.pl_state.tvm_tet_id = tvm_tet_id;
-        self.pl_state.tvm_tet_mesh_id = tvm_tet_mesh_id;
+            .upload_volume_mesh_with_transparency(&self.device, tet_data.clone(), "scalar")
+            .ok();
+        self.pl_state.tvm_tet_id = tvm_item.as_ref().and_then(|i| i.projected_tet_id);
+        self.pl_state.tvm_tet_mesh_id = tvm_item.as_ref().map(|i| i.boundary_mesh_id);
         self.pl_state.tvm_tet_data = Some(std::sync::Arc::new(tet_data));
 
         // --- Polyline: 3 spiral streamlines in front of sprites (pick_id=30) ---
@@ -1743,27 +1735,32 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.settings.unlit = false;
         fd.scene.gaussian_splats.push(item);
     }
-    // Hex cylinder: transparent volume mesh (pick_id=12).
-    if let (Some(tet_id), Some(tet_data)) =
-        (app.pl_state.tvm_tet_id, app.pl_state.tvm_tet_data.as_ref())
-    {
-        let mut tvm = TransparentVolumeMeshItem::new(tet_id);
-        tvm.settings.pick_id = PickId(12);
-        tvm.volume_mesh_data = Some(tet_data.clone());
-        tvm.settings.selected = app.pl_state.selection.contains(12);
-        tvm.boundary_mesh_id = app.pl_state.tvm_tet_mesh_id;
-        tvm.density = 2.0;
-        tvm.settings.unlit = false;
-        fd.scene.transparent_volume_meshes.push(tvm);
+    // Hex cylinder: rendered through projected-tet (pick_id=12).
+    if let (Some(tet_mesh_id), Some(tet_data)) = (
+        app.pl_state.tvm_tet_mesh_id,
+        app.pl_state.tvm_tet_data.as_ref(),
+    ) {
+        let mut item = VolumeMeshItem::new(tet_mesh_id, Vec::new());
+        item.projected_tet_id = app.pl_state.tvm_tet_id;
+        item.volume_mesh_data = Some(tet_data.clone());
+        item.colourmap_id = Some(viewport_lib::ColourmapId(0));
+        item.settings.pick_id = PickId(12);
+        item.settings.selected = app.pl_state.selection.contains(12);
+        item.settings.unlit = false;
+        item.transparency = Some(viewport_lib::VolumeTransparency {
+            density: 2.0,
+            ..Default::default()
+        });
+        fd.scene.volume_meshes.push(item);
     }
-    // TVM capsule (pick_id=11): VolumeMeshItem so renderer.pick() with PointLike
-    // mask can return Cell sub_objects via face_to_cell.
+    // TVM capsule (pick_id=11): renders as an opaque boundary surface, so
+    // PointLike picking returns Cell sub_objects via face_to_cell.
     if let Some(mesh_id) = app.pl_state.tvm_mesh_id {
         if !app.pl_state.tvm_face_to_cell.is_empty() {
             let mut item = VolumeMeshItem::new(mesh_id, app.pl_state.tvm_face_to_cell.clone());
             item.settings.pick_id = PickId(11);
             item.settings.unlit = false;
-            fd.scene.volume_mesh_items.push(item);
+            fd.scene.volume_meshes.push(item);
         }
     }
     // Sub-object highlight pass (face fill, edge outline, vertex/point sprites).

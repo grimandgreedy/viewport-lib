@@ -220,9 +220,9 @@ pub use renderer::{
     ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
     SpriteItem, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
     StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem,
-    TextureTransform, TileMode, ToneMapping, TransparentVolumeMeshItem, TriangleDirection,
-    TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame, ViewportId,
-    ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, aabb_wireframe_polyline,
+    TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem,
+    VelocityDist, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
+    VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline,
     sphere_wireframe_polyline,
 };
 
@@ -248,7 +248,7 @@ pub use resources::{
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult,
     FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob,
     ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform, MatcapId, MeshData,
-    ProgressHandle, ProjectedTetId, SingleLightUniform, TextureMemoryStats,
+    ProgressHandle, SingleLightUniform, TextureMemoryStats,
     UploadStatus, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
 };
 pub use resources::{

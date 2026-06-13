@@ -802,20 +802,25 @@ impl ViewportRenderer {
             }
         }
 
-        // 2b. Transparent volume mesh cell picks (CELL or OBJECT fallback).
+        // 2b. Interior-inclusive cell picks for volume meshes rendering
+        //     transparently. Items rendering as opaque are handled in section 1
+        //     above via vm_cell_map (face_to_cell on the boundary surface).
         if wants_cell || wants_object {
-            for item in &self.pick_tvm_items {
-                if item.settings.pick_id == PickId::NONE {
+            for item in &self.pick_volume_mesh_items {
+                if item.settings.pick_id == PickId::NONE
+                    || item.transparency.is_none()
+                {
                     continue;
                 }
                 let Some(data) = item.volume_mesh_data.as_deref() else {
                     continue;
                 };
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
                 if let Some(mut hit) = pick_transparent_volume_mesh_cpu(
                     ray_origin,
                     ray_dir,
                     item.settings.pick_id.0,
-                    glam::Mat4::IDENTITY,
+                    model,
                     data,
                 ) {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
@@ -1904,10 +1909,14 @@ impl ViewportRenderer {
         // 2. Opaque volume mesh cell picks are handled in section 1 above via
         // vm_cell_map (face_to_cell conversion on boundary triangle hits).
 
-        // 2b. Transparent volume mesh cell picks (CELL or OBJECT).
+        // 2b. Interior-inclusive cell picks for volume meshes rendering
+        //     transparently. Items rendering as opaque are handled in section 1
+        //     above via vm_cell_map (face_to_cell on the boundary surface).
         if wants_cell || wants_object {
-            for item in &self.pick_tvm_items {
-                if item.settings.pick_id == PickId::NONE {
+            for item in &self.pick_volume_mesh_items {
+                if item.settings.pick_id == PickId::NONE
+                    || item.transparency.is_none()
+                {
                     continue;
                 }
                 let Some(data) = item.volume_mesh_data.as_deref() else {
@@ -1915,7 +1924,7 @@ impl ViewportRenderer {
                 };
                 use crate::resources::volume_mesh::CELL_SENTINEL;
                 let id = item.settings.pick_id.0;
-                let mvp = view_proj; // TVM items are always in world space (no model transform)
+                let mvp = view_proj * glam::Mat4::from_cols_array_2d(&item.model);
                 let mut item_hit = false;
 
                 for (cell_idx, cell) in data.cells.iter().enumerate() {

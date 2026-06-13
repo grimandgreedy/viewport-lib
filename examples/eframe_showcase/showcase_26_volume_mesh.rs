@@ -4,7 +4,7 @@
 //!
 //! A 3x3x3 structured grid of cells is visualised via its extracted boundary.
 //! Interior faces shared by two cells are discarded automatically by
-//! [`upload_volume_mesh_data`]. Per-cell scalars and colours are remapped to the
+//! [`upload_volume_mesh`]. Per-cell scalars and colours are remapped to the
 //! boundary faces so the face-colouring path applies colourmaps
 //! cell-by-cell with no new GPU work.
 //!
@@ -28,8 +28,8 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CELL_SENTINEL, ClipObject,
-    ClipShape, ColourmapId, FrameData, LightingSettings, ProjectedTetId, SceneRenderItem,
-    TransparentVolumeMeshItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
+    ClipShape, ColourmapId, FrameData, LightingSettings, SceneRenderItem, ViewportRenderer,
+    VolumeMeshData, VolumeMeshItem, VolumeTransparency,
 };
 
 // ---------------------------------------------------------------------------
@@ -56,20 +56,24 @@ pub(crate) struct VmState {
     pub clip_azimuth: f32,
     /// CPU-clipped volume mesh item; allocated lazily on first clip.
     pub clipped_item: Option<VolumeMeshItem>,
-    /// Projected-tet handles per cell type (uploaded at startup with raw positions).
-    pub pt_hex_id: Option<ProjectedTetId>,
-    pub pt_tet_id: Option<ProjectedTetId>,
-    pub pt_tet_small_id: Option<ProjectedTetId>,
-    pub pt_tet_box_id: Option<ProjectedTetId>,
-    pub pt_pyramid_id: Option<ProjectedTetId>,
-    pub pt_wedge_id: Option<ProjectedTetId>,
+    /// Transparent-mode items per cell type, uploaded with projected-tet data
+    /// at startup. Each carries both the boundary surface and the tet
+    /// decomposition, so toggling transparency on or off is just a field flip.
+    pub tet_transparent_item: Option<VolumeMeshItem>,
+    pub hex_transparent_item: Option<VolumeMeshItem>,
+    pub tet_small_transparent_item: Option<VolumeMeshItem>,
+    pub tet_box_transparent_item: Option<VolumeMeshItem>,
+    pub pyramid_transparent_item: Option<VolumeMeshItem>,
+    pub wedge_transparent_item: Option<VolumeMeshItem>,
     /// Whether to render in transparent (projected-tet) mode.
     pub transparent: bool,
     /// Beer-Lambert extinction coefficient for transparent mode.
     pub density: f32,
     /// Scalar field last used for the PT upload; triggers a rebuild when it differs from field.
     pub pt_field: VmField,
-    /// Colourmap last used for the PT upload; triggers a rebuild when it differs from colourmap.
+    /// Colourmap last used for the PT upload; tracked for parity with the old
+    /// flow even though the LUT is now bound per-frame and no longer requires
+    /// a re-upload.
     pub pt_colourmap: BuiltinColourmap,
 }
 
@@ -92,12 +96,12 @@ impl Default for VmState {
             clip_elevation: 0.0,
             clip_azimuth: 0.0,
             clipped_item: None,
-            pt_hex_id: None,
-            pt_tet_id: None,
-            pt_tet_small_id: None,
-            pt_tet_box_id: None,
-            pt_pyramid_id: None,
-            pt_wedge_id: None,
+            tet_transparent_item: None,
+            hex_transparent_item: None,
+            tet_small_transparent_item: None,
+            tet_box_transparent_item: None,
+            pyramid_transparent_item: None,
+            wedge_transparent_item: None,
             transparent: false,
             density: 0.5,
             pt_field: VmField::Latitude,
@@ -716,11 +720,10 @@ impl App {
         let positions = sphere_vertex_positions();
 
         let mut upload = |data: &VolumeMeshData| -> VolumeMeshItem {
-            let (mesh_id, face_to_cell) = renderer
+            let mut item = renderer
                 .resources_mut()
-                .upload_volume_mesh_data(&self.device, data)
+                .upload_volume_mesh(&self.device, data)
                 .expect("vm upload");
-            let mut item = VolumeMeshItem::new(mesh_id, face_to_cell);
             item.material.backface_policy = BackfacePolicy::Identical;
             item
         };
@@ -743,33 +746,34 @@ impl App {
         let wedge_data = build_wedge_mesh(&positions);
         self.vm_state.wedge_item = Some(upload(&wedge_data));
 
-        // Colourmaps must be ready before the PT bind group is created.
+        // Colourmaps must be ready before the projected-tet pipeline samples them.
         renderer
             .resources_mut()
             .ensure_colourmaps_initialized(&self.device, &self.queue);
 
-        // Upload projected-tet meshes for each cell type.
-        // Hex and Pyramid use cube_sphere positions so the transparent sphere shape
-        // matches the opaque surface. Tet/Wedge use box positions because pure radial
-        // sphere projection puts all vertices on the sphere surface, collapsing tet
-        // volumes to zero.
+        // Upload the transparency-capable items. Hex and Pyramid share the
+        // boundary geometry of their opaque counterparts (cube-to-sphere
+        // positions); Tet and Wedge use raw box positions because radially
+        // projected positions collapse their Freudenthal-decomposed tets.
         let attr = vm_pt_scalar_attr(self.vm_state.field);
-        let colourmap_id = ColourmapId(self.vm_state.colourmap as usize);
 
-        let mut pt_upload = |data: &VolumeMeshData| -> Option<ProjectedTetId> {
+        let mut pt_upload = |data: VolumeMeshData| -> Option<VolumeMeshItem> {
             renderer
                 .resources_mut()
-                .upload_projected_tet_mesh(&self.device, data, attr, colourmap_id)
+                .upload_volume_mesh_with_transparency(&self.device, data, attr)
                 .ok()
-                .map(|(id, _, _)| id)
+                .map(|mut item| {
+                    item.material.backface_policy = BackfacePolicy::Identical;
+                    item
+                })
         };
 
-        self.vm_state.pt_hex_id = pt_upload(&pt_data_for_mode(VmMode::Hex));
-        self.vm_state.pt_tet_id = pt_upload(&pt_data_for_mode(VmMode::Tet));
-        self.vm_state.pt_tet_small_id = pt_upload(&pt_data_for_mode(VmMode::TetSmall));
-        self.vm_state.pt_tet_box_id = pt_upload(&pt_data_for_mode(VmMode::TetBox));
-        self.vm_state.pt_pyramid_id = pt_upload(&pt_data_for_mode(VmMode::Pyramid));
-        self.vm_state.pt_wedge_id = pt_upload(&pt_data_for_mode(VmMode::Wedge));
+        self.vm_state.hex_transparent_item = pt_upload(pt_data_for_mode(VmMode::Hex));
+        self.vm_state.tet_transparent_item = pt_upload(pt_data_for_mode(VmMode::Tet));
+        self.vm_state.tet_small_transparent_item = pt_upload(pt_data_for_mode(VmMode::TetSmall));
+        self.vm_state.tet_box_transparent_item = pt_upload(pt_data_for_mode(VmMode::TetBox));
+        self.vm_state.pyramid_transparent_item = pt_upload(pt_data_for_mode(VmMode::Pyramid));
+        self.vm_state.wedge_transparent_item = pt_upload(pt_data_for_mode(VmMode::Wedge));
 
         self.vm_state.built = true;
     }
@@ -828,26 +832,29 @@ impl App {
         }
     }
 
-    /// Build a [`SceneRenderItem`] for the active volume mesh.
+    /// Build the [`VolumeMeshItem`] for the active volume mesh, ready to push
+    /// into `SceneFrame::volume_meshes`. In opaque mode the renderer routes the
+    /// item's boundary surface through the standard mesh pipeline; in
+    /// transparent mode the same call also kicks the projected-tet pass.
     ///
     /// When clip is on and the clipped item is ready, uses that instead of the
     /// static boundary mesh.
-    pub(crate) fn vm_scene_items(&self) -> Vec<SceneRenderItem> {
-        if !self.vm_state.built || self.vm_state.transparent {
-            return vec![];
+    pub(crate) fn vm_active_volume_item(&self) -> Option<VolumeMeshItem> {
+        if !self.vm_state.built {
+            return None;
         }
 
-        // Pick the active item: clipped if available and clipping is on,
-        // otherwise the static boundary item for the current mode.
-        let active = if self.vm_state.clip_on {
+        let base = if self.vm_state.transparent {
+            self.vm_transparent_source_item()?.clone()
+        } else if self.vm_state.clip_on {
             self.vm_state
                 .clipped_item
                 .as_ref()
-                .or_else(|| self.vm_active_item())
+                .cloned()
+                .or_else(|| self.vm_active_item().cloned())?
         } else {
-            self.vm_active_item()
+            self.vm_active_item().cloned()?
         };
-        let Some(item) = active else { return vec![] };
 
         let (active_attribute, colourmap_id) = match self.vm_state.field {
             VmField::Latitude => (
@@ -880,13 +887,21 @@ impl App {
             ),
         };
 
-        let mut render_item = item.to_render_item();
-        render_item.active_attribute = active_attribute;
-        render_item.colourmap_id = colourmap_id;
-        vec![render_item]
+        let mut item = base;
+        item.active_attribute = active_attribute;
+        item.colourmap_id = colourmap_id;
+        if self.vm_state.transparent {
+            item.transparency = Some(VolumeTransparency {
+                density: self.vm_state.density,
+                ..Default::default()
+            });
+        } else {
+            item.transparency = None;
+        }
+        Some(item)
     }
 
-    /// Return a reference to the static [`VolumeMeshItem`] for the current mode.
+    /// Return a reference to the boundary-only [`VolumeMeshItem`] for the current mode.
     fn vm_active_item(&self) -> Option<&VolumeMeshItem> {
         match self.vm_state.mode {
             VmMode::Hex => self.vm_state.hex_item.as_ref(),
@@ -898,20 +913,24 @@ impl App {
         }
     }
 
-    /// Rebuild all projected-tet meshes with a new scalar field and colourmap.
-    ///
-    /// Called when the user changes `vm_field` or `vm_colourmap` while transparent
-    /// mode has been used at least once. Each mode keeps its own PT slot so switching
-    /// cell type doesn't re-upload.
-    pub(crate) fn rebuild_pt_meshes(
-        &mut self,
-        renderer: &mut ViewportRenderer,
-        device: &wgpu::Device,
-        field: VmField,
-        colourmap: BuiltinColourmap,
-    ) {
+    /// Return the transparency-capable item for the current mode.
+    fn vm_transparent_source_item(&self) -> Option<&VolumeMeshItem> {
+        match self.vm_state.mode {
+            VmMode::Hex => self.vm_state.hex_transparent_item.as_ref(),
+            VmMode::Tet => self.vm_state.tet_transparent_item.as_ref(),
+            VmMode::TetSmall => self.vm_state.tet_small_transparent_item.as_ref(),
+            VmMode::TetBox => self.vm_state.tet_box_transparent_item.as_ref(),
+            VmMode::Pyramid => self.vm_state.pyramid_transparent_item.as_ref(),
+            VmMode::Wedge => self.vm_state.wedge_transparent_item.as_ref(),
+        }
+    }
+
+    /// Rebuild the projected-tet storage buffer for every cell type with the
+    /// currently selected scalar attribute. The colourmap is now bound
+    /// per-frame from `item.colourmap_id`, so changing it does not require a
+    /// rebuild; only a change of `field` triggers re-extraction.
+    pub(crate) fn rebuild_pt_meshes(&mut self, renderer: &mut ViewportRenderer, field: VmField) {
         let attr = vm_pt_scalar_attr(field);
-        let colourmap_id = ColourmapId(colourmap as usize);
 
         for mode in [
             VmMode::Hex,
@@ -921,44 +940,48 @@ impl App {
             VmMode::Pyramid,
             VmMode::Wedge,
         ] {
-            let id = match mode {
-                VmMode::Hex => self.vm_state.pt_hex_id,
-                VmMode::Tet => self.vm_state.pt_tet_id,
-                VmMode::TetSmall => self.vm_state.pt_tet_small_id,
-                VmMode::TetBox => self.vm_state.pt_tet_box_id,
-                VmMode::Pyramid => self.vm_state.pt_pyramid_id,
-                VmMode::Wedge => self.vm_state.pt_wedge_id,
+            let pt_id = match mode {
+                VmMode::Hex => self
+                    .vm_state
+                    .hex_transparent_item
+                    .as_ref()
+                    .and_then(|i| i.projected_tet_id),
+                VmMode::Tet => self
+                    .vm_state
+                    .tet_transparent_item
+                    .as_ref()
+                    .and_then(|i| i.projected_tet_id),
+                VmMode::TetSmall => self
+                    .vm_state
+                    .tet_small_transparent_item
+                    .as_ref()
+                    .and_then(|i| i.projected_tet_id),
+                VmMode::TetBox => self
+                    .vm_state
+                    .tet_box_transparent_item
+                    .as_ref()
+                    .and_then(|i| i.projected_tet_id),
+                VmMode::Pyramid => self
+                    .vm_state
+                    .pyramid_transparent_item
+                    .as_ref()
+                    .and_then(|i| i.projected_tet_id),
+                VmMode::Wedge => self
+                    .vm_state
+                    .wedge_transparent_item
+                    .as_ref()
+                    .and_then(|i| i.projected_tet_id),
             };
-            if let Some(id) = id {
+            if let Some(pt_id) = pt_id {
                 let data = pt_data_for_mode(mode);
                 let _ = renderer.resources_mut().replace_projected_tet_mesh(
-                    device,
-                    id,
+                    &self.device,
+                    pt_id,
                     &data,
                     attr,
-                    colourmap_id,
                 );
             }
         }
-    }
-
-    /// Returns a `TransparentVolumeMeshItem` for the projected-tet pass when
-    /// transparent mode is active, or `None` otherwise.
-    pub(crate) fn vm_transparent_item(&self) -> Option<TransparentVolumeMeshItem> {
-        if !self.vm_state.transparent || !self.vm_state.built {
-            return None;
-        }
-        let id = match self.vm_state.mode {
-            VmMode::Hex => self.vm_state.pt_hex_id,
-            VmMode::Tet => self.vm_state.pt_tet_id,
-            VmMode::TetSmall => self.vm_state.pt_tet_small_id,
-            VmMode::TetBox => self.vm_state.pt_tet_box_id,
-            VmMode::Pyramid => self.vm_state.pt_pyramid_id,
-            VmMode::Wedge => self.vm_state.pt_wedge_id,
-        }?;
-        let mut item = TransparentVolumeMeshItem::new(id);
-        item.density = self.vm_state.density;
-        Some(item)
     }
 
     pub(crate) fn vm_clip_objects(&self) -> Vec<ClipObject> {
@@ -1120,20 +1143,20 @@ pub(crate) fn vm_collect_scene_items(
                 let clip_planes = [app.vm_clip_plane()];
                 match app.vm_state.clipped_item.as_ref() {
                     None => {
-                        if let Ok((id, f2c)) = renderer
-                            .resources_mut()
-                            .upload_clipped_volume_mesh_data(&rs.device, &data, &clip_planes)
-                        {
-                            let mut item = viewport_lib::VolumeMeshItem::new(id, f2c);
+                        if let Ok(mut item) = renderer.resources_mut().upload_clipped_volume_mesh(
+                            &rs.device,
+                            &data,
+                            &clip_planes,
+                        ) {
                             item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
                             app.vm_state.clipped_item = Some(item);
                         }
                     }
                     Some(existing) => {
-                        if let Ok(f2c) = renderer.resources_mut().replace_clipped_volume_mesh_data(
+                        if let Ok(f2c) = renderer.resources_mut().replace_clipped_volume_mesh(
                             &rs.device,
                             &rs.queue,
-                            existing.mesh_id,
+                            existing.boundary_mesh_id,
                             &data,
                             &clip_planes,
                         ) {
@@ -1146,34 +1169,33 @@ pub(crate) fn vm_collect_scene_items(
             }
         }
     }
-    // Rebuild PT meshes when the scalar field or colourmap changes.
-    let pt_needs_rebuild = app.vm_state.built
-        && (app.vm_state.field != app.vm_state.pt_field
-            || app.vm_state.colourmap != app.vm_state.pt_colourmap);
+    // Rebuild PT meshes when the scalar field changes. Colourmap is bound
+    // per-frame now, so changes there are free.
+    let pt_needs_rebuild = app.vm_state.built && app.vm_state.field != app.vm_state.pt_field;
     if pt_needs_rebuild {
         if let Some(rs) = frame.wgpu_render_state() {
             let mut guard = rs.renderer.write();
             if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
-                app.rebuild_pt_meshes(
-                    renderer,
-                    &rs.device,
-                    app.vm_state.field,
-                    app.vm_state.colourmap,
-                );
+                app.rebuild_pt_meshes(renderer, app.vm_state.field);
                 app.vm_state.pt_field = app.vm_state.field;
-                app.vm_state.pt_colourmap = app.vm_state.colourmap;
             }
         }
     }
+    app.vm_state.pt_colourmap = app.vm_state.colourmap;
 
-    let items = app.vm_scene_items();
-    (items, App::vm_lighting(), 0, 0)
+    // The unified VolumeMeshItem renders itself: in opaque mode the renderer
+    // turns its boundary surface into a scene item internally, in transparent
+    // mode it routes through projected-tet. So no extra SceneRenderItems leave
+    // this helper.
+    (vec![], App::vm_lighting(), 0, 0)
 }
 
 pub(crate) fn submit_vm_items(app: &mut App, fd: &mut FrameData) {
-    if let Some(item) = app.vm_transparent_item() {
-        fd.scene.transparent_volume_meshes.push(item);
-        fd.effects.post_process.enabled = true;
+    if let Some(item) = app.vm_active_volume_item() {
+        if item.transparency.is_some() {
+            fd.effects.post_process.enabled = true;
+        }
+        fd.scene.volume_meshes.push(item);
     }
 }
 

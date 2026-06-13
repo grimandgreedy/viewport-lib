@@ -67,10 +67,23 @@ impl ViewportRenderer {
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
 
-        // Read scene items from the surface submission.
-        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items.as_ref(),
+        // Read scene items from the surface submission, then extend with the
+        // boundary draws contributed by opaque volume meshes (items in
+        // `volume_meshes` whose `transparency` is `None`). The owned vector
+        // keeps these extra items alive for the whole prepare pass.
+        let scene_items_owned: Vec<SceneRenderItem> = {
+            let surfaces = match &frame.scene.surfaces {
+                SurfaceSubmission::Flat(items) => items.as_ref(),
+            };
+            let extra = frame
+                .scene
+                .volume_meshes
+                .iter()
+                .filter(|item| item.transparency.is_none())
+                .map(|item| item.to_render_item());
+            surfaces.iter().cloned().chain(extra).collect()
         };
+        let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         // Compute scene center / extent for shadow framing.
         let (shadow_center, shadow_extent) = if let Some(extent) = lighting.shadow_extent_override {
@@ -2453,22 +2466,23 @@ impl ViewportRenderer {
             }
         }
 
-        // TransparentVolumeMesh wireframe: boundary mesh edge overlay.
+        // Transparent volume meshes wireframe: boundary mesh edge overlay.
+        // Items rendering as opaque already participate in the standard
+        // wireframe pass via the surface submission; here we only need to
+        // gather boundary edges for items rendering through the projected-tet
+        // path so they still get a wireframe overlay.
         self.tvm_wireframe_draws.clear();
-        for item in &frame.scene.transparent_volume_meshes {
-            if item.settings.hidden {
+        for item in &frame.scene.volume_meshes {
+            if item.settings.hidden || item.transparency.is_none() {
                 continue;
             }
             if !(item.settings.wireframe || frame.viewport.wireframe_mode) {
                 continue;
             }
-            let Some(mesh_id) = item.boundary_mesh_id else {
-                continue;
-            };
-            if resources.mesh_store.get(mesh_id).is_none() {
+            if resources.mesh_store.get(item.boundary_mesh_id).is_none() {
                 continue;
             }
-            self.tvm_wireframe_draws.push(mesh_id);
+            self.tvm_wireframe_draws.push(item.boundary_mesh_id);
         }
         if !self.tvm_wireframe_draws.is_empty() && self.tvm_wireframe_bg.is_none() {
             use wgpu::util::DeviceExt;
@@ -3394,16 +3408,19 @@ impl ViewportRenderer {
                     mask_bind_group: bg,
                 });
             }
-            // Selected transparent volume meshes: use their boundary surface for the outline.
-            for item in &frame.scene.transparent_volume_meshes {
-                if item.settings.hidden || !item.settings.selected {
+            // Selected volume meshes rendered through projected-tet: use the
+            // boundary surface for the outline mask. Opaque-mode items already
+            // emit their outline via the standard surface submission, so skip
+            // them here to avoid double draws.
+            for item in &frame.scene.volume_meshes {
+                if item.settings.hidden
+                    || !item.settings.selected
+                    || item.transparency.is_none()
+                {
                     continue;
                 }
-                let Some(mesh_id) = item.boundary_mesh_id else {
-                    continue;
-                };
                 let uniform = OutlineUniform {
-                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                    model: item.model,
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
@@ -3426,7 +3443,7 @@ impl ViewportRenderer {
                     }],
                 });
                 outline_object_buffers.push(OutlineObjectBuffers {
-                    mesh_id,
+                    mesh_id: item.boundary_mesh_id,
                     two_sided: false,
                     deform_instance: None,
                     _mask_uniform_buf: buf,
@@ -6925,11 +6942,28 @@ impl ViewportRenderer {
             let surfaces = match &frame.scene.surfaces {
                 SurfaceSubmission::Flat(items) => items.as_ref(),
             };
-            self.pick_scene_items = surfaces.to_vec();
+            // Mirror the rendering-side scene_items construction: opaque
+            // volume meshes appear as boundary SceneRenderItems for face/vertex
+            // picking via the BVH; cell-level remapping is then driven from
+            // `pick_volume_mesh_items` (which keeps the full VolumeMeshItem so
+            // `face_to_cell` is available).
+            self.pick_scene_items = surfaces
+                .iter()
+                .cloned()
+                .chain(
+                    frame
+                        .scene
+                        .volume_meshes
+                        .iter()
+                        .filter(|item| item.transparency.is_none())
+                        .map(|item| item.to_render_item()),
+                )
+                .collect();
             self.pick_point_cloud_items = frame.scene.point_clouds.clone();
             self.pick_splat_items = frame.scene.gaussian_splats.clone();
             self.pick_volume_items = frame.scene.volumes.clone();
-            self.pick_tvm_items = frame.scene.transparent_volume_meshes.clone();
+            // Picking iterates the unified volume_meshes collection; no separate
+            // transparent-only cache is needed any more.
             self.pick_scatter_volume_items = frame.scene.scatter_volumes.clone();
             self.prepared_scatter_volumes.clear();
             self.prepared_refraction_volumes.clear();
@@ -6990,7 +7024,7 @@ impl ViewportRenderer {
                 let db = far_corner(&aabb_b);
                 db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
             });
-            self.pick_volume_mesh_items = frame.scene.volume_mesh_items.clone();
+            self.pick_volume_mesh_items = frame.scene.volume_meshes.clone();
             self.pick_polyline_items = frame.scene.polylines.clone();
             self.pick_glyph_items = frame.scene.glyphs.clone();
             self.pick_tensor_glyph_items = frame.scene.tensor_glyphs.clone();

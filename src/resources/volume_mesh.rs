@@ -61,7 +61,7 @@ pub const TET_SENTINEL: u32 = CELL_SENTINEL;
 /// ];
 /// ```
 #[non_exhaustive]
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct VolumeMeshData {
     /// Vertex positions in local space.
     pub positions: Vec<[f32; 3]>,

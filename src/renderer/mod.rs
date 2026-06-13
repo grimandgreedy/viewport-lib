@@ -41,9 +41,9 @@ pub use self::types::{
     SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
     SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
     SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
-    TileMode, ToneMapping, TransparentVolumeMeshItem, TriangleDirection, TubeItem, TubeRefItem,
-    VelocityDist, ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem,
-    VolumeSurfaceSliceItem, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist,
+    ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
+    VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -426,8 +426,6 @@ pub struct ViewportRenderer {
     pick_splat_items: Vec<GaussianSplatItem>,
     /// Volume items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_volume_items: Vec<VolumeItem>,
-    /// Transparent volume mesh items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_tvm_items: Vec<TransparentVolumeMeshItem>,
     /// Scatter volume items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_scatter_volume_items: Vec<crate::renderer::types::ScatterVolumeItem>,
     /// Volumes packed into the GPU storage buffer this frame
@@ -628,7 +626,6 @@ impl ViewportRenderer {
             pick_point_cloud_items: Vec::new(),
             pick_splat_items: Vec::new(),
             pick_volume_items: Vec::new(),
-            pick_tvm_items: Vec::new(),
             pick_scatter_volume_items: Vec::new(),
             prepared_scatter_volumes: Vec::new(),
             prepared_refraction_volumes: Vec::new(),
@@ -1434,44 +1431,45 @@ impl ViewportRenderer {
         self.resources.upload_result_volume_mc(id)
     }
 
-    /// Start an asynchronous volume mesh upload. See
-    /// [`ViewportGpuResources::begin_upload_volume_mesh_data`].
-    pub fn begin_upload_volume_mesh_data(
+    /// Start an asynchronous boundary-only volume mesh upload. See
+    /// [`ViewportGpuResources::begin_upload_volume_mesh`].
+    pub fn begin_upload_volume_mesh(
         &mut self,
         device: &wgpu::Device,
         data: crate::resources::volume_mesh::VolumeMeshData,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_volume_mesh_data(device, data)
+        self.resources.begin_upload_volume_mesh(device, data)
     }
 
-    /// Take the `(MeshId, face_to_cell)` pair produced by a completed
-    /// [`begin_upload_volume_mesh_data`](Self::begin_upload_volume_mesh_data) job.
+    /// Take the [`VolumeMeshItem`](crate::VolumeMeshItem)
+    /// produced by a completed
+    /// [`begin_upload_volume_mesh`](Self::begin_upload_volume_mesh) job.
     pub fn upload_result_volume_mesh(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+    ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         self.resources.upload_result_volume_mesh(id)
     }
 
     /// Start an asynchronous clipped volume mesh upload. See
-    /// [`ViewportGpuResources::begin_upload_clipped_volume_mesh_data`].
-    pub fn begin_upload_clipped_volume_mesh_data(
+    /// [`ViewportGpuResources::begin_upload_clipped_volume_mesh`].
+    pub fn begin_upload_clipped_volume_mesh(
         &mut self,
         device: &wgpu::Device,
         data: crate::resources::volume_mesh::VolumeMeshData,
         clip_planes: Vec<[f32; 4]>,
     ) -> crate::resources::JobId {
         self.resources
-            .begin_upload_clipped_volume_mesh_data(device, data, clip_planes)
+            .begin_upload_clipped_volume_mesh(device, data, clip_planes)
     }
 
-    /// Take the `(MeshId, face_to_cell)` pair produced by a completed
-    /// [`begin_upload_clipped_volume_mesh_data`](Self::begin_upload_clipped_volume_mesh_data)
-    /// job.
+    /// Take the [`VolumeMeshItem`](crate::VolumeMeshItem)
+    /// produced by a completed
+    /// [`begin_upload_clipped_volume_mesh`](Self::begin_upload_clipped_volume_mesh) job.
     pub fn upload_result_clipped_volume_mesh(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+    ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         self.resources.upload_result_clipped_volume_mesh(id)
     }
 
@@ -1494,28 +1492,6 @@ impl ViewportRenderer {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
         self.resources.upload_result_sparse_volume_grid(id)
-    }
-
-    /// Start an asynchronous projected-tet mesh upload. See
-    /// [`ViewportGpuResources::begin_upload_projected_tet_mesh`].
-    pub fn begin_upload_projected_tet_mesh(
-        &mut self,
-        device: &wgpu::Device,
-        data: crate::resources::volume_mesh::VolumeMeshData,
-        scalar_attribute: String,
-        colourmap_id: crate::resources::ColourmapId,
-    ) -> crate::resources::JobId {
-        self.resources
-            .begin_upload_projected_tet_mesh(device, data, scalar_attribute, colourmap_id)
-    }
-
-    /// Take the `(ProjectedTetId, scalar_min, scalar_max)` triple produced by a
-    /// completed [`begin_upload_projected_tet_mesh`](Self::begin_upload_projected_tet_mesh) job.
-    pub fn upload_result_projected_tet_mesh(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<(crate::resources::ProjectedTetId, f32, f32)> {
-        self.resources.upload_result_projected_tet_mesh(id)
     }
 
     /// Start an asynchronous Gaussian splat upload. See

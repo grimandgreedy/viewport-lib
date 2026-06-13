@@ -138,73 +138,157 @@ impl Default for SceneRenderItem {
 }
 
 // ---------------------------------------------------------------------------
-// Opaque volume mesh item
+// Volume mesh item (opaque boundary + optional volumetric interior)
 // ---------------------------------------------------------------------------
 
-/// Render item for an opaque volume mesh uploaded via
-/// [`upload_volume_mesh_data`](crate::resources::ViewportGpuResources::upload_volume_mesh_data).
+/// Optional volumetric render mode for a [`VolumeMeshItem`].
 ///
-/// Wraps the `MeshId` produced by boundary extraction together with the
-/// face-to-cell mapping so consumers can recover cell-level identity from
-/// face-level pick hits. Call [`to_render_item`](Self::to_render_item) each
-/// frame to produce the [`SceneRenderItem`] submitted to the renderer.
+/// When set, the renderer draws the interior cells via projected tetrahedra
+/// (Beer-Lambert through the volume) instead of the boundary surface. Requires
+/// that the item was uploaded with
+/// [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency)
+/// so the per-tet GPU buffer exists.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VolumeTransparency {
+    /// Beer-Lambert extinction coefficient (1/world unit). Typical range 0.1..5.0.
+    pub density: f32,
+    /// Discard cells whose scalar value is below this threshold.
+    /// Defaults to [`f32::NEG_INFINITY`] (no lower bound).
+    pub threshold_min: f32,
+    /// Discard cells whose scalar value is above this threshold.
+    /// Defaults to [`f32::INFINITY`] (no upper bound).
+    pub threshold_max: f32,
+}
+
+impl Default for VolumeTransparency {
+    fn default() -> Self {
+        Self {
+            density: 1.0,
+            threshold_min: f32::NEG_INFINITY,
+            threshold_max: f32::INFINITY,
+        }
+    }
+}
+
+/// An unstructured volume mesh submitted for one frame.
+///
+/// A volume mesh has two render modes that share the same source data
+/// ([`VolumeMeshData`](crate::resources::VolumeMeshData)):
+///
+/// 1. **Boundary surface (default).** `transparency: None`. The renderer draws
+///    the extracted boundary as a standard surface mesh: full [`Material`]
+///    support (shading, textures, shadows), per-frame colourmap lookup,
+///    selection outline, face- and cell-level picking. This is the cheap and
+///    most common mode.
+/// 2. **Volumetric (transparent).** `transparency: Some(VolumeTransparency { .. })`.
+///    The renderer rasterises every interior cell through the projected-tetrahedra
+///    pipeline and integrates Beer-Lambert opacity along view rays. Use this when
+///    you need to see *through* the volume. Requires the item to have been uploaded
+///    via [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency)
+///    so [`projected_tet_id`](Self::projected_tet_id) is populated; otherwise the
+///    transparency request is silently ignored.
+///
+/// Typical usage:
 ///
 /// ```rust,ignore
-/// let (mesh_id, face_to_cell) = resources.upload_volume_mesh_data(&device, &data)?;
-/// let item = VolumeMeshItem::new(mesh_id, face_to_cell);
+/// // Cheap path: boundary only.
+/// let item = resources.upload_volume_mesh(&device, &data)?;
+/// scene.volume_meshes.push(item);
 ///
-/// // Each frame:
-/// scene_frame.surfaces = SurfaceSubmission::Flat(vec![item.to_render_item()].into());
+/// // Volumetric path: opt in to transparency support at upload time.
+/// let mut item = resources.upload_volume_mesh_with_transparency(
+///     &device, &queue, data, "pressure",
+/// )?;
+/// item.transparency = Some(VolumeTransparency { density: 2.0, ..Default::default() });
+/// scene.volume_meshes.push(item);
 /// ```
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct VolumeMeshItem {
     /// GPU mesh slot for the extracted boundary surface.
-    pub mesh_id: crate::resources::mesh_store::MeshId,
+    ///
+    /// Always populated. Used for the opaque draw, the selection-outline mask,
+    /// and face- or cell-level picking via [`face_to_cell`](Self::face_to_cell).
+    pub boundary_mesh_id: crate::resources::mesh_store::MeshId,
     /// Maps each boundary triangle to its originating cell index.
     ///
     /// `face_to_cell[face_index]` is the cell index in the original
     /// [`VolumeMeshData::cells`](crate::VolumeMeshData::cells) array.
-    /// Use this to convert a [`SubObjectRef::Face`](crate::interaction::sub_object::SubObjectRef::Face)
+    /// Used to convert a [`SubObjectRef::Face`](crate::interaction::sub_object::SubObjectRef::Face)
     /// pick hit into a cell index.
     pub face_to_cell: Vec<u32>,
+    /// Projected-tet GPU handle. `None` for items uploaded via
+    /// [`upload_volume_mesh`](crate::resources::ViewportGpuResources::upload_volume_mesh)
+    /// (boundary-only path); `Some(_)` for items uploaded via
+    /// [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency).
+    ///
+    /// Transparency requires this to be `Some`. The handle is crate-internal,
+    /// produced by the upload helper.
+    pub projected_tet_id: Option<crate::resources::ProjectedTetId>,
+    /// CPU-side volume mesh data used for interior-inclusive cell picking when
+    /// transparency is active.
+    ///
+    /// Populated by [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency).
+    /// Without it, transparent items still render but cell-level picking via
+    /// `renderer.pick()` falls back to face-on-boundary hits only.
+    pub volume_mesh_data:
+        Option<std::sync::Arc<crate::resources::volume_mesh::VolumeMeshData>>,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
-    /// Per-item render settings (visibility, appearance, pick identity, selection state).
+    /// Per-item render settings (visibility, opacity, pick identity, selection state).
     pub settings: ItemSettings,
-    /// Per-object material.
+    /// Per-object material. Consumed only by the boundary-surface render path.
+    /// The projected-tet path uses the colourmap LUT and ignores [`Material`].
     pub material: crate::scene::material::Material,
-    /// Named scalar or colour attribute to colour by.
+    /// Named scalar or colour attribute to colour the boundary surface by.
     pub active_attribute: Option<crate::resources::AttributeRef>,
-    /// Explicit scalar range `(min, max)`. `None` = auto-range from upload.
+    /// Explicit scalar range `(min, max)`. `None` = use the range computed at upload.
+    /// Applies to both render paths.
     pub scalar_range: Option<(f32, f32)>,
-    /// Colourmap for scalar colouring.
+    /// Colourmap. Used by the boundary-surface path when `active_attribute` is
+    /// set, and by the projected-tet path for the volumetric LUT lookup.
     pub colourmap_id: Option<ColourmapId>,
+    /// Volumetric render mode. `None` = render the boundary as a surface mesh
+    /// (default); `Some(_)` = render through the interior via projected
+    /// tetrahedra (requires [`projected_tet_id`](Self::projected_tet_id) to be set).
+    pub transparency: Option<VolumeTransparency>,
 }
 
 impl VolumeMeshItem {
-    /// Create a new item from the mesh ID and face-to-cell map returned by
-    /// [`upload_volume_mesh_data`](crate::resources::ViewportGpuResources::upload_volume_mesh_data).
-    pub fn new(mesh_id: crate::resources::mesh_store::MeshId, face_to_cell: Vec<u32>) -> Self {
+    /// Construct a boundary-only volume mesh item.
+    ///
+    /// Prefer using
+    /// [`upload_volume_mesh`](crate::resources::ViewportGpuResources::upload_volume_mesh)
+    /// which returns a fully populated item. This constructor is provided for
+    /// host code that already has a `MeshId` and `face_to_cell` map (for
+    /// example after a clipped re-upload).
+    pub fn new(
+        boundary_mesh_id: crate::resources::mesh_store::MeshId,
+        face_to_cell: Vec<u32>,
+    ) -> Self {
         Self {
-            mesh_id,
+            boundary_mesh_id,
             face_to_cell,
+            projected_tet_id: None,
+            volume_mesh_data: None,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             settings: ItemSettings::default(),
             material: crate::scene::material::Material::default(),
             active_attribute: None,
             scalar_range: None,
             colourmap_id: None,
+            transparency: None,
         }
     }
 
-    /// Build the [`SceneRenderItem`] that the renderer consumes.
+    /// Build the [`SceneRenderItem`] that the boundary-surface pipeline consumes.
     ///
-    /// The volume mesh renders through the standard surface pipeline; this
-    /// method copies the per-frame fields into a `SceneRenderItem`.
+    /// Used internally by the renderer when [`transparency`](Self::transparency)
+    /// is `None`, and by selection-outline / wireframe passes regardless of
+    /// render mode. Host code does not usually need to call this.
     pub fn to_render_item(&self) -> SceneRenderItem {
         SceneRenderItem {
-            mesh_id: self.mesh_id,
+            mesh_id: self.boundary_mesh_id,
             model: self.model,
             settings: self.settings,
             material: self.material.clone(),
@@ -222,15 +306,15 @@ impl VolumeMeshItem {
         self.face_to_cell.get(face_index as usize).copied()
     }
 
-    /// Replace the mesh ID and face-to-cell map, for example after a clipped
-    /// re-upload via
-    /// [`replace_clipped_volume_mesh_data`](crate::resources::ViewportGpuResources::replace_clipped_volume_mesh_data).
+    /// Replace the boundary mesh ID and face-to-cell map, for example after a
+    /// clipped re-upload via
+    /// [`replace_clipped_volume_mesh`](crate::resources::ViewportGpuResources::replace_clipped_volume_mesh).
     pub fn update_mesh(
         &mut self,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        boundary_mesh_id: crate::resources::mesh_store::MeshId,
         face_to_cell: Vec<u32>,
     ) {
-        self.mesh_id = mesh_id;
+        self.boundary_mesh_id = boundary_mesh_id;
         self.face_to_cell = face_to_cell;
     }
 }

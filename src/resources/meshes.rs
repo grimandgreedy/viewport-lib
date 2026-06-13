@@ -764,53 +764,92 @@ impl ViewportGpuResources {
         self.mesh_store.remove(id)
     }
 
-    /// Upload an unstructured volume mesh by extracting its boundary surface and uploading
-    /// the result via [`upload_mesh_data`](Self::upload_mesh_data).
+    /// Upload an unstructured volume mesh and return a ready-to-submit
+    /// [`VolumeMeshItem`](crate::VolumeMeshItem).
     ///
-    /// Interior faces (shared by two cells) are discarded; only boundary faces (belonging
-    /// to exactly one cell) are kept. Per-cell scalar and colour attributes are remapped to
-    /// per-face attributes so the face-colouring path handles them automatically.
+    /// Extracts the boundary surface and uploads it through the standard mesh
+    /// pipeline. Interior faces (shared by two cells) are discarded; only
+    /// boundary faces (belonging to exactly one cell) are kept. Per-cell scalar
+    /// and colour attributes are remapped to per-face attributes so the
+    /// face-colouring path handles them automatically.
     ///
-    /// Returns the `MeshId`, identical to what [`upload_mesh_data`](Self::upload_mesh_data)
-    /// would return. Reference cell attributes via
-    /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
-    pub fn upload_volume_mesh_data(
+    /// The returned item has `transparency: None` and `projected_tet_id: None`;
+    /// it renders as an opaque surface mesh. Use
+    /// [`upload_volume_mesh_with_transparency`](Self::upload_volume_mesh_with_transparency)
+    /// instead if you need to toggle volumetric rendering at runtime.
+    pub fn upload_volume_mesh(
         &mut self,
         device: &wgpu::Device,
         data: &crate::resources::volume_mesh::VolumeMeshData,
-    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+    ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let (mesh_data, face_to_cell) = crate::resources::volume_mesh::extract_boundary_faces(data);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
-        Ok((mesh_id, face_to_cell))
+        Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
     }
 
-    /// Upload a clipped volume mesh by extracting boundary and section faces for the
-    /// given clip planes and uploading the result via [`upload_mesh_data`](Self::upload_mesh_data).
+    /// Upload an unstructured volume mesh with both the boundary surface and
+    /// the projected-tet decomposition needed for volumetric rendering.
     ///
-    /// Each entry in `clip_planes` is `[nx, ny, nz, d]` where a point `p` is kept when
-    /// `dot(p, [nx,ny,nz]) + d >= 0`.  An empty slice is equivalent to
-    /// [`upload_volume_mesh_data`](Self::upload_volume_mesh_data).
+    /// The returned item carries:
+    ///   - `boundary_mesh_id` + `face_to_cell` for the opaque surface draw and
+    ///     boundary-level cell picking,
+    ///   - `projected_tet_id` for the volumetric draw, and
+    ///   - `volume_mesh_data` (an `Arc` over the input) for interior-inclusive
+    ///     cell picking when transparency is on.
     ///
-    /// Returns the `MeshId`.  Reference cell attributes via
-    /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
-    pub fn upload_clipped_volume_mesh_data(
+    /// Default `transparency: None`: the item renders as a boundary surface
+    /// until the host sets [`VolumeMeshItem::transparency`](crate::VolumeMeshItem::transparency)
+    /// to `Some(VolumeTransparency { .. })`. Switching modes at runtime is free
+    /// because both GPU artifacts are already resident.
+    ///
+    /// `scalar_attribute` names a key in `data.cell_scalars`; cells without the
+    /// attribute receive scalar 0.0. The scalar range is auto-detected from the
+    /// data and stored in the per-volume uniform.
+    pub fn upload_volume_mesh_with_transparency(
+        &mut self,
+        device: &wgpu::Device,
+        data: crate::resources::volume_mesh::VolumeMeshData,
+        scalar_attribute: &str,
+    ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
+        let (mesh_data, face_to_cell) =
+            crate::resources::volume_mesh::extract_boundary_faces(&data);
+        let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
+        let (pt_id, _, _) = self.upload_projected_tet_mesh(device, &data, scalar_attribute)?;
+        let mut item =
+            crate::VolumeMeshItem::new(mesh_id, face_to_cell);
+        item.projected_tet_id = Some(pt_id);
+        item.volume_mesh_data = Some(std::sync::Arc::new(data));
+        Ok(item)
+    }
+
+    /// Upload a clipped volume mesh, returning a ready-to-submit
+    /// [`VolumeMeshItem`](crate::VolumeMeshItem).
+    ///
+    /// Each entry in `clip_planes` is `[nx, ny, nz, d]` where a point `p` is
+    /// kept when `dot(p, [nx, ny, nz]) + d >= 0`. An empty slice is equivalent
+    /// to [`upload_volume_mesh`](Self::upload_volume_mesh).
+    ///
+    /// The returned item has `transparency: None` and `projected_tet_id: None`.
+    pub fn upload_clipped_volume_mesh(
         &mut self,
         device: &wgpu::Device,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
-    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+    ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let (mesh_data, face_to_cell) =
             crate::resources::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
-        Ok((mesh_id, face_to_cell))
+        Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
     }
 
-    /// Replace an existing mesh slot with a freshly-extracted clipped volume mesh.
+    /// Replace an existing boundary-mesh slot with a freshly-extracted clipped
+    /// volume mesh, returning the new `face_to_cell` map.
     ///
-    /// Equivalent to calling [`upload_clipped_volume_mesh_data`](Self::upload_clipped_volume_mesh_data)
-    /// and then [`replace_mesh_data`](Self::replace_mesh_data), but without allocating a new slot.
-    /// Use this for per-frame clip-plane updates to avoid leaking GPU memory.
-    pub fn replace_clipped_volume_mesh_data(
+    /// Equivalent to calling [`upload_clipped_volume_mesh`](Self::upload_clipped_volume_mesh)
+    /// and then [`replace_mesh_data`](Self::replace_mesh_data), but without
+    /// allocating a new mesh slot. Use this for per-frame clip-plane updates to
+    /// avoid leaking GPU memory.
+    pub fn replace_clipped_volume_mesh(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -858,17 +897,20 @@ impl ViewportGpuResources {
         self.upload_mesh_data(device, &mesh_data)
     }
 
-    /// Start an asynchronous volume mesh upload.
+    /// Start an asynchronous boundary-only volume mesh upload.
     ///
     /// Returns a [`JobId`](crate::resources::JobId) immediately. Boundary
     /// extraction (`extract_boundary_faces`) and vertex prep
     /// (`prep_mesh_data`) run on a worker thread; the apply step creates
-    /// GPU buffers and inserts the mesh. Take the resulting `(MeshId,
-    /// face_to_cell)` pair via
+    /// GPU buffers and inserts the mesh. Take the resulting
+    /// [`VolumeMeshItem`](crate::VolumeMeshItem) via
     /// [`upload_result_volume_mesh`](Self::upload_result_volume_mesh).
     ///
-    /// Ownership of `data` transfers into the worker.
-    pub fn begin_upload_volume_mesh_data(
+    /// Ownership of `data` transfers into the worker. The returned item has
+    /// `transparency: None`; this async path does not produce a projected-tet
+    /// decomposition. For volumetric rendering use the synchronous
+    /// [`upload_volume_mesh_with_transparency`](Self::upload_volume_mesh_with_transparency).
+    pub fn begin_upload_volume_mesh(
         &mut self,
         device: &wgpu::Device,
         data: crate::resources::volume_mesh::VolumeMeshData,
@@ -905,12 +947,13 @@ impl ViewportGpuResources {
         id
     }
 
-    /// Take the `(MeshId, face_to_cell)` pair produced by a completed
-    /// [`begin_upload_volume_mesh_data`](Self::begin_upload_volume_mesh_data) job.
+    /// Take the [`VolumeMeshItem`](crate::VolumeMeshItem) produced
+    /// by a completed
+    /// [`begin_upload_volume_mesh`](Self::begin_upload_volume_mesh) job.
     pub fn upload_result_volume_mesh(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+    ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let mut map = self
             .job_volume_mesh_results
             .lock()
@@ -924,18 +967,18 @@ impl ViewportGpuResources {
             }
         };
         match slot.take() {
-            Some(pair) => {
+            Some((mesh_id, face_to_cell)) => {
                 map.remove(&id);
-                Ok(pair)
+                Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
             }
             None => Err(crate::error::ViewportError::JobNotReady),
         }
     }
 
     /// Start an asynchronous clipped volume mesh upload. See
-    /// [`upload_clipped_volume_mesh_data`](Self::upload_clipped_volume_mesh_data)
-    /// for the sync analog and the semantics of `clip_planes`.
-    pub fn begin_upload_clipped_volume_mesh_data(
+    /// [`upload_clipped_volume_mesh`](Self::upload_clipped_volume_mesh) for the
+    /// sync analog and the semantics of `clip_planes`.
+    pub fn begin_upload_clipped_volume_mesh(
         &mut self,
         device: &wgpu::Device,
         data: crate::resources::volume_mesh::VolumeMeshData,
@@ -976,13 +1019,13 @@ impl ViewportGpuResources {
         id
     }
 
-    /// Take the `(MeshId, face_to_cell)` pair produced by a completed
-    /// [`begin_upload_clipped_volume_mesh_data`](Self::begin_upload_clipped_volume_mesh_data)
-    /// job.
+    /// Take the [`VolumeMeshItem`](crate::VolumeMeshItem) produced
+    /// by a completed
+    /// [`begin_upload_clipped_volume_mesh`](Self::begin_upload_clipped_volume_mesh) job.
     pub fn upload_result_clipped_volume_mesh(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<(crate::resources::mesh_store::MeshId, Vec<u32>)> {
+    ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let mut map = self
             .job_clipped_volume_mesh_results
             .lock()
@@ -996,9 +1039,9 @@ impl ViewportGpuResources {
             }
         };
         match slot.take() {
-            Some(pair) => {
+            Some((mesh_id, face_to_cell)) => {
                 map.remove(&id);
-                Ok(pair)
+                Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
             }
             None => Err(crate::error::ViewportError::JobNotReady),
         }
@@ -2002,58 +2045,135 @@ impl ViewportGpuResources {
     /// Ensure the projected-tetrahedra bind group layout exists.
     ///
     /// No-op after the first call. Called internally by
-    /// [`upload_projected_tet_mesh`](Self::upload_projected_tet_mesh) and
-    /// [`ensure_pt_pipeline`](Self::ensure_pt_pipeline).
+    /// [`upload_volume_mesh_with_transparency`](Self::upload_volume_mesh_with_transparency)
+    /// and [`ensure_pt_pipeline`](Self::ensure_pt_pipeline).
+    ///
+    /// Group 1 carries the per-volume uniform and the tet storage buffer.  The
+    /// colourmap LUT lives in group 2 and is bound per-frame from the renderer's
+    /// colourmap registry: see [`ensure_pt_lut_bind_group`](Self::ensure_pt_lut_bind_group).
     pub(crate) fn ensure_pt_bind_group_layout(&mut self, device: &wgpu::Device) {
-        if self.pt_bind_group_layout.is_some() {
-            return;
+        if self.pt_bind_group_layout.is_none() {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("pt_bgl"),
+                entries: &[
+                    // binding 0: per-volume uniform (density, scalar_min, scalar_max, thresholds, flags)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 1: tet storage buffer (read-only)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+            self.pt_bind_group_layout = Some(bgl);
         }
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("pt_bgl"),
-            entries: &[
-                // binding 0: PT uniforms (density, scalar_min, scalar_max, _pad)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        if self.pt_lut_bind_group_layout.is_none() {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("pt_lut_bgl"),
+                entries: &[
+                    // binding 0: colourmap texture (256x1 D2, same format as all other LUT textures)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // binding 1: tet storage buffer (read-only)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // binding 1: colourmap sampler (linear clamp)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
                     },
-                    count: None,
-                },
-                // binding 2: colourmap texture (256x1 D2, same format as all other LUT textures)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 3: colourmap sampler (linear clamp)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-        self.pt_bind_group_layout = Some(bgl);
+                ],
+            });
+            self.pt_lut_bind_group_layout = Some(bgl);
+        }
+    }
+
+    /// Build (and cache) the projected-tet LUT bind group for `colourmap_id`.
+    ///
+    /// Returns the bind group keyed by `colourmap_id.0`. Falls back to the
+    /// fallback LUT (and its dedicated cached bind group) when the slot is empty.
+    /// Callers must ensure the bind group layouts exist
+    /// ([`ensure_pt_bind_group_layout`](Self::ensure_pt_bind_group_layout)).
+    pub(crate) fn ensure_pt_lut_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        colourmap_id: Option<crate::resources::ColourmapId>,
+    ) -> &wgpu::BindGroup {
+        let bgl = self
+            .pt_lut_bind_group_layout
+            .as_ref()
+            .expect("pt_lut_bind_group_layout must exist");
+        let sampler = &self.material_sampler;
+
+        match colourmap_id.and_then(|id| {
+            self.colourmap_views.get(id.0).map(|_| id.0)
+        }) {
+            Some(slot) => {
+                if !self.pt_lut_bind_groups.contains_key(&slot) {
+                    let lut_view = &self.colourmap_views[slot];
+                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("pt_lut_bind_group"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(lut_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.pt_lut_bind_groups.insert(slot, bg);
+                }
+                self.pt_lut_bind_groups.get(&slot).unwrap()
+            }
+            None => {
+                if self.pt_fallback_lut_bind_group.is_none() {
+                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("pt_fallback_lut_bind_group"),
+                        layout: bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.fallback_lut_view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.pt_fallback_lut_bind_group = Some(bg);
+                }
+                self.pt_fallback_lut_bind_group.as_ref().unwrap()
+            }
+        }
     }
 
     /// Decompose all cells in `data` into tetrahedra and upload to the GPU.
@@ -2068,29 +2188,23 @@ impl ViewportGpuResources {
     /// range stored in the GPU buffer. Callers should use the returned scalar range for
     /// threshold computations so that brimcast and the GPU always agree on the data range
     /// (including the constant-data `scalar_min + 1.0` adjustment in `decompose_into_chunks`).
-    pub fn upload_projected_tet_mesh(
+    pub(crate) fn upload_projected_tet_mesh(
         &mut self,
         device: &wgpu::Device,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
-        colourmap_id: ColourmapId,
     ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
         self.ensure_pt_bind_group_layout(device);
 
         let (pending, scalar_range, uniform_buffer) =
             Self::decompose_into_chunks(device, data, scalar_attribute);
 
-        // Build bind groups: one per chunk, all sharing the same uniform buffer + colourmap.
+        // Build bind groups: one per chunk, all sharing the same uniform buffer.
         let chunks = {
             let bgl = self
                 .pt_bind_group_layout
                 .as_ref()
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
-            let lut_view = self
-                .colourmap_views
-                .get(colourmap_id.0)
-                .unwrap_or(&self.fallback_lut_view);
-            let lut_sampler = &self.material_sampler;
             pending
                 .into_iter()
                 .map(|(tet_buffer, tet_count)| {
@@ -2105,14 +2219,6 @@ impl ViewportGpuResources {
                             wgpu::BindGroupEntry {
                                 binding: 1,
                                 resource: tet_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(lut_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Sampler(lut_sampler),
                             },
                         ],
                     });
@@ -2143,12 +2249,12 @@ impl ViewportGpuResources {
     /// inserts the mesh. Returns the [`JobId`](crate::resources::JobId);
     /// take the `(ProjectedTetId, scalar_min, scalar_max)` triple via
     /// [`upload_result_projected_tet_mesh`](Self::upload_result_projected_tet_mesh).
-    pub fn begin_upload_projected_tet_mesh(
+    #[allow(dead_code)]
+    pub(crate) fn begin_upload_projected_tet_mesh(
         &mut self,
         device: &wgpu::Device,
         data: crate::resources::volume_mesh::VolumeMeshData,
         scalar_attribute: String,
-        colourmap_id: ColourmapId,
     ) -> crate::resources::JobId {
         // Pipeline layout must exist when the apply step builds bind groups.
         self.ensure_pt_bind_group_layout(device);
@@ -2176,11 +2282,6 @@ impl ViewportGpuResources {
                                 .pt_bind_group_layout
                                 .as_ref()
                                 .expect("pt_bind_group_layout must exist");
-                            let lut_view = resources
-                                .colourmap_views
-                                .get(colourmap_id.0)
-                                .unwrap_or(&resources.fallback_lut_view);
-                            let lut_sampler = &resources.material_sampler;
                             pending
                                 .into_iter()
                                 .map(|(tet_buffer, tet_count)| {
@@ -2196,18 +2297,6 @@ impl ViewportGpuResources {
                                                 wgpu::BindGroupEntry {
                                                     binding: 1,
                                                     resource: tet_buffer.as_entire_binding(),
-                                                },
-                                                wgpu::BindGroupEntry {
-                                                    binding: 2,
-                                                    resource: wgpu::BindingResource::TextureView(
-                                                        lut_view,
-                                                    ),
-                                                },
-                                                wgpu::BindGroupEntry {
-                                                    binding: 3,
-                                                    resource: wgpu::BindingResource::Sampler(
-                                                        lut_sampler,
-                                                    ),
                                                 },
                                             ],
                                         },
@@ -2241,7 +2330,8 @@ impl ViewportGpuResources {
 
     /// Take the `(ProjectedTetId, scalar_min, scalar_max)` triple produced by a
     /// completed [`begin_upload_projected_tet_mesh`](Self::begin_upload_projected_tet_mesh) job.
-    pub fn upload_result_projected_tet_mesh(
+    #[allow(dead_code)]
+    pub(crate) fn upload_result_projected_tet_mesh(
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
@@ -2266,35 +2356,30 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Replace the tet buffer and colourmap for an existing projected-tet mesh in-place.
+    /// Replace the tet buffer of an existing projected-tet mesh in-place.
     ///
-    /// Rebuilds the tet buffer with the new scalar attribute and recreates the bind
-    /// group with the new colourmap LUT. The uniform buffer (density, scalar range) is
-    /// updated to reflect the new scalar range; the existing GPU buffer is reused.
+    /// Rebuilds the tet storage buffer (and its bind group) from the new scalar
+    /// attribute. The uniform buffer (density, thresholds, opacity) is reused;
+    /// only the cached scalar range is refreshed. Changing the colourmap on the
+    /// owning item is now free because the LUT is bound per-frame in render.rs,
+    /// so this call no longer takes a `colourmap_id`.
     pub fn replace_projected_tet_mesh(
         &mut self,
         device: &wgpu::Device,
-        id: ProjectedTetId,
+        id: crate::resources::ProjectedTetId,
         data: &crate::resources::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
-        colourmap_id: ColourmapId,
     ) -> crate::error::ViewportResult<()> {
         self.ensure_pt_bind_group_layout(device);
 
         let (pending, scalar_range, _new_uniform) =
             Self::decompose_into_chunks(device, data, scalar_attribute);
 
-        // Build bind groups referencing the existing uniform buffer (reuse the GPU allocation).
         let chunks = {
             let bgl = self
                 .pt_bind_group_layout
                 .as_ref()
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
-            let lut_view = self
-                .colourmap_views
-                .get(colourmap_id.0)
-                .unwrap_or(&self.fallback_lut_view);
-            let lut_sampler = &self.material_sampler;
             let uniform_buf = &self.projected_tet_store[id.0].uniform_buffer;
             pending
                 .into_iter()
@@ -2310,14 +2395,6 @@ impl ViewportGpuResources {
                             wgpu::BindGroupEntry {
                                 binding: 1,
                                 resource: tet_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(lut_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Sampler(lut_sampler),
                             },
                         ],
                     });
@@ -2409,6 +2486,8 @@ impl ViewportGpuResources {
             threshold_min: f32::NEG_INFINITY,
             threshold_max: f32::INFINITY,
             unlit: 0,
+            opacity: 1.0,
+            _pad: 0.0,
         };
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("pt_uniform_buf"),
@@ -2670,7 +2749,7 @@ mod async_upload_tests {
 mod c4_volume_mesh_tests {
     use crate::ViewportGpuResources;
     use crate::resources::volume_mesh::VolumeMeshData;
-    use crate::resources::{CELL_SENTINEL, ColourmapId, SparseVolumeGridData, UploadStatus};
+    use crate::resources::{CELL_SENTINEL, SparseVolumeGridData, UploadStatus};
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
@@ -2742,15 +2821,15 @@ mod c4_volume_mesh_tests {
         };
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_volume_mesh_data(&device, single_tet_volume());
+        let job = resources.begin_upload_volume_mesh(&device, single_tet_volume());
         drive_until_ready(&mut resources, &device, &queue, job, "volume_mesh");
-        let (mesh_id, face_to_cell) = resources.upload_result_volume_mesh(job).expect("ready");
-        assert!(resources.mesh_store.get(mesh_id).is_some());
-        assert!(!face_to_cell.is_empty());
-        let err = resources.upload_result_volume_mesh(job).unwrap_err();
+        let item = resources.upload_result_volume_mesh(job).expect("ready");
+        assert!(resources.mesh_store.get(item.boundary_mesh_id).is_some());
+        assert!(!item.face_to_cell.is_empty());
+        let res = resources.upload_result_volume_mesh(job);
         assert!(matches!(
-            err,
-            crate::error::ViewportError::JobResultMissing { .. }
+            res,
+            Err(crate::error::ViewportError::JobResultMissing { .. })
         ));
     }
 
@@ -2763,17 +2842,17 @@ mod c4_volume_mesh_tests {
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Empty clip planes: equivalent to plain volume mesh extraction.
-        let job = resources.begin_upload_clipped_volume_mesh_data(
+        let job = resources.begin_upload_clipped_volume_mesh(
             &device,
             single_tet_volume(),
             Vec::new(),
         );
         drive_until_ready(&mut resources, &device, &queue, job, "clipped_volume_mesh");
-        let (mesh_id, face_to_cell) = resources
+        let item = resources
             .upload_result_clipped_volume_mesh(job)
             .expect("ready");
-        assert!(resources.mesh_store.get(mesh_id).is_some());
-        assert!(!face_to_cell.is_empty());
+        assert!(resources.mesh_store.get(item.boundary_mesh_id).is_some());
+        assert!(!item.face_to_cell.is_empty());
     }
 
     #[test]
@@ -2804,7 +2883,6 @@ mod c4_volume_mesh_tests {
             &device,
             single_tet_volume(),
             "density".into(),
-            ColourmapId(0),
         );
         drive_until_ready(&mut resources, &device, &queue, job, "projected_tet_mesh");
         let (_id, smin, smax) = resources
@@ -2822,11 +2900,9 @@ mod c4_volume_mesh_tests {
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let vol = single_tet_volume();
-        let (_id, _ftc) = resources
-            .upload_volume_mesh_data(&device, &vol)
-            .expect("sync ok");
-        let (_id2, _ftc2) = resources
-            .upload_clipped_volume_mesh_data(&device, &vol, &[])
+        let _item = resources.upload_volume_mesh(&device, &vol).expect("sync ok");
+        let _item2 = resources
+            .upload_clipped_volume_mesh(&device, &vol, &[])
             .expect("clipped sync ok");
         let _grid_id = resources
             .upload_sparse_volume_grid_data(&device, &single_cell_sparse())
