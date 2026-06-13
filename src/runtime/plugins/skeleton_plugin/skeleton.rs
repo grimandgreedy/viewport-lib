@@ -44,7 +44,10 @@ pub struct Joint {
     /// Inverse of the joint's world-space transform in the bind pose.
     ///
     /// `inverse_bind = bind_world_transform.inverse()`. The skinning matrix
-    /// for joint `i` is `world_transform[i] * inverse_bind[i]`.
+    /// for joint `i` is `object_space_joint_transform[i] * inverse_bind[i]`,
+    /// where `object_space_joint_transform[i]` is the joint's transform in
+    /// the skeleton's own frame (the mesh's `object.model` is applied
+    /// separately at draw time).
     pub inverse_bind: glam::Affine3A,
 }
 
@@ -118,9 +121,12 @@ impl Pose {
 
 /// Per-joint skinning matrices computed from a [`Skeleton`] and [`Pose`].
 ///
-/// Each matrix is `world_transform[i] * inverse_bind[i]`. Multiply a
-/// bind-pose vertex position by this matrix (with LBS blending) to get the
-/// deformed position.
+/// Each matrix is `object_space_joint_transform[i] * inverse_bind[i]`, where
+/// `object_space_joint_transform[i]` is the joint's transform in the
+/// skeleton's own frame produced by forward kinematics from the pose. The
+/// mesh's `object.model` is applied separately at draw time, so multiplying
+/// a bind-pose vertex by this matrix (with LBS blending) yields the
+/// deformed position in the same object-local space as the bind mesh.
 pub struct JointMatrices {
     matrices: Vec<glam::Affine3A>,
 }

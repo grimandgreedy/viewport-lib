@@ -230,9 +230,11 @@ impl ViewportGpuResources {
     /// Re-binds the per-instance bind group when the buffer is reallocated.
     /// `set_skin_weights` must have been called for `mesh_id` first.
     ///
-    /// `palette[i]` is `world_transform[i] * inverse_bind[i]` for joint `i`,
-    /// the LBS-ready matrix produced by
-    /// [`crate::JointMatrices::compute`].
+    /// `palette[i]` is the object-space skinning matrix for joint `i`
+    /// produced by [`crate::JointMatrices::compute`]: the joint's
+    /// skeleton-local transform multiplied by its inverse bind. The mesh's
+    /// `object.model` is applied separately at draw time, so the palette
+    /// composes with the scene node transform rather than replacing it.
     pub fn set_skin_palette(
         &mut self,
         device: &wgpu::Device,
