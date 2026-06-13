@@ -395,6 +395,329 @@ pub(crate) fn build_outline_mask_pipelines(
     }
 }
 
+/// LDR `mesh_instanced.wgsl` pipelines: solid + transparent, both
+/// drawing through `vs_main` with the instance storage buffer at
+/// group 1.
+pub(crate) struct LdrInstancedMeshPipelines {
+    pub solid: wgpu::RenderPipeline,
+    pub transparent: wgpu::RenderPipeline,
+}
+
+pub(crate) fn build_ldr_instanced_mesh_pipelines(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    target_format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> LdrInstancedMeshPipelines {
+    let make = |label: &str,
+                cull: Option<wgpu::Face>,
+                blend: Option<wgpu::BlendState>,
+                depth_write: bool| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: depth_write,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        })
+    };
+    LdrInstancedMeshPipelines {
+        solid: make("solid_instanced_pipeline", Some(wgpu::Face::Back), None, true),
+        transparent: make(
+            "transparent_instanced_pipeline",
+            None,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+        ),
+    }
+}
+
+/// HDR `mesh_instanced.wgsl` pipelines, all `vs_main`. Includes the
+/// additive and premultiplied variants the particle system draws into.
+pub(crate) struct HdrInstancedMeshPipelines {
+    pub solid: wgpu::RenderPipeline,
+    pub transparent: wgpu::RenderPipeline,
+    pub additive: wgpu::RenderPipeline,
+    pub premultiplied: wgpu::RenderPipeline,
+}
+
+pub(crate) fn build_hdr_instanced_mesh_pipelines(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> HdrInstancedMeshPipelines {
+    let additive_blend = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+    let premultiplied_blend = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+    let make = |label: &str,
+                cull: Option<wgpu::Face>,
+                blend: Option<wgpu::BlendState>,
+                depth_write: bool| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: depth_write,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        })
+    };
+    HdrInstancedMeshPipelines {
+        solid: make(
+            "hdr_solid_instanced_pipeline",
+            Some(wgpu::Face::Back),
+            None,
+            true,
+        ),
+        transparent: make(
+            "hdr_transparent_instanced_pipeline",
+            None,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+        ),
+        additive: make(
+            "hdr_instanced_additive_pipeline",
+            None,
+            Some(additive_blend),
+            false,
+        ),
+        premultiplied: make(
+            "hdr_instanced_premultiplied_pipeline",
+            None,
+            Some(premultiplied_blend),
+            false,
+        ),
+    }
+}
+
+/// GPU-cull HDR solid pipeline: same as the HDR solid instanced pipeline
+/// but using `vs_main_cull` so the compute pass can write
+/// visibility indices.
+pub(crate) fn build_hdr_instanced_cull_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("hdr_solid_instanced_cull_pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main_cull"),
+            buffers: &[Vertex::buffer_layout()],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba16Float,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24PlusStencil8,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// OIT instanced pipeline shared between the non-cull (`vs_main`) and
+/// the cull (`vs_main_cull`) variants. Two color targets, depth-test
+/// only.
+pub(crate) fn build_oit_instanced_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    label: &str,
+    vs_entry: &str,
+) -> wgpu::RenderPipeline {
+    let accum_blend = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+    let reveal_blend = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::OneMinusSrc,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::OneMinusSrc,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(vs_entry),
+            buffers: &[Vertex::buffer_layout()],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_oit_main"),
+            targets: &[
+                Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: Some(accum_blend),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+                Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::R8Unorm,
+                    blend: Some(reveal_blend),
+                    write_mask: wgpu::ColorWrites::RED,
+                }),
+            ],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24PlusStencil8,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// Build a pipeline layout for instanced mesh-family pipelines.
+/// Group 0=camera, 1=instance/cull, 2=deform.
+pub(crate) fn instanced_pipeline_layout(
+    device: &wgpu::Device,
+    label: &str,
+    camera_bgl: &wgpu::BindGroupLayout,
+    instance_bgl: &wgpu::BindGroupLayout,
+    deform_bgl: &wgpu::BindGroupLayout,
+) -> wgpu::PipelineLayout {
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: &[camera_bgl, instance_bgl, deform_bgl],
+        push_constant_ranges: &[],
+    })
+}
+
 /// Build the shared mesh pipeline layout used by both LDR and HDR mesh
 /// pipelines. Camera + object + deform BGLs at slots 0, 1, 2.
 pub(crate) fn mesh_pipeline_layout(

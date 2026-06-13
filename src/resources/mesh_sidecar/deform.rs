@@ -566,6 +566,121 @@ impl ViewportGpuResources {
             self.outline_mask_pipeline = masks.mask;
             self.outline_mask_two_sided_pipeline = masks.mask_two_sided;
         }
+
+        // mesh_instanced.wgsl: LDR (solid + transparent), HDR (solid +
+        // transparent + additive + premultiplied), and HDR cull. Only
+        // present after `ensure_instanced_pipelines` / its HDR sibling /
+        // `ensure_cull_instance_pipelines` have run.
+        if let Some(base) = lookup_source("mesh_instanced.wgsl") {
+            let composed = compose_shader(base, &registrations);
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_instanced_shader_composed"),
+                source: wgpu::ShaderSource::Wgsl(composed.into()),
+            });
+
+            if let Some(instance_bgl) = self.instance_bind_group_layout.as_ref() {
+                if self.solid_instanced_pipeline.is_some() {
+                    let layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+                        device,
+                        "instanced_pipeline_layout",
+                        &self.camera_bind_group_layout,
+                        instance_bgl,
+                        &self.deform.bind_group_layout,
+                    );
+                    let ldr = crate::resources::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
+                        device,
+                        &layout,
+                        &shader,
+                        self.target_format,
+                        self.sample_count,
+                    );
+                    self.solid_instanced_pipeline = Some(ldr.solid);
+                    self.transparent_instanced_pipeline = Some(ldr.transparent);
+                }
+                if self.hdr_solid_instanced_pipeline.is_some() {
+                    let layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+                        device,
+                        "hdr_instanced_pipeline_layout",
+                        &self.camera_bind_group_layout,
+                        instance_bgl,
+                        &self.deform.bind_group_layout,
+                    );
+                    let hdr = crate::resources::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
+                        device,
+                        &layout,
+                        &shader,
+                    );
+                    self.hdr_solid_instanced_pipeline = Some(hdr.solid);
+                    self.hdr_transparent_instanced_pipeline = Some(hdr.transparent);
+                    self.hdr_instanced_additive_pipeline = Some(hdr.additive);
+                    self.hdr_instanced_premultiplied_pipeline = Some(hdr.premultiplied);
+                }
+            }
+            if let Some(cull_bgl) = self.instance_cull_bind_group_layout.as_ref() {
+                if self.hdr_solid_instanced_cull_pipeline.is_some() {
+                    let layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+                        device,
+                        "hdr_instanced_cull_pipeline_layout",
+                        &self.camera_bind_group_layout,
+                        cull_bgl,
+                        &self.deform.bind_group_layout,
+                    );
+                    let pl = crate::resources::mesh_pipelines::build_hdr_instanced_cull_pipeline(
+                        device,
+                        &layout,
+                        &shader,
+                    );
+                    self.hdr_solid_instanced_cull_pipeline = Some(pl);
+                }
+            }
+        }
+
+        // mesh_instanced_oit.wgsl: non-cull and cull OIT pipelines.
+        if let Some(base) = lookup_source("mesh_instanced_oit.wgsl") {
+            let composed = compose_shader(base, &registrations);
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_instanced_oit_shader_composed"),
+                source: wgpu::ShaderSource::Wgsl(composed.into()),
+            });
+            if let Some(instance_bgl) = self.instance_bind_group_layout.as_ref() {
+                if self.oit_instanced_pipeline.is_some() {
+                    let layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+                        device,
+                        "oit_instanced_pipeline_layout",
+                        &self.camera_bind_group_layout,
+                        instance_bgl,
+                        &self.deform.bind_group_layout,
+                    );
+                    let pl = crate::resources::mesh_pipelines::build_oit_instanced_pipeline(
+                        device,
+                        &layout,
+                        &shader,
+                        "oit_instanced_pipeline",
+                        "vs_main",
+                    );
+                    self.oit_instanced_pipeline = Some(pl);
+                }
+            }
+            if let Some(cull_bgl) = self.instance_cull_bind_group_layout.as_ref() {
+                if self.oit_instanced_cull_pipeline.is_some() {
+                    let layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+                        device,
+                        "oit_instanced_cull_pipeline_layout",
+                        &self.camera_bind_group_layout,
+                        cull_bgl,
+                        &self.deform.bind_group_layout,
+                    );
+                    let pl = crate::resources::mesh_pipelines::build_oit_instanced_pipeline(
+                        device,
+                        &layout,
+                        &shader,
+                        "oit_instanced_cull_pipeline",
+                        "vs_main_cull",
+                    );
+                    self.oit_instanced_cull_pipeline = Some(pl);
+                }
+            }
+        }
     }
 }
 
