@@ -294,10 +294,12 @@ fn sample_shadow_csm(
     let nz = nz_sign * max(abs(n_ndc.z), 1e-4);
     // Depth change per atlas-UV step. Tile V runs opposite to NDC Y, which
     // flips the sign of the Y term.
+    // Gate receiver-plane bias to directional lights only; see mesh.wgsl.
+    let rp_gate = select(0.0, 1.0, primary_light_type == 0u);
     let depth_grad = vec2<f32>(
         -n_ndc.x / nz * 2.0 / (rect.z - rect.x),
         n_ndc.y / nz * 2.0 / (rect.w - rect.y),
-    );
+    ) * rp_gate;
 
     let texel_size = 1.0 / shadow_atlas.atlas_size;
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
@@ -339,7 +341,7 @@ fn sample_shadow_csm(
         }
         return ShadowSample(shadow / 32.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     } else {
-        let pcf_radius = 1.5 * texel_size;
+        let pcf_radius = select(4.0, 1.5, primary_light_type == 0u) * texel_size;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
             let d = POISSON_DISK[i];
