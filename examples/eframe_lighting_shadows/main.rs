@@ -221,6 +221,9 @@ struct App {
     last_picked_pos: Option<(u32, u32)>,
     last_picked_values: Option<[f32; 4]>,
 
+    // Scene toggles
+    show_platform: bool,
+
     // Instancing status (updated each frame by the paint callback)
     instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
     // Shadow debug stats (updated each frame by the paint callback)
@@ -272,7 +275,7 @@ impl App {
             light_kind: 0,
             light_colour: [1.0, 0.97, 0.90],
             light_intensity: 0.8,
-            dir_direction: [0.3, -0.5, 0.8],
+            dir_direction: [0.3, 0.5, 0.8],
             point_position: [0.0, 0.0, 5.0],
             point_range: 20.0,
             spot_position: [0.0, -8.0, 6.0],
@@ -307,6 +310,7 @@ impl App {
             pixel_read_res: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_picked_pos: None,
             last_picked_values: None,
+            show_platform: true,
             instancing_status: std::sync::Arc::new(std::sync::Mutex::new((false, 0))),
             shadow_stats: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
@@ -377,14 +381,16 @@ impl App {
         let mut items = Vec::new();
 
         // Ground platform: light warm sand. Cuboid with top surface at z=0.
-        let mut ground = SceneRenderItem::default();
-        ground.mesh_id = self.m_ground;
-        ground.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        ground.material = Material::from_colour([0.88, 0.84, 0.76]);
-        ground.material.roughness = 0.85;
-        ground.material.backface_policy = BackfacePolicy::Cull;
-        items.push(ground);
+        if self.show_platform {
+            let mut ground = SceneRenderItem::default();
+            ground.mesh_id = self.m_ground;
+            ground.model =
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+            ground.material = Material::from_colour([0.88, 0.84, 0.76]);
+            ground.material.roughness = 0.85;
+            ground.material.backface_policy = BackfacePolicy::Cull;
+            items.push(ground);
+        }
 
         // Sphere: light sage green. Acne is easy to spot on light curved surfaces.
         let mut sphere = SceneRenderItem::default();
@@ -418,13 +424,15 @@ impl App {
         let mut items = Vec::new();
 
         // Ground platform: neutral light grey, top surface at z=0.
-        let mut ground = SceneRenderItem::default();
-        ground.mesh_id = self.m_ground2;
-        ground.model =
-            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
-        ground.material = Material::from_colour([0.85, 0.85, 0.85]);
-        ground.material.roughness = 0.85;
-        items.push(ground);
+        if self.show_platform {
+            let mut ground = SceneRenderItem::default();
+            ground.mesh_id = self.m_ground2;
+            ground.model =
+                glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+            ground.material = Material::from_colour([0.85, 0.85, 0.85]);
+            ground.material.roughness = 0.85;
+            items.push(ground);
+        }
 
         // Clay matcap sphere (blendable): off-white base exposes matcap tint while keeping
         // surfaces light enough to show shadow detail.
@@ -733,6 +741,15 @@ impl App {
                     ui.label("Ground:");
                     ui.color_edit_button_rgb(&mut self.ground_colour);
                 });
+            });
+
+        ui.add_space(4.0);
+
+        // Scene toggles
+        egui::CollapsingHeader::new("Scene")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.checkbox(&mut self.show_platform, "Show platform");
             });
 
         ui.add_space(4.0);
