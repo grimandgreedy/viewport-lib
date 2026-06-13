@@ -278,6 +278,24 @@ impl DeformationState {
             .unwrap_or(0)
     }
 
+    /// Whether `(mesh_id, instance_id)` has any per-instance deformer data
+    /// attached. Used by the renderer to filter items out of GPU-driven
+    /// instanced batching: items with per-instance deform data need their
+    /// own bind group at draw time and cannot share an instance batch.
+    pub(crate) fn has_per_instance_deform_data(
+        &self,
+        mesh_id: MeshId,
+        instance_id: Option<u32>,
+    ) -> bool {
+        let Some(id) = instance_id else {
+            return false;
+        };
+        self.meshes
+            .get(&mesh_id)
+            .and_then(|m| m.instances.get(&id))
+            .is_some_and(|i| i.flag_bits != 0)
+    }
+
     /// Bind group to use for a draw of `(mesh_id, instance_id)`. Falls back
     /// to the per-mesh-only bind group when no per-instance data is
     /// attached, and to the renderer dummy when the mesh has no data at all.

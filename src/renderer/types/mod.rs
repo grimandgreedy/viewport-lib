@@ -205,8 +205,9 @@ macro_rules! emit_draw_calls {
                                     || item.material.is_two_sided()
                                     || item.material.matcap_id().is_some()
                                     || item.material.param_vis.is_some()
-                                    || (item.skin_instance.is_some()
-                                        && resources.is_skinned_mesh(item.mesh_id)))
+                                    || resources
+                                        .deform
+                                        .has_per_instance_deform_data(item.mesh_id, item.deform_instance))
                                 && resources
                                     .mesh_store
                                     .get(item.mesh_id)
@@ -289,7 +290,7 @@ macro_rules! emit_draw_calls {
                                 2,
                                 resources
                                     .deform
-                                    .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                    .instance_bind_group_for(item.mesh_id, item.deform_instance),
                                 &[],
                             );
                             let bg = wireframe_bind_groups.get(wf_idx)
@@ -327,7 +328,7 @@ macro_rules! emit_draw_calls {
                                 2,
                                 resources
                                     .deform
-                                    .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                    .instance_bind_group_for(item.mesh_id, item.deform_instance),
                                 &[],
                             );
                             render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
@@ -393,7 +394,7 @@ macro_rules! emit_draw_calls {
 
                         let deform_bg = resources
                             .deform
-                            .instance_bind_group_for(item.mesh_id, item.skin_instance);
+                            .instance_bind_group_for(item.mesh_id, item.deform_instance);
 
                         // mesh.object_bind_group (group 1) already carries the object uniform
                         // and the correct texture views : updated in prepare() if material changed.

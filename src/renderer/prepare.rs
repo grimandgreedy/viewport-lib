@@ -810,7 +810,7 @@ impl ViewportRenderer {
         // per-item object uniform writes too.
         let has_skinned_items = scene_items
             .iter()
-            .any(|i| i.skin_instance.is_some() && resources.is_skinned_mesh(i.mesh_id));
+            .any(|i| resources.deform.has_per_instance_deform_data(i.mesh_id, i.deform_instance));
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
@@ -854,8 +854,9 @@ impl ViewportRenderer {
                 let mesh_has_override = resources.mesh_store.get(item.mesh_id).map_or(false, |m| {
                     m.position_override_buffer.is_some() || m.normal_override_buffer.is_some()
                 });
-                let item_is_skinned =
-                    item.skin_instance.is_some() && resources.is_skinned_mesh(item.mesh_id);
+                let item_is_skinned = resources
+                    .deform
+                    .has_per_instance_deform_data(item.mesh_id, item.deform_instance);
                 if self.use_instancing
                     && !frame.viewport.wireframe_mode
                     && item.active_attribute.is_none()
@@ -1315,12 +1316,12 @@ impl ViewportRenderer {
                             && item.material.param_vis.is_none()
                             && resources.mesh_store.get(item.mesh_id).is_some()
                             && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
-                            // Skinned items go through the per-object skinned
-                            // pipeline. Batched skinning with palette-array
-                            // lookup is a future optimisation; see
-                            // docs/plans/skeletal-animation-plan.md.
-                            && !(item.skin_instance.is_some()
-                                && resources.is_skinned_mesh(item.mesh_id))
+                            // Items with per-instance deformer data need their
+                            // own bind group at draw time and cannot share an
+                            // instance batch.
+                            && !resources
+                                .deform
+                                .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
                             // Items with a position/normal override must use
                             // the per-object pipeline; see the matching check
                             // in `instancable_count` above.
@@ -2904,8 +2905,9 @@ impl ViewportRenderer {
                                 {
                                     continue;
                                 }
-                                if item.skin_instance.is_none()
-                                    || !resources.is_skinned_mesh(item.mesh_id)
+                                if !resources
+                                    .deform
+                                    .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
                                 {
                                     continue;
                                 }
@@ -2926,7 +2928,7 @@ impl ViewportRenderer {
                                     2,
                                     resources
                                         .deform
-                                        .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                        .instance_bind_group_for(item.mesh_id, item.deform_instance),
                                     &[],
                                 );
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -3002,7 +3004,7 @@ impl ViewportRenderer {
                                 2,
                                 resources
                                     .deform
-                                    .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                    .instance_bind_group_for(item.mesh_id, item.deform_instance),
                                 &[],
                             );
                             shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -3387,7 +3389,7 @@ impl ViewportRenderer {
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
                     two_sided: item.material.is_two_sided(),
-                    skin_instance: item.skin_instance,
+                    deform_instance: item.deform_instance,
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
                 });
@@ -3426,7 +3428,7 @@ impl ViewportRenderer {
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id,
                     two_sided: false,
-                    skin_instance: None,
+                    deform_instance: None,
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
                 });
@@ -3462,7 +3464,7 @@ impl ViewportRenderer {
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
                     two_sided: true,
-                    skin_instance: None,
+                    deform_instance: None,
                     _mask_uniform_buf: buf,
                     mask_bind_group: bg,
                 });
@@ -4743,7 +4745,7 @@ impl ViewportRenderer {
                         2,
                         self.resources
                             .deform
-                            .instance_bind_group_for(outlined.mesh_id, outlined.skin_instance),
+                            .instance_bind_group_for(outlined.mesh_id, outlined.deform_instance),
                         &[],
                     );
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));

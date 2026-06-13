@@ -12,8 +12,9 @@ use crate::runtime::plugin::{RuntimePlugin, phase};
 /// `Cpu` runs LBS on the CPU and emits [`SkinnedMeshUpdate`]; the host must
 /// upload deformed positions/normals via `write_mesh_positions_normals`.
 /// `Gpu` emits [`SkinnedPoseUpdate`] carrying joint matrices; the host
-/// uploads them via [`crate::ViewportGpuResources::set_skin_palette`] and the
-/// skinned pipeline variant does LBS in the vertex stage.
+/// uploads them via
+/// [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette)
+/// and the registered skinning deformer does LBS in the vertex stage.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SkinningPath {
     /// CPU LBS, re-upload deformed vertices each frame.
@@ -65,7 +66,7 @@ pub struct SkeletonPlugin {
     /// Which deformation path to emit each frame. Defaults to `Cpu` so existing
     /// consumers keep working unchanged. Set to `Gpu` when the host has
     /// uploaded skin weights for `mesh_id` and is draining
-    /// `output.skinned_pose_updates` into `set_skin_palette`.
+    /// `output.skinned_pose_updates` into `SkinningPlugin::attach_palette`.
     pub path: SkinningPath,
     cpu_positions: Vec<[f32; 3]>,
     cpu_normals: Vec<[f32; 3]>,

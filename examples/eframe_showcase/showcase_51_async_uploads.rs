@@ -71,6 +71,9 @@ pub(crate) enum PayloadSize {
 }
 
 pub(crate) struct AsyncUploadsState {
+    /// Handle to the GPU skinning deformer. `Some` after `build_async_uploads_scene`
+    /// installs the plugin.
+    pub skinning: Option<viewport_lib::plugins::skinning::SkinningPlugin>,
     /// When true, button clicks call the synchronous upload path. Useful
     /// for showing the difference in frame pacing.
     pub use_sync: bool,
@@ -177,6 +180,7 @@ pub(crate) struct AsyncUploadsState {
 impl Default for AsyncUploadsState {
     fn default() -> Self {
         Self {
+            skinning: None,
             use_sync: false,
             payload_size: PayloadSize::Heavy,
             last_frame_at: None,
@@ -235,11 +239,13 @@ impl Default for AsyncUploadsState {
 impl App {
     pub(crate) fn build_async_uploads_scene(&mut self, renderer: &mut ViewportRenderer) {
         // GPU skinning is opt-in: install once before uploading any skin data.
-        viewport_lib::plugins::skinning::install_skinning(
-            renderer.resources_mut(),
-            &self.device,
-        )
-        .expect("install skinning");
+        self.async_uploads_state.skinning = Some(
+            viewport_lib::plugins::skinning::SkinningPlugin::install(
+                renderer.resources_mut(),
+                &self.device,
+            )
+            .expect("install skinning"),
+        );
 
         let plane_mesh = viewport_lib::primitives::sphere(0.7, 24, 18);
         self.async_uploads_state.base_mesh_id = Some(
@@ -1566,19 +1572,22 @@ impl App {
         }
         let weights = unit_skin_weights(vertex_count);
         let started = Instant::now();
+        let Some(skinning) = self.async_uploads_state.skinning.clone() else {
+            return;
+        };
         if self.async_uploads_state.use_sync {
-            renderer
-                .resources_mut()
-                .set_skin_weights(&self.device, mesh_id, &weights);
+            skinning.attach_weights(renderer.resources_mut(), &self.device, mesh_id, &weights);
             self.async_uploads_state.skin_installed = true;
             self.async_uploads_state.skin_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job =
-                renderer
-                    .resources_mut()
-                    .begin_upload_skin_weights(&self.device, mesh_id, weights);
+            let job = skinning.begin_upload_weights(
+                renderer.resources_mut(),
+                &self.device,
+                mesh_id,
+                weights,
+            );
             self.async_uploads_state.skin_state = AssetState::InFlight {
                 job,
                 progress: 0.0,

@@ -54,7 +54,6 @@ pub mod mode;
 pub mod output;
 pub mod plugin;
 /// Built-in animation, constraint, and physics plugins.
-pub mod plugins;
 pub mod resources;
 pub mod snapshot;
 /// Built-in interaction systems: SelectionSystem and ManipulationSystem.
@@ -73,14 +72,6 @@ pub use output::{
     SkinnedPoseUpdate, TransformWriteback,
 };
 pub use plugin::{RuntimeEvent, RuntimePhase, RuntimePlugin, phase};
-#[allow(deprecated)]
-#[deprecated(since = "0.18.0", note = "use viewport_lib::plugins::* instead")]
-pub use plugins::{
-    AnimationClip, AnimationPlugin, AnimationTrack, Channel, ClipPlayerPlugin, Constraint,
-    ConstraintPlugin, Interpolation, Joint, JointMatrices, Keyframe, PhysicsBody,
-    PhysicsLitePlugin, Pose, Sampler, Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart,
-    SkinnedActorPlugin, SkinningPath, Track, TrackValue, TrackValues, apply_skin,
-};
 pub use resources::RuntimeResources;
 pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
 pub use systems::{ManipulationSystem, SelectionSystem};

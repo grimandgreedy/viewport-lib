@@ -1639,8 +1639,9 @@ impl ViewportRenderer {
                                     || item.material.is_two_sided()
                                     || item.material.matcap_id().is_some()
                                     || item.material.param_vis.is_some()
-                                    || (item.skin_instance.is_some()
-                                        && resources.is_skinned_mesh(item.mesh_id)))
+                                    || resources
+                                        .deform
+                                        .has_per_instance_deform_data(item.mesh_id, item.deform_instance))
                                 && resources.mesh_store.get(item.mesh_id).is_some()
                         })
                         .collect();
@@ -1758,7 +1759,7 @@ impl ViewportRenderer {
                                     2,
                                     resources
                                         .deform
-                                        .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                        .instance_bind_group_for(item.mesh_id, item.deform_instance),
                                     &[],
                                 );
                                 let bg = self
@@ -1802,7 +1803,7 @@ impl ViewportRenderer {
                                 2,
                                 resources
                                     .deform
-                                    .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                    .instance_bind_group_for(item.mesh_id, item.deform_instance),
                                 &[],
                             );
                             let obj_bg = self
@@ -1908,7 +1909,7 @@ impl ViewportRenderer {
 
                             let deform_bg = resources
                                 .deform
-                                .instance_bind_group_for(item.mesh_id, item.skin_instance);
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
                             let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
                                 matches!(
                                     a.kind,
@@ -2856,8 +2857,10 @@ impl ViewportRenderer {
                             || i.material.is_two_sided()
                             || i.material.matcap_id().is_some()
                             || i.material.param_vis.is_some()
-                            || (i.skin_instance.is_some()
-                                && self.resources.is_skinned_mesh(i.mesh_id)))
+                            || self
+                                .resources
+                                .deform
+                                .has_per_instance_deform_data(i.mesh_id, i.deform_instance))
                 })
         } else {
             scene_items
@@ -3020,8 +3023,10 @@ impl ViewportRenderer {
                             {
                                 continue;
                             }
-                            let is_skinned = item.skin_instance.is_some()
-                                && self.resources.is_skinned_mesh(item.mesh_id);
+                            let is_skinned = self
+                                .resources
+                                .deform
+                                .has_per_instance_deform_data(item.mesh_id, item.deform_instance);
                             if !is_skinned
                                 && item.active_attribute.is_none()
                                 && !item.material.is_two_sided()
@@ -3035,7 +3040,7 @@ impl ViewportRenderer {
                             let deform_bg = self
                                 .resources
                                 .deform
-                                .instance_bind_group_for(item.mesh_id, item.skin_instance);
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
                             let obj_bg = self
                                 .per_item_object_bind_groups
                                 .get(item_idx)
@@ -3065,7 +3070,7 @@ impl ViewportRenderer {
                         let deform_bg = self
                             .resources
                             .deform
-                            .instance_bind_group_for(item.mesh_id, item.skin_instance);
+                            .instance_bind_group_for(item.mesh_id, item.deform_instance);
                         let obj_bg = self
                             .per_item_object_bind_groups
                             .get(item_idx)

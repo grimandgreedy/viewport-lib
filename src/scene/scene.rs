@@ -84,9 +84,9 @@ pub struct SceneNode {
     children: Vec<NodeId>,
     layer: LayerId,
     dirty: bool,
-    /// Per-node skinning instance ID. See
-    /// [`SceneRenderItem::skin_instance`](crate::renderer::SceneRenderItem::skin_instance).
-    skin_instance: Option<u32>,
+    /// Per-node deformer instance ID. See
+    /// [`SceneRenderItem::deform_instance`](crate::renderer::SceneRenderItem::deform_instance).
+    deform_instance: Option<u32>,
     /// Whether projected decals land on this surface. Default: `true`.
     receives_decals: bool,
     /// Light source carried by this node. Position and direction are resolved
@@ -382,7 +382,7 @@ impl Scene {
             children: Vec::new(),
             layer: DEFAULT_LAYER,
             dirty: true,
-            skin_instance: None,
+            deform_instance: None,
             receives_decals: true,
             light: None,
         };
@@ -556,15 +556,14 @@ impl Scene {
         self.version = self.version.wrapping_add(1);
     }
 
-    /// Set the GPU skinning instance ID for a node.
+    /// Set the per-instance deformer ID for a node.
     ///
-    /// `Some(instance_id)` routes the node through the skinned pipeline using
-    /// the joint palette uploaded via
-    /// [`crate::ViewportGpuResources::set_skin_palette`]. `None` treats the
-    /// node as static even if its mesh has skin data attached.
-    pub fn set_skin_instance(&mut self, id: NodeId, instance: Option<u32>) {
+    /// Addresses per-(mesh, instance) deformer data such as a GPU skinning
+    /// joint palette. `None` treats the node as having no per-instance
+    /// deformer data and uses the per-mesh slot only.
+    pub fn set_deform_instance(&mut self, id: NodeId, instance: Option<u32>) {
         if let Some(node) = self.nodes.get_mut(&id) {
-            node.skin_instance = instance;
+            node.deform_instance = instance;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -916,7 +915,7 @@ impl Scene {
                 nan_colour: None,
                 warp_attribute: None,
                 warp_scale: 1.0,
-                skin_instance: node.skin_instance,
+                deform_instance: node.deform_instance,
                 receives_decals: node.receives_decals,
                 lic: None,
             });
@@ -996,7 +995,7 @@ impl Scene {
                     nan_colour: None,
                     warp_attribute: None,
                     warp_scale: 1.0,
-                    skin_instance: node.skin_instance,
+                    deform_instance: node.deform_instance,
                     receives_decals: node.receives_decals,
                     lic: None,
                 });
@@ -1053,7 +1052,7 @@ impl Scene {
                     nan_colour: None,
                     warp_attribute: None,
                     warp_scale: 1.0,
-                    skin_instance: node.skin_instance,
+                    deform_instance: node.deform_instance,
                     receives_decals: node.receives_decals,
                     lic: None,
                 });
@@ -1095,7 +1094,7 @@ impl Scene {
             children: Vec::new(),
             layer: DEFAULT_LAYER,
             dirty: true,
-            skin_instance: None,
+            deform_instance: None,
             receives_decals: false,
             light: Some(light),
         };

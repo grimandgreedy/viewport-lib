@@ -435,63 +435,6 @@ fn viewport_mask_fs() -> @location(0) f32 {
 }
 "#;
 
-/// Vertex-stage helper for GPU skinning.
-///
-/// Declares the lib's skinning bind group at `@group(2)` and a
-/// `viewport_skin_matrix(vertex_index) -> mat4x4<f32>` helper that builds
-/// the per-vertex skinning matrix from the bound weights + palette.
-/// Plugin pipelines that want to ship skinned variants add
-/// [`ViewportGpuResources::skin_palette_layout`](crate::resources::ViewportGpuResources::skin_palette_layout)
-/// to their `extra_bind_group_layouts` list as group 2 and call this
-/// helper from their vertex shader.
-///
-/// The palette is uploaded per-instance by the host via
-/// [`ViewportGpuResources::set_skin_palette`](crate::resources::ViewportGpuResources::set_skin_palette);
-/// plugins do not manage palette uploads.
-pub const SHARED_SKIN_WGSL: &str = r#"
-// @viewport-wgsl-version: 1
-// GPU skinning bind group + matrix-blend helper.
-//
-// Expects the host to bind the lib's skin bind group at @group(2):
-//   @binding(0): array<SkinVertex>     (per-vertex weights + 4 joint indices)
-//   @binding(1): array<mat4x4<f32>>    (per-instance joint palette)
-//
-// Plugin vertex shaders that include this helper must also forward a
-// `vertex_index` builtin to the position transform:
-//
-//   let skin_m   = viewport_skin_matrix(in.vertex_index);
-//   let skin_pos = (skin_m * vec4(in.position, 1.0)).xyz;
-//   let skin_n   = normalize((skin_m * vec4(in.normal, 0.0)).xyz);
-
-struct SkinVertex {
-    weights:    vec4<f32>,
-    joints_01:  u32,
-    joints_23:  u32,
-};
-
-@group(2) @binding(0) var<storage, read> skin_weights: array<SkinVertex>;
-@group(2) @binding(1) var<storage, read> skin_palette: array<mat4x4<f32>>;
-
-fn viewport_unpack_joint(skin: SkinVertex, slot: u32) -> u32 {
-    if slot == 0u { return skin.joints_01 & 0xFFFFu; }
-    if slot == 1u { return (skin.joints_01 >> 16u) & 0xFFFFu; }
-    if slot == 2u { return skin.joints_23 & 0xFFFFu; }
-    return (skin.joints_23 >> 16u) & 0xFFFFu;
-}
-
-fn viewport_skin_matrix(vertex_index: u32) -> mat4x4<f32> {
-    let s = skin_weights[vertex_index];
-    let j0 = viewport_unpack_joint(s, 0u);
-    let j1 = viewport_unpack_joint(s, 1u);
-    let j2 = viewport_unpack_joint(s, 2u);
-    let j3 = viewport_unpack_joint(s, 3u);
-    return skin_palette[j0] * s.weights.x
-         + skin_palette[j1] * s.weights.y
-         + skin_palette[j2] * s.weights.z
-         + skin_palette[j3] * s.weights.w;
-}
-"#;
-
 /// Fragment helper for the pick-id pass.
 ///
 /// A plugin's pick pipeline reuses its scene-pass vertex stage (extended to

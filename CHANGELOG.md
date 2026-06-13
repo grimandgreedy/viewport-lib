@@ -4,6 +4,25 @@
 
 ### Behavior changes
 
+#### GPU skinning moved to a plugin handle
+
+Skinning is no longer wired into `ViewportGpuResources` directly. The upload methods used to live on the renderer (`set_skin_weights`, `set_skin_palette`, `is_skinned_mesh`, `supports_gpu_skinning`, `begin_upload_skin_weights`); they are all gone. In their place, `viewport_lib::plugins::skinning::SkinningPlugin::install(&mut resources, &device)` returns a small handle that owns the deformer id and exposes `attach_weights`, `attach_palette`, `begin_upload_weights`, and `is_skinned_mesh`.
+
+The renderer no longer knows anything about skinning specifically. Items that need their own bind group at draw time (per-instance deformer data, of which skinning is one example) are filtered out of GPU-driven instanced batching through a generic `has_per_instance_deform_data(mesh_id, instance_id)` check. The per-node instance key on the scene side is renamed too: `SceneNode::skin_instance` / `SceneRenderItem::skin_instance` -> `deform_instance`, and `Scene::set_skin_instance(node, ...)` -> `Scene::set_deform_instance(node, ...)`.
+
+Update sites use the handle:
+
+```rust
+let skinning = viewport_lib::plugins::skinning::SkinningPlugin::install(
+    renderer.resources_mut(), &device)?;
+skinning.attach_weights(renderer.resources_mut(), &device, mesh_id, &weights);
+skinning.attach_palette(renderer.resources_mut(), &device, &queue,
+    mesh_id, instance_id, &palette);
+scene.set_deform_instance(node_id, Some(instance_id));
+```
+
+The bind-group-layout accessor on `PluginBuilders` is renamed from `skin_palette_layout()` to `deform_bind_group_layout()`. The obsolete `SHARED_SKIN_WGSL` constant is removed from `plugin_api::shared_wgsl`; plugins that need GPU skinning use the registered deformer and do not need their own variant.
+
 #### Built-in plugins moved to `viewport_lib::plugins`
 
 The in-crate plugins now live under one top-level module. Previously these were split between `viewport_lib::runtime::plugins::*` (animation, constraints, physics, skeleton) and the GPU sidecars under `viewport_lib::resources::mesh_sidecar::*`. They now share one home, and each plugin's public surface is reached through its own subpath:
@@ -13,22 +32,23 @@ use viewport_lib::plugins::skeleton::{SkeletonPlugin, SkinnedActorPlugin, ClipPl
 use viewport_lib::plugins::animation::AnimationPlugin;
 use viewport_lib::plugins::constraint::ConstraintPlugin;
 use viewport_lib::plugins::physics_lite::PhysicsLitePlugin;
-use viewport_lib::plugins::skinning::install_skinning;
+use viewport_lib::plugins::skinning::SkinningPlugin;
 ```
 
-Each in-crate plugin module mirrors how an external plugin crate is consumed. `viewport_lib::plugins::skinning::install_skinning` is the same shape as `viewport_lib_wind::WindPlugin` would be from an external crate: one plugin module, one public surface.
+Each in-crate plugin module mirrors how an external plugin crate is consumed: one plugin module, one public surface.
 
-Old `viewport_lib::SkeletonPlugin` and `viewport_lib::runtime::plugins::*` paths still work for the next release with a deprecation note pointing to the new path.
+The old `viewport_lib::SkeletonPlugin` and `viewport_lib::runtime::plugins::*` paths are removed in this release. See `docs/migration-guides/v0.18.0-plugins-module-and-opt-in-skinning.md` for the symbol-by-symbol mapping.
 
 #### GPU skinning is opt-in
 
-GPU skinning used to register itself automatically at renderer construction. It now requires one explicit call:
+GPU skinning used to register itself automatically at renderer construction. It now requires one explicit call that returns a handle:
 
 ```rust
-viewport_lib::plugins::skinning::install_skinning(&mut resources, &device)?;
+let skinning = viewport_lib::plugins::skinning::SkinningPlugin::install(
+    &mut resources, &device)?;
 ```
 
-Make the call once at startup before uploading any skin weights or palettes. Consumers that do not need GPU skinning pay nothing for it. `supports_gpu_skinning()` now reports the truth — `true` after install, `false` before — instead of always returning `true`. `set_skin_weights` and `set_skin_palette` return `false` and do nothing if install has not run.
+Make the call once at startup before uploading any skin weights or palettes. Consumers that do not need GPU skinning pay nothing for it.
 
 ### Features
 
@@ -52,9 +72,9 @@ The standalone vertex displacement sidecar is gone. Hosts that previously planne
 
 #### GPU skinning runs through the deformer registry
 
-GPU skinning is now an internal deformer on a reserved slot rather than a parallel set of pipelines. The standard `mesh.wgsl`, `mesh_oit.wgsl`, `shadow.wgsl`, and `outline_mask.wgsl` pipelines pick up linear blend skinning by reading per-vertex weights and per-instance joint palettes through the deformer's slot helpers. `set_skin_weights` packs weights at the deformer's 24-byte stride and attaches them to the per-mesh slot. `set_skin_palette` writes the joint matrices to the per-instance slot through the new `attach_deform_slot_instance` API. The public skinning API (`set_skin_weights`, `set_skin_palette`, `is_skinned_mesh`, `supports_gpu_skinning`) keeps the same signatures.
+GPU skinning is now a deformer on a reserved slot rather than a parallel set of pipelines. The standard `mesh.wgsl`, `mesh_oit.wgsl`, `shadow.wgsl`, and `outline_mask.wgsl` pipelines pick up linear blend skinning by reading per-vertex weights and per-instance joint palettes through the deformer's slot helpers. `SkinningPlugin::attach_weights` packs weights at the deformer's 24-byte stride and attaches them to the per-mesh slot; `SkinningPlugin::attach_palette` writes the joint matrices to the per-instance slot through `attach_deform_slot_instance`.
 
-The dedicated skinned pipelines (`skinned_solid_pipeline`, `skinned_solid_two_sided_pipeline`, `skinned_transparent_pipeline`, `skinned_wireframe_pipeline`, `skinned_shadow_pipeline`, `skinned_oit_pipeline`, `hdr_skinned_*`, `outline_mask_skinned_*`) and their backing shaders (`mesh_skinned.wgsl`, `shadow_skinned.wgsl`, `outline_mask_skinned.wgsl`) are gone. So is `skin_palette_layout()`'s old return value: it now points at the deformer bind group layout instead of a separate skin layout. The deformer registry's host slot count stays at four; an additional internal slot range is reserved for in-crate deformers and does not count against the host budget.
+The dedicated skinned pipelines (`skinned_solid_pipeline`, `skinned_solid_two_sided_pipeline`, `skinned_transparent_pipeline`, `skinned_wireframe_pipeline`, `skinned_shadow_pipeline`, `skinned_oit_pipeline`, `hdr_skinned_*`, `outline_mask_skinned_*`) and their backing shaders (`mesh_skinned.wgsl`, `shadow_skinned.wgsl`, `outline_mask_skinned.wgsl`) are gone. The deformer registry's host slot count stays at four; an additional internal slot range is reserved for in-crate deformers and does not count against the host budget.
 
 #### Lit sprites and lit GPU particles
 

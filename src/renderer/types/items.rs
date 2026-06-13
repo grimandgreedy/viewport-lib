@@ -94,20 +94,19 @@ pub struct SceneRenderItem {
     pub warp_attribute: Option<String>,
     /// Scale factor applied to the warp vector. Default: 1.0.
     pub warp_scale: f32,
-    /// Which skinning instance palette to use when `mesh_id` has been marked
-    /// skinnable via [`crate::ViewportGpuResources::set_skin_weights`].
+    /// Which per-instance deformer data to bind for this item.
     ///
-    /// - `None`: this item is treated as static even if the mesh has skinning
-    ///   data attached. The standard (non-skinned) pipeline is used.
-    /// - `Some(instance_id)`: the renderer routes this item through the
-    ///   skinned pipeline variant and binds the joint palette uploaded via
-    ///   `set_skin_palette(mesh_id, instance_id, ...)`. If no palette has
-    ///   been uploaded for this `(mesh_id, instance_id)`, the item falls
-    ///   back to the static pipeline for this frame.
+    /// - `None`: the item uses only per-mesh deformer data.
+    /// - `Some(instance_id)`: the renderer binds the per-(mesh, instance)
+    ///   deformer slot data attached via
+    ///   [`crate::resources::ViewportGpuResources::attach_deform_slot_instance`]
+    ///   (or a plugin handle like
+    ///   [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette)).
     ///
-    /// Allows multiple `SceneRenderItem`s that share a bind-pose mesh to each
-    /// pose independently (crowd / instanced characters).
-    pub skin_instance: Option<u32>,
+    /// Allows multiple `SceneRenderItem`s that share a bind-pose mesh to
+    /// each pose independently (crowd / instanced characters with GPU
+    /// skinning).
+    pub deform_instance: Option<u32>,
     /// Whether this surface receives projected decals. Default: `true`.
     pub receives_decals: bool,
     /// LIC flow overlay for this surface. `None` disables LIC for this item.
@@ -131,7 +130,7 @@ impl Default for SceneRenderItem {
             nan_colour: None,
             warp_attribute: None,
             warp_scale: 1.0,
-            skin_instance: None,
+            deform_instance: None,
             receives_decals: true,
             lic: None,
         }

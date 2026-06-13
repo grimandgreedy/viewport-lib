@@ -112,7 +112,7 @@ pub struct SkinnedActorPlugin {
     /// Which deformation path to emit each frame. On `Gpu`, one
     /// [`SkinnedPoseUpdate`] is pushed per actor per part. The instance id is
     /// the actor's index in `actors` so the host can drive the right joint
-    /// palette via `set_skin_palette`.
+    /// palette via `SkinningPlugin::attach_palette`.
     pub path: SkinningPath,
 }
 

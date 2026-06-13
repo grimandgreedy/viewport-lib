@@ -142,13 +142,10 @@ impl ViewportGpuResources {
 
     /// Bind group layout for the per-vertex deformation sidecar.
     ///
-    /// Plugins building pipelines that draw deformable or skinned meshes
+    /// Plugins building pipelines that draw meshes with registered deformers
     /// add this layout at group 2 so their vertex stage can read from the
-    /// shared `deform_data` / `deform_instance_data` storage buffers. GPU
-    /// skinning is registered against this same layout at renderer
-    /// construction; per-instance joint palettes flow through
-    /// [`set_skin_palette`](Self::set_skin_palette).
-    pub fn skin_palette_layout(&self) -> &wgpu::BindGroupLayout {
+    /// shared `deform_data` / `deform_instance_data` storage buffers.
+    pub fn deform_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.deform.bind_group_layout
     }
 

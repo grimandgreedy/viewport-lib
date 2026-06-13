@@ -187,12 +187,15 @@ pub struct SkinnedMeshUpdate {
 /// GPU path.
 ///
 /// Returned in [`RuntimeOutput::skinned_pose_updates`]. Apply after `step()`
-/// by calling [`crate::ViewportGpuResources::set_skin_palette`]:
+/// by calling
+/// [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette):
 ///
 /// ```rust,ignore
 /// for u in &output.skinned_pose_updates {
-///     renderer.resources_mut()
-///         .set_skin_palette(&queue, u.mesh_id, u.instance_id, &u.joint_matrices);
+///     skinning.attach_palette(
+///         renderer.resources_mut(), &device, &queue,
+///         u.mesh_id, u.instance_id, &u.joint_matrices,
+///     );
 /// }
 /// ```
 pub struct SkinnedPoseUpdate {
@@ -247,8 +250,8 @@ pub struct RuntimeOutput {
     pub skinned_mesh_updates: Vec<SkinnedMeshUpdate>,
     /// Per-instance joint palette updates from skinning plugins on the GPU
     /// path. Apply after `step()` by calling
-    /// [`crate::ViewportGpuResources::set_skin_palette`] on each entry. Empty
-    /// when no skinning plugin is active on the GPU path.
+    /// [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette)
+    /// on each entry. Empty when no skinning plugin is active on the GPU path.
     pub skinned_pose_updates: Vec<SkinnedPoseUpdate>,
 }
 

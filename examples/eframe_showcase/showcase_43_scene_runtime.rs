@@ -15,10 +15,11 @@
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, AnimationPlugin, AnimationTrack, CameraFollow, FixedTimestep, Keyframe, Material, MeshId,
-    PhysicsBody, PhysicsLitePlugin, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext,
-    SceneRenderItem, ViewportRuntime, camera::Camera, runtime::plugin::phase, scene::Scene,
-    selection::Selection,
+    Aabb, CameraFollow, FixedTimestep, Material, MeshId, RuntimeFrameContext, RuntimePlugin,
+    RuntimeStepContext, SceneRenderItem, ViewportRuntime, camera::Camera,
+    plugins::animation::{AnimationPlugin, AnimationTrack, Keyframe},
+    plugins::physics_lite::{PhysicsBody, PhysicsLitePlugin},
+    runtime::plugin::phase, scene::Scene, selection::Selection,
 };
 
 use crate::App;

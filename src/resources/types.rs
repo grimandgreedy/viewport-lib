@@ -169,12 +169,12 @@ pub enum BuiltinColourmap {
 ///
 /// `SkinWeights` is uploaded to the renderer as a sidecar storage buffer
 /// keyed by `MeshId` via
-/// [`crate::ViewportGpuResources::set_skin_weights`]. The mesh's vertex
-/// buffer is not modified. The skinned vertex shader looks up the
-/// per-vertex joint indices and weights from the storage buffer using
-/// `@builtin(vertex_index)`. Calling `set_skin_weights` on a `mesh_id`
-/// is what marks the mesh as skinnable; skinned draws are then routed
-/// through the skinned pipeline variant.
+/// [`SkinningPlugin::attach_weights`](crate::plugins::skinning::SkinningPlugin::attach_weights).
+/// The mesh's vertex buffer is not modified. The registered skinning
+/// deformer reads the per-vertex joint indices and weights from the
+/// storage buffer using `@builtin(vertex_index)`. Calling `attach_weights`
+/// on a `mesh_id` is what marks the mesh as skinnable; the LBS body in
+/// the composed mesh shader takes over for that mesh on subsequent draws.
 #[derive(Clone)]
 pub struct SkinWeights {
     /// Joint indices for each vertex: 4 per vertex, parallel to positions.
@@ -944,11 +944,12 @@ pub(crate) struct OutlineUniform {
 pub(crate) struct OutlineObjectBuffers {
     pub mesh_id: crate::resources::mesh_store::MeshId,
     pub two_sided: bool,
-    /// Skin instance id for the picked node, or `None` when the node is not
-    /// skinned. When `Some` and the renderer has a palette for
-    /// `(mesh_id, instance_id)`, the outline mask is drawn via the skinned
-    /// pipeline so the selection halo tracks the deformed silhouette.
-    pub skin_instance: Option<u32>,
+    /// Per-instance deformer id for the picked node, or `None` when the node
+    /// has no per-instance deformer data. When `Some` and the renderer has
+    /// per-instance data for `(mesh_id, instance_id)`, the outline mask is
+    /// drawn with that bind group so the selection halo tracks the deformed
+    /// silhouette.
+    pub deform_instance: Option<u32>,
     pub _mask_uniform_buf: wgpu::Buffer,
     pub mask_bind_group: wgpu::BindGroup,
 }
@@ -2544,19 +2545,11 @@ pub struct ViewportGpuResources {
     pub object_bind_group_layout: wgpu::BindGroupLayout,
     /// Scene meshes (slotted storage with free-list removal).
     pub(crate) mesh_store: crate::resources::mesh_store::MeshStore,
-    /// GPU skinning sidecar storage: per-mesh skin weights and per-instance
-    /// joint palette buffers. Empty for static meshes.
-    pub(crate) skinning: crate::plugins::skinning::SkinningState,
     /// Per-vertex deformation sidecar storage: header uniform, dummy fallback
     /// buffers, and per-mesh slot bind groups. Every mesh-family pipeline
     /// binds `@group(2)` from this state; meshes without attached deformer
     /// data fall back to the renderer-owned dummy bind group.
     pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
-    /// Slot assigned to the in-crate skinning deformer at renderer
-    /// construction. `set_skin_weights` and `set_skin_palette` route their
-    /// uploads through this slot.
-    pub(crate) skinning_slot:
-        Option<crate::resources::mesh_sidecar::registry::DeformerId>,
     // --- Shadow map resources ---
     /// Shadow atlas depth texture (Depth32Float, atlas_size × atlas_size, 2×2 tile grid).
     pub shadow_map_texture: wgpu::Texture,

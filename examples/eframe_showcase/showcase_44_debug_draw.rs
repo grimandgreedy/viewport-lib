@@ -15,9 +15,10 @@
 
 use eframe::egui;
 use viewport_lib::{
-    Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, PhysicsBody,
-    PhysicsLitePlugin, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, SceneRenderItem,
-    ViewportRuntime, runtime::plugin::phase, scene::Scene, selection::Selection,
+    Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, RuntimeFrameContext,
+    RuntimePlugin, RuntimeStepContext, SceneRenderItem, ViewportRuntime,
+    plugins::physics_lite::{PhysicsBody, PhysicsLitePlugin},
+    runtime::plugin::phase, scene::Scene, selection::Selection,
 };
 
 use crate::App;

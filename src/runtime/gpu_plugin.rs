@@ -12,7 +12,7 @@
 //!
 //! ```text
 //! output = runtime.step(scene, selection, &frame_ctx);
-//! // host applies output (write_mesh_positions_normals, set_skin_palette, ...)
+//! // host applies output (write_mesh_positions_normals, SkinningPlugin::attach_palette, ...)
 //!
 //! let plugin_bufs  = runtime.pre_prepare(device, queue, &gpu_ctx);
 //! let prepare_bufs = renderer.pass().prepare(device, queue, &frame);
