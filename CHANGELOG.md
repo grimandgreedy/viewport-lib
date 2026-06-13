@@ -2,6 +2,13 @@
 
 ## [Unreleased Changes]
 
+## [0.18.1]
+### Improvements
+
+#### Omnidirectional point-light shadows
+
+Point lights now cast shadows in every direction. The renderer keeps a cubemap-array depth texture and renders six faces per shadow-casting point light each frame, so a point light's cast shadow no longer cuts off at a 90 degree cone toward the scene centre. Up to eight point lights can cast shadows simultaneously; the rest get direct illumination only. Directional and spot shadow paths are unchanged.
+
 ## [0.18.0]
 
 ### Breaking changes
@@ -25,10 +32,6 @@ Particle effects can run end to end on the GPU. Upload a system once with a capa
 #### Mesh-rendered GPU particles
 
 GPU particle systems can draw their live particles as instanced meshes instead of sprites. Pick a mesh, a blend mode, and an alignment rule (identity, velocity-aligned, or stable random tumble seeded at spawn); the simulation path is unchanged and one draw call covers the whole system. Useful for debris, projectiles, gibs, casings, dropped collectibles, and anything else that doesn't want a billboard.
-
-#### Omnidirectional point-light shadows
-
-Point lights now cast shadows in every direction. The renderer keeps a cubemap-array depth texture and renders six faces per shadow-casting point light each frame, so a point light's cast shadow no longer cuts off at a 90 degree cone toward the scene centre. Up to eight point lights can cast shadows simultaneously; the rest get direct illumination only. Directional and spot shadow paths are unchanged.
 
 #### Lit sprites and lit particles
 
