@@ -22,6 +22,54 @@
 //!   builder per variant.
 //!
 //! All accessors live on [`crate::resources::ViewportGpuResources`].
+//!
+//! # Compatibility policy
+//!
+//! Pre-1.0, this surface evolves more freely than a stable crate would, but
+//! the policy below describes what plugins can rely on within a given minor
+//! version and how breakage is signalled.
+//!
+//! Plugins are expected to track `viewport-lib` minor versions. The
+//! convention is that a minor bump may rename or remove items the audit
+//! flags as non-additive; a patch bump never does.
+//!
+//! - **Group-0 binding indices ([`SharedBindings`]) are additive-only.**
+//!   The constants in `SharedBindings` (`CAMERA_BINDING`, ...) keep their
+//!   numeric values forever. New bindings are appended at the next free
+//!   index. This is the strongest guarantee in the API: a plugin pipeline
+//!   built once stays valid as new bindings are added.
+//!
+//! - **WGSL helper strings in [`shared_wgsl`] are stable within a minor
+//!   version.** Helper *function signatures* (`viewport_pbr_shade`,
+//!   `viewport_oit_pack`, `viewport_sample_csm`, ...) and the struct
+//!   layouts they declare may change with a minor bump. When a helper's
+//!   signature changes in an incompatible way, the helper is renamed (the
+//!   old name is removed) so a plugin shader that referenced the old name
+//!   fails to compile loudly rather than silently producing wrong output.
+//!   Additive changes (new helpers, new optional fields appended to
+//!   structs) ride patch bumps.
+//!
+//! - **Target descriptors and pipeline builder signatures are stable within
+//!   a minor version.** Format constants (`HDR_COLOR_FORMAT`, blend
+//!   states, depth-stencil state) follow the same rule: any change rides a
+//!   minor bump and is noted in the CHANGELOG.
+//!
+//! - **The deformer registry hook contract is additive-only.** The
+//!   `DeformVertex` and `DeformContext` struct shapes (see
+//!   [`crate::resources::mesh_sidecar::registry::DeformerDesc`]) keep
+//!   existing fields stable across releases; new fields may be appended.
+//!   The composition-order policy (ObjectSpace before WorldSpace, priority
+//!   ascending within stage) is part of the contract and will not change.
+//!
+//! - **Builder methods on [`crate::resources::ViewportGpuResources`] that
+//!   construct pipelines for plugins** (`build_opaque_pipeline`,
+//!   `build_oit_pipeline`, ...) keep their behaviour stable within a minor
+//!   version. Signature changes ride minor bumps and are listed in the
+//!   CHANGELOG.
+//!
+//! Anything not listed above is internal: a plugin that reaches past the
+//! published surface (private modules, undocumented constants) may break at
+//! any release.
 
 pub mod cull;
 pub mod item_type;

@@ -10,6 +10,14 @@
 //! Hosts that do not need GPU skinning never call `install` and pay nothing.
 //! Static meshes pay nothing either way: the per-object `deform_flags`
 //! branch in the composed shader gates the LBS body off.
+//!
+//! `SkinningPlugin` is not a [`RuntimePlugin`](crate::RuntimePlugin); it is a
+//! renderer-side upload handle. Pair it with
+//! [`SkeletonPlugin`](crate::plugins::skeleton::SkeletonPlugin) or
+//! [`SkinnedActorPlugin`](crate::plugins::skeleton::SkinnedActorPlugin) for the
+//! runtime half: those compute the per-frame joint matrices and emit
+//! [`SkinnedPoseUpdate`] events on `output.events`; the host drains the events
+//! and calls [`SkinningPlugin::attach_palette`] on each one.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
