@@ -63,6 +63,11 @@ impl ViewportRenderer {
                 for mesh_id in &self.tvm_wireframe_draws {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                        render_pass.set_bind_group(
+                            2,
+                            &self.resources.deform.dummy_bind_group,
+                            &[],
+                        );
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(
@@ -352,6 +357,11 @@ impl ViewportRenderer {
                     for mesh_id in &self.tvm_wireframe_draws {
                         if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                            render_pass.set_bind_group(
+                                2,
+                                &self.resources.deform.dummy_bind_group,
+                                &[],
+                            );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             render_pass.set_index_buffer(
@@ -1001,6 +1011,11 @@ impl ViewportRenderer {
                         for mesh_id in &self.tvm_wireframe_draws {
                             if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                                 render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                                render_pass.set_bind_group(
+                                    2,
+                                    &self.resources.deform.dummy_bind_group,
+                                    &[],
+                                );
                                 render_pass.set_bind_group(1, tvm_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
@@ -1654,6 +1669,11 @@ impl ViewportRenderer {
                                 &resources.indirect_args_buf,
                             ) {
                                 render_pass.set_pipeline(pipeline);
+                                render_pass.set_bind_group(
+                                    2,
+                                    &resources.deform.dummy_bind_group,
+                                    &[],
+                                );
                                 for (batch_global_idx, batch) in &opaque_batches {
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
@@ -1684,6 +1704,11 @@ impl ViewportRenderer {
                             }
                         } else if let Some(ref pipeline) = resources.hdr_solid_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
+                            render_pass.set_bind_group(
+                                2,
+                                &resources.deform.dummy_bind_group,
+                                &[],
+                            );
                             for (_, batch) in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
@@ -1790,6 +1815,11 @@ impl ViewportRenderer {
                                     hdr_solid
                                 };
                                 render_pass.set_pipeline(pipeline);
+                                render_pass.set_bind_group(
+                                    2,
+                                    &resources.deform.dummy_bind_group,
+                                    &[],
+                                );
                             }
                             let obj_bg = self
                                 .per_item_object_bind_groups
@@ -1831,6 +1861,11 @@ impl ViewportRenderer {
                             if let Some(ref nl_buf) = mesh.normal_line_buffer {
                                 if mesh.normal_line_count > 0 {
                                     render_pass.set_pipeline(hdr_wf);
+                                    render_pass.set_bind_group(
+                                        2,
+                                        &resources.deform.dummy_bind_group,
+                                        &[],
+                                    );
                                     render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                                     render_pass.set_vertex_buffer(0, nl_buf.slice(..));
                                     render_pass.draw(0..mesh.normal_line_count, 0..1);
@@ -1911,6 +1946,11 @@ impl ViewportRenderer {
                                     render_pass.set_bind_group(2, bg, &[]);
                                 } else {
                                     render_pass.set_pipeline(wf_pl);
+                                    render_pass.set_bind_group(
+                                        2,
+                                        &resources.deform.dummy_bind_group,
+                                        &[],
+                                    );
                                 }
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
@@ -1926,6 +1966,11 @@ impl ViewportRenderer {
                                         solid_pl
                                     };
                                     render_pass.set_pipeline(pl);
+                                    render_pass.set_bind_group(
+                                        2,
+                                        &resources.deform.dummy_bind_group,
+                                        &[],
+                                    );
                                     render_pass.set_vertex_buffer(0, fvb.slice(..));
                                     render_pass.draw(0..mesh.index_count, 0..1);
                                 }
@@ -1952,6 +1997,11 @@ impl ViewportRenderer {
                                     render_pass.set_bind_group(2, bg, &[]);
                                 } else {
                                     render_pass.set_pipeline(pl);
+                                    render_pass.set_bind_group(
+                                        2,
+                                        &resources.deform.dummy_bind_group,
+                                        &[],
+                                    );
                                 }
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 if let Some(fr) = filter {
@@ -1972,6 +2022,11 @@ impl ViewportRenderer {
                                 if let Some(ref nl_buf) = mesh.normal_line_buffer {
                                     if mesh.normal_line_count > 0 {
                                         render_pass.set_pipeline(wf_pl);
+                                        render_pass.set_bind_group(
+                                            2,
+                                            &resources.deform.dummy_bind_group,
+                                            &[],
+                                        );
                                         render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                                         render_pass.set_vertex_buffer(0, nl_buf.slice(..));
                                         render_pass.draw(0..mesh.normal_line_count, 0..1);
@@ -2932,6 +2987,11 @@ impl ViewportRenderer {
                             &self.resources.indirect_args_buf,
                         ) {
                             oit_pass.set_pipeline(pipeline);
+                            oit_pass.set_bind_group(
+                                2,
+                                &self.resources.deform.dummy_bind_group,
+                                &[],
+                            );
                             for (batch_global_idx, batch) in
                                 self.instanced_batches.iter().enumerate()
                             {
@@ -2966,6 +3026,11 @@ impl ViewportRenderer {
                         }
                     } else if let Some(ref pipeline) = self.resources.oit_instanced_pipeline {
                         oit_pass.set_pipeline(pipeline);
+                        oit_pass.set_bind_group(
+                            2,
+                            &self.resources.deform.dummy_bind_group,
+                            &[],
+                        );
                         for batch in &self.instanced_batches {
                             if !batch.is_transparent {
                                 continue;
@@ -3002,6 +3067,11 @@ impl ViewportRenderer {
                     // Render them here individually so they are not invisible at opacity < 1.
                     if let Some(ref pipeline) = self.resources.oit_pipeline {
                         oit_pass.set_pipeline(pipeline);
+                        oit_pass.set_bind_group(
+                            2,
+                            &self.resources.deform.dummy_bind_group,
+                            &[],
+                        );
                         let mut last_skinned = false;
                         for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
@@ -3031,6 +3101,11 @@ impl ViewportRenderer {
                                     );
                                 } else {
                                     oit_pass.set_pipeline(pipeline);
+                                    oit_pass.set_bind_group(
+                                        2,
+                                        &self.resources.deform.dummy_bind_group,
+                                        &[],
+                                    );
                                 }
                                 last_skinned = want_skinned;
                             }
@@ -3053,6 +3128,11 @@ impl ViewportRenderer {
                     }
                 } else if let Some(ref pipeline) = self.resources.oit_pipeline {
                     oit_pass.set_pipeline(pipeline);
+                    oit_pass.set_bind_group(
+                        2,
+                        &self.resources.deform.dummy_bind_group,
+                        &[],
+                    );
                     let mut last_skinned = false;
                     for (item_idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden
@@ -3075,6 +3155,11 @@ impl ViewportRenderer {
                                 );
                             } else {
                                 oit_pass.set_pipeline(pipeline);
+                                oit_pass.set_bind_group(
+                                    2,
+                                    &self.resources.deform.dummy_bind_group,
+                                    &[],
+                                );
                             }
                             last_skinned = want_skinned;
                         }

@@ -438,12 +438,18 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
+        // Per-vertex deformation sidecar. Constructed early because every
+        // mesh-family pipeline layout binds its group(2) BGL.
+        // ------------------------------------------------------------------
+        let deform = crate::resources::mesh_sidecar::deform::DeformationState::new(device);
+
+        // ------------------------------------------------------------------
         // Pipeline layout (shared between solid and transparent pipelines)
-        // Groups: 0=camera, 1=object+texture (merged to stay within iced's max_bind_groups=2)
+        // Groups: 0=camera, 1=object+texture, 2=deform sidecar
         // ------------------------------------------------------------------
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh_pipeline_layout"),
-            bind_group_layouts: &[&camera_bgl, &object_bgl],
+            bind_group_layouts: &[&camera_bgl, &object_bgl, &deform.bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -905,7 +911,7 @@ impl ViewportGpuResources {
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_pipeline_layout"),
-                bind_group_layouts: &[&shadow_camera_bgl, &object_bgl],
+                bind_group_layouts: &[&shadow_camera_bgl, &object_bgl, &deform.bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -1977,7 +1983,7 @@ impl ViewportGpuResources {
         let outline_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("outline_pipeline_layout"),
-                bind_group_layouts: &[&camera_bgl, &outline_bgl],
+                bind_group_layouts: &[&camera_bgl, &outline_bgl, &deform.bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -2312,7 +2318,7 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         let skinning = crate::resources::mesh_sidecar::skin::SkinningState::new(device);
         let displacement = crate::resources::mesh_sidecar::displacement::DisplacementState::new(device);
-        let deform = crate::resources::mesh_sidecar::deform::DeformationState::new(device);
+        // `deform` is constructed earlier (before the mesh pipeline layout).
 
         // Skinned variants require bind group index 2 (the skinning sidecar).
         // iced_wgpu (and any framework that hardcodes max_bind_groups = 2) cannot

@@ -3008,6 +3008,13 @@ impl ViewportRenderer {
                                 } else {
                                     &resources.shadow_pipeline
                                 });
+                                if !want_skinned {
+                                    shadow_pass.set_bind_group(
+                                        2,
+                                        &resources.deform.dummy_bind_group,
+                                        &[],
+                                    );
+                                }
                                 last_skinned = Some(want_skinned);
                             }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
@@ -4757,6 +4764,8 @@ impl ViewportRenderer {
                     pass.set_bind_group(1, &outlined.mask_bind_group, &[]);
                     if let Some(bg) = skin_bg {
                         pass.set_bind_group(2, bg, &[]);
+                    } else {
+                        pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                     }
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

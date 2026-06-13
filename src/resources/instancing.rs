@@ -79,7 +79,11 @@ impl ViewportGpuResources {
 
         let instanced_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("instanced_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &instance_bgl],
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                &instance_bgl,
+                &self.deform.bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 
@@ -273,7 +277,11 @@ impl ViewportGpuResources {
         });
         let inst_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hdr_instanced_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, instance_bgl],
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                instance_bgl,
+                &self.deform.bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 
@@ -481,7 +489,11 @@ impl ViewportGpuResources {
         });
         let instanced_oit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("oit_instanced_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, instance_bgl],
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                instance_bgl,
+                &self.deform.bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -784,7 +796,11 @@ impl ViewportGpuResources {
         });
         let inst_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hdr_instanced_cull_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &cull_bgl],
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                &cull_bgl,
+                &self.deform.bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
         let hdr_solid_cull = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -835,7 +851,11 @@ impl ViewportGpuResources {
         });
         let oit_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("oit_instanced_cull_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &cull_bgl],
+            bind_group_layouts: &[
+                &self.camera_bind_group_layout,
+                &cull_bgl,
+                &self.deform.bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
         let accum_blend = wgpu::BlendState {

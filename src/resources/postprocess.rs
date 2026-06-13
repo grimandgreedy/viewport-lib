@@ -1197,6 +1197,7 @@ impl ViewportGpuResources {
             bind_group_layouts: &[
                 &self.camera_bind_group_layout,
                 &self.object_bind_group_layout,
+                &self.deform.bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -1324,6 +1325,7 @@ impl ViewportGpuResources {
             bind_group_layouts: &[
                 &self.camera_bind_group_layout,
                 &self.object_bind_group_layout,
+                &self.deform.bind_group_layout,
             ],
             push_constant_ranges: &[],
         });

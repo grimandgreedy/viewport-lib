@@ -290,6 +290,7 @@ macro_rules! emit_draw_calls {
                                 render_pass.set_bind_group(2, bg, &[]);
                             } else {
                                 render_pass.set_pipeline(&resources.wireframe_pipeline);
+                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             }
                             let bg = wireframe_bind_groups.get(wf_idx)
                                 .unwrap_or(&mesh.object_bind_group);
@@ -337,6 +338,9 @@ macro_rules! emit_draw_calls {
                                 &resources.solid_pipeline
                             };
                             render_pass.set_pipeline(pipeline);
+                            if skinned_pl.is_none() {
+                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
+                            }
                             render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
 
                             let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
@@ -419,13 +423,18 @@ macro_rules! emit_draw_calls {
                         });
 
                         if frame.viewport.wireframe_mode {
+                            let mut used_skinned = false;
                             let wf_pl: &wgpu::RenderPipeline = if let (Some(bg), Some(pl)) = (skin_bg, resources.skinned_wireframe_pipeline.as_ref()) {
                                 render_pass.set_bind_group(2, bg, &[]);
+                                used_skinned = true;
                                 pl
                             } else {
                                 &resources.wireframe_pipeline
                             };
                             render_pass.set_pipeline(wf_pl);
+                            if !used_skinned {
+                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
+                            }
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             render_pass.set_index_buffer(
                                 mesh.edge_index_buffer.slice(..),
@@ -435,6 +444,7 @@ macro_rules! emit_draw_calls {
                         } else if is_face_attr {
                             if let Some(ref fvb) = mesh.face_vertex_buffer {
                                 render_pass.set_pipeline($pipeline);
+                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                                 render_pass.set_vertex_buffer(0, fvb.slice(..));
                                 render_pass.draw(0..mesh.index_count, 0..1);
                             }
@@ -459,9 +469,11 @@ macro_rules! emit_draw_calls {
                                     render_pass.set_bind_group(2, bg, &[]);
                                 } else {
                                     render_pass.set_pipeline($pipeline);
+                                    render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                                 }
                             } else {
                                 render_pass.set_pipeline($pipeline);
+                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             }
                             if let Some(fr) = filter_result {
                                 render_pass.set_index_buffer(
@@ -482,6 +494,7 @@ macro_rules! emit_draw_calls {
                             if let Some(ref nl_buf) = mesh.normal_line_buffer {
                                 if mesh.normal_line_count > 0 {
                                     render_pass.set_pipeline(&resources.wireframe_pipeline);
+                                    render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                                     render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                                     render_pass.set_vertex_buffer(0, nl_buf.slice(..));
                                     render_pass.draw(0..mesh.normal_line_count, 0..1);
