@@ -2,164 +2,67 @@
 
 ## [Unreleased Changes]
 
-### Behavior changes
-
-#### GPU skinning moved to a plugin handle
-
-Skinning is no longer wired into `ViewportGpuResources` directly. The upload methods used to live on the renderer (`set_skin_weights`, `set_skin_palette`, `is_skinned_mesh`, `supports_gpu_skinning`, `begin_upload_skin_weights`); they are all gone. In their place, `viewport_lib::plugins::skinning::SkinningPlugin::install(&mut resources, &device)` returns a small handle that owns the deformer id and exposes `attach_weights`, `attach_palette`, `begin_upload_weights`, and `is_skinned_mesh`.
-
-The renderer no longer knows anything about skinning specifically. Items that need their own bind group at draw time (per-instance deformer data, of which skinning is one example) are filtered out of GPU-driven instanced batching through a generic `has_per_instance_deform_data(mesh_id, instance_id)` check. The per-node instance key on the scene side is renamed too: `SceneNode::skin_instance` / `SceneRenderItem::skin_instance` -> `deform_instance`, and `Scene::set_skin_instance(node, ...)` -> `Scene::set_deform_instance(node, ...)`.
-
-Update sites use the handle:
-
-```rust
-let skinning = viewport_lib::plugins::skinning::SkinningPlugin::install(
-    renderer.resources_mut(), &device)?;
-skinning.attach_weights(renderer.resources_mut(), &device, mesh_id, &weights);
-skinning.attach_palette(renderer.resources_mut(), &device, &queue,
-    mesh_id, instance_id, &palette);
-scene.set_deform_instance(node_id, Some(instance_id));
-```
-
-The bind-group-layout accessor on `PluginBuilders` is renamed from `skin_palette_layout()` to `deform_bind_group_layout()`. The obsolete `SHARED_SKIN_WGSL` constant is removed from `plugin_api::shared_wgsl`; plugins that need GPU skinning use the registered deformer and do not need their own variant.
-
-#### Built-in plugins moved to `viewport_lib::plugins`
-
-The in-crate plugins now live under one top-level module. Previously these were split between `viewport_lib::runtime::plugins::*` (animation, constraints, physics, skeleton) and the GPU sidecars under `viewport_lib::resources::mesh_sidecar::*`. They now share one home, and each plugin's public surface is reached through its own subpath:
-
-```rust
-use viewport_lib::plugins::skeleton::{SkeletonPlugin, SkinnedActorPlugin, ClipPlayerPlugin, Skeleton, Pose};
-use viewport_lib::plugins::animation::AnimationPlugin;
-use viewport_lib::plugins::constraint::ConstraintPlugin;
-use viewport_lib::plugins::physics_lite::PhysicsLitePlugin;
-use viewport_lib::plugins::skinning::SkinningPlugin;
-```
-
-Each in-crate plugin module mirrors how an external plugin crate is consumed: one plugin module, one public surface.
-
-The old `viewport_lib::SkeletonPlugin` and `viewport_lib::runtime::plugins::*` paths are removed in this release. See `docs/migration-guides/v0.18.0-plugins-module-and-opt-in-skinning.md` for the symbol-by-symbol mapping.
-
-#### GPU skinning is opt-in
-
-GPU skinning used to register itself automatically at renderer construction. It now requires one explicit call that returns a handle:
-
-```rust
-let skinning = viewport_lib::plugins::skinning::SkinningPlugin::install(
-    &mut resources, &device)?;
-```
-
-Make the call once at startup before uploading any skin weights or palettes. Consumers that do not need GPU skinning pay nothing for it.
-
 ### Features
+
+#### Per-vertex deformation as a single mechanism
+
+Skinning, wind, displacement, morph targets, ocean surfaces, and similar effects now register against one extension point. A plugin supplies a short WGSL body and per-vertex data; the body runs in every mesh draw (solid, transparent, instanced, shadow, outline) so the deformed mesh casts a deformed shadow and tracks a deformed selection outline. The previous parallel pipelines for skinning and vertex displacement are gone in favour of this one path. Up to four host deformers can be registered at once. See `docs/overviews/plugin-types.md` for the recipe.
+
+#### GPU particle systems
+
+Particle effects can run end to end on the GPU. Upload a system once with a capacity and a render route, then submit one item per frame with emitter settings (rate, lifetime, spawn shape, initial velocity) and a list of force fields. The renderer handles emission, simulation, and rendering. Spawn shapes include point, box, and sphere; velocity distributions cover fixed, box, and cone; forces include gravity, drag, and point attractors. Per-particle CPU work on the host drops to zero.
+
+#### Lit sprites and lit particles
+
+Sprites and GPU particles can opt into the scene lighting: directional, point, spot, and hemisphere ambient all apply, so smoke, dust, and fog read with a clear lit and shaded side instead of looking flat. Three normal modes (spherical for round soft particles, flat for camera-aligned art, normal-mapped for textured surfaces) and an optional cascade shadow tap with PCF filtering. Defaults preserve the previous emissive billboard behaviour.
+
+#### Sprite orientation and refraction
+
+Sprites gain two new orientation modes alongside the default camera-facing: velocity-stretched (aligns the long axis with motion, length scales with speed) for sparks and rain streaks, and axis-locked (long axis pinned to a world direction) for vertical flames and grass cards. Sprites can also enable per-pixel scene refraction for heat haze, shockwaves, water splashes, and force-field hits; the renderer distorts the scene behind the sprite based on its texture. Refraction is HDR-path only.
 
 #### Per-material UV transform
 
-Materials can now shift and scale the UVs they sample with. Set `Material::uv_transform` to `(offset_x, offset_y, scale_x, scale_y)` to pick a sub-region of a texture or tile it differently per material. Useful for sharing one texture atlas across many materials, or for tiling a wood / stone texture at a different rate without re-authoring the mesh. The default is `(0, 0, 1, 1)`, which leaves UVs alone. Affects every texture the material samples: colour, normal, ambient occlusion, metallic-roughness, and emissive. Works for both single-draw meshes and instanced batches.
+Materials can now shift and scale their texture UVs. Pick a sub-region of a texture, tile a wood or stone pattern at a different rate, or share one atlas across many materials without re-authoring meshes. Affects every texture the material samples (colour, normal, ambient occlusion, metallic-roughness, emissive). Works for single draws and instanced batches.
 
-#### Per-vertex deformation hooks and deformer registry
+#### Ribbon trails: colour and blend modes
 
-Every mesh-family shader (`mesh.wgsl`, `mesh_oit.wgsl`, `mesh_instanced.wgsl`, `mesh_instanced_oit.wgsl`, `shadow.wgsl`, `outline_mask.wgsl`) now runs two deformation hooks in its vertex stage: `viewport_deform_object_space` before the model transform and `viewport_deform_world_space` after. The shipping bodies are identity passthroughs with slot markers the deformer registry rewrites at registration time, so consumer geometry passes through unchanged until something registers.
+Ribbons can fade per vertex with an RGBA attribute and select between alpha, additive, and premultiplied blend modes. Useful for trails that go from invisible at the tail to bright at the head without a colourmap, and for additive streaks that brighten where segments overlap.
 
-`ViewportGpuResources` exposes a slot-based deformer registry: `register_deformer(device, DeformerDesc { name, stage, priority, wgsl_body, per_vertex_stride })` allocates one of four slots, identifier-prefixes the supplied WGSL body, composes it into every mesh-family base shader, and runs each composed module through wgpu's validator before storing the registration. Failures (duplicate name, slot exhaustion, malformed WGSL) roll back cleanly and leave the prior state live. `attach_deform_slot(device, mesh_id, slot, &[u8])`, `detach_deform_slot`, `has_deform_slot`, `set_deform_slot_params(queue, slot, params)`, and `set_deform_time(queue, t)` give per-mesh data and shared per-slot uniform parameters. `prepare.rs` writes the resulting `deform_flags` bitmask into every `ObjectUniform` so each draw knows which slots are live for its mesh.
+#### Stroked polyline overlay
 
-`ObjectUniform` grows by 16 bytes (one `u32` flag word plus tail padding) and the renderer carries a new `DeformationState` resource with a group(2) bind group layout, a shared header uniform, and a single packed storage buffer per mesh that holds per-slot `(offset, stride)` layout followed by the slot data. Meshes with no attached data bind a renderer-owned dummy. Every mesh-family pipeline layout (LDR + HDR solid / transparent / wireframe / two-sided, the shadow and outline-mask base pipelines, OIT, and the instanced + cull variants) takes the deform BGL at slot 2, and every mesh-family draw site binds either the per-mesh group or the dummy. The shader-side WGSL contract reads slot data through `deform_read_f32(slot, vertex_index, k)` / `deform_read_u32(...)` helpers so registered bodies are independent of how slots are physically packed.
+A new screen-space polyline overlay primitive: a list of waypoints, a thickness, a colour, a join mode (mitre with auto-bevel fallback, or always-bevel), and an optional closed flag. Includes a path-sampling constructor for tracing a generated curve.
 
-`register_deformer` now rebuilds the LDR and HDR `mesh.wgsl` pipeline families (solid, two-sided, transparent, wireframe) with a freshly composed shader module, so a registration takes effect at the next draw on those paths. The shared pipeline factories live in `resources/mesh_pipelines.rs` and run at both startup and rebuild time, so init and rebuild stay in lockstep. Other mesh-family pipelines (instanced, OIT, shadow, outline mask) continue to run the identity path until their factories migrate to the same rebuild flow.
+#### Richer overlay shapes
 
-#### Vertex displacement folds into the deformer registry
+Several extensions to screen-space overlay shapes:
 
-The standalone vertex displacement sidecar is gone. Hosts that previously planned to ship displacement (wind, water, snow) now register a deformer like any other: pack per-vertex sway-mask data into a per-mesh slot and the wind / water / snow uniform into the shared deform header. There were no external consumers of the prior API, so the removal is clean: `set_vertex_displacement_weights`, `set_displacement_uniform_buffer`, `is_displaceable_mesh`, `has_displacement_uniform`, `displacement_bind_group`, and `displacement_bind_group_layout` on `PluginBuilders` are all removed. `SHARED_DISPLACE_WGSL` is removed from `plugin_api::shared_wgsl`.
+- Radial and conical gradient fills, plus multi-stop variants of linear, radial, and conical gradients (up to four stops).
+- Clipping groups: a designated mask shape's bounding rectangle clips other shapes that reference it. Solid shapes only.
+- Per-shape rotation, applied to fill, border, shadow, and gradient direction. The bounding box stays axis-aligned.
+- 9-slice texture fills for resizable panel art, with independent stretch or tile behaviour for centre and edge regions.
+- Texture transform: offset, scale, rotation, flip, and a new mirror tile mode for texture-filled shapes.
+- Inner shadows for pressed buttons, dropdowns, and recessed surfaces. Shapes can carry an outer or inner shadow, not both at once.
 
-#### GPU skinning runs through the deformer registry
+#### Overlay animation tracks
 
-GPU skinning is now a deformer on a reserved slot rather than a parallel set of pipelines. The standard `mesh.wgsl`, `mesh_oit.wgsl`, `shadow.wgsl`, and `outline_mask.wgsl` pipelines pick up linear blend skinning by reading per-vertex weights and per-instance joint palettes through the deformer's slot helpers. `SkinningPlugin::attach_weights` packs weights at the deformer's 24-byte stride and attaches them to the per-mesh slot; `SkinningPlugin::attach_palette` writes the joint matrices to the per-instance slot through `attach_deform_slot_instance`.
-
-The dedicated skinned pipelines (`skinned_solid_pipeline`, `skinned_solid_two_sided_pipeline`, `skinned_transparent_pipeline`, `skinned_wireframe_pipeline`, `skinned_shadow_pipeline`, `skinned_oit_pipeline`, `hdr_skinned_*`, `outline_mask_skinned_*`) and their backing shaders (`mesh_skinned.wgsl`, `shadow_skinned.wgsl`, `outline_mask_skinned.wgsl`) are gone. The deformer registry's host slot count stays at four; an additional internal slot range is reserved for in-crate deformers and does not count against the host budget.
-
-#### Lit sprites and lit GPU particles
-
-`SpriteItem` and `ParticleRender::Sprite` gain a `lit` flag and a `SpriteLitParams` block (`roughness`, `normal_mode`, `receive_shadows`, `ambient_scale`). Lit batches run through dedicated pipelines that pick up the scene's directional, point, spot, and hemisphere ambient lighting, so smoke, dust, fog, and other particles read with a clear lit and shaded side under any directional light, instead of looking flat. Default `lit = false` preserves the prior emissive billboard behaviour.
-
-Three normal modes: `Spherical` derives a per-fragment normal from the quad-centre offset for soft round particles (the default), `Flat` uses the quad's facing direction for grass cards and other already-oriented art, and `NormalMap` samples a tangent-space normal map supplied via `normal_texture_id`.
-
-When `receive_shadows` is on, the lit fragment samples the cascade shadow atlas with 16-tap PCF and collapses to hemisphere ambient where occluded, preserving full direct contribution where lit. Available on every sprite blend mode (alpha, additive, premultiplied) and on the GPU particle sprite path.
-
-#### GPU-simulated particle systems
-
-Particle effects can run end to end on the GPU. The host allocates a `GpuParticleSystemId` once with a capacity and a render route, then submits one `GpuParticleSystemItem` per frame carrying emitter settings (rate, lifetime, spawn shape, initial-velocity distribution) and a list of force fields. The renderer dispatches emit and sim compute passes and draws live particles through a sprite pipeline that sources positions and per-particle data directly from the GPU buffer.
-
-Spawn shapes: `Point`, `Box`, `Sphere`. Velocity distributions: `Fixed`, `UniformBox`, `UniformCone`. Forces: `Gravity`, `Drag`, `PointAttractor`. Three blend modes (alpha, additive, premultiplied) are available; additive disables depth write so overlapping particles accumulate brightness. Per-particle CPU work on the host drops to zero.
-
-#### Sprite orientation modes
-
-`SpriteItem` gains a `SpriteOrientation` field. `CameraFacing` is the default and unchanged. `VelocityStretched` aligns each quad's long axis with the per-instance velocity vector projected to screen, with length scaling by speed (sparks, muzzle flashes, rain streaks). `AxisLocked` locks each quad's long axis to a fixed world-space direction (vertical flames, grass cards, plume columns). Backing fields: `velocities: Vec<[f32; 3]>` and `axis: [f32; 3]`.
-
-#### Refractive sprites
-
-`SpriteItem` gains `refraction_strength: Option<f32>`. When set, the sprite draws as a screen-space distortion: the renderer copies the resolved scene colour into a per-viewport resolve texture and samples it at an offset driven by the sprite's RGBA (R/G as signed displacement, A as mask) in a dedicated post-pass. Use for heat haze, shockwaves, force-field hits, water splashes.
-
-HDR path only; the direct LDR `paint_to` cannot resolve scene colour for sampling, matching the soft-particle constraint. `None` (the default) keeps the sprite on the normal pipeline.
-
-#### Ribbon trails
-
-`RibbonItem` gains a per-vertex RGBA `colour_attribute` and a `blend: SpriteBlend` field, so trails can fade from invisible tail to bright head without a custom colourmap and switch between alpha, additive, and premultiplied modes. Additive and premultiplied disable depth write so overlapping segments accumulate brightness.
-
-#### Radial and conical overlay gradients
-
-`OverlayFill` gains `RadialGradient { centre_colour, edge_colour }` and `ConicalGradient { start_colour, end_colour, offset_angle }`. Radial interpolates by distance from the shape centre to the bounding-box edge; conical wraps once around the origin like a colour wheel.
-
-#### Overlay clipping groups
-
-`OverlayShapeItem` gains `clip_mask_id: Option<u32>` and `clip_id: Option<u32>`. A shape with `clip_mask_id` is not drawn; its bounding box defines a clip rectangle for any shape whose `clip_id` matches. Fragments outside the rect are discarded. Solid (non-textured, non-backdrop-blur) shapes only. The clip is the mask's axis-aligned bounding box.
-
-#### Overlay shape rotation
-
-`OverlayShapeItem` gains `rotation: f32` (radians, CCW). Applies to fill, border, shadow, and gradient direction across every SDF shape. The bounding box (`position` + `size`) stays axis-aligned, so the rotated shape draws inside the unrotated box.
-
-#### Multi-stop overlay gradients
-
-`OverlayFill` gains `LinearGradientMulti`, `RadialGradientMulti`, and `ConicalGradientMulti` variants taking a `Vec<GradientStop>` with arbitrary positions in `[0, 1]`. Up to four stops per gradient (`OVERLAY_MAX_GRADIENT_STOPS`); additional stops are truncated. The existing two-stop variants remain so old call sites compile unchanged.
-
-#### 9-slice overlay texture fills
-
-`OverlayShapeItem` gains `nine_slice: Option<NineSlice>` for resizable panel art. Insets are given in texture pixels and converted to UV / shape-fraction ratios at prepare time. `TileMode::{Stretch, Tile}` is picked independently for the centre and edge regions, so a button graphic keeps crisp corners while the middle and edges stretch or repeat with the panel size.
-
-#### Overlay texture transform
-
-`OverlayShapeItem` gains `texture_transform: TextureTransform { offset, scale, rotation, tile_mode, flip_x, flip_y }`. The fragment shader scales and rotates the bounding-box UV around the centre, translates, flips, and resolves out-of-range UVs through the chosen tile mode. `TileMode` gains a `Mirror` variant alongside the existing `Stretch` and `Tile`. When `nine_slice` is also set on the same shape, 9-slice takes precedence and the transform is ignored.
-
-#### Inner overlay shadows
-
-`OverlayShapeItem` gains `shadow_inset: bool`. When `true`, the existing `shadow_*` fields render as an inset (inner) shadow that fades from the edge inward, used for pressed buttons, dropdowns, and recessed surfaces. The flag is packed alongside `border_mode` into a single vertex slot. A shape currently carries either an outer or an inner shadow, not both at once; stackable multi-shadow layers are a planned follow-up.
-
-#### Multi-channel overlay animations
-
-`OverlayShapeItem` gains an `animations: OverlayAnimations` field with six independent tracks: `opacity`, `position`, `size`, `fill`, `border`, and `rotation`. Each `AnimTrack<T>` carries `start_time`, `duration`, `from`, `to`, an `OverlayEasing` curve (`Linear`, `EaseIn`, `EaseOut`, `EaseInOut`, `Pulse`), and a `RepeatMode` (`Once`, `Loop`, `PingPong`). Resolution runs in `prepare()` against `OverlayFrame::time`. The opacity track takes precedence over the legacy `OverlayShapeItem::animation` field.
-
-#### Closure-driven animation paths
-
-`PathTrack<T>` complements `AnimTrack<T>` for non-linear motion: it stores an `Arc<dyn Fn(f32) -> T + Send + Sync>` and calls the closure once per frame at the eased `t`. The shared `Arc` makes the track cheap to clone. `PathTrack::<[f32; 2]>::bezier` and `polyline` constructors cover the common 2D cases; anything else is `PathTrack::new(start, dur, closure).with_easing(...).with_repeat(...)`. `OverlayAnimations` gains parallel `*_path` channels (`position_path`, `size_path`, `fill_path`, `border_path`, `rotation_path`, `opacity_path`); each overrides the matching linear track when set.
-
-#### Stroked polyline overlay primitive
-
-`OverlayPolylineItem` joins `OverlayShapeItem` and `OverlayRectItem` as a sibling overlay item: a list of waypoints, a thickness, a colour, a `LineJoin` mode (`Mitre` with auto-fallback to `Bevel` on sharp corners, or always-`Bevel`), and a `closed` flag. CPU-tessellated into a triangle list in `prepare()` and rendered through the existing overlay text/rect pipeline — no new shader, pipeline, or render-site wiring. `OverlayPolylineItem::from_path` samples a closure at N+1 points for the common case of tracing a generated path.
+Overlay shapes gain six independent animation tracks (opacity, position, size, fill, border, rotation) with five easing curves (linear, ease-in, ease-out, ease-in-out, pulse) and three repeat modes (once, loop, ping-pong). For non-linear motion, an alternate closure-driven path track stores a function called once per frame at the eased time; bezier and polyline constructors cover common 2D cases.
 
 ### Improvements
 
-- `RibbonItem` gains optional texturing. A `texture_id` and per-vertex `u_attribute` let lightning, slash arcs, laser beams, and similar effects multiply a streak texture into the resolved ribbon colour. Per-vertex `u` is optional; when empty it derives from cumulative arc length so the texture stretches evenly across each strip.
-- `SpriteItem` gains `soft_particle_distances: Vec<f32>` for per-instance soft-fade distance. Mixed-size batches (large smoke puffs next to small embers) can carry a different fade per instance instead of sharing one batch value. An empty vector or a zero entry falls back to the existing batch-level `soft_particle_distance`, so existing call sites behave the same.
+- The built-in plugins (animation, constraints, physics, skeletal animation, skinning) moved to one top-level module: `viewport_lib::plugins`. Each plugin reaches its API through its own subpath, mirroring how an external plugin crate is consumed. GPU skinning is now opt-in: hosts call `SkinningPlugin::install` once at startup before uploading skin data; hosts without skinned content pay nothing for it. Skinning uploads happen through the plugin handle (`attach_weights`, `attach_palette`) rather than methods on the renderer. The old paths are gone in this release; see `docs/migration-guides/v0.18.0-plugins-module-and-opt-in-skinning.md` for a complete mapping. The same pattern applies elsewhere: plugin-specific outputs (physics contacts, skinning updates, camera commands) now flow through the runtime's generic typed event bus rather than dedicated fields, so external plugins get the same surface as built-ins.
+- Ribbons can sample a texture, multiplied into the resolved ribbon colour. Useful for lightning, slash arcs, laser beams, and similar effects. Per-vertex `u` coordinates are optional; when empty they derive from cumulative arc length so the texture stretches evenly across each strip.
+- Sprites can carry per-instance soft-particle fade distances. Mixed-size batches (large smoke puffs next to small embers) can vary the fade per instance instead of sharing one value.
 
 ### Bug fixes
 
-- Overlay clip rectangle scaled by `pixels_per_point`. The Phase 13 clip-group implementation built rects in logical pixels but the fragment shader's `clip_position.xy` is in framebuffer pixels, so on any display with `pixels_per_point != 1.0` clipped shapes were discarded entirely instead of showing the clipped portion.
-- `OverlayShapeItem::distance` and `contains` now honour `rotation`. The CPU hit-test had been evaluating the SDF in the unrotated frame, so clicks on rotated shapes resolved against the un-spun silhouette.
-- Single-sided skinned meshes (`BackfacePolicy::Cull` with a skin instance) are no longer silently dropped. The batched-instanced path intentionally skips skinned items (the instanced shader does not consume the skin palette), but the per-item path was not admitting them either, so no draw call was ever issued. Two-sided skinned meshes happened to slip through via `is_two_sided()`. Skinned items now reach the per-item render path, the OIT-trigger predicate, and the per-item object-uniform prepare loop, so single-sided skinned characters render correctly with normal backface culling.
-- Shadow acne that varied with light azimuth is fixed. The shader was deriving each cascade's world-space texel size from a single matrix element that also depended on the light's rotation, so the normal bias inflated or flipped sign as the light direction swept across certain axes (visible in `eframe-lighting-shadows` as a band of acne around `dir.y = 0` at `dir.z = 1`, and as broad acne whenever `dir.z < 0`). The bias now uses the true ortho scale and is stable for any light direction.
-- Self-shadow speckle on tilted or near-grazing receivers is fixed. PCF and PCSS filter taps now adjust the depth comparison reference along the receiver's depth gradient in light space, so the filter disk no longer reads "lit" on the up-slope side of objects resting on a surface. Visible improvement on shadows just inside a caster's contact line and on far cascades.
-- Removed a shadow-terminator fade that was masking legitimate shadows. The lit mesh shaders previously faded sampled shadows back to fully lit as `N dot L` approached zero, to hide grazing-angle texel artifacts. With a light below the horizon (`dir.z < 0`), the whole visible lit band of any object lives in that fade region and in another object's shadow at the same time, producing bright stripes that read as acne. The fade is now gone; the texel-size and receiver-plane fixes above handle the original grazing-angle artifacts.
-- New viewports no longer render their first frame fully black-shadowed. The shadow-atlas uniform was written only to viewport slots that already existed when the per-frame scene prepare ran, but a slot created later in the same frame would draw once with a zeroed uniform (NaN shadow UVs, comparison fails everywhere). New slots are now seeded from the latest uploaded uniform. Invisible under continuous repaint, but broke single-shot and headless rendering.
-- `shadow_atlas_resolution` settings of 1K and 2K no longer silently misconfigure the shader. The uniform's atlas size now always matches the backing texture, so PCF radius, blocker-search coordinates, and normal-bias texel size stay correct at every supported resolution; the requested resolution still takes effect through the per-cascade UV rects.
-- Contact shadows now appear at close contact points instead of leaving a bright spot where an object meets a surface. The screen-space self-shadow guard scales with the user's max-distance and step count rather than using a fixed 0.10 m offset that rejected exactly the close occluders contact shadows are meant to catch. Spot lights also get correct contact shadows: the upload now passes the surface-to-light direction the ray march expects, instead of the spot's outward shining direction.
+- Single-sided skinned characters render correctly with normal backface culling. They were previously silently dropped from the draw queue.
+- Shadow acne that shifted with the light direction is gone. Cascade bias is now stable for any light direction; previously certain orientations produced a band of acne or broad acne with the light below the horizon.
+- Removed a shadow-terminator fade that was hiding legitimate shadows. With lights below the horizon it produced bright stripes that read as acne; the new bias work above handles the original grazing-angle artifact it was masking.
+- New viewports no longer render their first frame fully black-shadowed. The shadow uniform is now seeded for slots created mid-frame; the bug was invisible under continuous repaint but broke single-shot and headless rendering.
+- 1K and 2K shadow atlas resolutions no longer silently misconfigure the shadow filter; resolution settings now take full effect.
+- Contact shadows now appear at close contact points instead of leaving a bright spot where objects meet a surface. Spot lights also get correct contact shadows.
+- Overlay clip rectangles now scale correctly on high-DPI displays. Clipped shapes previously vanished entirely on any display with a pixel ratio other than 1.
+- Overlay shape hit testing now honours rotation. Clicks on rotated shapes resolved against the un-rotated silhouette before.
 
 
 ## [0.17.0]
