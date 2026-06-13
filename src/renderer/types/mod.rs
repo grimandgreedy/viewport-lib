@@ -230,6 +230,7 @@ macro_rules! emit_draw_calls {
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
                         if let Some(ref pipeline) = resources.solid_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
+                            render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             for batch in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
@@ -255,6 +256,7 @@ macro_rules! emit_draw_calls {
                     if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
                         if let Some(ref pipeline) = resources.transparent_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
+                            render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             for batch in &transparent_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
