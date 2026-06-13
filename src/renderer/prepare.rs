@@ -473,12 +473,21 @@ impl ViewportRenderer {
                     (glam::Vec3::Z,     glam::Vec3::NEG_Y),
                     (glam::Vec3::NEG_Z, glam::Vec3::NEG_Y),
                 ];
-                let proj = glam::Mat4::perspective_rh(
-                    std::f32::consts::FRAC_PI_2,
-                    1.0,
-                    POINT_SHADOW_NEAR,
-                    range.max(POINT_SHADOW_NEAR + 0.01),
-                );
+                // Y-flipped projection: cubemap face (u, v) sampling
+                // (WebGPU/OpenGL convention) expects content with V growing
+                // in the opposite direction of `look_at_rh`'s positive view-Y.
+                // Without this flip, every face stores its content mirrored
+                // along V, so the lit pass looks up shadows in the wrong
+                // image rows and shadows land far from the objects that cast
+                // them. The pipeline compensates by treating CW as front-face
+                // (see `build_shadow_point_pipeline`).
+                let proj = glam::Mat4::from_scale(glam::Vec3::new(1.0, -1.0, 1.0))
+                    * glam::Mat4::perspective_rh(
+                        std::f32::consts::FRAC_PI_2,
+                        1.0,
+                        POINT_SHADOW_NEAR,
+                        range.max(POINT_SHADOW_NEAR + 0.01),
+                    );
                 for (f, (forward, up)) in faces.iter().enumerate() {
                     let view = glam::Mat4::look_at_rh(light_pos, light_pos + *forward, *up);
                     point_shadow_faces.push(PointShadowFace {

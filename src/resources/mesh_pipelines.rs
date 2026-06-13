@@ -368,7 +368,12 @@ pub(crate) fn build_shadow_point_pipeline(
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
+            // Y-flipped projection reverses triangle winding in screen space:
+            // a triangle that's CCW in world space rasterises as CW after the
+            // flip. Treating CW as the front face keeps back-face culling
+            // (cull_mode: Back) working in the original sense: the surfaces
+            // facing the light are kept, the surfaces facing away are culled.
+            front_face: wgpu::FrontFace::Cw,
             cull_mode: Some(wgpu::Face::Back),
             unclipped_depth: false,
             polygon_mode: wgpu::PolygonMode::Fill,
