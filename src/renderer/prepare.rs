@@ -3004,67 +3004,108 @@ impl ViewportRenderer {
                                 shadow_draws += 1;
                             }
 
-                            // Skinned items are excluded from instanced
-                            // batches; draw them per-object through the
-                            // skinned shadow pipeline so they still cast
-                            // shadows while the instanced path runs. The
-                            // skinned shadow pipeline uses a different group-0
-                            // layout (shadow_camera_bgl with dynamic offset),
-                            // so rebind group 0 + 1 around the per-object loop
-                            // and restore the instanced bindings after.
-                            // Skinned meshes do not batch (palettes are
-                            // per-instance), so draw them individually with
-                            // the standard shadow pipeline; the deform
-                            // sidecar binds per-instance data at group 2.
-                            let mut drew_per_item = false;
-                            for item in scene_items.iter() {
-                                if item.settings.hidden
-                                    || !item.settings.cast_shadows
-                                    || item.settings.opacity < 1.0
-                                {
-                                    continue;
-                                }
-                                if !resources
+                        }
+                    }
+
+                    // Per-item shadow casters for items excluded from
+                    // instanced batches.
+                    //
+                    // `sorted_items` in the instancing builder filters out
+                    // items with: active scalar attributes, two-sided
+                    // materials, matcap shading, UV/param visualisation,
+                    // per-instance deformer data (skinned), and
+                    // position/normal overrides. Those items render through
+                    // the per-item lit path; without this loop they would
+                    // also be silently dropped from the shadow atlas. Draw
+                    // them here with the non-instanced `shadow_pipeline`
+                    // (group 0 = `shadow_bind_group` with cascade dynamic
+                    // offset, group 1 = mesh.object_bind_group, group 2 =
+                    // per-mesh deform sidecar).
+                    let filter_results = &self.compute_filter_results;
+                    for cascade in 0..effective_cascade_count {
+                        let tile_col = (cascade % 2) as f32;
+                        let tile_row = (cascade / 2) as f32;
+                        shadow_pass.set_viewport(
+                            tile_col * tile_px,
+                            tile_row * tile_px,
+                            tile_px,
+                            tile_px,
+                            0.0,
+                            1.0,
+                        );
+                        shadow_pass.set_scissor_rect(
+                            (tile_col * tile_px) as u32,
+                            (tile_row * tile_px) as u32,
+                            tile_size,
+                            tile_size,
+                        );
+                        shadow_pass.set_pipeline(&resources.shadow_pipeline);
+                        shadow_pass.set_bind_group(
+                            0,
+                            &resources.shadow_bind_group,
+                            &[cascade as u32 * 256],
+                        );
+
+                        let cascade_frustum =
+                            crate::camera::frustum::Frustum::from_view_proj(
+                                &cascade_view_projs[cascade],
+                            );
+
+                        for item in scene_items.iter() {
+                            if item.settings.hidden
+                                || !item.settings.cast_shadows
+                                || item.settings.opacity < 1.0
+                            {
+                                continue;
+                            }
+                            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                                continue;
+                            };
+
+                            // Mirror the inclusion filter from
+                            // `sorted_items` (instancing builder). When
+                            // every condition holds, the item was drawn by
+                            // the instanced shadow path and must not be
+                            // drawn again here.
+                            let in_instanced_batch = item.active_attribute.is_none()
+                                && !item.material.is_two_sided()
+                                && item.material.matcap_id().is_none()
+                                && item.material.param_vis.is_none()
+                                && !filter_results
+                                    .iter()
+                                    .any(|r| r.mesh_id == item.mesh_id)
+                                && !resources.deform.has_per_instance_deform_data(
+                                    item.mesh_id,
+                                    item.deform_instance,
+                                )
+                                && mesh.position_override_buffer.is_none()
+                                && mesh.normal_override_buffer.is_none();
+                            if in_instanced_batch {
+                                continue;
+                            }
+
+                            let world_aabb = mesh.aabb.transformed(
+                                &glam::Mat4::from_cols_array_2d(&item.model),
+                            );
+                            if cascade_frustum.cull_aabb(&world_aabb) {
+                                continue;
+                            }
+
+                            shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
+                            shadow_pass.set_bind_group(
+                                2,
+                                resources
                                     .deform
-                                    .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
-                                {
-                                    continue;
-                                }
-                                let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
-                                    continue;
-                                };
-                                if !drew_per_item {
-                                    shadow_pass.set_pipeline(&resources.shadow_pipeline);
-                                    shadow_pass.set_bind_group(
-                                        0,
-                                        &resources.shadow_bind_group,
-                                        &[cascade as u32 * 256],
-                                    );
-                                    drew_per_item = true;
-                                }
-                                shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                                shadow_pass.set_bind_group(
-                                    2,
-                                    resources
-                                        .deform
-                                        .instance_bind_group_for(item.mesh_id, item.deform_instance),
-                                    &[],
-                                );
-                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                shadow_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
-                                );
-                                shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                                shadow_draws += 1;
-                            }
-                            // Restore the instanced bind groups for the next
-                            // cascade so the instanced path keeps working.
-                            if drew_per_item {
-                                shadow_pass.set_pipeline(pipeline);
-                                shadow_pass.set_bind_group(0, cascade_bg, &[]);
-                                shadow_pass.set_bind_group(1, instance_bg, &[]);
-                            }
+                                    .instance_bind_group_for(item.mesh_id, item.deform_instance),
+                                &[],
+                            );
+                            shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            shadow_pass.set_index_buffer(
+                                mesh.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            shadow_draws += 1;
                         }
                     }
                 } else {
