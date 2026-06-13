@@ -171,6 +171,19 @@ fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {
 }
 "#;
 
+/// Re-pack the legacy `PackedSkinVertex` array as a tight 24-byte stream
+/// matching the deformer slot's expected stride: four `f32` weights
+/// followed by the two packed joint-index u32s, with no trailing padding.
+fn pack_skin_weights_tight(packed: &[PackedSkinVertex]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(packed.len() * SKIN_WEIGHT_STRIDE_BYTES as usize);
+    for v in packed {
+        out.extend_from_slice(bytemuck::bytes_of(&v.weights));
+        out.extend_from_slice(bytemuck::bytes_of(&v.joints_01));
+        out.extend_from_slice(bytemuck::bytes_of(&v.joints_23));
+    }
+    out
+}
+
 /// Register the skinning deformer on its reserved internal slot. Called
 /// once at renderer construction. The slot is recorded on `resources` so
 /// `set_skin_weights` / `set_skin_palette` can route their uploads through
@@ -270,8 +283,9 @@ impl ViewportGpuResources {
     }
 
     /// Shared apply step for both `set_skin_weights` and
-    /// `begin_upload_skin_weights`: build the storage buffer and register
-    /// the mesh as skinnable.
+    /// `begin_upload_skin_weights`: build the storage buffer for the legacy
+    /// skinned pipelines and attach a tight-packed copy of the weights to
+    /// the internal skinning deformer slot for the registry-driven path.
     fn install_skin_weights(
         &mut self,
         device: &wgpu::Device,
@@ -290,6 +304,21 @@ impl ViewportGpuResources {
                 instances: HashMap::new(),
             },
         );
+
+        // Push a tight-packed (24-byte stride) copy into the deformer
+        // slot. The legacy `PackedSkinVertex` struct is 32 bytes because
+        // WGSL std430 rounds the struct up to its vec4 alignment; the
+        // deformer slot expects exactly six u32 words per vertex.
+        if let Some(slot_id) = self.skinning_slot {
+            let tight = pack_skin_weights_tight(packed);
+            self.deform.attach_slot(
+                device,
+                mesh_id,
+                slot_id.slot(),
+                SKIN_WEIGHT_STRIDE_BYTES / 4,
+                &tight,
+            );
+        }
     }
 
     /// Upload the joint palette for one instance of a skinned mesh.
@@ -361,6 +390,21 @@ impl ViewportGpuResources {
         let inst = mesh.instances.get(&instance_id).unwrap();
         let bytes: Vec<[[f32; 4]; 4]> = palette.iter().map(|m| m.to_cols_array_2d()).collect();
         queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&bytes));
+
+        // Mirror the palette into the deformer per-instance slot so the
+        // registry-driven skinning path sees the same data. Bytes are the
+        // 64-byte-per-mat4 column-major form.
+        if let Some(slot_id) = self.skinning_slot {
+            self.deform.attach_slot_instance(
+                device,
+                queue,
+                mesh_id,
+                instance_id,
+                slot_id.slot(),
+                SKIN_PALETTE_STRIDE_BYTES / 4,
+                bytemuck::cast_slice(&bytes),
+            );
+        }
         true
     }
 
