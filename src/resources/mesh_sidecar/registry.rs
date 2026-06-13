@@ -26,11 +26,20 @@ pub enum DeformStage {
 /// [`crate::resources::mesh_sidecar::deform::DEFORM_SLOT_COUNT`] so the
 /// registry can validate against it without pulling the sidecar module into
 /// the public API.
+#[allow(dead_code)]
 pub(crate) const REGISTRY_SLOT_COUNT: usize =
     crate::resources::mesh_sidecar::deform::DEFORM_SLOT_COUNT;
 
-/// Maximum number of deformer slots the registry exposes.
-pub const DEFORM_SLOT_COUNT_PUB: usize = REGISTRY_SLOT_COUNT;
+/// First slot index reserved for internal in-crate deformers. Slots in
+/// `[0, DEFORM_SLOT_COUNT_PUB)` are allocated to host registrations through
+/// `register_deformer`; slots in `[DEFORM_SLOT_COUNT_PUB, REGISTRY_SLOT_COUNT)`
+/// are reserved for shipped-in-crate deformers (skinning, displacement) that
+/// register at renderer construction.
+pub(crate) const REGISTRY_INTERNAL_SLOT_START: usize =
+    crate::resources::mesh_sidecar::deform::DEFORM_INTERNAL_SLOT_START;
+
+/// Maximum number of deformer slots the registry exposes to hosts.
+pub const DEFORM_SLOT_COUNT_PUB: usize = REGISTRY_INTERNAL_SLOT_START;
 
 /// Number of `vec4<f32>` parameter words per slot in the shared deformation
 /// header uniform.
@@ -252,20 +261,42 @@ pub(crate) fn compose_shader(base: &str, stored: &[StoredDeformer]) -> String {
     rewrite_marker(&after_obj, "world", &world_calls).unwrap_or(after_obj)
 }
 
-/// Assign a slot to a new descriptor among already-stored registrations.
-/// Returns the lowest unused slot or `DeformSlotsExhausted` if full.
+/// Assign a slot in the host range `[0, DEFORM_SLOT_COUNT_PUB)` to a new
+/// descriptor. Returns the lowest unused host slot or `DeformSlotsExhausted`
+/// when the host range is full. Internal in-crate deformers use
+/// [`allocate_internal_slot`] instead.
 pub(crate) fn allocate_slot(stored: &[StoredDeformer]) -> ViewportResult<usize> {
     let mut used = 0u32;
     for d in stored {
         used |= 1u32 << d.slot;
     }
-    for slot in 0..REGISTRY_SLOT_COUNT {
+    for slot in 0..REGISTRY_INTERNAL_SLOT_START {
         if used & (1u32 << slot) == 0 {
             return Ok(slot);
         }
     }
     Err(ViewportError::DeformSlotsExhausted {
-        max: REGISTRY_SLOT_COUNT,
+        max: REGISTRY_INTERNAL_SLOT_START,
+    })
+}
+
+/// Assign a slot in the internal range
+/// `[DEFORM_SLOT_COUNT_PUB, REGISTRY_SLOT_COUNT)`. Used at renderer
+/// construction to register the in-crate deformers (skinning, displacement)
+/// without consuming a host slot.
+#[allow(dead_code)]
+pub(crate) fn allocate_internal_slot(stored: &[StoredDeformer]) -> ViewportResult<usize> {
+    let mut used = 0u32;
+    for d in stored {
+        used |= 1u32 << d.slot;
+    }
+    for slot in REGISTRY_INTERNAL_SLOT_START..REGISTRY_SLOT_COUNT {
+        if used & (1u32 << slot) == 0 {
+            return Ok(slot);
+        }
+    }
+    Err(ViewportError::DeformSlotsExhausted {
+        max: REGISTRY_SLOT_COUNT - REGISTRY_INTERNAL_SLOT_START,
     })
 }
 
@@ -378,9 +409,9 @@ mod tests {
     }
 
     #[test]
-    fn allocate_slot_returns_exhausted_when_full() {
+    fn allocate_slot_returns_exhausted_when_host_range_full() {
         let mut stored = Vec::<StoredDeformer>::new();
-        for slot in 0..REGISTRY_SLOT_COUNT {
+        for slot in 0..REGISTRY_INTERNAL_SLOT_START {
             let mut d = desc(
                 Box::leak(format!("d{slot}").into_boxed_str()),
                 DeformStage::ObjectSpace,
@@ -393,8 +424,15 @@ mod tests {
         let err = allocate_slot(&stored).unwrap_err();
         assert!(matches!(
             err,
-            ViewportError::DeformSlotsExhausted { max } if max == REGISTRY_SLOT_COUNT
+            ViewportError::DeformSlotsExhausted { max } if max == REGISTRY_INTERNAL_SLOT_START
         ));
+    }
+
+    #[test]
+    fn allocate_internal_slot_uses_reserved_range() {
+        let stored = Vec::<StoredDeformer>::new();
+        let slot = allocate_internal_slot(&stored).unwrap();
+        assert!(slot >= REGISTRY_INTERNAL_SLOT_START && slot < REGISTRY_SLOT_COUNT);
     }
 
     #[test]

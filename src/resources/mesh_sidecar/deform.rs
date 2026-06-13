@@ -15,17 +15,23 @@ use wgpu::util::DeviceExt;
 use crate::error::ViewportResult;
 use crate::resources::ViewportGpuResources;
 use crate::resources::mesh_sidecar::registry::{
-    DeformerDesc, DeformerId, MESH_FAMILY_SHADERS, StoredDeformer, allocate_slot, compose_shader,
-    lookup_source, validate_name, validate_with_wgpu,
+    DeformerDesc, DeformerId, MESH_FAMILY_SHADERS, StoredDeformer, allocate_internal_slot,
+    allocate_slot, compose_shader, lookup_source, validate_name, validate_with_wgpu,
 };
 use crate::resources::mesh_store::MeshId;
 
-/// Maximum number of registered deformer slots. With every slot's data
-/// packed into one storage buffer, deform contributes two vertex-stage
-/// bindings (the shared header uniform plus the packed data buffer)
-/// regardless of slot count, leaving the slot count free to scale to
-/// whatever the WGSL flag-bit budget allows.
-pub const DEFORM_SLOT_COUNT: usize = 4;
+/// Maximum number of registered deformer slots (host range + reserved
+/// internal range). Slot indices `[0, DEFORM_INTERNAL_SLOT_START)` are
+/// available to hosts through `register_deformer`; indices
+/// `[DEFORM_INTERNAL_SLOT_START, DEFORM_SLOT_COUNT)` are reserved for the
+/// in-crate deformers (skinning, displacement) that register at renderer
+/// construction. Slot data is packed into two storage buffers (per-mesh and
+/// per-instance) so deform contributes three vertex-stage bindings total
+/// regardless of slot count.
+pub const DEFORM_SLOT_COUNT: usize = 8;
+
+/// First slot index reserved for in-crate deformers.
+pub const DEFORM_INTERNAL_SLOT_START: usize = 4;
 
 /// `vec4<f32>` count per slot inside the shared header uniform. Keep in sync
 /// with `DeformHeader` and the `slot_params` field in `deform.wgsl`.
@@ -56,6 +62,22 @@ impl DeformHeader {
     }
 }
 
+/// Per-(mesh, instance) deformation storage. Holds the per-instance packed
+/// slot buffer and its bind group (which also binds the owning mesh's
+/// per-mesh buffer at the same time, so the draw needs only one bind-group
+/// swap to switch instances).
+pub(crate) struct InstanceDeform {
+    pub slot_data: [Option<Vec<u8>>; DEFORM_SLOT_COUNT],
+    pub slot_stride: [u32; DEFORM_SLOT_COUNT],
+    pub buffer: wgpu::Buffer,
+    /// Bytes currently allocated in `buffer`. Used to decide when to realloc
+    /// rather than `write_buffer` in place.
+    pub buffer_capacity: u64,
+    pub bind_group: wgpu::BindGroup,
+    /// Bit `i` set when slot `i` has per-instance data attached.
+    pub flag_bits: u32,
+}
+
 /// Per-mesh deformation storage.
 pub(crate) struct MeshDeform {
     /// Source bytes per slot, retained so attach/detach can re-pack
@@ -67,9 +89,18 @@ pub(crate) struct MeshDeform {
     /// Packed buffer: `SLOT_LAYOUT_WORDS * 4` bytes of `(offset, stride)`
     /// header followed by tightly packed slot bytes in slot order.
     pub buffer: wgpu::Buffer,
+    /// Bind group for draws of this mesh that have no per-instance data:
+    /// binds the per-mesh buffer at @binding(1) and the renderer's empty
+    /// instance buffer at @binding(2).
     pub bind_group: wgpu::BindGroup,
-    /// Bit `i` set when slot `i` has data attached.
+    /// Bit `i` set when slot `i` has per-mesh data attached.
     pub flag_bits: u32,
+    /// Bit `i` set when *any* instance of this mesh has slot `i`
+    /// per-instance data attached. Combined with `flag_bits` at
+    /// `ObjectUniform.deform_flags` write time so the shader sees both
+    /// per-mesh and per-instance slot activity.
+    pub instance_flag_bits_union: u32,
+    pub instances: HashMap<u32, InstanceDeform>,
 }
 
 /// Renderer-side deformation state.
@@ -81,6 +112,10 @@ pub(crate) struct DeformationState {
     /// stays valid.
     #[allow(dead_code)]
     pub dummy_data_buffer: wgpu::Buffer,
+    /// Empty per-instance buffer reused by every per-mesh bind group that
+    /// has no instance data yet. Kept alive on the state so the bind group
+    /// stays valid.
+    pub dummy_instance_buffer: wgpu::Buffer,
     /// Bind group used when a mesh has no attached deformer data. Bound by
     /// every mesh-family draw at slot 2 to satisfy the pipeline layout
     /// without forcing per-mesh storage allocation.
@@ -116,6 +151,16 @@ impl DeformationState {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -132,6 +177,11 @@ impl DeformationState {
             contents: bytemuck::cast_slice(&dummy_words),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
+        let dummy_instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("deform_dummy_instance_data"),
+            contents: bytemuck::cast_slice(&dummy_words),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
 
         let dummy_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("deform_dummy_bg"),
@@ -145,6 +195,10 @@ impl DeformationState {
                     binding: 1,
                     resource: dummy_data_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: dummy_instance_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -152,6 +206,7 @@ impl DeformationState {
             bind_group_layout,
             header_buffer,
             dummy_data_buffer,
+            dummy_instance_buffer,
             dummy_bind_group,
             meshes: HashMap::new(),
             header_cpu,
@@ -172,8 +227,34 @@ impl DeformationState {
     }
 
     /// `deform_flags` value to write into the `ObjectUniform` for `mesh_id`.
+    /// Folds per-mesh and per-instance slot activity together: any slot
+    /// with data on either side is reported as live so the registered
+    /// body's flag branch executes.
     pub fn flag_bits(&self, mesh_id: MeshId) -> u32 {
-        self.meshes.get(&mesh_id).map(|m| m.flag_bits).unwrap_or(0)
+        self.meshes
+            .get(&mesh_id)
+            .map(|m| m.flag_bits | m.instance_flag_bits_union)
+            .unwrap_or(0)
+    }
+
+    /// Bind group to use for a draw of `(mesh_id, instance_id)`. Falls back
+    /// to the per-mesh-only bind group when no per-instance data is
+    /// attached, and to the renderer dummy when the mesh has no data at all.
+    #[allow(dead_code)]
+    pub fn instance_bind_group_for(
+        &self,
+        mesh_id: MeshId,
+        instance_id: Option<u32>,
+    ) -> &wgpu::BindGroup {
+        let Some(mesh) = self.meshes.get(&mesh_id) else {
+            return &self.dummy_bind_group;
+        };
+        if let Some(id) = instance_id {
+            if let Some(inst) = mesh.instances.get(&id) {
+                return &inst.bind_group;
+            }
+        }
+        &mesh.bind_group
     }
 
     /// Pack the per-slot data of one mesh into a single u32 stream prefixed
@@ -198,9 +279,15 @@ impl DeformationState {
         words
     }
 
-    fn make_bind_group(&self, device: &wgpu::Device, buffer: &wgpu::Buffer) -> wgpu::BindGroup {
+    fn make_bind_group(
+        &self,
+        device: &wgpu::Device,
+        label: &str,
+        mesh_buffer: &wgpu::Buffer,
+        instance_buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("deform_mesh_bg"),
+            label: Some(label),
             layout: &self.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -209,19 +296,25 @@ impl DeformationState {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: buffer.as_entire_binding(),
+                    resource: mesh_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: instance_buffer.as_entire_binding(),
                 },
             ],
         })
     }
 
-    /// Re-pack and re-upload the mesh's data, rebuilding the bind group.
-    /// Drops the mesh entry when no slot has data attached.
+    /// Re-pack and re-upload the mesh's data, rebuilding the per-mesh bind
+    /// group and every per-instance bind group (which also binds the
+    /// per-mesh buffer). Drops the mesh entry when no slot has any data
+    /// attached on either side.
     fn refresh(&mut self, device: &wgpu::Device, mesh_id: MeshId) {
         let Some(m) = self.meshes.get(&mesh_id) else {
             return;
         };
-        if m.flag_bits == 0 {
+        if m.flag_bits == 0 && m.instance_flag_bits_union == 0 {
             self.meshes.remove(&mesh_id);
             return;
         }
@@ -231,13 +324,71 @@ impl DeformationState {
             contents: bytemuck::cast_slice(&words),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
-        let new_bg = self.make_bind_group(device, &new_buffer);
+        let new_bg = self.make_bind_group(
+            device,
+            "deform_mesh_bg",
+            &new_buffer,
+            &self.dummy_instance_buffer,
+        );
+
+        // Rebuild instance bind groups since they bind this mesh's buffer.
+        let instance_ids: Vec<u32> =
+            self.meshes.get(&mesh_id).unwrap().instances.keys().copied().collect();
+        for id in instance_ids {
+            let inst_buf_clone = {
+                let inst = self.meshes.get(&mesh_id).unwrap().instances.get(&id).unwrap();
+                // SAFETY: as_entire_binding holds a borrow of the buffer,
+                // not the buffer itself; we reborrow per call.
+                inst.buffer.clone()
+            };
+            let bg =
+                self.make_bind_group(device, "deform_mesh_instance_bg", &new_buffer, &inst_buf_clone);
+            let inst = self
+                .meshes
+                .get_mut(&mesh_id)
+                .unwrap()
+                .instances
+                .get_mut(&id)
+                .unwrap();
+            inst.bind_group = bg;
+        }
+
         let m = self.meshes.get_mut(&mesh_id).unwrap();
         m.buffer = new_buffer;
         m.bind_group = new_bg;
     }
 
-    /// Attach raw bytes to a specific slot for `mesh_id`. `stride_words` is
+    fn ensure_mesh(&mut self, device: &wgpu::Device, mesh_id: MeshId) {
+        if self.meshes.contains_key(&mesh_id) {
+            return;
+        }
+        let init_words = vec![0u32; SLOT_LAYOUT_WORDS];
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("deform_mesh_data_init"),
+            contents: bytemuck::cast_slice(&init_words),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let bind_group = self.make_bind_group(
+            device,
+            "deform_mesh_bg",
+            &buffer,
+            &self.dummy_instance_buffer,
+        );
+        self.meshes.insert(
+            mesh_id,
+            MeshDeform {
+                slot_data: Default::default(),
+                slot_stride: [0; DEFORM_SLOT_COUNT],
+                buffer,
+                bind_group,
+                flag_bits: 0,
+                instance_flag_bits_union: 0,
+                instances: HashMap::new(),
+            },
+        );
+    }
+
+    /// Attach raw bytes to a per-mesh slot for `mesh_id`. `stride_words` is
     /// the per-vertex stride in u32 words (must equal the registered
     /// deformer's `per_vertex_stride / 4`).
     pub fn attach_slot(
@@ -253,25 +404,7 @@ impl DeformationState {
             data.len() % 4 == 0,
             "deform slot data length must be a multiple of 4 bytes"
         );
-        if !self.meshes.contains_key(&mesh_id) {
-            let init_words = vec![0u32; SLOT_LAYOUT_WORDS];
-            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("deform_mesh_data_init"),
-                contents: bytemuck::cast_slice(&init_words),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-            let bind_group = self.make_bind_group(device, &buffer);
-            self.meshes.insert(
-                mesh_id,
-                MeshDeform {
-                    slot_data: Default::default(),
-                    slot_stride: [0; DEFORM_SLOT_COUNT],
-                    buffer,
-                    bind_group,
-                    flag_bits: 0,
-                },
-            );
-        }
+        self.ensure_mesh(device, mesh_id);
         let entry = self.meshes.get_mut(&mesh_id).unwrap();
         entry.slot_data[slot] = Some(data.to_vec());
         entry.slot_stride[slot] = stride_words;
@@ -279,7 +412,7 @@ impl DeformationState {
         self.refresh(device, mesh_id);
     }
 
-    /// Detach a slot. Returns `true` if any data was removed.
+    /// Detach a per-mesh slot. Returns `true` if any data was removed.
     pub fn detach_slot(&mut self, device: &wgpu::Device, mesh_id: MeshId, slot: usize) -> bool {
         assert!(slot < DEFORM_SLOT_COUNT);
         let Some(m) = self.meshes.get_mut(&mesh_id) else {
@@ -298,6 +431,221 @@ impl DeformationState {
         self.meshes
             .get(&mesh_id)
             .map(|m| m.slot_data[slot].is_some())
+            .unwrap_or(false)
+    }
+
+    fn recompute_instance_union(m: &mut MeshDeform) {
+        let mut union = 0u32;
+        for inst in m.instances.values() {
+            union |= inst.flag_bits;
+        }
+        m.instance_flag_bits_union = union;
+    }
+
+    /// Attach raw bytes to a per-(mesh, instance) slot. The data is treated
+    /// as a sequence of fixed-stride elements (e.g. mat4 joint matrices
+    /// for skinning). When the instance buffer must grow, its bind group is
+    /// rebuilt. When the existing buffer is large enough, the data is
+    /// written with `queue.write_buffer` and the bind group is reused.
+    pub fn attach_slot_instance(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+        stride_words: u32,
+        data: &[u8],
+    ) {
+        assert!(slot < DEFORM_SLOT_COUNT);
+        assert!(
+            data.len() % 4 == 0,
+            "deform slot data length must be a multiple of 4 bytes"
+        );
+        self.ensure_mesh(device, mesh_id);
+        // Ensure the instance entry exists with a minimal buffer.
+        let needs_insert = !self
+            .meshes
+            .get(&mesh_id)
+            .unwrap()
+            .instances
+            .contains_key(&instance_id);
+        if needs_insert {
+            let init_words = vec![0u32; SLOT_LAYOUT_WORDS];
+            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("deform_mesh_instance_data_init"),
+                contents: bytemuck::cast_slice(&init_words),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+            let mesh_buf_clone = self.meshes.get(&mesh_id).unwrap().buffer.clone();
+            let bind_group =
+                self.make_bind_group(device, "deform_mesh_instance_bg", &mesh_buf_clone, &buffer);
+            let m = self.meshes.get_mut(&mesh_id).unwrap();
+            let cap = (init_words.len() * 4) as u64;
+            m.instances.insert(
+                instance_id,
+                InstanceDeform {
+                    slot_data: Default::default(),
+                    slot_stride: [0; DEFORM_SLOT_COUNT],
+                    buffer,
+                    buffer_capacity: cap,
+                    bind_group,
+                    flag_bits: 0,
+                },
+            );
+        }
+
+        // Mutate slot bookkeeping.
+        {
+            let inst = self
+                .meshes
+                .get_mut(&mesh_id)
+                .unwrap()
+                .instances
+                .get_mut(&instance_id)
+                .unwrap();
+            inst.slot_data[slot] = Some(data.to_vec());
+            inst.slot_stride[slot] = stride_words;
+            inst.flag_bits |= 1u32 << slot;
+        }
+
+        // Re-pack and decide between in-place write or realloc.
+        let (packed_words, packed_bytes_len) = {
+            let inst = self
+                .meshes
+                .get(&mesh_id)
+                .unwrap()
+                .instances
+                .get(&instance_id)
+                .unwrap();
+            let w = Self::pack(&inst.slot_data, &inst.slot_stride);
+            let len = (w.len() * 4) as u64;
+            (w, len)
+        };
+
+        let needs_realloc = {
+            let inst = self
+                .meshes
+                .get(&mesh_id)
+                .unwrap()
+                .instances
+                .get(&instance_id)
+                .unwrap();
+            packed_bytes_len > inst.buffer_capacity
+        };
+
+        if needs_realloc {
+            let new_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("deform_mesh_instance_data"),
+                contents: bytemuck::cast_slice(&packed_words),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+            let mesh_buf_clone = self.meshes.get(&mesh_id).unwrap().buffer.clone();
+            let bg = self.make_bind_group(
+                device,
+                "deform_mesh_instance_bg",
+                &mesh_buf_clone,
+                &new_buffer,
+            );
+            let inst = self
+                .meshes
+                .get_mut(&mesh_id)
+                .unwrap()
+                .instances
+                .get_mut(&instance_id)
+                .unwrap();
+            inst.buffer = new_buffer;
+            inst.buffer_capacity = packed_bytes_len;
+            inst.bind_group = bg;
+        } else {
+            let inst = self
+                .meshes
+                .get(&mesh_id)
+                .unwrap()
+                .instances
+                .get(&instance_id)
+                .unwrap();
+            queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&packed_words));
+        }
+
+        // Recompute the union and refresh flag bits.
+        let m = self.meshes.get_mut(&mesh_id).unwrap();
+        Self::recompute_instance_union(m);
+    }
+
+    /// Detach a per-instance slot. Returns `true` if any data was removed.
+    /// Drops the instance entry when no slot remains attached and re-packs
+    /// the instance buffer if other slots still hold data.
+    pub fn detach_slot_instance(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+    ) -> bool {
+        assert!(slot < DEFORM_SLOT_COUNT);
+        let Some(m) = self.meshes.get_mut(&mesh_id) else {
+            return false;
+        };
+        let Some(inst) = m.instances.get_mut(&instance_id) else {
+            return false;
+        };
+        let had = inst.slot_data[slot].take().is_some();
+        if !had {
+            return false;
+        }
+        inst.slot_stride[slot] = 0;
+        inst.flag_bits &= !(1u32 << slot);
+        let drop_instance = inst.flag_bits == 0;
+
+        if drop_instance {
+            m.instances.remove(&instance_id);
+        } else {
+            let (packed_words, packed_bytes_len) = {
+                let inst = m.instances.get(&instance_id).unwrap();
+                let w = Self::pack(&inst.slot_data, &inst.slot_stride);
+                let len = (w.len() * 4) as u64;
+                (w, len)
+            };
+            let inst = m.instances.get(&instance_id).unwrap();
+            if packed_bytes_len > inst.buffer_capacity {
+                let new_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("deform_mesh_instance_data"),
+                    contents: bytemuck::cast_slice(&packed_words),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
+                let mesh_buf_clone = m.buffer.clone();
+                let bg = self.make_bind_group(
+                    device,
+                    "deform_mesh_instance_bg",
+                    &mesh_buf_clone,
+                    &new_buffer,
+                );
+                let m = self.meshes.get_mut(&mesh_id).unwrap();
+                let inst = m.instances.get_mut(&instance_id).unwrap();
+                inst.buffer = new_buffer;
+                inst.buffer_capacity = packed_bytes_len;
+                inst.bind_group = bg;
+            } else {
+                queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&packed_words));
+            }
+        }
+
+        let m = self.meshes.get_mut(&mesh_id).unwrap();
+        Self::recompute_instance_union(m);
+        // Drop the mesh entirely when nothing references it.
+        if m.flag_bits == 0 && m.instance_flag_bits_union == 0 {
+            self.meshes.remove(&mesh_id);
+        }
+        true
+    }
+
+    pub fn has_slot_instance(&self, mesh_id: MeshId, instance_id: u32, slot: usize) -> bool {
+        self.meshes
+            .get(&mesh_id)
+            .and_then(|m| m.instances.get(&instance_id))
+            .map(|i| i.slot_data[slot].is_some())
             .unwrap_or(false)
     }
 }
@@ -361,7 +709,7 @@ impl ViewportGpuResources {
             .attach_slot(device, mesh_id, slot, stride_bytes / 4, data);
     }
 
-    /// Detach a slot's data. Returns `true` if any data was removed.
+    /// Detach a per-mesh slot's data. Returns `true` if any data was removed.
     pub fn detach_deform_slot(
         &mut self,
         device: &wgpu::Device,
@@ -371,9 +719,64 @@ impl ViewportGpuResources {
         self.deform.detach_slot(device, mesh_id, slot)
     }
 
-    /// Returns `true` when the mesh has data attached at the given slot.
+    /// Returns `true` when the mesh has per-mesh data attached at the given
+    /// slot.
     pub fn has_deform_slot(&self, mesh_id: MeshId, slot: usize) -> bool {
         self.deform.has_slot(mesh_id, slot)
+    }
+
+    /// Attach raw bytes for one deformer slot on a single instance of the
+    /// given mesh. Used for data that varies per instance (e.g. joint
+    /// palettes). `stride_bytes` is the per-element byte stride; the data
+    /// length must be a multiple of `stride_bytes` and 4.
+    pub fn attach_deform_slot_instance(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+        stride_bytes: u32,
+        data: &[u8],
+    ) {
+        assert!(
+            stride_bytes >= 4 && stride_bytes % 4 == 0,
+            "deform slot stride must be a positive multiple of 4 bytes"
+        );
+        self.deform.attach_slot_instance(
+            device,
+            queue,
+            mesh_id,
+            instance_id,
+            slot,
+            stride_bytes / 4,
+            data,
+        );
+    }
+
+    /// Detach a per-instance slot's data. Returns `true` if any data was
+    /// removed.
+    pub fn detach_deform_slot_instance(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+    ) -> bool {
+        self.deform
+            .detach_slot_instance(device, queue, mesh_id, instance_id, slot)
+    }
+
+    /// Returns `true` when the given instance of the mesh has per-instance
+    /// data attached at the given slot.
+    pub fn has_deform_slot_instance(
+        &self,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+    ) -> bool {
+        self.deform.has_slot_instance(mesh_id, instance_id, slot)
     }
 
     /// Register a deformer against the mesh shader family.
@@ -434,7 +837,44 @@ impl ViewportGpuResources {
         Ok(DeformerId(slot))
     }
 
-    /// Number of currently registered deformers.
+    /// Register a deformer on a reserved internal slot
+    /// (`[DEFORM_INTERNAL_SLOT_START, DEFORM_SLOT_COUNT)`). Used at
+    /// renderer construction for the in-crate deformers (skinning,
+    /// displacement) so they do not consume one of the four slots exposed
+    /// to hosts. Validation, composition, and pipeline rebuild work the
+    /// same as [`Self::register_deformer`].
+    #[allow(dead_code)]
+    pub(crate) fn register_internal_deformer(
+        &mut self,
+        device: &wgpu::Device,
+        desc: DeformerDesc,
+    ) -> ViewportResult<DeformerId> {
+        validate_name(&self.deform.registrations, desc.name)?;
+        let slot = allocate_internal_slot(&self.deform.registrations)?;
+
+        let candidate = StoredDeformer { desc, slot };
+        let mut trial = self.deform.registrations.clone();
+        trial.push(candidate.clone());
+
+        for shader_name in MESH_FAMILY_SHADERS {
+            let Some(base) = lookup_source(shader_name) else {
+                return Err(crate::error::ViewportError::DeformShaderInvalid {
+                    reason: format!(
+                        "internal: shader '{shader_name}' missing from shader catalog"
+                    ),
+                });
+            };
+            let composed = compose_shader(base, &trial);
+            let label = format!("deform_compose_{shader_name}");
+            validate_with_wgpu(device, &label, &composed)?;
+        }
+
+        self.deform.registrations.push(candidate);
+        self.rebuild_mesh_pipelines(device);
+        Ok(DeformerId(slot))
+    }
+
+    /// Number of currently registered deformers (host + internal).
     pub fn registered_deformer_count(&self) -> usize {
         self.deform.registrations.len()
     }
@@ -718,7 +1158,7 @@ mod tests {
         stride[2] = 2;
 
         let words = DeformationState::pack(&data, &stride);
-        // Layout prefix is SLOT_LAYOUT_WORDS = 8 u32s.
+        // Layout prefix holds an (offset, stride) pair per slot.
         assert_eq!(words[0], SLOT_LAYOUT_WORDS as u32); // slot 0 offset
         assert_eq!(words[1], 1); // slot 0 stride
         assert_eq!(words[2], 0); // slot 1 offset (unused)
@@ -727,15 +1167,17 @@ mod tests {
         assert_eq!(words[5], 2); // slot 2 stride
         assert_eq!(words[6], 0); // slot 3 offset
         assert_eq!(words[7], 0); // slot 3 stride
-        // Slot 0 data follows.
-        assert_eq!(words[8], 1);
-        assert_eq!(words[9], 2);
-        assert_eq!(words[10], 3);
-        // Slot 2 data follows.
-        assert_eq!(words[11], 10);
-        assert_eq!(words[12], 20);
-        assert_eq!(words[13], 30);
-        assert_eq!(words[14], 40);
+        // Slot 0 data follows the prefix.
+        let slot0_base = SLOT_LAYOUT_WORDS;
+        assert_eq!(words[slot0_base], 1);
+        assert_eq!(words[slot0_base + 1], 2);
+        assert_eq!(words[slot0_base + 2], 3);
+        // Slot 2 data follows slot 0.
+        let slot2_base = slot0_base + 3;
+        assert_eq!(words[slot2_base], 10);
+        assert_eq!(words[slot2_base + 1], 20);
+        assert_eq!(words[slot2_base + 2], 30);
+        assert_eq!(words[slot2_base + 3], 40);
     }
 
     #[test]
@@ -773,6 +1215,42 @@ mod tests {
         assert_eq!(s.flag_bits(mesh), 0);
         assert!(!s.meshes.contains_key(&mesh));
         assert!(!s.detach_slot(&device, mesh, 1));
+    }
+
+    #[test]
+    fn attach_slot_instance_marks_union_and_routes_bind_group() {
+        let Some((device, queue)) = headless() else {
+            return;
+        };
+        let mut s = DeformationState::new(&device);
+        let mesh = MeshId(42);
+        let instance = 3u32;
+        assert_eq!(s.flag_bits(mesh), 0);
+
+        // Per-mesh slot 1, then per-instance slot 0.
+        s.attach_slot(&device, mesh, 1, 1, &[0u8; 16]);
+        s.attach_slot_instance(&device, &queue, mesh, instance, 0, 16, &[0u8; 64]);
+
+        // flag_bits reports the union of per-mesh and per-instance.
+        assert_eq!(s.flag_bits(mesh), 0b0011);
+        assert!(s.has_slot_instance(mesh, instance, 0));
+        assert!(!s.has_slot_instance(mesh, instance, 1));
+
+        // The instance bind group differs from the mesh bind group.
+        let inst_bg: *const wgpu::BindGroup = s.instance_bind_group_for(mesh, Some(instance));
+        let mesh_bg: *const wgpu::BindGroup = s.instance_bind_group_for(mesh, None);
+        assert_ne!(inst_bg, mesh_bg);
+
+        // A draw of an instance with no per-instance data falls back to the
+        // mesh bind group.
+        let fallback: *const wgpu::BindGroup = s.instance_bind_group_for(mesh, Some(99));
+        assert_eq!(fallback, mesh_bg);
+
+        // Detaching the instance slot drops the instance entry and clears
+        // the union bit; per-mesh slot 1 remains.
+        assert!(s.detach_slot_instance(&device, &queue, mesh, instance, 0));
+        assert_eq!(s.flag_bits(mesh), 0b0010);
+        assert!(!s.has_slot_instance(mesh, instance, 0));
     }
 
     #[test]
