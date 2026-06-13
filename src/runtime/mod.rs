@@ -73,6 +73,8 @@ pub use output::{
     SkinnedPoseUpdate, TransformWriteback,
 };
 pub use plugin::{RuntimeEvent, RuntimePhase, RuntimePlugin, phase};
+#[allow(deprecated)]
+#[deprecated(since = "0.18.0", note = "use viewport_lib::plugins::* instead")]
 pub use plugins::{
     AnimationClip, AnimationPlugin, AnimationTrack, Channel, ClipPlayerPlugin, Constraint,
     ConstraintPlugin, Interpolation, Joint, JointMatrices, Keyframe, PhysicsBody,
@@ -1221,9 +1223,7 @@ mod tests {
     // ---- skeleton / skinning tests ------------------------------------------
 
     use crate::resources::SkinWeights;
-    use crate::runtime::plugins::skeleton_plugin::{
-        Joint, JointMatrices, Pose, Skeleton, SkeletonPlugin, apply_skin,
-    };
+    use crate::plugins::skeleton::{Joint, JointMatrices, Pose, Skeleton, SkeletonPlugin, apply_skin};
 
     fn two_joint_skeleton() -> Skeleton {
         Skeleton::new(vec![
@@ -1578,6 +1578,15 @@ impl ViewportRuntime {
         self
     }
 
+    /// Register a plugin on an existing runtime.
+    ///
+    /// Same semantics as [`with_plugin`](Self::with_plugin) but takes
+    /// `&mut self`, for hosts that need to add plugins after the runtime
+    /// has been constructed and possibly already run frames.
+    pub fn add_plugin(&mut self, plugin: impl RuntimePlugin) {
+        self.plugins.push(Box::new(plugin));
+    }
+
     /// Register a GPU plugin. GPU plugins encode wgpu command buffers from
     /// [`ViewportRuntime::pre_prepare`], which the host calls each frame after
     /// `step` and before `renderer.prepare()`. Plugins run in ascending
@@ -1590,6 +1599,15 @@ impl ViewportRuntime {
         self.gpu_plugins.push(Box::new(plugin));
         self.gpu_initialized = false;
         self
+    }
+
+    /// Register a GPU plugin on an existing runtime.
+    ///
+    /// Same semantics as [`with_gpu_plugin`](Self::with_gpu_plugin) but
+    /// takes `&mut self`.
+    pub fn add_gpu_plugin(&mut self, plugin: impl GpuPlugin) {
+        self.gpu_plugins.push(Box::new(plugin));
+        self.gpu_initialized = false;
     }
 
     /// Register a GPU plugin scoped to a single viewport.

@@ -2030,10 +2030,10 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         // Mesh sidecars (skinning marker + deformer registry)
         // ------------------------------------------------------------------
-        let skinning = crate::resources::mesh_sidecar::skin::SkinningState::new(device);
+        let skinning = crate::plugins::skinning::SkinningState::new(device);
         // `deform` is constructed earlier (before the mesh pipeline layout).
 
-        let mut resources = Self {
+        let resources = Self {
             target_format,
             sample_count,
             solid_pipeline,
@@ -2496,10 +2496,10 @@ impl ViewportGpuResources {
             decal_exclude_pipeline: None,
             decal_exclude_obj_bgl: None,
         };
-        // Register the in-crate skinning deformer on a reserved internal
-        // slot. The body sits idle (returns identity) until a mesh attaches
-        // per-vertex weights and an instance attaches a joint palette.
-        crate::resources::mesh_sidecar::skin::register_internal_skinning(&mut resources, device);
+        // GPU skinning is opt-in: hosts call
+        // `viewport_lib::plugins::skinning::install_skinning(&mut resources, &device)`
+        // before uploading any skin data. The renderer otherwise carries no
+        // skinning state.
         resources
     }
 }

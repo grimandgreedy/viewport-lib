@@ -121,14 +121,28 @@ fn pack_skin_weights_tight(packed: &[PackedSkinVertex]) -> Vec<u8> {
     out
 }
 
-/// Register the skinning deformer on its reserved internal slot. Called
-/// once at renderer construction. The slot is recorded on `resources` so
-/// `set_skin_weights` / `set_skin_palette` can route their uploads through
-/// the deformer registry.
-pub(crate) fn register_internal_skinning(
+/// Install GPU skinning against the renderer.
+///
+/// Registers the skinning deformer on a reserved internal slot and wires
+/// `set_skin_weights` / `set_skin_palette` to it. Call once at startup
+/// before uploading any skin data. Subsequent calls return early without
+/// re-registering.
+///
+/// Returns the assigned [`DeformerId`](crate::DeformerId) on first
+/// install, or the previously assigned id on subsequent calls.
+///
+/// # Errors
+///
+/// Propagates the underlying registry error if shader composition or
+/// validation fails (extremely unlikely for the shipped body, which is
+/// covered by unit tests).
+pub fn install_skinning(
     resources: &mut ViewportGpuResources,
     device: &wgpu::Device,
-) {
+) -> crate::error::ViewportResult<crate::DeformerId> {
+    if let Some(id) = resources.skinning_slot {
+        return Ok(id);
+    }
     use crate::resources::mesh_sidecar::registry::{DeformStage, DeformerDesc};
     let desc = DeformerDesc {
         name: SKINNING_DEFORMER_NAME,
@@ -137,10 +151,9 @@ pub(crate) fn register_internal_skinning(
         wgsl_body: SKINNING_DEFORMER_BODY.to_string(),
         per_vertex_stride: SKIN_WEIGHT_STRIDE_BYTES,
     };
-    let id = resources
-        .register_internal_deformer(device, desc)
-        .expect("internal skinning deformer must register on a reserved slot");
+    let id = resources.register_internal_deformer(device, desc)?;
     resources.skinning_slot = Some(id);
+    Ok(id)
 }
 
 // ---------------------------------------------------------------------------
@@ -148,17 +161,15 @@ pub(crate) fn register_internal_skinning(
 // ---------------------------------------------------------------------------
 
 impl ViewportGpuResources {
-    /// Always `true`. GPU skinning ships unconditionally as part of the
-    /// renderer's capability set.
+    /// Whether GPU skinning is installed.
     ///
-    /// Plugins read this to decide whether to emit
+    /// Returns `true` after a successful call to
+    /// [`install_skinning`](crate::plugins::skinning::install_skinning),
+    /// `false` otherwise. Plugins read this to decide whether to emit
     /// [`crate::SkinnedPoseUpdate`] (GPU path) or
-    /// [`crate::SkinnedMeshUpdate`] (CPU path) each frame. The flag stays in
-    /// the API so a future build that intentionally drops the skinned
-    /// pipelines (memory-constrained target, headless test mode) can return
-    /// `false` here without changing plugin code.
+    /// [`crate::SkinnedMeshUpdate`] (CPU path) each frame.
     pub fn supports_gpu_skinning(&self) -> bool {
-        true
+        self.skinning_slot.is_some()
     }
 
     /// Attach per-vertex skin weights to an uploaded mesh.

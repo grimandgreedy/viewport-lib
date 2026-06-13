@@ -87,6 +87,8 @@ pub mod quantities;
 pub mod renderer;
 /// GPU resource container (pipelines, buffers, bind groups).
 pub mod resources;
+/// Built-in plugins: skinning, animation, constraints, physics, skeleton.
+pub mod plugins;
 /// Scene runtime: per-frame orchestration, plugin system, and physics hooks.
 pub mod runtime;
 /// Scene graph, material, traits, and AABB.
@@ -255,13 +257,25 @@ pub use resources::{
 };
 
 pub use runtime::{
-    AnimationClip, AnimationPlugin, AnimationTrack, CameraFollow, Channel, ClipPlayerPlugin,
-    Constraint, ConstraintPlugin, ContactEvent, DebugDraw, DebugLayer, DebugPrim, FixedStepIter,
-    FixedTimestep, Interpolation, Joint, JointMatrices, Keyframe, ManipulationSystem,
-    NodeTransformOp, PhysicsBody, PhysicsLitePlugin, Pose, RuntimeFrameContext, RuntimeOutput,
-    RuntimePhase, RuntimePlugin, RuntimeStepContext, Sampler, SceneRuntimeMode, SelectionOp,
-    SelectionSystem, SimulationStepContext, Skeleton, SkeletonPlugin, SkinnedActor,
-    SkinnedActorPart, SkinnedActorPlugin, SkinnedMeshUpdate, SkinnedPoseUpdate, SkinningPath,
-    Track, TrackValue, TrackValues, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
-    ViewportRuntime, apply_skin,
+    CameraFollow, ContactEvent, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,
+    ManipulationSystem, NodeTransformOp, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
+    RuntimePlugin, RuntimeStepContext, SceneRuntimeMode, SelectionOp, SelectionSystem,
+    SimulationStepContext, SkinnedMeshUpdate, SkinnedPoseUpdate, TransformSnapshot,
+    TransformSnapshotTable, TransformWriteback, ViewportRuntime,
+};
+
+// Crate-root plugin re-exports. Deprecated in favor of importing from each
+// plugin's own module path (`viewport_lib::plugins::<plugin>::*`). Kept for
+// one release window so downstream imports can migrate gradually.
+#[deprecated(since = "0.18.0", note = "use viewport_lib::plugins::animation::* instead")]
+pub use plugins::animation::{AnimationPlugin, AnimationTrack, Keyframe};
+#[deprecated(since = "0.18.0", note = "use viewport_lib::plugins::constraint::* instead")]
+pub use plugins::constraint::{Constraint, ConstraintPlugin};
+#[deprecated(since = "0.18.0", note = "use viewport_lib::plugins::physics_lite::* instead")]
+pub use plugins::physics_lite::{PhysicsBody, PhysicsLitePlugin};
+#[deprecated(since = "0.18.0", note = "use viewport_lib::plugins::skeleton::* instead")]
+pub use plugins::skeleton::{
+    AnimationClip, Channel, ClipPlayerPlugin, Interpolation, Joint, JointMatrices, Pose, Sampler,
+    Skeleton, SkeletonPlugin, SkinnedActor, SkinnedActorPart, SkinnedActorPlugin, SkinningPath,
+    Track, TrackValue, TrackValues, apply_skin,
 };

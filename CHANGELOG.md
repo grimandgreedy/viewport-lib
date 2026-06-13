@@ -2,7 +2,39 @@
 
 ## [Unreleased Changes]
 
+### Behavior changes
+
+#### Built-in plugins moved to `viewport_lib::plugins`
+
+The in-crate plugins now live under one top-level module. Previously these were split between `viewport_lib::runtime::plugins::*` (animation, constraints, physics, skeleton) and the GPU sidecars under `viewport_lib::resources::mesh_sidecar::*`. They now share one home, and each plugin's public surface is reached through its own subpath:
+
+```rust
+use viewport_lib::plugins::skeleton::{SkeletonPlugin, SkinnedActorPlugin, ClipPlayerPlugin, Skeleton, Pose};
+use viewport_lib::plugins::animation::AnimationPlugin;
+use viewport_lib::plugins::constraint::ConstraintPlugin;
+use viewport_lib::plugins::physics_lite::PhysicsLitePlugin;
+use viewport_lib::plugins::skinning::install_skinning;
+```
+
+Each in-crate plugin module mirrors how an external plugin crate is consumed. `viewport_lib::plugins::skinning::install_skinning` is the same shape as `viewport_lib_wind::WindPlugin` would be from an external crate: one plugin module, one public surface.
+
+Old `viewport_lib::SkeletonPlugin` and `viewport_lib::runtime::plugins::*` paths still work for the next release with a deprecation note pointing to the new path.
+
+#### GPU skinning is opt-in
+
+GPU skinning used to register itself automatically at renderer construction. It now requires one explicit call:
+
+```rust
+viewport_lib::plugins::skinning::install_skinning(&mut resources, &device)?;
+```
+
+Make the call once at startup before uploading any skin weights or palettes. Consumers that do not need GPU skinning pay nothing for it. `supports_gpu_skinning()` now reports the truth — `true` after install, `false` before — instead of always returning `true`. `set_skin_weights` and `set_skin_palette` return `false` and do nothing if install has not run.
+
 ### Features
+
+#### Per-material UV transform
+
+Materials can now shift and scale the UVs they sample with. Set `Material::uv_transform` to `(offset_x, offset_y, scale_x, scale_y)` to pick a sub-region of a texture or tile it differently per material. Useful for sharing one texture atlas across many materials, or for tiling a wood / stone texture at a different rate without re-authoring the mesh. The default is `(0, 0, 1, 1)`, which leaves UVs alone. Affects every texture the material samples: colour, normal, ambient occlusion, metallic-roughness, and emissive. Works for both single-draw meshes and instanced batches.
 
 #### Per-vertex deformation hooks and deformer registry
 

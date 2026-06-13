@@ -234,6 +234,13 @@ impl Default for AsyncUploadsState {
 
 impl App {
     pub(crate) fn build_async_uploads_scene(&mut self, renderer: &mut ViewportRenderer) {
+        // GPU skinning is opt-in: install once before uploading any skin data.
+        viewport_lib::plugins::skinning::install_skinning(
+            renderer.resources_mut(),
+            &self.device,
+        )
+        .expect("install skinning");
+
         let plane_mesh = viewport_lib::primitives::sphere(0.7, 24, 18);
         self.async_uploads_state.base_mesh_id = Some(
             renderer

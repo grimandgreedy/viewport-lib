@@ -421,6 +421,10 @@ impl Default for Skin47State {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
+    // GPU skinning is opt-in: install once before uploading any skin data.
+    viewport_lib::plugins::skinning::install_skinning(renderer.resources_mut(), &app.device)
+        .expect("install skinning");
+
     let (positions, normals, indices, skin_weights) = build_arm_mesh();
 
     let mut mesh_data = MeshData::default();

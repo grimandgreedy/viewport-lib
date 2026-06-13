@@ -2546,7 +2546,7 @@ pub struct ViewportGpuResources {
     pub(crate) mesh_store: crate::resources::mesh_store::MeshStore,
     /// GPU skinning sidecar storage: per-mesh skin weights and per-instance
     /// joint palette buffers. Empty for static meshes.
-    pub(crate) skinning: crate::resources::mesh_sidecar::skin::SkinningState,
+    pub(crate) skinning: crate::plugins::skinning::SkinningState,
     /// Per-vertex deformation sidecar storage: header uniform, dummy fallback
     /// buffers, and per-mesh slot bind groups. Every mesh-family pipeline
     /// binds `@group(2)` from this state; meshes without attached deformer
