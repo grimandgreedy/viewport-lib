@@ -71,6 +71,9 @@ pub(crate) use self::scivis::curve_store::{
     GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
+pub use self::mesh_sidecar::deform::{
+    DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, deform_slot_params_byte_offset,
+};
 pub use self::mesh_sidecar::registry::{
     DEFORM_PARAMS_PER_SLOT_PUB, DEFORM_SLOT_COUNT_PUB, DeformStage, DeformerDesc, DeformerId,
 };

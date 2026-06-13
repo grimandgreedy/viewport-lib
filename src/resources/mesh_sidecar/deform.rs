@@ -62,6 +62,47 @@ impl DeformHeader {
     }
 }
 
+/// Byte offset of slot `slot`'s `slot_params` block inside the deformation
+/// header uniform. The header layout is `[time_seconds, _pad x3]`
+/// (16 bytes) followed by 32 contiguous `vec4<f32>` slot-params entries,
+/// 4 per slot.
+pub const DEFORM_SLOT_PARAMS_BYTES: u64 =
+    (DEFORM_PARAMS_PER_SLOT * std::mem::size_of::<[f32; 4]>()) as u64;
+const DEFORM_HEADER_PREFIX_BYTES: u64 = 16;
+
+/// Byte offset of slot `slot`'s parameter block inside the deformation
+/// header uniform.
+#[inline]
+pub const fn deform_slot_params_byte_offset(slot: usize) -> u64 {
+    DEFORM_HEADER_PREFIX_BYTES + (slot as u64) * DEFORM_SLOT_PARAMS_BYTES
+}
+
+/// Handle that lets a plugin update one deformer slot's `slot_params` block
+/// from a context that only has `&wgpu::Queue` (a `GpuPlugin::pre_prepare`,
+/// say). Cloning is cheap.
+#[derive(Clone)]
+pub struct DeformSlotHandle {
+    header_buffer: wgpu::Buffer,
+    slot: usize,
+}
+
+impl DeformSlotHandle {
+    /// The slot this handle writes.
+    pub fn slot(&self) -> usize {
+        self.slot
+    }
+
+    /// Write the four `vec4<f32>` parameter words for this slot. Cheap;
+    /// safe to call per frame from a plugin's `pre_prepare`.
+    pub fn write(&self, queue: &wgpu::Queue, params: &[[f32; 4]; DEFORM_PARAMS_PER_SLOT]) {
+        queue.write_buffer(
+            &self.header_buffer,
+            deform_slot_params_byte_offset(self.slot),
+            bytemuck::cast_slice(params),
+        );
+    }
+}
+
 /// Per-(mesh, instance) deformation storage. Holds the per-instance packed
 /// slot buffer and its bind group (which also binds the owning mesh's
 /// per-mesh buffer at the same time, so the draw needs only one bind-group
@@ -877,6 +918,17 @@ impl ViewportGpuResources {
     /// Number of currently registered deformers (host + internal).
     pub fn registered_deformer_count(&self) -> usize {
         self.deform.registrations.len()
+    }
+
+    /// Build a [`DeformSlotHandle`] for the given deformer. Plugins stash
+    /// the handle at registration time and use it to write that slot's
+    /// `slot_params` block from contexts (e.g. a `GpuPlugin::pre_prepare`)
+    /// that only carry `&wgpu::Queue`.
+    pub fn deform_slot_handle(&self, id: DeformerId) -> DeformSlotHandle {
+        DeformSlotHandle {
+            header_buffer: self.deform.header_buffer.clone(),
+            slot: id.slot(),
+        }
     }
 
     /// Re-compose every mesh-family shader and rebuild the pipelines that
