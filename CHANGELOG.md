@@ -2,11 +2,13 @@
 
 ## [Unreleased Changes]
 
+## [0.18.0]
+
 ### Breaking changes
 
 #### Volume meshes unified into one item type
 
-Opaque and transparent volume meshes are now one type. The old `TransparentVolumeMeshItem` is gone; `VolumeMeshItem` gains an optional transparency field that flips the render between the boundary surface and a projected-tet pass through the interior. Submission goes through one scene field instead of two. Uploading also collapses to one helper (with a transparency-capable variant for hosts that need volumetric rendering). Selection outlines and cell picking work in both modes automatically — no more separate boundary-mesh handshake.
+Opaque and transparent volume meshes are now one type. The old `TransparentVolumeMeshItem` is gone; `VolumeMeshItem` gains an optional transparency field that flips the render between the boundary surface and a projected-tet pass through the interior. Submission goes through one scene field instead of two. Uploading also collapses to one helper (with a transparency-capable variant for hosts that need volumetric rendering). Selection outlines and cell picking work in both modes automatically.
 
 The transparent pass also drops its colormap-at-upload coupling: changing the colormap is now free per frame, like every other item type.
 
