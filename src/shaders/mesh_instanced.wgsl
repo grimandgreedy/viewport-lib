@@ -271,17 +271,23 @@ fn sample_shadow_csm(
 
     let n_dot_l = dot(surface_normal, light_dir);
     let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
-    // World-space texel size of this cascade. The ortho x-scale must be
-    // recovered as the length of the matrix's first row: element [0][0] alone
-    // is ortho_scale * right.x of the light rotation, which varies with light
-    // azimuth and hits zero when the light-up vector switches axes.
+    // World-space texel size of this cascade.
     let vp = shadow_atlas.cascade_vp[cascade_idx];
     let vp_row0 = vec3<f32>(vp[0][0], vp[1][0], vp[2][0]);
     let vp_row1 = vec3<f32>(vp[0][1], vp[1][1], vp[2][1]);
     let vp_row2 = vec3<f32>(vp[0][2], vp[1][2], vp[2][2]);
     let texel_world = 2.0 / (length(vp_row0) * shadow_atlas.atlas_size * (rect.z - rect.x));
-    let normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));
-    let offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
+    // Branch on primary-light type. See mesh.wgsl for rationale.
+    let primary_light_type = lights_storage[0].light_type;
+    var offset_world: vec3<f32>;
+    var normal_bias: f32;
+    if primary_light_type == 0u {
+        normal_bias = texel_world * 1.5;
+        offset_world = world_pos - light_dir * normal_bias;
+    } else {
+        normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));
+        offset_world = world_pos + surface_normal * (offset_sign * normal_bias);
+    }
     let offset_clip = shadow_atlas.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
     let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights_uniform.shadow_bias;
     let surface_depth = ndc.z;
@@ -307,10 +313,12 @@ fn sample_shadow_csm(
     let nz = nz_sign * max(abs(n_ndc.z), 1e-4);
     // Depth change per atlas-UV step. Tile V runs opposite to NDC Y, which
     // flips the sign of the Y term.
+    // Gate receiver-plane bias to directional lights only; see mesh.wgsl.
+    let rp_gate = select(0.0, 1.0, primary_light_type == 0u);
     let depth_grad = vec2<f32>(
         -n_ndc.x / nz * 2.0 / (rect.z - rect.x),
         n_ndc.y / nz * 2.0 / (rect.w - rect.y),
-    );
+    ) * rp_gate;
 
     let texel_size = 1.0 / shadow_atlas.atlas_size;
     let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
@@ -352,7 +360,7 @@ fn sample_shadow_csm(
         }
         return ShadowSample(shadow / 32.0, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     } else {
-        let pcf_radius = 4.0 * texel_size;
+        let pcf_radius = select(4.0, 1.5, primary_light_type == 0u) * texel_size;
         var shadow = 0.0;
         for (var i = 0u; i < 32u; i++) {
             let d = POISSON_DISK[i];
