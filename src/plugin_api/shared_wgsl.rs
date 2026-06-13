@@ -29,7 +29,7 @@
 /// ```ignore
 /// const _: () = assert!(viewport_lib::plugin_api::shared_wgsl::WGSL_VERSION == 1);
 /// ```
-pub const WGSL_VERSION: u32 = 4;
+pub const WGSL_VERSION: u32 = 5;
 
 /// Group-0 bind declarations and shared scene-data structs.
 ///
@@ -47,7 +47,7 @@ pub const WGSL_VERSION: u32 = 4;
 /// | 2  | shadow comparison sampler | `shadow_atlas_sampler` |
 /// | 3  | `Lights` header uniform | `lights` |
 /// | 4  | `ClipPlanes` uniform | `clip_planes` |
-/// | 5  | `ShadowInfo` uniform (CSM matrices, splits) | `shadow_info` |
+/// | 5  | *(internal: CSM uniform; route through `viewport_sample_csm`)* | *(opaque)* |
 /// | 6  | `ClipVolumes` uniform | `clip_volumes` |
 /// | 7  | IBL irradiance equirect | `ibl_irradiance_tex` |
 /// | 8  | IBL specular equirect | `ibl_specular_tex` |
@@ -200,9 +200,12 @@ fn viewport_clip_test(world_pos: vec3<f32>) -> bool {
         && viewport_pass_clip_volumes(world_pos);
 }
 
-// The shadow-info uniform (binding 5) is opaque to plugins; sample via
-// `viewport_sample_csm` from SHARED_PBR_WGSL rather than reading the
-// raw uniform directly.
+// The shadow-info uniform (binding 5) is declared inside SHARED_PBR_WGSL
+// for the sole use of `viewport_sample_csm`. Its struct layout and field
+// set are intentionally not part of the published contract and may change
+// between catalog versions. Plugins must not redeclare binding 5 and must
+// not read the uniform directly; route shadow queries through
+// `viewport_sample_csm`.
 "#;
 
 /// Shared PBR shading helper.
@@ -217,22 +220,63 @@ fn viewport_clip_test(world_pos: vec3<f32>) -> bool {
 ///
 /// `viewport_pbr_shade` returns the final lit colour for a fragment given a
 /// `PbrInputs` populated with albedo / normal / metallic / roughness / AO /
-/// emissive. It applies the lib's standard hemisphere ambient + light loop +
-/// (optionally) shadow attenuation. Future revisions may add IBL and SSAO
-/// sampling inside this function; consumers should rebuild their shaders
-/// when the catalog version bumps to pick up the upgrade.
+/// emissive. It applies the lib's standard hemisphere ambient + light loop
+/// and attenuates the primary light's contribution by the CSM shadow factor
+/// when `lights.shadows_enabled != 0`. Plugins that compose this helper get
+/// shadows automatically; do not multiply by `viewport_sample_csm` again.
+/// Future revisions may add IBL and SSAO sampling inside this function;
+/// consumers should rebuild their shaders when the catalog version bumps to
+/// pick up the upgrade.
 ///
 /// `viewport_sample_csm` returns a 0..1 shadow factor for `world_pos`.
 /// Returns 1.0 (fully lit) when shadows are disabled or the position is
-/// outside every cascade.
+/// outside every cascade. The cascade scheme, filter kernel, and bias
+/// strategy are internal details and may change between catalog versions;
+/// the function signature and return-value semantics are the contract.
 ///
 /// `viewport_apply_scene_lighting` is the simpler Lambert helper used by
 /// non-PBR pipelines (glyphs, tubes, ribbons). Use it when a plugin wants
 /// scene-light parity with those built-in items.
 pub const SHARED_PBR_WGSL: &str = r#"
-// @viewport-wgsl-version: 1
+// @viewport-wgsl-version: 2
 // Shared PBR / lit-shading helpers. Requires SHARED_BINDINGS_WGSL to be
 // included first.
+//
+// Internal binding: the CSM uniform at @group(0) @binding(5) is declared
+// here for `viewport_sample_csm`'s use. Its struct layout is an internal
+// detail of this catalog; plugin shaders must not reference
+// `_viewport_csm` directly or assume the field set is stable.
+
+struct _ViewportCsm {
+    cascade_vp:        array<mat4x4<f32>, 4>,
+    cascade_splits:    vec4<f32>,
+    cascade_count:     u32,
+    atlas_size:        f32,
+    shadow_filter:     u32,
+    pcss_light_radius: f32,
+    atlas_rects:       array<vec4<f32>, 8>,
+};
+
+@group(0) @binding(5) var<uniform> _viewport_csm: _ViewportCsm;
+
+const _VIEWPORT_POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
+    vec2<f32>(-0.94201624, -0.39906216), vec2<f32>( 0.94558609, -0.76890725),
+    vec2<f32>(-0.09418410, -0.92938870), vec2<f32>( 0.34495938,  0.29387760),
+    vec2<f32>(-0.91588581,  0.45771432), vec2<f32>(-0.81544232, -0.87912464),
+    vec2<f32>(-0.38277543,  0.27676845), vec2<f32>( 0.97484398,  0.75648379),
+    vec2<f32>( 0.44323325, -0.97511554), vec2<f32>( 0.53742981, -0.47373420),
+    vec2<f32>(-0.26496911, -0.41893023), vec2<f32>( 0.79197514,  0.19090188),
+    vec2<f32>(-0.24188840,  0.99706507), vec2<f32>(-0.81409955,  0.91437590),
+    vec2<f32>( 0.19984126,  0.78641367), vec2<f32>( 0.14383161, -0.14100790),
+    vec2<f32>(-0.44451570,  0.67055830), vec2<f32>( 0.70509040, -0.15854630),
+    vec2<f32>( 0.07130650, -0.64599580), vec2<f32>( 0.39881030,  0.55789810),
+    vec2<f32>(-0.60554040, -0.34964830), vec2<f32>( 0.85095100,  0.47178830),
+    vec2<f32>(-0.47994860,  0.08443340), vec2<f32>(-0.12494190, -0.76098760),
+    vec2<f32>( 0.64839320,  0.74738240), vec2<f32>(-0.96815740, -0.12345680),
+    vec2<f32>( 0.27682050, -0.80927180), vec2<f32>(-0.73016460,  0.18344200),
+    vec2<f32>( 0.54754660,  0.06234570), vec2<f32>(-0.30967360, -0.61021430),
+    vec2<f32>(-0.57774330,  0.80459740), vec2<f32>( 0.18238670, -0.37596540),
+);
 
 struct PbrInputs {
     world_pos:  vec3<f32>,
@@ -244,6 +288,11 @@ struct PbrInputs {
     ao:         f32,
     emissive:   vec3<f32>,
 };
+
+// Forward declaration: defined below; referenced by the lighting helpers.
+// The full definition appears after the lighting helpers for readability.
+// (WGSL allows module-scope identifiers to be used anywhere in the module
+// regardless of source order.)
 
 fn viewport_apply_scene_lighting(
     normal: vec3<f32>,
@@ -287,18 +336,145 @@ fn viewport_apply_scene_lighting(
         }
         let raw = dot(normal, L);
         let n_dot_l = select(max(raw, 0.0), abs(raw), two_sided);
-        direct = direct + radiance * n_dot_l;
+        var shadow_factor = 1.0;
+        if i == 0u {
+            shadow_factor = viewport_sample_csm(world_pos, normal);
+        }
+        direct = direct + radiance * n_dot_l * shadow_factor;
     }
     return base_colour * (ambient + direct);
 }
 
-// Placeholder shadow sampler. The full CSM tap requires the shadow_info
-// uniform layout, which is not yet part of the published group-0 contract;
-// while it stabilises this function returns 1.0 (fully lit). A future
-// catalog version will wire this to the atlas tap once the layout is
-// frozen.
+// Cascade selection + atlas tap. Mirrors the bias scheme and filter
+// kernel used by the lib's built-in mesh pipeline so plugin items composite
+// consistently in the same scene. Implementation details (cascade count,
+// filter, bias) are internal and may change between catalog versions.
 fn viewport_sample_csm(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
-    return 1.0;
+    if lights.shadows_enabled == 0u || lights.count == 0u {
+        return 1.0;
+    }
+
+    let primary = lights_storage[0];
+    var light_dir: vec3<f32>;
+    if primary.light_type == 0u {
+        light_dir = normalize(primary.pos_or_dir);
+    } else {
+        let to_light = primary.pos_or_dir - world_pos;
+        light_dir = to_light / max(length(to_light), 0.0001);
+    }
+
+    let eye_pos = camera.eye_pos;
+    let dist = dot(world_pos - eye_pos, camera.forward);
+
+    var cascade_idx = 0u;
+    for (var i = 0u; i < _viewport_csm.cascade_count; i = i + 1u) {
+        if dist > _viewport_csm.cascade_splits[i] {
+            cascade_idx = i + 1u;
+        }
+    }
+    cascade_idx = min(cascade_idx, _viewport_csm.cascade_count - 1u);
+
+    let light_clip = _viewport_csm.cascade_vp[cascade_idx] * vec4<f32>(world_pos, 1.0);
+    let ndc = light_clip.xyz / light_clip.w;
+    let tile_uv = vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+
+    let rect = _viewport_csm.atlas_rects[cascade_idx];
+    let atlas_uv = vec2<f32>(
+        mix(rect.x, rect.z, tile_uv.x),
+        mix(rect.y, rect.w, tile_uv.y),
+    );
+
+    let n_dot_l = dot(world_normal, light_dir);
+    let offset_sign = select(-1.0, 1.0, n_dot_l >= 0.0);
+    let vp = _viewport_csm.cascade_vp[cascade_idx];
+    let vp_row0 = vec3<f32>(vp[0][0], vp[1][0], vp[2][0]);
+    let vp_row1 = vec3<f32>(vp[0][1], vp[1][1], vp[2][1]);
+    let vp_row2 = vec3<f32>(vp[0][2], vp[1][2], vp[2][2]);
+    let texel_world = 2.0 / (length(vp_row0) * _viewport_csm.atlas_size * (rect.z - rect.x));
+
+    let primary_light_type = primary.light_type;
+    var offset_world: vec3<f32>;
+    if primary_light_type == 0u {
+        let normal_bias = texel_world * 1.5;
+        offset_world = world_pos - light_dir * normal_bias;
+    } else {
+        let normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));
+        offset_world = world_pos + world_normal * (offset_sign * normal_bias);
+    }
+    let offset_clip = _viewport_csm.cascade_vp[cascade_idx] * vec4<f32>(offset_world, 1.0);
+    let biased_depth = (offset_clip.xyz / offset_clip.w).z - lights.shadow_bias;
+
+    if tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0 ||
+       ndc.z < 0.0 || ndc.z > 1.0 {
+        return 1.0;
+    }
+
+    let n_ndc = vec3<f32>(
+        dot(vp_row0, world_normal) / dot(vp_row0, vp_row0),
+        dot(vp_row1, world_normal) / dot(vp_row1, vp_row1),
+        dot(vp_row2, world_normal) / dot(vp_row2, vp_row2),
+    );
+    let nz_sign = select(-1.0, 1.0, n_ndc.z >= 0.0);
+    let nz = nz_sign * max(abs(n_ndc.z), 1e-4);
+    let rp_gate = select(0.0, 1.0, primary_light_type == 0u);
+    let depth_grad = vec2<f32>(
+        -n_ndc.x / nz * 2.0 / (rect.z - rect.x),
+         n_ndc.y / nz * 2.0 / (rect.w - rect.y),
+    ) * rp_gate;
+
+    let texel_size = 1.0 / _viewport_csm.atlas_size;
+    let noise = fract(52.9829189 * fract(dot(world_pos.xz, vec2<f32>(0.06711056, 0.00583715))));
+    let rot = noise * 6.28318530;
+    let sin_r = sin(rot);
+    let cos_r = cos(rot);
+
+    if _viewport_csm.shadow_filter == 1u {
+        let search_radius = _viewport_csm.pcss_light_radius * 16.0 * texel_size;
+        var blocker_sum = 0.0;
+        var blocker_count = 0.0;
+        for (var i = 0u; i < 16u; i = i + 1u) {
+            let d = _VIEWPORT_POISSON_DISK[i];
+            let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
+            let sample_uv = atlas_uv + rd * search_radius;
+            let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
+            let coords = vec2<i32>(clamped_uv * _viewport_csm.atlas_size);
+            let raw_depth = textureLoad(shadow_atlas_tex, coords, 0);
+            if raw_depth < ndc.z {
+                blocker_sum = blocker_sum + raw_depth;
+                blocker_count = blocker_count + 1.0;
+            }
+        }
+        if blocker_count < 1.0 {
+            return 1.0;
+        }
+        let avg_blocker = blocker_sum / blocker_count;
+        let penumbra_width = _viewport_csm.pcss_light_radius * (biased_depth - avg_blocker) / max(avg_blocker, 0.001);
+        let filter_radius = max(penumbra_width * 16.0 * texel_size, texel_size);
+        var shadow = 0.0;
+        for (var i = 0u; i < 32u; i = i + 1u) {
+            let d = _VIEWPORT_POISSON_DISK[i];
+            let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
+            let sample_uv = atlas_uv + rd * filter_radius;
+            let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
+            let tap_depth = biased_depth
+                + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
+            shadow = shadow + textureSampleCompare(shadow_atlas_tex, shadow_atlas_sampler, clamped_uv, tap_depth);
+        }
+        return shadow / 32.0;
+    } else {
+        let pcf_radius = select(4.0, 1.5, primary_light_type == 0u) * texel_size;
+        var shadow = 0.0;
+        for (var i = 0u; i < 32u; i = i + 1u) {
+            let d = _VIEWPORT_POISSON_DISK[i];
+            let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
+            let sample_uv = atlas_uv + rd * pcf_radius;
+            let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
+            let tap_depth = biased_depth
+                + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
+            shadow = shadow + textureSampleCompare(shadow_atlas_tex, shadow_atlas_sampler, clamped_uv, tap_depth);
+        }
+        return shadow / 32.0;
+    }
 }
 
 // PBR shading. Cook-Torrance specular with GGX NDF + Smith G + Schlick
@@ -367,7 +543,11 @@ fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
 
         let kd = (vec3<f32>(1.0) - F) * (1.0 - inp.metallic);
         let diff = kd * inp.albedo / 3.14159265;
-        lo = lo + (diff + spec) * radiance * n_dot_l;
+        var shadow_factor = 1.0;
+        if i == 0u {
+            shadow_factor = viewport_sample_csm(inp.world_pos, N);
+        }
+        lo = lo + (diff + spec) * radiance * n_dot_l * shadow_factor;
     }
 
     return ambient + lo + inp.emissive;
