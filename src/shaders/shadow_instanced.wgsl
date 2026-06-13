@@ -8,6 +8,10 @@ struct Light {
     view_proj: mat4x4<f32>,
 };
 
+// Layout must match the WGSL `InstanceData` struct in `mesh_instanced.wgsl`
+// and the Rust `InstanceData` in `resources/types.rs`. The shadow vertex
+// stage only reads `model`, but the storage-buffer stride must agree with
+// the CPU upload size so subsequent instances align correctly.
 struct InstanceData {
     model: mat4x4<f32>,
     colour: vec4<f32>,
@@ -27,6 +31,7 @@ struct InstanceData {
     receive_shadows: u32,
     use_flat: u32,
     _pad_inst1: u32,
+    uv_transform: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> light: Light;
