@@ -447,15 +447,15 @@ impl ViewportGpuResources {
         // Pipeline layout (shared between solid and transparent pipelines)
         // Groups: 0=camera, 1=object+texture, 2=deform sidecar
         // ------------------------------------------------------------------
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mesh_pipeline_layout"),
-            bind_group_layouts: &[&camera_bgl, &object_bgl, &deform.bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = crate::resources::mesh_pipelines::mesh_pipeline_layout(
+            device,
+            "mesh_pipeline_layout",
+            &camera_bgl,
+            &object_bgl,
+            &deform.bind_group_layout,
+        );
 
-        // ------------------------------------------------------------------
-        // Depth stencil state (shared between solid and wireframe pipelines)
-        // ------------------------------------------------------------------
+        // Shared depth-stencil reused by several downstream pipelines.
         let depth_stencil = wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24PlusStencil8,
             depth_write_enabled: true,
@@ -465,194 +465,21 @@ impl ViewportGpuResources {
         };
 
         // ------------------------------------------------------------------
-        // Solid render pipeline (TriangleList)
+        // LDR mesh.wgsl pipelines: solid + two-sided + transparent + wireframe.
+        // Built through the shared factory so `register_deformer` can rebuild
+        // them with a freshly composed shader module.
         // ------------------------------------------------------------------
-        let solid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("solid_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(depth_stencil.clone()),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        // ------------------------------------------------------------------
-        // Solid two-sided render pipeline (TriangleList, no blending, no culling)
-        // Identical to solid_pipeline but with cull_mode = None.
-        // Used for analytical surfaces (plots, isosurfaces) viewed from both sides.
-        // ------------------------------------------------------------------
-        let solid_two_sided_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("solid_two_sided_pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: target_format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None, // No culling: surface visible from both sides.
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(depth_stencil.clone()),
-                // The outline/stencil passes render into a dedicated offscreen target
-                // allocated at sample_count = 1, even when the main scene uses MSAA.
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
-
-        // ------------------------------------------------------------------
-        // Transparent render pipeline (TriangleList, alpha blending)
-        // Identical to solid_pipeline but with alpha blending enabled.
-        // Used for objects with appearance.opacity < 1.0.
-        // ------------------------------------------------------------------
-        let transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("transparent_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::Zero,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // No culling for transparent objects (viewed from all angles).
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false, // Transparent objects don't write depth.
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            // The outline ring is also rendered into the same single-sample
-            // offscreen outline target.
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        // ------------------------------------------------------------------
-        // Wireframe render pipeline (LineList, no back-face culling)
-        // ------------------------------------------------------------------
-        let wireframe_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("wireframe_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // No culling for wireframe lines
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(depth_stencil.clone()),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
+        let ldr = crate::resources::mesh_pipelines::build_ldr_mesh_pipelines(
+            device,
+            &pipeline_layout,
+            &shader,
+            target_format,
+            sample_count,
+        );
+        let solid_pipeline = ldr.solid;
+        let solid_two_sided_pipeline = ldr.solid_two_sided;
+        let transparent_pipeline = ldr.transparent;
+        let wireframe_pipeline = ldr.wireframe;
 
         // ------------------------------------------------------------------
         // Camera uniform buffer and bind group
@@ -915,46 +742,15 @@ impl ViewportGpuResources {
                 push_constant_ranges: &[],
             });
 
-        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow_pipeline"),
-            layout: Some(&shadow_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shadow_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: None, // Depth-only pass.
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Front), // Front-face culling reduces shadow acne.
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                // Zero slope-scale to eliminate contact-shadow gap; shader-side shadow_bias
-                // handles acne prevention. constant=2 keeps depth testing stable.
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 0.0,
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1, // Shadow map is always single-sample.
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
+        // Depth-only pass through the shared factory so register_deformer
+        // can rebuild it from composed source. Bias constant=2 with zero
+        // slope-scale eliminates the contact-shadow gap while keeping depth
+        // testing stable; the shader-side shadow_bias term handles acne.
+        let shadow_pipeline = crate::resources::mesh_pipelines::build_shadow_pipeline(
+            device,
+            &shadow_pipeline_layout,
+            &shadow_shader,
+        );
 
         // Shadow pass uniform buffer : 4 cascade slots × 256 bytes (wgpu dynamic-offset alignment).
         // Each slot holds one 4×4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
@@ -1995,87 +1791,14 @@ impl ViewportGpuResources {
                 include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl")).into(),
             ),
         });
-        let outline_mask_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("outline_mask_pipeline"),
-                layout: Some(&outline_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &outline_mask_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &outline_mask_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R8Unorm,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
-
-        let outline_mask_two_sided_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("outline_mask_two_sided_pipeline"),
-                layout: Some(&outline_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &outline_mask_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &outline_mask_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R8Unorm,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
+        let outline_masks = crate::resources::mesh_pipelines::build_outline_mask_pipelines(
+            device,
+            &outline_pipeline_layout,
+            &outline_mask_shader,
+            wgpu::TextureFormat::R8Unorm,
+        );
+        let outline_mask_pipeline = outline_masks.mask;
+        let outline_mask_two_sided_pipeline = outline_masks.mask_two_sided;
 
         // Billboard disc pipeline for the Gaussian splat outline mask pass.
         // Reuses the same pipeline layout as the mesh mask pipelines (camera_bgl + outline_bgl).
@@ -2691,6 +2414,7 @@ impl ViewportGpuResources {
             shadow_map_view,
             shadow_sampler,
             shadow_pipeline,
+            shadow_camera_bind_group_layout: shadow_camera_bgl,
             shadow_uniform_buf,
             shadow_bind_group,
             shadow_info_buf,

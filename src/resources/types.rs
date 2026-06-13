@@ -2581,6 +2581,10 @@ pub struct ViewportGpuResources {
     pub shadow_sampler: wgpu::Sampler,
     /// Render pipeline for the shadow depth pass (depth-only, no fragment output).
     pub shadow_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the shadow camera uniform (group 0 of the
+    /// shadow pass). Kept on the renderer so `register_deformer` can rebuild
+    /// the shadow pipeline from a freshly composed shader module.
+    pub(crate) shadow_camera_bind_group_layout: wgpu::BindGroupLayout,
     /// Uniform buffer holding the per-cascade light-space view-projection matrix (64 bytes).
     pub shadow_uniform_buf: wgpu::Buffer,
     /// Bind group for the shadow pass (group 0: light uniform).

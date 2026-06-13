@@ -423,7 +423,7 @@ mod tests {
         let out = identifier_prefix("wind", body);
         assert!(out.contains("fn wind__deform("));
         assert!(out.contains("fn wind__helper()"));
-        // DeformVertex / DeformContext are external — must not get prefixed.
+        // DeformVertex / DeformContext are external: must not get prefixed.
         assert!(out.contains("DeformVertex"));
         assert!(!out.contains("wind__DeformVertex"));
     }

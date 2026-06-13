@@ -26,6 +26,9 @@ mod instancing;
 pub mod matcap_data;
 /// Slotted GPU mesh storage with free-list removal.
 pub mod mesh_store;
+/// Factory functions for the mesh-family pipelines that share a single
+/// shader source. Used at init time and on `register_deformer` rebuild.
+pub(crate) mod mesh_pipelines;
 mod meshes;
 mod overlay_shape;
 mod overlay_text;
