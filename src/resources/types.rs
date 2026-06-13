@@ -2558,25 +2558,6 @@ pub struct ViewportGpuResources {
     /// uploads through this slot.
     pub(crate) skinning_slot:
         Option<crate::resources::mesh_sidecar::registry::DeformerId>,
-    /// Skinned variant of [`Self::solid_pipeline`]. Same fragment stage as the
-    /// non-skinned pipeline; vertex stage applies LBS from the skinning
-    /// sidecar storage buffers.
-    // None when device.limits().max_bind_groups < 3 (e.g. iced_wgpu, which hardcodes 2).
-    pub skinned_solid_pipeline: Option<wgpu::RenderPipeline>,
-    /// Skinned two-sided variant (cull_mode = None). Selected when a skinned
-    /// mesh's material requests a non-Cull backface policy.
-    pub skinned_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
-    /// Skinned variant of [`Self::transparent_pipeline`]: alpha blending,
-    /// no back-face culling, no depth write. Selected for skinned items
-    /// with opacity < 1.0 or a blended material.
-    pub skinned_transparent_pipeline: Option<wgpu::RenderPipeline>,
-    /// Skinned variant of [`Self::wireframe_pipeline`]: LineList topology
-    /// over the mesh's edge index buffer.
-    pub skinned_wireframe_pipeline: Option<wgpu::RenderPipeline>,
-    /// Skinned variant of [`Self::shadow_pipeline`] used when a skinned mesh
-    /// casts shadows.
-    pub skinned_shadow_pipeline: Option<wgpu::RenderPipeline>,
-
     // --- Shadow map resources ---
     /// Shadow atlas depth texture (Depth32Float, atlas_size × atlas_size, 2×2 tile grid).
     pub shadow_map_texture: wgpu::Texture,
@@ -2909,12 +2890,6 @@ pub struct ViewportGpuResources {
     pub(crate) outline_mask_pipeline: wgpu::RenderPipeline,
     /// Two-sided mask-write pipeline for selected meshes rendered without face culling.
     pub(crate) outline_mask_two_sided_pipeline: wgpu::RenderPipeline,
-    /// Skinned variant of `outline_mask_pipeline`. Applies LBS to the bind-pose
-    /// vertex buffer so the selection outline tracks the deformed silhouette
-    /// on the GPU skinning path.
-    pub(crate) outline_mask_skinned_pipeline: Option<wgpu::RenderPipeline>,
-    /// Skinned two-sided outline mask pipeline.
-    pub(crate) outline_mask_skinned_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// Fullscreen edge-detection pipeline: reads mask, outputs anti-aliased outline ring.
     pub(crate) outline_edge_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the edge-detection pass (mask texture + sampler + uniform).
@@ -3128,20 +3103,6 @@ pub struct ViewportGpuResources {
 
     /// HDR-format variants of core scene pipelines.
     pub(crate) hdr_solid_pipeline: Option<wgpu::RenderPipeline>,
-    /// HDR skinned variant (group 2 = skin sidecar). Built alongside
-    /// `hdr_solid_pipeline` so the HDR draw path can render skinned meshes
-    /// without a format mismatch.
-    pub(crate) hdr_skinned_solid_pipeline: Option<wgpu::RenderPipeline>,
-    /// HDR skinned two-sided variant (cull_mode: None).
-    pub(crate) hdr_skinned_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
-    /// HDR skinned transparent variant (alpha blending, no depth write).
-    pub(crate) hdr_skinned_transparent_pipeline: Option<wgpu::RenderPipeline>,
-    /// HDR skinned wireframe variant (LineList over edge index buffer).
-    pub(crate) hdr_skinned_wireframe_pipeline: Option<wgpu::RenderPipeline>,
-    /// Skinned variant of [`Self::oit_pipeline`]. Same OIT accumulate /
-    /// reveal output as the static OIT pipeline; vertex stage is the skinned
-    /// LBS from `mesh_skinned.wgsl`. HDR-only: OIT is not used in LDR.
-    pub(crate) skinned_oit_pipeline: Option<wgpu::RenderPipeline>,
     /// HDR two-sided variant (cull_mode: None) for analytical surfaces.
     pub(crate) hdr_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_transparent_pipeline: Option<wgpu::RenderPipeline>,

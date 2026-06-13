@@ -1753,17 +1753,14 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                     continue;
                                 };
-                                let skin_bg = item.skin_instance.and_then(|inst| {
-                                    resources.skin_instance_bind_group(item.mesh_id, inst)
-                                });
-                                if let (Some(bg), Some(hdr_skinned_wf)) =
-                                    (skin_bg, resources.hdr_skinned_wireframe_pipeline.as_ref())
-                                {
-                                    render_pass.set_pipeline(hdr_skinned_wf);
-                                    render_pass.set_bind_group(2, bg, &[]);
-                                } else {
-                                    render_pass.set_pipeline(hdr_wf);
-                                }
+                                render_pass.set_pipeline(hdr_wf);
+                                render_pass.set_bind_group(
+                                    2,
+                                    resources
+                                        .deform
+                                        .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                    &[],
+                                );
                                 let bg = self
                                     .wireframe_bind_groups
                                     .get(wf_idx)
@@ -1795,32 +1792,19 @@ impl ViewportRenderer {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
-                            let skin_bg = item.skin_instance.and_then(|inst| {
-                                resources.skin_instance_bind_group(item.mesh_id, inst)
-                            });
-                            if let (Some(bg), Some(hdr_skinned_pl)) = (
-                                skin_bg,
-                                if item.material.is_two_sided() {
-                                    resources.hdr_skinned_solid_two_sided_pipeline.as_ref()
-                                } else {
-                                    resources.hdr_skinned_solid_pipeline.as_ref()
-                                },
-                            ) {
-                                render_pass.set_pipeline(hdr_skinned_pl);
-                                render_pass.set_bind_group(2, bg, &[]);
+                            let pipeline = if item.material.is_two_sided() {
+                                hdr_solid_two_sided
                             } else {
-                                let pipeline = if item.material.is_two_sided() {
-                                    hdr_solid_two_sided
-                                } else {
-                                    hdr_solid
-                                };
-                                render_pass.set_pipeline(pipeline);
-                                render_pass.set_bind_group(
-                                    2,
-                                    &resources.deform.dummy_bind_group,
-                                    &[],
-                                );
-                            }
+                                hdr_solid
+                            };
+                            render_pass.set_pipeline(pipeline);
+                            render_pass.set_bind_group(
+                                2,
+                                resources
+                                    .deform
+                                    .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                &[],
+                            );
                             let obj_bg = self
                                 .per_item_object_bind_groups
                                 .get(item_idx)
@@ -1922,13 +1906,9 @@ impl ViewportRenderer {
                                 .unwrap_or(&mesh.object_bind_group);
                             render_pass.set_bind_group(1, obj_bg, &[]);
 
-                            // Skinned routing: if the mesh has a skin sidecar
-                            // and this item's instance has a palette uploaded,
-                            // switch to the skinned pipeline variant and bind
-                            // group 2. Falls back to the static path otherwise.
-                            let skin_bg = item.skin_instance.and_then(|inst| {
-                                resources.skin_instance_bind_group(item.mesh_id, inst)
-                            });
+                            let deform_bg = resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.skin_instance);
                             let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
                                 matches!(
                                     a.kind,
@@ -1939,19 +1919,8 @@ impl ViewportRenderer {
                                 )
                             });
                             if frame.viewport.wireframe_mode {
-                                if let (Some(bg), Some(hdr_skinned_wf)) =
-                                    (skin_bg, resources.hdr_skinned_wireframe_pipeline.as_ref())
-                                {
-                                    render_pass.set_pipeline(hdr_skinned_wf);
-                                    render_pass.set_bind_group(2, bg, &[]);
-                                } else {
-                                    render_pass.set_pipeline(wf_pl);
-                                    render_pass.set_bind_group(
-                                        2,
-                                        &resources.deform.dummy_bind_group,
-                                        &[],
-                                    );
-                                }
+                                render_pass.set_pipeline(wf_pl);
+                                render_pass.set_bind_group(2, deform_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     mesh.edge_index_buffer.slice(..),
@@ -1966,11 +1935,7 @@ impl ViewportRenderer {
                                         solid_pl
                                     };
                                     render_pass.set_pipeline(pl);
-                                    render_pass.set_bind_group(
-                                        2,
-                                        &resources.deform.dummy_bind_group,
-                                        &[],
-                                    );
+                                    render_pass.set_bind_group(2, deform_bg, &[]);
                                     render_pass.set_vertex_buffer(0, fvb.slice(..));
                                     render_pass.draw(0..mesh.index_count, 0..1);
                                 }
@@ -1983,26 +1948,8 @@ impl ViewportRenderer {
                                 } else {
                                     solid_pl
                                 };
-                                let is_blended =
-                                    item.settings.opacity < 1.0 || item.material.is_blend();
-                                let hdr_skinned_pl = if is_blended {
-                                    resources.hdr_skinned_transparent_pipeline.as_ref()
-                                } else if item.material.is_two_sided() {
-                                    resources.hdr_skinned_solid_two_sided_pipeline.as_ref()
-                                } else {
-                                    resources.hdr_skinned_solid_pipeline.as_ref()
-                                };
-                                if let (Some(bg), Some(hdr_skinned)) = (skin_bg, hdr_skinned_pl) {
-                                    render_pass.set_pipeline(hdr_skinned);
-                                    render_pass.set_bind_group(2, bg, &[]);
-                                } else {
-                                    render_pass.set_pipeline(pl);
-                                    render_pass.set_bind_group(
-                                        2,
-                                        &resources.deform.dummy_bind_group,
-                                        &[],
-                                    );
-                                }
+                                render_pass.set_pipeline(pl);
+                                render_pass.set_bind_group(2, deform_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 if let Some(fr) = filter {
                                     render_pass.set_index_buffer(
@@ -3067,22 +3014,15 @@ impl ViewportRenderer {
                     // Render them here individually so they are not invisible at opacity < 1.
                     if let Some(ref pipeline) = self.resources.oit_pipeline {
                         oit_pass.set_pipeline(pipeline);
-                        oit_pass.set_bind_group(
-                            2,
-                            &self.resources.deform.dummy_bind_group,
-                            &[],
-                        );
-                        let mut last_skinned = false;
                         for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || (item.settings.opacity >= 1.0 && !item.material.is_blend())
                             {
                                 continue;
                             }
-                            let skin_bg = item.skin_instance.and_then(|inst| {
-                                self.resources.skin_instance_bind_group(item.mesh_id, inst)
-                            });
-                            if skin_bg.is_none()
+                            let is_skinned = item.skin_instance.is_some()
+                                && self.resources.is_skinned_mesh(item.mesh_id);
+                            if !is_skinned
                                 && item.active_attribute.is_none()
                                 && !item.material.is_two_sided()
                                 && item.material.matcap_id().is_none()
@@ -3092,32 +3032,17 @@ impl ViewportRenderer {
                             let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
-                            let want_skinned =
-                                skin_bg.is_some() && self.resources.skinned_oit_pipeline.is_some();
-                            if want_skinned != last_skinned {
-                                if want_skinned {
-                                    oit_pass.set_pipeline(
-                                        self.resources.skinned_oit_pipeline.as_ref().unwrap(),
-                                    );
-                                } else {
-                                    oit_pass.set_pipeline(pipeline);
-                                    oit_pass.set_bind_group(
-                                        2,
-                                        &self.resources.deform.dummy_bind_group,
-                                        &[],
-                                    );
-                                }
-                                last_skinned = want_skinned;
-                            }
+                            let deform_bg = self
+                                .resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.skin_instance);
                             let obj_bg = self
                                 .per_item_object_bind_groups
                                 .get(item_idx)
                                 .and_then(|opt| opt.as_ref())
                                 .unwrap_or(&mesh.object_bind_group);
                             oit_pass.set_bind_group(1, obj_bg, &[]);
-                            if let Some(bg) = skin_bg {
-                                oit_pass.set_bind_group(2, bg, &[]);
-                            }
+                            oit_pass.set_bind_group(2, deform_bg, &[]);
                             oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             oit_pass.set_index_buffer(
                                 mesh.index_buffer.slice(..),
@@ -3128,12 +3053,6 @@ impl ViewportRenderer {
                     }
                 } else if let Some(ref pipeline) = self.resources.oit_pipeline {
                     oit_pass.set_pipeline(pipeline);
-                    oit_pass.set_bind_group(
-                        2,
-                        &self.resources.deform.dummy_bind_group,
-                        &[],
-                    );
-                    let mut last_skinned = false;
                     for (item_idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden
                             || (item.settings.opacity >= 1.0 && !item.material.is_blend())
@@ -3143,35 +3062,17 @@ impl ViewportRenderer {
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                             continue;
                         };
-                        let skin_bg = item.skin_instance.and_then(|inst| {
-                            self.resources.skin_instance_bind_group(item.mesh_id, inst)
-                        });
-                        let want_skinned =
-                            skin_bg.is_some() && self.resources.skinned_oit_pipeline.is_some();
-                        if want_skinned != last_skinned {
-                            if want_skinned {
-                                oit_pass.set_pipeline(
-                                    self.resources.skinned_oit_pipeline.as_ref().unwrap(),
-                                );
-                            } else {
-                                oit_pass.set_pipeline(pipeline);
-                                oit_pass.set_bind_group(
-                                    2,
-                                    &self.resources.deform.dummy_bind_group,
-                                    &[],
-                                );
-                            }
-                            last_skinned = want_skinned;
-                        }
+                        let deform_bg = self
+                            .resources
+                            .deform
+                            .instance_bind_group_for(item.mesh_id, item.skin_instance);
                         let obj_bg = self
                             .per_item_object_bind_groups
                             .get(item_idx)
                             .and_then(|opt| opt.as_ref())
                             .unwrap_or(&mesh.object_bind_group);
                         oit_pass.set_bind_group(1, obj_bg, &[]);
-                        if let Some(bg) = skin_bg {
-                            oit_pass.set_bind_group(2, bg, &[]);
-                        }
+                        oit_pass.set_bind_group(2, deform_bg, &[]);
                         oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         oit_pass.set_index_buffer(
                             mesh.index_buffer.slice(..),

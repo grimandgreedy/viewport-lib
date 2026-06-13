@@ -2892,7 +2892,11 @@ impl ViewportRenderer {
                             // layout (shadow_camera_bgl with dynamic offset),
                             // so rebind group 0 + 1 around the per-object loop
                             // and restore the instanced bindings after.
-                            let mut drew_skinned = false;
+                            // Skinned meshes do not batch (palettes are
+                            // per-instance), so draw them individually with
+                            // the standard shadow pipeline; the deform
+                            // sidecar binds per-instance data at group 2.
+                            let mut drew_per_item = false;
                             for item in scene_items.iter() {
                                 if item.settings.hidden
                                     || !item.settings.cast_shadows
@@ -2900,30 +2904,31 @@ impl ViewportRenderer {
                                 {
                                     continue;
                                 }
-                                let Some(skin_bg) = item.skin_instance.and_then(|inst| {
-                                    resources.skin_instance_bind_group(item.mesh_id, inst)
-                                }) else {
+                                if item.skin_instance.is_none()
+                                    || !resources.is_skinned_mesh(item.mesh_id)
+                                {
                                     continue;
-                                };
+                                }
                                 let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                     continue;
                                 };
-                                if !drew_skinned {
-                                    let Some(skinned_pl) =
-                                        resources.skinned_shadow_pipeline.as_ref()
-                                    else {
-                                        continue;
-                                    };
-                                    shadow_pass.set_pipeline(skinned_pl);
+                                if !drew_per_item {
+                                    shadow_pass.set_pipeline(&resources.shadow_pipeline);
                                     shadow_pass.set_bind_group(
                                         0,
                                         &resources.shadow_bind_group,
                                         &[cascade as u32 * 256],
                                     );
-                                    drew_skinned = true;
+                                    drew_per_item = true;
                                 }
                                 shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                                shadow_pass.set_bind_group(2, skin_bg, &[]);
+                                shadow_pass.set_bind_group(
+                                    2,
+                                    resources
+                                        .deform
+                                        .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                    &[],
+                                );
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
@@ -2934,7 +2939,7 @@ impl ViewportRenderer {
                             }
                             // Restore the instanced bind groups for the next
                             // cascade so the instanced path keeps working.
-                            if drew_skinned {
+                            if drew_per_item {
                                 shadow_pass.set_pipeline(pipeline);
                                 shadow_pass.set_bind_group(0, cascade_bg, &[]);
                                 shadow_pass.set_bind_group(1, instance_bg, &[]);
@@ -2965,10 +2970,7 @@ impl ViewportRenderer {
                             &resources.shadow_bind_group,
                             &[cascade as u32 * 256],
                         );
-                        // Track which pipeline is currently bound to avoid
-                        // redundant set_pipeline calls between static and
-                        // skinned meshes during the cascade walk.
-                        let mut last_skinned: Option<bool> = None;
+                        shadow_pass.set_pipeline(&resources.shadow_pipeline);
 
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &cascade_view_projs[cascade],
@@ -2995,32 +2997,14 @@ impl ViewportRenderer {
                                 continue;
                             }
 
-                            let skin_bg = item.skin_instance.and_then(|inst| {
-                                resources.skin_instance_bind_group(item.mesh_id, inst)
-                            });
-                            let want_skinned = skin_bg.is_some();
-                            if last_skinned != Some(want_skinned) {
-                                shadow_pass.set_pipeline(if want_skinned {
-                                    resources
-                                        .skinned_shadow_pipeline
-                                        .as_ref()
-                                        .unwrap_or(&resources.shadow_pipeline)
-                                } else {
-                                    &resources.shadow_pipeline
-                                });
-                                if !want_skinned {
-                                    shadow_pass.set_bind_group(
-                                        2,
-                                        &resources.deform.dummy_bind_group,
-                                        &[],
-                                    );
-                                }
-                                last_skinned = Some(want_skinned);
-                            }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            if let Some(bg) = skin_bg {
-                                shadow_pass.set_bind_group(2, bg, &[]);
-                            }
+                            shadow_pass.set_bind_group(
+                                2,
+                                resources
+                                    .deform
+                                    .instance_bind_group_for(item.mesh_id, item.skin_instance),
+                                &[],
+                            );
                             shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             shadow_pass.set_index_buffer(
                                 mesh.index_buffer.slice(..),
@@ -4734,39 +4718,20 @@ impl ViewportRenderer {
                     let Some(mesh) = self.resources.mesh_store.get(outlined.mesh_id) else {
                         continue;
                     };
-                    // Skinned route: only if the node carries a skin_instance,
-                    // the mesh has weights uploaded, and a palette is present
-                    // for this (mesh, instance) pair. Otherwise fall back to
-                    // the unskinned pipeline (drawing against the bind pose).
-                    let skin_bg = outlined.skin_instance.and_then(|inst| {
-                        if !self.resources.is_skinned_mesh(outlined.mesh_id) {
-                            return None;
-                        }
-                        self.resources
-                            .skin_instance_bind_group(outlined.mesh_id, inst)
-                    });
-                    let pipeline: &wgpu::RenderPipeline =
-                        match (skin_bg.is_some(), outlined.two_sided) {
-                            (true, true) => self
-                                .resources
-                                .outline_mask_skinned_two_sided_pipeline
-                                .as_ref()
-                                .unwrap_or(&self.resources.outline_mask_two_sided_pipeline),
-                            (true, false) => self
-                                .resources
-                                .outline_mask_skinned_pipeline
-                                .as_ref()
-                                .unwrap_or(&self.resources.outline_mask_pipeline),
-                            (false, true) => &self.resources.outline_mask_two_sided_pipeline,
-                            (false, false) => &self.resources.outline_mask_pipeline,
-                        };
+                    let pipeline: &wgpu::RenderPipeline = if outlined.two_sided {
+                        &self.resources.outline_mask_two_sided_pipeline
+                    } else {
+                        &self.resources.outline_mask_pipeline
+                    };
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(1, &outlined.mask_bind_group, &[]);
-                    if let Some(bg) = skin_bg {
-                        pass.set_bind_group(2, bg, &[]);
-                    } else {
-                        pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
-                    }
+                    pass.set_bind_group(
+                        2,
+                        self.resources
+                            .deform
+                            .instance_bind_group_for(outlined.mesh_id, outlined.skin_instance),
+                        &[],
+                    );
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);

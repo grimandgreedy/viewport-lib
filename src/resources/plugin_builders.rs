@@ -140,19 +140,33 @@ impl ViewportGpuResources {
         &self.shadow_sampler
     }
 
-    /// Bind group layout for the GPU skinning palette.
+    /// Bind group layout for the per-vertex deformation sidecar.
     ///
-    /// Plugins shipping skinned variants of their geometry add this
-    /// layout to their pipeline's `extra_bind_group_layouts` list at
-    /// group 2, then include
-    /// [`SHARED_SKIN_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SKIN_WGSL)
-    /// in their vertex shader.
-    ///
-    /// The host (or the mesh-attach helper) uploads per-instance joint
-    /// palettes via [`set_skin_palette`](Self::set_skin_palette); plugins
-    /// do not manage palette uploads themselves.
+    /// Plugins building pipelines that draw deformable or skinned meshes
+    /// add this layout at group 2 so their vertex stage can read from the
+    /// shared `deform_data` / `deform_instance_data` storage buffers. GPU
+    /// skinning is registered against this same layout at renderer
+    /// construction; per-instance joint palettes flow through
+    /// [`set_skin_palette`](Self::set_skin_palette).
     pub fn skin_palette_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.skinning.bind_group_layout
+        &self.deform.bind_group_layout
+    }
+
+    /// Bind group layout for the vertex displacement sidecar.
+    ///
+    /// Plugins shipping displaceable variants of their geometry add this
+    /// layout to their pipeline's `extra_bind_group_layouts` list at
+    /// group 3, include
+    /// [`SHARED_DISPLACE_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DISPLACE_WGSL)
+    /// in their vertex shader, and supply their own helper string defining
+    /// `viewport_apply_vertex_displacement`.
+    ///
+    /// The host uploads per-vertex sway-mask buffers via
+    /// [`set_vertex_displacement_weights`](Self::set_vertex_displacement_weights)
+    /// and installs the displacement uniform via
+    /// [`set_displacement_uniform_buffer`](Self::set_displacement_uniform_buffer).
+    pub fn displacement_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.displacement.bind_group_layout
     }
 
     /// Number of live user-uploaded textures.

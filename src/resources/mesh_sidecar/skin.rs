@@ -1,31 +1,21 @@
-//! GPU skinning sidecar storage.
+//! GPU skinning routed through the deformer registry.
 //!
-//! Holds the per-mesh skin-weight storage buffers and the per-(mesh, instance)
-//! joint palette storage buffers used by the skinned pipeline variants.
-//!
-//! Static meshes pay zero overhead: nothing is allocated until
-//! [`crate::ViewportGpuResources::set_skin_weights`] is called for a mesh,
-//! which is what marks that mesh as skinnable.
-//!
-//! See `docs/plans/skeletal-animation-plan.md`.
+//! Skinning is registered at renderer construction as an internal deformer
+//! on a reserved slot. `set_skin_weights` packs per-vertex weights into the
+//! deformer's per-mesh slot, `set_skin_palette` writes the joint matrices
+//! into the deformer's per-instance slot, and the standard mesh shaders
+//! apply LBS during the object-space deform stage. Static meshes pay zero
+//! overhead.
 
 use std::collections::HashMap;
-
-use wgpu::util::DeviceExt;
 
 use crate::resources::SkinWeights;
 use crate::resources::ViewportGpuResources;
 use crate::resources::mesh_store::MeshId;
 
-/// Packed per-vertex skin data uploaded to the GPU sidecar storage buffer.
-///
-/// Layout matches the `SkinVertex` WGSL struct in `mesh_skinned.wgsl`:
-/// `weights` first (vec4 aligned to 16), then the two packed joint-index
-/// u32s, then 8 bytes of trailing padding. WGSL rounds the struct up to its
-/// alignment (16) for array stride, so the stride is 32 bytes even though
-/// only 24 bytes carry data. The padding makes Rust agree.
-///
-/// Total: 32 bytes per vertex (24 bytes data + 8 bytes std430 padding).
+/// Packed per-vertex skin data: four `f32` weights followed by two packed
+/// joint-index `u32`s. Total 24 bytes, matching the per-vertex stride
+/// expected by the deformer's skinning body.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct PackedSkinVertex {
@@ -34,69 +24,17 @@ pub(crate) struct PackedSkinVertex {
     pub joints_01: u32,
     /// `joints[2]` in the low 16 bits, `joints[3]` in the high 16 bits.
     pub joints_23: u32,
-    /// Trailing padding so the struct stride matches WGSL std430.
-    pub _pad: [u32; 2],
 }
 
-/// Per-instance joint palette: storage buffer plus its bind group.
-pub(crate) struct InstancePalette {
-    /// Storage buffer of `mat4x4<f32>` joint matrices.
-    pub buffer: wgpu::Buffer,
-    /// Bind group binding both the mesh's skin weights and this instance's
-    /// palette buffer.
-    pub bind_group: wgpu::BindGroup,
-    /// Number of `Mat4` slots allocated in `buffer`. Used to decide when a
-    /// realloc is required.
-    pub joint_capacity: u32,
-}
-
-/// Per-mesh skinning data: the weights storage buffer plus a map of instance
-/// palettes keyed by `instance_id`.
-pub(crate) struct MeshSkinning {
-    pub weights_buffer: wgpu::Buffer,
-    pub instances: HashMap<u32, InstancePalette>,
-}
-
-/// Renderer-side skinning state.
-///
-/// Owns the bind group layout used by skinned pipeline variants and a per-mesh
-/// map of skinning sidecars.
+/// Renderer-side skinning state. Tracks which meshes are skinnable so
+/// `is_skinned_mesh` can answer without consulting the deformer registry.
 pub(crate) struct SkinningState {
-    pub bind_group_layout: wgpu::BindGroupLayout,
-    pub meshes: HashMap<MeshId, MeshSkinning>,
+    pub meshes: HashMap<MeshId, ()>,
 }
 
 impl SkinningState {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("skin_bgl"),
-            entries: &[
-                // binding 0: skin weights storage buffer (per-vertex joint indices + weights)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 1: joint palette storage buffer (mat4x4<f32> per joint)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+    pub fn new(_device: &wgpu::Device) -> Self {
         Self {
-            bind_group_layout,
             meshes: HashMap::new(),
         }
     }
@@ -115,7 +53,6 @@ impl SkinningState {
                     weights: *w,
                     joints_01: j0 | (j1 << 16),
                     joints_23: j2 | (j3 << 16),
-                    _pad: [0, 0],
                 }
             })
             .collect()
@@ -283,32 +220,15 @@ impl ViewportGpuResources {
     }
 
     /// Shared apply step for both `set_skin_weights` and
-    /// `begin_upload_skin_weights`: build the storage buffer for the legacy
-    /// skinned pipelines and attach a tight-packed copy of the weights to
-    /// the internal skinning deformer slot for the registry-driven path.
+    /// `begin_upload_skin_weights`: mark the mesh as skinnable and attach
+    /// the tight-packed weights to the internal skinning deformer slot.
     fn install_skin_weights(
         &mut self,
         device: &wgpu::Device,
         mesh_id: MeshId,
         packed: &[PackedSkinVertex],
     ) {
-        let weights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("skin_weights_buffer"),
-            contents: bytemuck::cast_slice(packed),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-        self.skinning.meshes.insert(
-            mesh_id,
-            MeshSkinning {
-                weights_buffer,
-                instances: HashMap::new(),
-            },
-        );
-
-        // Push a tight-packed (24-byte stride) copy into the deformer
-        // slot. The legacy `PackedSkinVertex` struct is 32 bytes because
-        // WGSL std430 rounds the struct up to its vec4 alignment; the
-        // deformer slot expects exactly six u32 words per vertex.
+        self.skinning.meshes.insert(mesh_id, ());
         if let Some(slot_id) = self.skinning_slot {
             let tight = pack_skin_weights_tight(packed);
             self.deform.attach_slot(
@@ -343,68 +263,22 @@ impl ViewportGpuResources {
         instance_id: u32,
         palette: &[glam::Mat4],
     ) -> bool {
-        let bgl = &self.skinning.bind_group_layout;
-        let mesh = match self.skinning.meshes.get_mut(&mesh_id) {
-            Some(m) => m,
-            None => return false,
-        };
-
-        let joints_needed = palette.len() as u32;
-        let needs_realloc = match mesh.instances.get(&instance_id) {
-            Some(inst) => inst.joint_capacity < joints_needed,
-            None => true,
-        };
-
-        if needs_realloc {
-            let capacity = joints_needed.max(1);
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("skin_palette_buffer"),
-                size: (capacity as u64) * std::mem::size_of::<[[f32; 4]; 4]>() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("skin_bind_group"),
-                layout: bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: mesh.weights_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: buffer.as_entire_binding(),
-                    },
-                ],
-            });
-            mesh.instances.insert(
-                instance_id,
-                InstancePalette {
-                    buffer,
-                    bind_group,
-                    joint_capacity: capacity,
-                },
-            );
+        if !self.skinning.meshes.contains_key(&mesh_id) {
+            return false;
         }
-
-        let inst = mesh.instances.get(&instance_id).unwrap();
+        let Some(slot_id) = self.skinning_slot else {
+            return false;
+        };
         let bytes: Vec<[[f32; 4]; 4]> = palette.iter().map(|m| m.to_cols_array_2d()).collect();
-        queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&bytes));
-
-        // Mirror the palette into the deformer per-instance slot so the
-        // registry-driven skinning path sees the same data. Bytes are the
-        // 64-byte-per-mat4 column-major form.
-        if let Some(slot_id) = self.skinning_slot {
-            self.deform.attach_slot_instance(
-                device,
-                queue,
-                mesh_id,
-                instance_id,
-                slot_id.slot(),
-                SKIN_PALETTE_STRIDE_BYTES / 4,
-                bytemuck::cast_slice(&bytes),
-            );
-        }
+        self.deform.attach_slot_instance(
+            device,
+            queue,
+            mesh_id,
+            instance_id,
+            slot_id.slot(),
+            SKIN_PALETTE_STRIDE_BYTES / 4,
+            bytemuck::cast_slice(&bytes),
+        );
         true
     }
 
@@ -412,21 +286,6 @@ impl ViewportGpuResources {
     /// [`Self::set_skin_weights`].
     pub fn is_skinned_mesh(&self, mesh_id: MeshId) -> bool {
         self.skinning.meshes.contains_key(&mesh_id)
-    }
-
-    /// Whether the given `(mesh_id, instance_id)` has a palette uploaded and
-    /// is ready to be drawn through the skinned pipeline.
-    pub(crate) fn skin_instance_bind_group(
-        &self,
-        mesh_id: MeshId,
-        instance_id: u32,
-    ) -> Option<&wgpu::BindGroup> {
-        self.skinning
-            .meshes
-            .get(&mesh_id)?
-            .instances
-            .get(&instance_id)
-            .map(|p| &p.bind_group)
     }
 }
 

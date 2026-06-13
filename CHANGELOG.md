@@ -14,6 +14,12 @@ Every mesh-family shader (`mesh.wgsl`, `mesh_oit.wgsl`, `mesh_instanced.wgsl`, `
 
 `register_deformer` now rebuilds the LDR and HDR `mesh.wgsl` pipeline families (solid, two-sided, transparent, wireframe) with a freshly composed shader module, so a registration takes effect at the next draw on those paths. The shared pipeline factories live in `resources/mesh_pipelines.rs` and run at both startup and rebuild time, so init and rebuild stay in lockstep. Other mesh-family pipelines (instanced, OIT, shadow, outline mask) continue to run the identity path until their factories migrate to the same rebuild flow.
 
+#### GPU skinning runs through the deformer registry
+
+GPU skinning is now an internal deformer on a reserved slot rather than a parallel set of pipelines. The standard `mesh.wgsl`, `mesh_oit.wgsl`, `shadow.wgsl`, and `outline_mask.wgsl` pipelines pick up linear blend skinning by reading per-vertex weights and per-instance joint palettes through the deformer's slot helpers. `set_skin_weights` packs weights at the deformer's 24-byte stride and attaches them to the per-mesh slot. `set_skin_palette` writes the joint matrices to the per-instance slot through the new `attach_deform_slot_instance` API. The public skinning API (`set_skin_weights`, `set_skin_palette`, `is_skinned_mesh`, `supports_gpu_skinning`) keeps the same signatures.
+
+The dedicated skinned pipelines (`skinned_solid_pipeline`, `skinned_solid_two_sided_pipeline`, `skinned_transparent_pipeline`, `skinned_wireframe_pipeline`, `skinned_shadow_pipeline`, `skinned_oit_pipeline`, `hdr_skinned_*`, `outline_mask_skinned_*`) and their backing shaders (`mesh_skinned.wgsl`, `shadow_skinned.wgsl`, `outline_mask_skinned.wgsl`) are gone. So is `skin_palette_layout()`'s old return value: it now points at the deformer bind group layout instead of a separate skin layout. The deformer registry's host slot count stays at four; an additional internal slot range is reserved for in-crate deformers and does not count against the host budget.
+
 #### Lit sprites and lit GPU particles
 
 `SpriteItem` and `ParticleRender::Sprite` gain a `lit` flag and a `SpriteLitParams` block (`roughness`, `normal_mode`, `receive_shadows`, `ambient_scale`). Lit batches run through dedicated pipelines that pick up the scene's directional, point, spot, and hemisphere ambient lighting, so smoke, dust, fog, and other particles read with a clear lit and shaded side under any directional light, instead of looking flat. Default `lit = false` preserves the prior emissive billboard behaviour.
