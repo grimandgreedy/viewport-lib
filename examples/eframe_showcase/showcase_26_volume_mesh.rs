@@ -891,6 +891,13 @@ impl App {
         item.active_attribute = active_attribute;
         item.colourmap_id = colourmap_id;
         if self.vm_state.transparent {
+            // The projected-tet path samples a colourmap LUT keyed by the
+            // upload-time scalar attribute; it has no path for per-cell RGBA.
+            // Fall back to the active colourmap so DirectColour does not
+            // render with an empty LUT.
+            if item.colourmap_id.is_none() {
+                item.colourmap_id = Some(ColourmapId(self.vm_state.colourmap as usize));
+            }
             item.transparency = Some(VolumeTransparency {
                 density: self.vm_state.density,
                 ..Default::default()

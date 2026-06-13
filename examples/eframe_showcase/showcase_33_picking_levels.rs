@@ -241,20 +241,20 @@ fn make_pl_tvm_tet_data() -> VolumeMeshData {
         let top = layer + 1;
         for s in 0..N_SECTORS {
             let s_next = (s + 1) % N_SECTORS;
-            // Each "wedge" from center to outer edge forms a hex cell:
-            // bottom face: center_bot, outer_s_bot, outer_s+1_bot, center_bot (degenerate quad)
-            // top face:    center_top, outer_s_top, outer_s+1_top, center_top
-            // We use a proper hex with the center vertex duplicated to fill the
-            // 8-vertex slot (wedge-like hex).
+            // Each wedge: bottom triangle (center, outer_s, outer_s+1) at the
+            // current layer and a matching top triangle at layer+1. Encoded in
+            // the 6-index wedge slot with CELL_SENTINEL padding so the
+            // projected-tet decomposition picks the 3-tet wedge path instead
+            // of the 6-tet hex one.
             cells.push([
                 vi(bot, 0),
                 vi(bot, 1 + s),
                 vi(bot, 1 + s_next),
-                vi(bot, 0),
                 vi(top, 0),
                 vi(top, 1 + s),
                 vi(top, 1 + s_next),
-                vi(top, 0),
+                viewport_lib::CELL_SENTINEL,
+                viewport_lib::CELL_SENTINEL,
             ]);
             let t = (layer as f32 + 0.5) / N_LAYERS as f32;
             let u = (s as f32 + 0.5) / N_SECTORS as f32;
