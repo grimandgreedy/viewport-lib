@@ -70,12 +70,17 @@ impl ViewportGpuResources {
         });
 
         // Instanced mesh shader.
-        let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh_instanced_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into(),
-            ),
-        });
+        let instanced_shader = {
+            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"));
+            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
+                base,
+                &self.deform.registrations,
+            );
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_instanced_shader"),
+                source: wgpu::ShaderSource::Wgsl(composed.into()),
+            })
+        };
 
         let instanced_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
             device,
@@ -195,12 +200,17 @@ impl ViewportGpuResources {
             return;
         };
 
-        let inst_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh_instanced_shader_hdr"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into(),
-            ),
-        });
+        let inst_shader = {
+            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"));
+            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
+                base,
+                &self.deform.registrations,
+            );
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_instanced_shader_hdr"),
+                source: wgpu::ShaderSource::Wgsl(composed.into()),
+            })
+        };
         let inst_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_pipeline_layout",
@@ -231,12 +241,17 @@ impl ViewportGpuResources {
             return;
         };
 
-        let instanced_oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh_instanced_oit_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl")).into(),
-            ),
-        });
+        let instanced_oit_shader = {
+            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl"));
+            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
+                base,
+                &self.deform.registrations,
+            );
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_instanced_oit_shader"),
+                source: wgpu::ShaderSource::Wgsl(composed.into()),
+            })
+        };
         let instanced_oit_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
             device,
             "oit_instanced_pipeline_layout",
@@ -504,12 +519,17 @@ impl ViewportGpuResources {
         });
 
         // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
-        let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh_instanced_shader_cull"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl")).into(),
-            ),
-        });
+        let instanced_shader = {
+            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"));
+            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
+                base,
+                &self.deform.registrations,
+            );
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_instanced_shader_cull"),
+                source: wgpu::ShaderSource::Wgsl(composed.into()),
+            })
+        };
         let inst_cull_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_cull_pipeline_layout",
@@ -524,12 +544,17 @@ impl ViewportGpuResources {
         );
 
         // OIT cull pipeline: Rgba16Float + R8Unorm targets, vs_main_cull, no depth write.
-        let oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh_instanced_oit_shader_cull"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl")).into(),
-            ),
-        });
+        let oit_shader = {
+            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl"));
+            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
+                base,
+                &self.deform.registrations,
+            );
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh_instanced_oit_shader_cull"),
+                source: wgpu::ShaderSource::Wgsl(composed.into()),
+            })
+        };
         let oit_cull_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
             device,
             "oit_instanced_cull_pipeline_layout",

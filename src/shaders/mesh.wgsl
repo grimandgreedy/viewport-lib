@@ -98,6 +98,7 @@ struct Object {
     has_metallic_roughness_tex: u32,       // offset 248
     has_emissive_tex: u32,                 // offset 252
     uv_transform: vec4<f32>,               // offset 256 : (offset.xy, scale.xy)
+    deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
 };
 
 struct ClipVolumeEntry {
@@ -247,7 +248,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
         }
     }
     var dv = DeformVertex(local_pos, local_normal, in.vertex_index);
-    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, 0u, 0u);
+    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let model3 = mat3x3<f32>(
         object.model[0].xyz,

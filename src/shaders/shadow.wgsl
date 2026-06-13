@@ -8,17 +8,13 @@ struct Light {
     view_proj: mat4x4<f32>,
 };
 
+// Shadow only needs `object.model` and `object.deform_flags`. The struct
+// declares padding up to the deform_flags offset (272) to match the
+// renderer's `ObjectUniform` layout without naming every interleaved field.
 struct Object {
-    model: mat4x4<f32>,
-    colour: vec4<f32>,
-    selected: u32,
-    wireframe: u32,
-    ambient: f32,
-    diffuse: f32,
-    specular: f32,
-    shininess: f32,
-    has_texture: u32,
-    _pad: u32,
+    model: mat4x4<f32>,                    // offset   0
+    _pad_to_deform: array<vec4<u32>, 13>,  // offsets 64..272
+    deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
 };
 
 @group(0) @binding(0) var<uniform> light: Light;
@@ -33,7 +29,7 @@ fn vs_main(
     @builtin(vertex_index) vertex_index: u32,
 ) -> @builtin(position) vec4<f32> {
     var dv = DeformVertex(position, vec3<f32>(0.0, 0.0, 1.0), vertex_index);
-    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, 0u, 0u);
+    let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let world_pos4 = object.model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;

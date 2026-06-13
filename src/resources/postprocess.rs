@@ -1156,11 +1156,16 @@ impl ViewportGpuResources {
 
         // OIT mesh pipeline. Two color targets (`Rgba16Float` accumulation +
         // `R8Unorm` reveal) and depth-test-only.
+        let oit_mesh_source = {
+            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"));
+            crate::resources::mesh_sidecar::registry::compose_shader(
+                base,
+                &self.deform.registrations,
+            )
+        };
         let oit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_oit_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(oit_mesh_source.into()),
         });
         let oit_layout = crate::resources::mesh_pipelines::mesh_pipeline_layout(
             device,
@@ -1180,12 +1185,21 @@ impl ViewportGpuResources {
         // empty-scene-on-frame-1 trap where this ensure_hdr_shared early-returns before
         // the BGL exists and never re-runs.
 
-        // HDR scene pipelines
+        // HDR scene pipelines. Compose the shader with currently registered
+        // deformers so any host or in-crate registration (skinning, wind,
+        // etc.) is picked up the first time HDR is enabled. Without this
+        // the HDR mesh pipeline would use the identity hook bodies even
+        // though the LDR pipeline was rebuilt at registration time.
+        let hdr_mesh_source = {
+            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"));
+            crate::resources::mesh_sidecar::registry::compose_shader(
+                base,
+                &self.deform.registrations,
+            )
+        };
         let hdr_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_shader_hdr"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(hdr_mesh_source.into()),
         });
         let hdr_depth_stencil = wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24PlusStencil8,

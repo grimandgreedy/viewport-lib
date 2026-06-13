@@ -923,12 +923,13 @@ unsafe impl bytemuck::Pod for ClipVolumeUniform {}
 
 /// Per-object outline uniform for the two-pass stencil outline effect.
 ///
-/// Layout (96 bytes):
+/// Layout (112 bytes):
 /// - model:        [[f32;4];4] = 64 bytes
 /// - colour:         [f32;4]   = 16 bytes  (outline RGBA)
 /// - pixel_offset:  f32       =  4 bytes  (outline ring width in pixels)
 /// - _pad:          [f32;3]   = 12 bytes
-/// Total: 96 bytes
+/// - deform_flags:  u32       =  4 bytes  (bit i set when deformer slot i is active for this draw)
+/// - _deform_pad:   [u32;3]   = 12 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineUniform {
@@ -936,6 +937,8 @@ pub(crate) struct OutlineUniform {
     pub(crate) colour: [f32; 4],     //  16 bytes
     pub(crate) pixel_offset: f32,    //   4 bytes
     pub(crate) _pad: [f32; 3],       //  12 bytes
+    pub(crate) deform_flags: u32,    //   4 bytes
+    pub(crate) _deform_pad: [u32; 3], //  12 bytes
 }
 
 pub(crate) struct OutlineObjectBuffers {

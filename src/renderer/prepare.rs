@@ -3366,6 +3366,8 @@ impl ViewportRenderer {
                     colour: [0.0; 4], // unused by mask shader
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
+                    deform_flags: resources.deform.flag_bits(item.mesh_id),
+                    _deform_pad: [0; 3],
                 };
                 let buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_mask_uniform_buf"),
@@ -3403,6 +3405,8 @@ impl ViewportRenderer {
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
+                    deform_flags: 0,
+                    _deform_pad: [0; 3],
                 };
                 let buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_mask_uniform_buf"),
@@ -3437,6 +3441,8 @@ impl ViewportRenderer {
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
+                    deform_flags: 0,
+                    _deform_pad: [0; 3],
                 };
                 let buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_mask_uniform_buf"),
@@ -3878,6 +3884,8 @@ impl ViewportRenderer {
                     colour: [1.0, 1.0, 1.0, 1.0],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
+                    deform_flags: 0,
+                    _deform_pad: [0; 3],
                 };
                 let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("curve_outline_uniform_buf"),
@@ -4021,6 +4029,8 @@ impl ViewportRenderer {
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
+                    deform_flags: 0,
+                    _deform_pad: [0; 3],
                 };
                 let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_mask_uniform_buf"),
@@ -4149,6 +4159,8 @@ impl ViewportRenderer {
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
+                    deform_flags: 0,
+                    _deform_pad: [0; 3],
                 };
                 let buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("mc_outline_uniform_buf"),
@@ -4190,6 +4202,8 @@ impl ViewportRenderer {
                     colour: frame.interaction.xray_colour,
                     pixel_offset: 0.0,
                     _pad: [0.0; 3],
+                    deform_flags: 0,
+                    _deform_pad: [0; 3],
                 };
                 let buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("xray_uniform_buf"),

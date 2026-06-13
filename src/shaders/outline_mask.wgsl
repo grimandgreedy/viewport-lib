@@ -18,6 +18,10 @@ struct OutlineUniform {
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
+    deform_flags: u32,
+    _deform_pad0: u32,
+    _deform_pad1: u32,
+    _deform_pad2: u32,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -32,7 +36,7 @@ fn vs_main(
     @builtin(vertex_index) vertex_index: u32,
 ) -> @builtin(position) vec4<f32> {
     var dv = DeformVertex(position, vec3<f32>(0.0, 0.0, 1.0), vertex_index);
-    let dctx = DeformContext(outline.model, outline.model[3].xyz, 0.0, 0u, 0u);
+    let dctx = DeformContext(outline.model, outline.model[3].xyz, 0.0, outline.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);
     let world_pos4 = outline.model * vec4<f32>(dv.position, 1.0);
     dv.position = world_pos4.xyz;
