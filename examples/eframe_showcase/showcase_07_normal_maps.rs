@@ -24,6 +24,11 @@ pub(crate) struct NormalMapsState {
     pub mapped_nodes: Vec<(NodeId, u64, u64)>,
     pub normal_on: bool,
     pub ao_on: bool,
+    /// Min/max remap applied to the AO map's R sample. Identity `[0.0, 1.0]`
+    /// passes the sample through unchanged. Shrinking the range from the
+    /// minimum side brightens cavities; raising the minimum compresses the
+    /// cavity factor toward fully lit.
+    pub ao_range: [f32; 2],
     pub clip_enabled: bool,
     pub cap_fill: bool,
 }
@@ -36,6 +41,7 @@ impl Default for NormalMapsState {
             mapped_nodes: Vec::new(),
             normal_on: true,
             ao_on: true,
+            ao_range: [0.0, 1.0],
             clip_enabled: false,
             cap_fill: true,
         }
@@ -223,6 +229,37 @@ pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
                 let mut mat = *node.material();
                 mat.ao_map_id = if on { Some(ao_id) } else { None };
                 app.nm_state.scene.set_material(node_id, mat);
+            }
+        }
+    }
+
+    if app.nm_state.ao_on {
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label("AO range");
+            changed |= ui
+                .add(egui::Slider::new(&mut app.nm_state.ao_range[0], 0.0..=1.0).text("min"))
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(&mut app.nm_state.ao_range[1], 0.0..=1.0).text("max"))
+                .changed();
+            if ui.button("reset").clicked() {
+                app.nm_state.ao_range = [0.0, 1.0];
+                changed = true;
+            }
+        });
+        if changed {
+            // Clamp max >= min for a well-formed range.
+            if app.nm_state.ao_range[1] < app.nm_state.ao_range[0] {
+                app.nm_state.ao_range[1] = app.nm_state.ao_range[0];
+            }
+            let range = app.nm_state.ao_range;
+            for &(node_id, _, _) in &app.nm_state.mapped_nodes.clone() {
+                if let Some(node) = app.nm_state.scene.node(node_id) {
+                    let mut mat = *node.material();
+                    mat.ao_range = range;
+                    app.nm_state.scene.set_material(node_id, mat);
+                }
             }
         }
     }
