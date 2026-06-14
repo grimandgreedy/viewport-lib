@@ -2,6 +2,12 @@
 
 ## [Unreleased Changes]
 
+### Features
+
+#### Per-material range remaps for ambient occlusion, metallic, and roughness textures
+
+Some asset pipelines bake their AO, metallic, and roughness masks into a reduced range rather than a full 0-to-1 sweep, so sampling those textures raw produces shading that's too dark, too bright, or the wrong amount of shine. Materials now accept a min and a max per channel; the renderer rescales the raw texture sample to that range before lighting evaluates. Defaults are unchanged behaviour, so existing materials look the same and there is nothing to set unless an asset needs it. Ambient occlusion remapping works on both per-item and instanced meshes; metallic and roughness remapping work on per-item meshes today.
+
 ## [0.18.1]
 ### Improvements
 

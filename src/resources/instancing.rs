@@ -852,7 +852,8 @@ impl ViewportGpuResources {
             return None;
         }
 
-        // Per-instance struct must match `InstanceData` in `mesh_instanced.wgsl`.
+        // Per-instance struct must match `InstanceData` in `mesh_instanced.wgsl`
+        // and `resources::types::InstanceData` (176 bytes).
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct GpuInstanceData {
@@ -874,7 +875,12 @@ impl ViewportGpuResources {
             receive_shadows: u32,
             use_flat: u32,
             _pad_inst1: u32,
+            uv_transform: [f32; 4],
+            ao_range: [f32; 2],
+            _pad_ao_range: [f32; 2],
         }
+
+        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 176);
 
         let has_texture = if item
             .texture_id
@@ -905,13 +911,16 @@ impl ViewportGpuResources {
                 receive_shadows: 0,
                 use_flat: 1,
                 _pad_inst1: 0,
+                uv_transform: [0.0, 0.0, 1.0, 1.0],
+                ao_range: [0.0, 1.0],
+                _pad_ao_range: [0.0, 0.0],
             })
             .collect();
 
         let instance_bytes = bytemuck::cast_slice(&instances);
         let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh_instance_buf"),
-            size: instance_bytes.len().max(144) as u64,
+            size: instance_bytes.len().max(std::mem::size_of::<GpuInstanceData>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

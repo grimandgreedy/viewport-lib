@@ -61,6 +61,8 @@ struct InstanceData {
     use_flat: u32,
     _pad_inst1: u32,
     uv_transform: vec4<f32>,
+    ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
+    _pad_ao_range: vec2<f32>,
 };
 
 struct ClipVolumeEntry {
@@ -522,7 +524,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
 
     var ao_factor = 1.0;
-    if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, mat_uv).r; }
+    if inst.has_ao_map != 0u {
+        let raw_ao = textureSample(ao_map, obj_sampler, mat_uv).r;
+        ao_factor = mix(inst.ao_range.x, inst.ao_range.y, raw_ao);
+    }
 
     // Use the geometric fragment normal for shadowing so the receiver test
     // matches the faceted mesh that was rasterized into the shadow atlas.

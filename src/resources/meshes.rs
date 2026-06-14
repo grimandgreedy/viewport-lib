@@ -1769,7 +1769,10 @@ impl ViewportGpuResources {
             has_emissive_tex: 0,
             uv_transform: [0.0, 0.0, 1.0, 1.0],
             deform_flags: 0,
-            _deform_pad: [0; 3],
+            _pad_after_deform: 0,
+            ao_range: [0.0, 1.0],
+            metallic_range: [0.0, 1.0],
+            roughness_range: [0.0, 1.0],
         };
         let object_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -1891,7 +1894,10 @@ impl ViewportGpuResources {
             has_emissive_tex: 0,
             uv_transform: [0.0, 0.0, 1.0, 1.0],
             deform_flags: 0,
-            _deform_pad: [0; 3],
+            _pad_after_deform: 0,
+            ao_range: [0.0, 1.0],
+            metallic_range: [0.0, 1.0],
+            roughness_range: [0.0, 1.0],
         };
         let normal_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

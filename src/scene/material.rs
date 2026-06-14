@@ -344,6 +344,27 @@ pub struct Material {
     ///
     /// See [`uv_offset`](Self::uv_offset) for the full sampling formula.
     pub uv_scale: [f32; 2],
+    /// Min/max range applied to the AO map's R sample. Identity `[0.0, 1.0]`
+    /// passes the sample through unchanged. Skipped when `ao_map_id` is None.
+    ///
+    /// The remap is `mix(min, max, raw_sample)`. Useful when a packed mask
+    /// map authors AO in a reduced range (e.g. `[0.4, 1.0]`) and the renderer
+    /// needs to normalise the sample before it drives lighting.
+    pub ao_range: [f32; 2],
+    /// Min/max range applied to the metallic sample (B channel of the
+    /// metallic-roughness texture in the glTF/ORM convention). Identity
+    /// `[0.0, 1.0]`. Skipped when `metallic_roughness_texture_id` is None.
+    ///
+    /// Applied to the texture sample before the scalar `metallic` factor:
+    /// `final = clamp(mix(min, max, raw.b) * metallic, 0.0, 1.0)`.
+    pub metallic_range: [f32; 2],
+    /// Min/max range applied to the roughness sample (G channel of the
+    /// metallic-roughness texture). Identity `[0.0, 1.0]`. Skipped when
+    /// `metallic_roughness_texture_id` is None.
+    ///
+    /// Applied to the texture sample before the scalar `roughness` factor:
+    /// `final = max(mix(min, max, raw.g) * roughness, 0.04)`.
+    pub roughness_range: [f32; 2],
 }
 
 impl Default for Material {
@@ -368,6 +389,9 @@ impl Default for Material {
             backface_policy: BackfacePolicy::Cull,
             uv_offset: [0.0, 0.0],
             uv_scale: [1.0, 1.0],
+            ao_range: [0.0, 1.0],
+            metallic_range: [0.0, 1.0],
+            roughness_range: [0.0, 1.0],
         }
     }
 }
@@ -647,5 +671,29 @@ mod tests {
     fn pbr_with_ao_accepts_none() {
         let m = Material::pbr_with_ao([0.5; 3], 0.0, 1.0, None);
         assert_eq!(m.ao_map_id, None);
+    }
+
+    #[test]
+    fn channel_ranges_default_to_identity() {
+        let m = Material::default();
+        assert_eq!(m.ao_range, [0.0, 1.0]);
+        assert_eq!(m.metallic_range, [0.0, 1.0]);
+        assert_eq!(m.roughness_range, [0.0, 1.0]);
+    }
+
+    #[test]
+    fn channel_ranges_round_trip_with_spread() {
+        let m = Material {
+            ao_range: [0.4, 1.0],
+            metallic_range: [0.1, 0.9],
+            roughness_range: [0.2, 0.8],
+            ..Default::default()
+        };
+        assert_eq!(m.ao_range, [0.4, 1.0]);
+        assert_eq!(m.metallic_range, [0.1, 0.9]);
+        assert_eq!(m.roughness_range, [0.2, 0.8]);
+        // Other defaults unaffected.
+        assert_eq!(m.uv_offset, [0.0, 0.0]);
+        assert_eq!(m.uv_scale, [1.0, 1.0]);
     }
 }

@@ -99,6 +99,10 @@ struct Object {
     has_emissive_tex: u32,                 // offset 252
     uv_transform: vec4<f32>,               // offset 256 : (offset.xy, scale.xy)
     deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
+    _pad_after_deform: u32,                // offset 276 : pad to align next vec2 to 8 bytes
+    ao_range: vec2<f32>,                   // offset 280 : (min, max) remap of AO map R sample
+    metallic_range: vec2<f32>,             // offset 288 : (min, max) remap of MR texture B channel
+    roughness_range: vec2<f32>,            // offset 296 : (min, max) remap of MR texture G channel
 };
 
 struct ClipVolumeEntry {
@@ -788,10 +792,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         }
     }
 
-    // AO factor from AO map.
+    // AO factor from AO map. Per-material `ao_range` remaps the raw sample
+    // before it drives shading; identity `(0, 1)` is a no-op.
     var ao_factor = 1.0;
     if object.has_ao_map != 0u {
-        ao_factor = textureSample(ao_map, obj_sampler, mat_uv).r;
+        let raw_ao = textureSample(ao_map, obj_sampler, mat_uv).r;
+        ao_factor = mix(object.ao_range.x, object.ao_range.y, raw_ao);
     }
 
     // Matcap shading : the matcap texture encodes material appearance as a sphere-space lookup.
@@ -856,10 +862,14 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         var metallic  = clamp(object.metallic,  0.0, 1.0);
         var roughness = max(object.roughness, 0.04);
         if object.has_metallic_roughness_tex != 0u {
-            // glTF ORM texture: G=roughness factor, B=metallic factor.
+            // glTF ORM texture: G=roughness factor, B=metallic factor. Per-material
+            // `metallic_range` / `roughness_range` remap the raw samples before the
+            // scalar factor; identity `(0, 1)` is a no-op.
             let mr = textureSample(metallic_roughness_tex, obj_sampler, mat_uv);
-            metallic  = clamp(mr.b * metallic,  0.0, 1.0);
-            roughness = max(mr.g * roughness, 0.04);
+            let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.b);
+            let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.g);
+            metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
+            roughness = max(r_remapped * roughness, 0.04);
         }
         let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
 

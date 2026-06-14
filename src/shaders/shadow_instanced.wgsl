@@ -32,6 +32,8 @@ struct InstanceData {
     use_flat: u32,
     _pad_inst1: u32,
     uv_transform: vec4<f32>,
+    ao_range: vec2<f32>,
+    _pad_ao_range: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> light: Light;

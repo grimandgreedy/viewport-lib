@@ -1130,7 +1130,10 @@ impl ViewportRenderer {
                         m.uv_scale[1],
                     ],
                     deform_flags: resources.deform.flag_bits(item.mesh_id),
-                    _deform_pad: [0; 3],
+                    _pad_after_deform: 0,
+                    ao_range: m.ao_range,
+                    metallic_range: m.metallic_range,
+                    roughness_range: m.roughness_range,
                 };
 
                 let normal_obj_uniform = ObjectUniform {
@@ -1174,7 +1177,10 @@ impl ViewportRenderer {
                     has_emissive_tex: 0,
                     uv_transform: [0.0, 0.0, 1.0, 1.0],
                     deform_flags: 0,
-                    _deform_pad: [0; 3],
+                    _pad_after_deform: 0,
+                    ao_range: [0.0, 1.0],
+                    metallic_range: [0.0, 1.0],
+                    roughness_range: [0.0, 1.0],
                 };
 
                 // Collect per-item uniform for wireframe per-item bind groups.
@@ -1562,6 +1568,8 @@ impl ViewportRenderer {
                                         m.uv_scale[0],
                                         m.uv_scale[1],
                                     ],
+                                    ao_range: m.ao_range,
+                                    _pad_ao_range: [0.0, 0.0],
                                 });
                                 if let Some(mesh) = batch_mesh {
                                     let model = glam::Mat4::from_cols_array_2d(&item.model);

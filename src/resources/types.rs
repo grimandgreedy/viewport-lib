@@ -459,8 +459,11 @@ pub type LightUniform = LightsUniform;
 /// - has_emissive_tex:           u32      =  4 bytes  offset 252
 /// - uv_transform:               [f32;4]  = 16 bytes  offset 256  (offset.xy, scale.xy)
 /// - deform_flags:               u32      =  4 bytes  offset 272  (bit i = deformer slot i active)
-/// - _deform_pad:                [u32;3]  = 12 bytes  offset 276  (struct tail padding to 16B)
-/// Total: 288 bytes
+/// - _pad_after_deform:          u32      =  4 bytes  offset 276  (align next vec2 to 8)
+/// - ao_range:                   [f32;2]  =  8 bytes  offset 280
+/// - metallic_range:             [f32;2]  =  8 bytes  offset 288
+/// - roughness_range:            [f32;2]  =  8 bytes  offset 296
+/// Total: 304 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
@@ -517,14 +520,23 @@ pub(crate) struct ObjectUniform {
     /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
     /// no deformer registry has attached data for this mesh.
     pub(crate) deform_flags: u32,    //   4 bytes, offset 272
-    pub(crate) _deform_pad: [u32; 3], //  12 bytes, offset 276 (tail pad to 16B)
+    pub(crate) _pad_after_deform: u32, //   4 bytes, offset 276 (align next vec2 to 8)
+    /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
+    /// Mirrors `Material::ao_range`.
+    pub(crate) ao_range: [f32; 2],   //   8 bytes, offset 280
+    /// Min/max remap applied to the metallic sample (B channel of the MR
+    /// texture). Identity `[0, 1]`. Mirrors `Material::metallic_range`.
+    pub(crate) metallic_range: [f32; 2], //   8 bytes, offset 288
+    /// Min/max remap applied to the roughness sample (G channel of the MR
+    /// texture). Identity `[0, 1]`. Mirrors `Material::roughness_range`.
+    pub(crate) roughness_range: [f32; 2], //   8 bytes, offset 296
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 288);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 304);
 
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
-/// Layout mirrors ObjectUniform (128 bytes).
+/// Layout: 176 bytes.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
@@ -552,7 +564,15 @@ pub(crate) struct InstanceData {
     /// Per-material UV transform; mirrors `ObjectUniform::uv_transform`.
     /// `[offset_x, offset_y, scale_x, scale_y]`.
     pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 144
+    /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
+    /// Mirrors `Material::ao_range`. The instanced mesh shaders do not sample
+    /// the MR texture today, so `metallic_range` / `roughness_range` are
+    /// intentionally absent from `InstanceData`.
+    pub(crate) ao_range: [f32; 2],   //   8 bytes, offset 160
+    pub(crate) _pad_ao_range: [f32; 2], //  8 bytes, offset 168 (struct stride to 16B)
 }
+
+const _: () = assert!(std::mem::size_of::<InstanceData>() == 176);
 
 /// Per-instance GPU data for the object-ID pick pass.
 ///

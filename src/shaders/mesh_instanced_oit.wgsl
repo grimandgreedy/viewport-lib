@@ -61,6 +61,8 @@ struct InstanceData {
     use_flat: u32,
     _pad_inst1: u32,
     uv_transform: vec4<f32>,
+    ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
+    _pad_ao_range: vec2<f32>,
 };
 
 struct ClipVolumeEntry {
@@ -359,7 +361,10 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
     }
 
     var ao_factor = 1.0;
-    if inst.has_ao_map != 0u { ao_factor = textureSample(ao_map, obj_sampler, mat_uv).r; }
+    if inst.has_ao_map != 0u {
+        let raw_ao = textureSample(ao_map, obj_sampler, mat_uv).r;
+        ao_factor = mix(inst.ao_range.x, inst.ao_range.y, raw_ao);
+    }
 
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0);
