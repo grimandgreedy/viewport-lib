@@ -494,7 +494,7 @@ impl ViewportGpuResources {
             })
             .unwrap_or(&self.fallback_lut_view);
 
-        let lut_sampler = &self.material_sampler;
+        let lut_sampler = &self.lut_sampler;
 
         let bgl = self
             .polyline_bgl

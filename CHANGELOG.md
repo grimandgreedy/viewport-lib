@@ -2,6 +2,20 @@
 
 ## [Unreleased Changes]
 
+### Bug Fixes
+
+#### White tips on polylines coloured by an edge-scalar colourmap
+
+A polyline coloured by `edge_scalars` against a colourmap (e.g. Plasma) no longer renders the first and last segments as a near-white tan instead of the LUT's true endpoint colours. The polyline pipeline was binding the wrap-addressed material sampler for the LUT, so sampling at the scalar extremes blended across the LUT boundary. It now uses the dedicated clamp-to-edge LUT sampler, the same one every other LUT-based item type already uses.
+
+#### Dark patches on thin flat objects under directional light
+
+A thin slab, plate, or panel facing the sun no longer picks up a sharp dark patch on its top surface that slides around when the camera moves. The shadow bias on surfaces facing the light is now small enough that it can't push the surface past its own back side, which was what caused the false shadow on thin objects. Surfaces tilted away from the light still get the full bias they need to stay clean.
+
+#### Building and scene shadows only appearing when the camera was close
+
+In scenes with a first-person camera, shadows from buildings and other distant objects often did not appear on the ground until the camera moved close to them. Shadow coverage is now derived from the camera's actual view distance rather than from an internal field that only made sense for orbit cameras, so casters across a typical-sized scene render their shadows at all distances. Scenes that were already setting a manual shadow extent are unaffected.
+
 ### Features
 
 #### Per-material range remaps for ambient occlusion, metallic, and roughness textures
