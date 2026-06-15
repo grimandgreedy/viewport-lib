@@ -2580,6 +2580,12 @@ pub struct ViewportGpuResources {
     /// the per-face render pass sets a dynamic offset.
     pub shadow_point_face_bind_group: wgpu::BindGroup,
     /// Render pipeline for the shadow depth pass (depth-only, no fragment output).
+    ///
+    /// Culls front faces, so closed solids cast shadow from their back face
+    /// and a solid's own front face is never compared against itself in the
+    /// shadow map. Two-sided surfaces with a single quad facing the light
+    /// (planes, cloth) have their only face culled here and do not cast a
+    /// shadow; the receiver-side bias path covers their self-shadow case.
     pub shadow_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the shadow camera uniform (group 0 of the
     /// shadow pass). Kept on the renderer so `register_deformer` can rebuild

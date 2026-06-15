@@ -302,7 +302,9 @@ fn sample_shadow_csm(
     var offset_world: vec3<f32>;
     var normal_bias: f32;
     if primary_light_type == 0u {
-        normal_bias = texel_world * 1.5;
+        // See mesh.wgsl for the n_dot_l scaling rationale.
+        let bias_floor = 0.001;
+        normal_bias = mix(texel_world * 1.5, bias_floor, clamp(abs(n_dot_l), 0.0, 1.0));
         offset_world = world_pos - light_dir * normal_bias;
     } else {
         normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));

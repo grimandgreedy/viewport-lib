@@ -802,13 +802,14 @@ impl ViewportGpuResources {
             });
 
         // Depth-only pass through the shared factory so register_deformer
-        // can rebuild it from composed source. Bias constant=2 with zero
-        // slope-scale eliminates the contact-shadow gap while keeping depth
-        // testing stable; the shader-side shadow_bias term handles acne.
+        // can rebuild it from composed source. Cull-front: back faces are
+        // the casters, so a closed solid's own front face is never compared
+        // against itself in the shadow map.
         let shadow_pipeline = crate::resources::mesh_pipelines::build_shadow_pipeline(
             device,
             &shadow_pipeline_layout,
             &shadow_shader,
+            Some(wgpu::Face::Front),
         );
 
         // Shadow pass uniform buffer : 4 cascade slots × 256 bytes (wgpu dynamic-offset alignment).

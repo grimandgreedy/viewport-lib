@@ -402,7 +402,18 @@ fn sample_shadow_csm(
     var offset_world: vec3<f32>;
     var normal_bias: f32;
     if primary_light_type == 0u {
-        normal_bias = texel_world * 1.5;
+        // Scale bias by `n_dot_l`. Grazing receivers (n_dot_l -> 0) get the
+        // full `texel_world * 1.5` cascade-scaled bias to clear
+        // shadow-texel quantization across the surface. Perpendicular
+        // receivers (n_dot_l -> 1) get a small cascade-INDEPENDENT floor
+        // that's just enough to close the coplanar leak (cube bottom flush
+        // with the ground), and crucially can't grow with cascade width.
+        // The earlier `texel_world * floor` form scaled the perpendicular
+        // bias with the cascade too, so wide cascades pushed thin
+        // perpendicular receivers (a 0.01-thick slab top) past their own
+        // back face into the recorded caster depth and they self-shadowed.
+        let bias_floor = 0.001;
+        normal_bias = mix(texel_world * 1.5, bias_floor, clamp(abs(n_dot_l), 0.0, 1.0));
         offset_world = world_pos - light_dir * normal_bias;
     } else {
         normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));

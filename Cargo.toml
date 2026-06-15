@@ -50,6 +50,10 @@ name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
 
 [[example]]
+name = "debug-light"
+path = "examples/debug_light/main.rs"
+
+[[example]]
 name = "eframe-lighting-shadows"
 path = "examples/eframe_lighting_shadows/main.rs"
 

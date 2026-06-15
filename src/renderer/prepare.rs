@@ -86,10 +86,21 @@ impl ViewportRenderer {
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         // Compute scene center / extent for shadow framing.
+        //
+        // When no consumer override is set, derive the auto extent from the
+        // camera's far plane: a fraction of the view distance the camera
+        // already reports as visible, clamped so very-long-far cameras don't
+        // blow out the cascade footprint and very-short-far ones don't lose
+        // contact-shadow precision. The earlier fixed 20.0 default broke FPS
+        // cameras with scenes deeper than 20 units, since shadow coverage
+        // capped at that distance and casters past it dropped out of every
+        // cascade.
         let (shadow_center, shadow_extent) = if let Some(extent) = lighting.shadow_extent_override {
             (glam::Vec3::ZERO, extent)
         } else {
-            (glam::Vec3::ZERO, 20.0)
+            let camera_far = frame.camera.render_camera.far.max(1.0);
+            let auto_extent = (camera_far * 0.25).clamp(20.0, 200.0);
+            (glam::Vec3::ZERO, auto_extent)
         };
 
         /// Build a light-space view-projection matrix for shadow mapping.

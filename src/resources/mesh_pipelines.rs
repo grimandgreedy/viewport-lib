@@ -289,14 +289,51 @@ pub(crate) fn build_oit_pipeline(
     })
 }
 
+/// Depth bias values used by every CSM shadow caster pipeline (the per-item
+/// pipeline here and the two instanced pipelines in `instancing.rs`). Pulled
+/// into one place so the three pipelines stay aligned: a difference in bias
+/// between them shows up as a visible step where the active draw path changes.
+///
+/// `constant` is a fixed depth offset in the cascade's NDC, tiny in
+/// Depth32Float (about 5e-7 NDC per unit), enough to close the coplanar
+/// leak class without detaching the shadow at contact points.
+///
+/// `slope_scale` is held at zero on purpose. Receiver-side normal bias in
+/// `sample_shadow_csm` already scales `texel_world * 1.5` at grazing
+/// angles, which is where slope-scaled caster bias would otherwise earn
+/// its keep. Stacking a slope-scaled caster bias on top of that visibly
+/// detaches shadows from grazing-angle casters (tall walls lit obliquely
+/// were the test case).
+pub(crate) const CSM_SHADOW_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: 2,
+    slope_scale: 0.0,
+    clamp: 0.0,
+};
+
 /// `shadow.wgsl`: depth-only shadow pass pipeline.
+///
+/// `cull_mode` selects which faces are rasterised into the shadow atlas:
+/// - `Some(Face::Front)` for closed solids (`BackfacePolicy::Cull`). Back
+///   faces become the casters, so a solid's own front face is never compared
+///   against itself in the shadow map.
+/// - `None` for two-sided surfaces (`BackfacePolicy::Identical` and friends,
+///   typically single-quad planes, cloth, foliage). Both sides rasterise so
+///   the surface can still cast a shadow regardless of which side faces the
+///   light. The receiver-side normal bias is what keeps the self-shadow
+///   class quiet on this path.
 pub(crate) fn build_shadow_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
+    cull_mode: Option<wgpu::Face>,
 ) -> wgpu::RenderPipeline {
+    let label = match cull_mode {
+        Some(wgpu::Face::Front) => "shadow_pipeline",
+        Some(wgpu::Face::Back) => "shadow_pipeline_cull_back",
+        None => "shadow_pipeline_two_sided",
+    };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("shadow_pipeline"),
+        label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
@@ -309,7 +346,7 @@ pub(crate) fn build_shadow_pipeline(
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Front),
+            cull_mode,
             unclipped_depth: false,
             polygon_mode: wgpu::PolygonMode::Fill,
             conservative: false,
@@ -319,11 +356,7 @@ pub(crate) fn build_shadow_pipeline(
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState {
-                constant: 2,
-                slope_scale: 0.0,
-                clamp: 0.0,
-            },
+            bias: CSM_SHADOW_BIAS,
         }),
         multisample: wgpu::MultisampleState {
             count: 1,

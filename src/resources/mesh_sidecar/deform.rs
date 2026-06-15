@@ -1057,7 +1057,10 @@ impl ViewportGpuResources {
                 push_constant_ranges: &[],
             });
             self.shadow_pipeline = crate::resources::mesh_pipelines::build_shadow_pipeline(
-                device, &layout, &shader,
+                device,
+                &layout,
+                &shader,
+                Some(wgpu::Face::Front),
             );
         }
 
