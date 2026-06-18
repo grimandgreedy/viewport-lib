@@ -1197,6 +1197,24 @@ pub struct OverlayPolylineItem {
     pub mitre_limit: f32,
     /// When `true`, the last point connects back to the first.
     pub closed: bool,
+    /// Optional interior fill. Only used when `closed` is `true`.
+    ///
+    /// Texture fills use this the same way [`OverlayShapeItem`] does: when
+    /// `texture` is set, `OverlayFill::Solid` acts as a tint. Gradient fills
+    /// are ignored for textured interiors.
+    pub fill: Option<OverlayFill>,
+    /// Optional texture fill for the interior. Only used when `closed` is `true`.
+    ///
+    /// The polygon is clipped by triangulating the closed path. UVs are
+    /// derived from the path bounds unless `uvs` has one entry per point.
+    pub texture: Option<OverlayTextureId>,
+    /// Optional per-point UVs for textured interiors.
+    ///
+    /// When set, this must have the same length as `points`. Otherwise the
+    /// renderer falls back to bounds-mapped UVs.
+    pub uvs: Option<Vec<[f32; 2]>>,
+    /// Affine transform applied to texture UVs before sampling.
+    pub texture_transform: TextureTransform,
     /// Overall opacity multiplier in `[0, 1]`.
     pub opacity: f32,
     /// Draw order relative to other overlay rects, polylines, and labels.
@@ -1213,6 +1231,10 @@ impl Default for OverlayPolylineItem {
             join: LineJoin::Mitre,
             mitre_limit: 4.0,
             closed: false,
+            fill: None,
+            texture: None,
+            uvs: None,
+            texture_transform: TextureTransform::default(),
             opacity: 1.0,
             z_order: 0,
         }

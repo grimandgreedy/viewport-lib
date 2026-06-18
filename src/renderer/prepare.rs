@@ -455,8 +455,10 @@ impl ViewportRenderer {
             range: f32,
         }
         let mut point_shadow_faces: Vec<PointShadowFace> = Vec::new();
-        if matches!(lighting.point_shadow_mode, crate::renderer::types::PointShadowMode::Cube)
-            && lighting.shadows_enabled
+        if matches!(
+            lighting.point_shadow_mode,
+            crate::renderer::types::PointShadowMode::Cube
+        ) && lighting.shadows_enabled
         {
             self.point_shadow_frame = self.point_shadow_frame.wrapping_add(1);
             self.point_shadow_pool.begin_frame(self.point_shadow_frame);
@@ -477,11 +479,11 @@ impl ViewportRenderer {
                 // Six standard cubemap face directions (forward, up). Order:
                 //   0:+X, 1:-X, 2:+Y, 3:-Y, 4:+Z, 5:-Z.
                 let faces: [(glam::Vec3, glam::Vec3); 6] = [
-                    (glam::Vec3::X,     glam::Vec3::NEG_Y),
+                    (glam::Vec3::X, glam::Vec3::NEG_Y),
                     (glam::Vec3::NEG_X, glam::Vec3::NEG_Y),
-                    (glam::Vec3::Y,     glam::Vec3::Z),
+                    (glam::Vec3::Y, glam::Vec3::Z),
                     (glam::Vec3::NEG_Y, glam::Vec3::NEG_Z),
-                    (glam::Vec3::Z,     glam::Vec3::NEG_Y),
+                    (glam::Vec3::Z, glam::Vec3::NEG_Y),
                     (glam::Vec3::NEG_Z, glam::Vec3::NEG_Y),
                 ];
                 // Y-flipped projection: cubemap face (u, v) sampling
@@ -518,8 +520,8 @@ impl ViewportRenderer {
             struct PointFaceUniform {
                 view_proj: [[f32; 4]; 4], // 0..64
                 // Packed vec4: xyz = light_pos, w = range.
-                light_pos: [f32; 4],      // 64..80
-                _pad:      [f32; 44],     // pad to 256
+                light_pos: [f32; 4], // 64..80
+                _pad: [f32; 44],     // pad to 256
             }
             for fc in &point_shadow_faces {
                 let entry = PointFaceUniform {
@@ -937,9 +939,11 @@ impl ViewportRenderer {
         // Skinned items are excluded from the batched-instanced path (the
         // instanced shader does not consume the skin palette), so they need
         // per-item object uniform writes too.
-        let has_skinned_items = scene_items
-            .iter()
-            .any(|i| resources.deform.has_per_instance_deform_data(i.mesh_id, i.deform_instance));
+        let has_skinned_items = scene_items.iter().any(|i| {
+            resources
+                .deform
+                .has_per_instance_deform_data(i.mesh_id, i.deform_instance)
+        });
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
@@ -1134,12 +1138,7 @@ impl ViewportRenderer {
                     } else {
                         0
                     },
-                    uv_transform: [
-                        m.uv_offset[0],
-                        m.uv_offset[1],
-                        m.uv_scale[0],
-                        m.uv_scale[1],
-                    ],
+                    uv_transform: [m.uv_offset[0], m.uv_offset[1], m.uv_scale[0], m.uv_scale[1]],
                     deform_flags: resources.deform.flag_bits(item.mesh_id),
                     _pad_after_deform: 0,
                     ao_range: m.ao_range,
@@ -3022,7 +3021,6 @@ impl ViewportRenderer {
                                 );
                                 shadow_draws += 1;
                             }
-
                         }
                     }
 
@@ -3065,10 +3063,9 @@ impl ViewportRenderer {
                             &[cascade as u32 * 256],
                         );
 
-                        let cascade_frustum =
-                            crate::camera::frustum::Frustum::from_view_proj(
-                                &cascade_view_projs[cascade],
-                            );
+                        let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
+                            &cascade_view_projs[cascade],
+                        );
 
                         for item in scene_items.iter() {
                             if item.settings.hidden
@@ -3090,9 +3087,7 @@ impl ViewportRenderer {
                                 && !item.material.is_two_sided()
                                 && item.material.matcap_id().is_none()
                                 && item.material.param_vis.is_none()
-                                && !filter_results
-                                    .iter()
-                                    .any(|r| r.mesh_id == item.mesh_id)
+                                && !filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
                                 && !resources.deform.has_per_instance_deform_data(
                                     item.mesh_id,
                                     item.deform_instance,
@@ -3103,9 +3098,9 @@ impl ViewportRenderer {
                                 continue;
                             }
 
-                            let world_aabb = mesh.aabb.transformed(
-                                &glam::Mat4::from_cols_array_2d(&item.model),
-                            );
+                            let world_aabb = mesh
+                                .aabb
+                                .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
                             if cascade_frustum.cull_aabb(&world_aabb) {
                                 continue;
                             }
@@ -3309,14 +3304,9 @@ impl ViewportRenderer {
                 });
                 pass.set_pipeline(&resources.shadow_point_pipeline);
                 let dyn_offset = layer * POINT_FACE_STRIDE as u32;
-                pass.set_bind_group(
-                    0,
-                    &resources.shadow_point_face_bind_group,
-                    &[dyn_offset],
-                );
+                pass.set_bind_group(0, &resources.shadow_point_face_bind_group, &[dyn_offset]);
 
-                let face_frustum =
-                    crate::camera::frustum::Frustum::from_view_proj(&fc.view_proj);
+                let face_frustum = crate::camera::frustum::Frustum::from_view_proj(&fc.view_proj);
 
                 for item in scene_items.iter() {
                     if item.settings.hidden
@@ -3343,10 +3333,7 @@ impl ViewportRenderer {
                         &[],
                     );
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        mesh.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
@@ -3685,10 +3672,7 @@ impl ViewportRenderer {
             // emit their outline via the standard surface submission, so skip
             // them here to avoid double draws.
             for item in &frame.scene.volume_meshes {
-                if item.settings.hidden
-                    || !item.settings.selected
-                    || item.transparency.is_none()
-                {
+                if item.settings.hidden || !item.settings.selected || item.transparency.is_none() {
                     continue;
                 }
                 let uniform = OutlineUniform {
@@ -5437,23 +5421,38 @@ impl ViewportRenderer {
 
                 // --- Polylines (between rects and labels in z order) ---
                 for poly in &frame.overlays.polylines {
-                    if poly.points.len() < 2 || poly.opacity <= 0.0 || poly.thickness <= 0.0 {
+                    if poly.points.len() < 2 || poly.opacity <= 0.0 {
                         continue;
                     }
-                    let mut colour = poly.colour;
-                    colour[3] *= poly.opacity;
-                    let verts = tessellate_polyline(
-                        &poly.points,
-                        poly.thickness,
-                        poly.closed,
-                        poly.join,
-                        poly.mitre_limit,
-                        colour,
-                        vp_w,
-                        vp_h,
-                    );
-                    if !verts.is_empty() {
-                        batches.push((poly.z_order, verts));
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                    if poly.closed && poly.texture.is_none() {
+                        if let Some(fill) = &poly.fill {
+                            emit_filled_polyline(
+                                &mut batch,
+                                &poly.points,
+                                fill,
+                                poly.opacity,
+                                vp_w,
+                                vp_h,
+                            );
+                        }
+                    }
+                    if poly.thickness > 0.0 {
+                        let mut colour = poly.colour;
+                        colour[3] *= poly.opacity;
+                        batch.extend(tessellate_polyline(
+                            &poly.points,
+                            poly.thickness,
+                            poly.closed,
+                            poly.join,
+                            poly.mitre_limit,
+                            colour,
+                            vp_w,
+                            vp_h,
+                        ));
+                    }
+                    if !batch.is_empty() {
+                        batches.push((poly.z_order, batch));
                     }
                 }
 
@@ -6237,7 +6236,12 @@ impl ViewportRenderer {
         // SDF overlay shapes
         // ------------------------------------------------------------------
         self.overlay_shape_gpu_data = None;
-        if !frame.overlays.shapes.is_empty() {
+        let has_textured_polyline_fill = frame
+            .overlays
+            .polylines
+            .iter()
+            .any(|p| p.closed && p.texture.is_some() && p.opacity > 0.0 && p.points.len() >= 3);
+        if !frame.overlays.shapes.is_empty() || has_textured_polyline_fill {
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
             if vp_w > 0.0 && vp_h > 0.0 {
@@ -6248,7 +6252,8 @@ impl ViewportRenderer {
                 let has_solid = sorted
                     .iter()
                     .any(|s| s.texture.is_none() && s.backdrop_blur <= 0.0);
-                let has_tex = sorted.iter().any(|s| s.texture.is_some());
+                let has_tex =
+                    sorted.iter().any(|s| s.texture.is_some()) || has_textured_polyline_fill;
                 let has_blur = sorted
                     .iter()
                     .any(|s| s.backdrop_blur > 0.0 && s.texture.is_none());
@@ -6719,6 +6724,78 @@ impl ViewportRenderer {
                                 stop_colour_c: stop_colours[2],
                                 stop_colour_d: stop_colours[3],
                                 stop_positions,
+                            });
+                        }
+                    }
+                }
+
+                for poly in &frame.overlays.polylines {
+                    let Some(crate::renderer::types::OverlayTextureId(tid)) = poly.texture else {
+                        continue;
+                    };
+                    if !poly.closed || poly.opacity <= 0.0 || poly.points.len() < 3 {
+                        continue;
+                    }
+                    let Some((min, max)) = polyline_bounds(&poly.points) else {
+                        continue;
+                    };
+                    let tris = triangulate_polygon(&poly.points);
+                    if tris.is_empty() {
+                        continue;
+                    }
+                    let group_idx = tex_groups
+                        .iter()
+                        .position(|(id, _)| *id == tid)
+                        .unwrap_or_else(|| {
+                            tex_groups.push((tid, Vec::new()));
+                            tex_groups.len() - 1
+                        });
+                    let group_verts = &mut tex_groups[group_idx].1;
+                    let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
+                    let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
+                    let half_size = [size[0] * 0.5, size[1] * 0.5];
+                    let mut tint = match &poly.fill {
+                        Some(crate::renderer::types::OverlayFill::Solid(c)) => *c,
+                        _ => [1.0, 1.0, 1.0, 1.0],
+                    };
+                    tint[3] *= poly.opacity;
+                    let explicit_uvs = poly
+                        .uvs
+                        .as_ref()
+                        .filter(|uvs| uvs.len() == poly.points.len());
+                    let tt = poly.texture_transform;
+                    let tt_a = [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]];
+                    let tt_b = [
+                        tt.rotation,
+                        tile_mode_to_f(tt.tile_mode),
+                        if tt.flip_x { 1.0 } else { 0.0 },
+                        if tt.flip_y { 1.0 } else { 0.0 },
+                    ];
+                    for tri in tris {
+                        for idx in tri {
+                            let p = poly.points[idx];
+                            let local = [p[0] - centre[0], p[1] - centre[1]];
+                            let uv = explicit_uvs.map_or(
+                                [(p[0] - min[0]) / size[0], (p[1] - min[1]) / size[1]],
+                                |uvs| uvs[idx],
+                            );
+                            group_verts.push(crate::resources::OverlayShapeTexVertex {
+                                position: px_to_ndc(p[0], p[1], vp_w, vp_h),
+                                local_pos: local,
+                                fill_colour: tint,
+                                border_colour: [0.0; 4],
+                                half_size,
+                                radii: [0.0; 4],
+                                border_width: 0.0,
+                                shape_type: 0.0,
+                                uv,
+                                shadow_colour: [0.0; 4],
+                                shadow_params: [0.0; 4],
+                                extras: [0.0; 4],
+                                nine_slice_uv: [0.0; 4],
+                                nine_slice_frac: [0.0; 4],
+                                texture_transform_a: tt_a,
+                                texture_transform_b: tt_b,
                             });
                         }
                     }
@@ -7611,6 +7688,211 @@ fn project_to_screen(
 #[inline]
 fn px_to_ndc(px_x: f32, px_y: f32, vp_w: f32, vp_h: f32) -> [f32; 2] {
     [px_x / vp_w * 2.0 - 1.0, 1.0 - px_y / vp_h * 2.0]
+}
+
+fn polyline_bounds(points: &[[f32; 2]]) -> Option<([f32; 2], [f32; 2])> {
+    let first = *points.first()?;
+    let mut min = first;
+    let mut max = first;
+    for p in points.iter().skip(1) {
+        min[0] = min[0].min(p[0]);
+        min[1] = min[1].min(p[1]);
+        max[0] = max[0].max(p[0]);
+        max[1] = max[1].max(p[1]);
+    }
+    Some((min, max))
+}
+
+fn gradient_lerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    [
+        a[0] * (1.0 - t) + b[0] * t,
+        a[1] * (1.0 - t) + b[1] * t,
+        a[2] * (1.0 - t) + b[2] * t,
+        a[3] * (1.0 - t) + b[3] * t,
+    ]
+}
+
+fn sample_stops(stops: &[crate::renderer::types::GradientStop], t: f32) -> [f32; 4] {
+    let mut colours = [[0.0; 4]; 4];
+    let mut positions = [0.0, 1.0, 1.0, 1.0];
+    let count = pack_stops(stops, &mut colours, &mut positions) as usize;
+    let t = t.clamp(0.0, 1.0);
+    if count <= 1 || t <= positions[0] {
+        return colours[0];
+    }
+    for i in 0..(count - 1) {
+        if t <= positions[i + 1] {
+            let span = (positions[i + 1] - positions[i]).max(1e-6);
+            let local = (t - positions[i]) / span;
+            return gradient_lerp(colours[i], colours[i + 1], local);
+        }
+    }
+    colours[count - 1]
+}
+
+fn sample_overlay_fill(
+    fill: &crate::renderer::types::OverlayFill,
+    p: [f32; 2],
+    min: [f32; 2],
+    max: [f32; 2],
+) -> [f32; 4] {
+    let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
+    let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
+    match fill {
+        crate::renderer::types::OverlayFill::Solid(c) => *c,
+        crate::renderer::types::OverlayFill::LinearGradient {
+            start_colour,
+            end_colour,
+            angle,
+        } => {
+            let dir = [angle.cos(), angle.sin()];
+            let rel = [p[0] - centre[0], p[1] - centre[1]];
+            let extent = (dir[0].abs() * size[0] + dir[1].abs() * size[1]).max(1e-6);
+            let t = (rel[0] * dir[0] + rel[1] * dir[1]) / extent + 0.5;
+            gradient_lerp(*start_colour, *end_colour, t)
+        }
+        crate::renderer::types::OverlayFill::RadialGradient {
+            centre_colour,
+            edge_colour,
+        } => {
+            let dx = p[0] - centre[0];
+            let dy = p[1] - centre[1];
+            let radius = ((size[0] * 0.5).powi(2) + (size[1] * 0.5).powi(2))
+                .sqrt()
+                .max(1e-6);
+            gradient_lerp(
+                *centre_colour,
+                *edge_colour,
+                (dx * dx + dy * dy).sqrt() / radius,
+            )
+        }
+        crate::renderer::types::OverlayFill::ConicalGradient {
+            start_colour,
+            end_colour,
+            offset_angle,
+        } => {
+            let a = (p[1] - centre[1]).atan2(p[0] - centre[0]) - offset_angle;
+            let t = ((a / std::f32::consts::TAU) % 1.0 + 1.0) % 1.0;
+            gradient_lerp(*start_colour, *end_colour, t)
+        }
+        crate::renderer::types::OverlayFill::LinearGradientMulti { stops, angle } => {
+            let dir = [angle.cos(), angle.sin()];
+            let rel = [p[0] - centre[0], p[1] - centre[1]];
+            let extent = (dir[0].abs() * size[0] + dir[1].abs() * size[1]).max(1e-6);
+            sample_stops(stops, (rel[0] * dir[0] + rel[1] * dir[1]) / extent + 0.5)
+        }
+        crate::renderer::types::OverlayFill::RadialGradientMulti { stops } => {
+            let dx = p[0] - centre[0];
+            let dy = p[1] - centre[1];
+            let radius = ((size[0] * 0.5).powi(2) + (size[1] * 0.5).powi(2))
+                .sqrt()
+                .max(1e-6);
+            sample_stops(stops, (dx * dx + dy * dy).sqrt() / radius)
+        }
+        crate::renderer::types::OverlayFill::ConicalGradientMulti {
+            stops,
+            offset_angle,
+        } => {
+            let a = (p[1] - centre[1]).atan2(p[0] - centre[0]) - offset_angle;
+            sample_stops(stops, ((a / std::f32::consts::TAU) % 1.0 + 1.0) % 1.0)
+        }
+    }
+}
+
+fn polygon_area(points: &[[f32; 2]]) -> f32 {
+    let mut area = 0.0;
+    for i in 0..points.len() {
+        let a = points[i];
+        let b = points[(i + 1) % points.len()];
+        area += a[0] * b[1] - b[0] * a[1];
+    }
+    area * 0.5
+}
+
+fn point_in_tri(p: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> bool {
+    let cross = |u: [f32; 2], v: [f32; 2], w: [f32; 2]| {
+        (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0])
+    };
+    let ab = cross(a, b, p);
+    let bc = cross(b, c, p);
+    let ca = cross(c, a, p);
+    (ab >= -1e-5 && bc >= -1e-5 && ca >= -1e-5) || (ab <= 1e-5 && bc <= 1e-5 && ca <= 1e-5)
+}
+
+fn triangulate_polygon(points: &[[f32; 2]]) -> Vec<[usize; 3]> {
+    let n = points.len();
+    if n < 3 || polygon_area(points).abs() < 1e-5 {
+        return Vec::new();
+    }
+    let ccw = polygon_area(points) > 0.0;
+    let mut idx: Vec<usize> = if ccw {
+        (0..n).collect()
+    } else {
+        (0..n).rev().collect()
+    };
+    let mut tris = Vec::with_capacity(n.saturating_sub(2));
+    let mut guard = 0usize;
+    while idx.len() > 3 && guard < n * n {
+        guard += 1;
+        let mut clipped = false;
+        for i in 0..idx.len() {
+            let ia = idx[(i + idx.len() - 1) % idx.len()];
+            let ib = idx[i];
+            let ic = idx[(i + 1) % idx.len()];
+            let a = points[ia];
+            let b = points[ib];
+            let c = points[ic];
+            let cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+            if cross <= 1e-5 {
+                continue;
+            }
+            let contains = idx
+                .iter()
+                .any(|&j| j != ia && j != ib && j != ic && point_in_tri(points[j], a, b, c));
+            if contains {
+                continue;
+            }
+            tris.push([ia, ib, ic]);
+            idx.remove(i);
+            clipped = true;
+            break;
+        }
+        if !clipped {
+            break;
+        }
+    }
+    if idx.len() == 3 {
+        tris.push([idx[0], idx[1], idx[2]]);
+    }
+    tris
+}
+
+fn emit_filled_polyline(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    points: &[[f32; 2]],
+    fill: &crate::renderer::types::OverlayFill,
+    opacity: f32,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let Some((min, max)) = polyline_bounds(points) else {
+        return;
+    };
+    for tri in triangulate_polygon(points) {
+        for idx in tri {
+            let p = points[idx];
+            let mut colour = sample_overlay_fill(fill, p, min, max);
+            colour[3] *= opacity;
+            verts.push(crate::resources::OverlayTextVertex {
+                position: px_to_ndc(p[0], p[1], vp_w, vp_h),
+                uv: [0.0, 0.0],
+                colour,
+                use_texture: 0.0,
+                _pad: 0.0,
+            });
+        }
+    }
 }
 
 /// Tessellate a polyline into a triangle list of `OverlayTextVertex`s.

@@ -1491,6 +1491,81 @@ pub(crate) fn build_overlay_frame(
             });
         }
 
+        // Closed polyline fills: the left polygon uses OverlayFill directly;
+        // the right heart uses the Carl Gauss overlay texture.
+        {
+            let py = 20.0
+                + row_h
+                + 24.0
+                + 90.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0;
+            let x_poly = 20.0 + 70.0 + gap + 180.0 + gap + 180.0 + gap + 32.0;
+            let y_poly = py + 35.0;
+
+            polylines.push(viewport_lib::OverlayPolylineItem {
+                points: vec![
+                    [x_poly, y_poly - 30.0],
+                    [x_poly + 48.0, y_poly - 12.0],
+                    [x_poly + 42.0, y_poly + 28.0],
+                    [x_poly - 18.0, y_poly + 22.0],
+                    [x_poly - 36.0, y_poly - 10.0],
+                ],
+                thickness: 2.0,
+                colour: [1.0, 1.0, 1.0, 0.8],
+                closed: true,
+                fill: Some(OverlayFill::LinearGradient {
+                    start_colour: [0.12, 0.65, 0.95, 0.78],
+                    end_colour: [0.95, 0.35, 0.7, 0.82],
+                    angle: std::f32::consts::PI * 0.25,
+                }),
+                z_order: 1,
+                ..Default::default()
+            });
+
+            if let Some(tid) = app.ovl_state.carlgauss_tex_id {
+                let tx = x_poly + 128.0;
+                let heart_points = (0..40)
+                    .map(|i| {
+                        let t = i as f32 / 40.0 * std::f32::consts::TAU;
+                        let s = t.sin();
+                        let c = t.cos();
+                        [
+                            tx + 2.1 * 16.0 * s.powi(3),
+                            y_poly
+                                - 2.1
+                                    * (13.0 * c
+                                        - 5.0 * (2.0 * t).cos()
+                                        - 2.0 * (3.0 * t).cos()
+                                        - (4.0 * t).cos()),
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                let heart_uvs = heart_points
+                    .iter()
+                    .map(|p| [(p[0] - (tx - 36.0)) / 72.0, (p[1] - (y_poly - 36.0)) / 72.0])
+                    .collect::<Vec<_>>();
+                polylines.push(viewport_lib::OverlayPolylineItem {
+                    points: heart_points,
+                    thickness: 2.0,
+                    colour: [1.0, 0.78, 0.9, 0.9],
+                    closed: true,
+                    fill: Some(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95])),
+                    texture: Some(tid),
+                    uvs: Some(heart_uvs),
+                    z_order: 1,
+                    ..Default::default()
+                });
+            }
+        }
+
         // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).
         if app.ovl_state.backdrop_blur_radius > 0.0 {
             shapes.push(OverlayShapeItem {
