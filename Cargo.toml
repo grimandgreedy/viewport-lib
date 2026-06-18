@@ -70,10 +70,6 @@ name = "eframe-primitives"
 path = "examples/eframe_primitives/main.rs"
 
 [[example]]
-name = "eframe-viewport"
-path = "examples/eframe_viewport/main.rs"
-
-[[example]]
 name = "eframe-input-controllers"
 path = "examples/eframe_input_controllers/main.rs"
 
