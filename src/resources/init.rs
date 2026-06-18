@@ -15,11 +15,20 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         // Shader module
         // ------------------------------------------------------------------
+        // iced_wgpu and other WebGL2-targeting backends cap max_bind_groups at
+        // 2. viewport-lib's mesh shader family uses 3 groups (camera, object,
+        // deform). On limited devices we compile the _noop variants which omit
+        // the deform group, and build 2-group pipeline layouts instead.
+        let deform_enabled = device.limits().max_bind_groups >= 3;
+
+        let mesh_src = if deform_enabled {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
+        } else {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
+        };
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(mesh_src.into()),
         });
 
         // ------------------------------------------------------------------
@@ -459,18 +468,23 @@ impl ViewportGpuResources {
         // Per-vertex deformation sidecar. Constructed early because every
         // mesh-family pipeline layout binds its group(2) BGL.
         // ------------------------------------------------------------------
-        let deform = crate::resources::mesh_sidecar::deform::DeformationState::new(device);
+        let deform = if deform_enabled {
+            crate::resources::mesh_sidecar::deform::DeformationState::new(device)
+        } else {
+            crate::resources::mesh_sidecar::deform::DeformationState::new_disabled(device)
+        };
+        let deform_bgl = deform.enabled.then_some(&deform.bind_group_layout);
 
         // ------------------------------------------------------------------
         // Pipeline layout (shared between solid and transparent pipelines)
-        // Groups: 0=camera, 1=object+texture, 2=deform sidecar
+        // Groups: 0=camera, 1=object+texture, and optionally 2=deform sidecar
         // ------------------------------------------------------------------
         let pipeline_layout = crate::resources::mesh_pipelines::mesh_pipeline_layout(
             device,
             "mesh_pipeline_layout",
             &camera_bgl,
             &object_bgl,
-            &deform.bind_group_layout,
+            deform_bgl,
         );
 
         // ------------------------------------------------------------------
@@ -782,11 +796,14 @@ impl ViewportGpuResources {
         // ------------------------------------------------------------------
         // Shadow pass pipeline (depth-only, renders from light's POV)
         // ------------------------------------------------------------------
+        let shadow_src = if deform_enabled {
+            include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl"))
+        } else {
+            include_str!(concat!(env!("OUT_DIR"), "/shadow_noop.wgsl"))
+        };
         let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shadow_src.into()),
         });
 
         // Shadow pass uses a simple bind group layout: just the light uniform.
@@ -807,10 +824,15 @@ impl ViewportGpuResources {
             }],
         });
 
+        let shadow_pl_bgls: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
+            vec![&shadow_camera_bgl, &object_bgl, d]
+        } else {
+            vec![&shadow_camera_bgl, &object_bgl]
+        };
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_pipeline_layout"),
-                bind_group_layouts: &[&shadow_camera_bgl, &object_bgl, &deform.bind_group_layout],
+                bind_group_layouts: &shadow_pl_bgls,
                 push_constant_ranges: &[],
             });
 
@@ -859,11 +881,14 @@ impl ViewportGpuResources {
         // mirrors the cascade pipeline (same object + deform bind groups)
         // and carries a per-face uniform with view_proj + light_pos + range.
         // ------------------------------------------------------------------
+        let shadow_point_src = if deform_enabled {
+            include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl"))
+        } else {
+            include_str!(concat!(env!("OUT_DIR"), "/shadow_point_noop.wgsl"))
+        };
         let shadow_point_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow_point_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shadow_point_src.into()),
         });
         let shadow_point_face_bgl =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -879,14 +904,15 @@ impl ViewportGpuResources {
                     count: None,
                 }],
             });
+        let shadow_point_pl_bgls: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
+            vec![&shadow_point_face_bgl, &object_bgl, d]
+        } else {
+            vec![&shadow_point_face_bgl, &object_bgl]
+        };
         let shadow_point_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_point_pipeline_layout"),
-                bind_group_layouts: &[
-                    &shadow_point_face_bgl,
-                    &object_bgl,
-                    &deform.bind_group_layout,
-                ],
+                bind_group_layouts: &shadow_point_pl_bgls,
                 push_constant_ranges: &[],
             });
         let shadow_point_pipeline = crate::resources::mesh_pipelines::build_shadow_point_pipeline(
@@ -1918,20 +1944,28 @@ impl ViewportGpuResources {
             ),
         });
 
+        let outline_pl_bgls: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
+            vec![&camera_bgl, &outline_bgl, d]
+        } else {
+            vec![&camera_bgl, &outline_bgl]
+        };
         let outline_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("outline_pipeline_layout"),
-                bind_group_layouts: &[&camera_bgl, &outline_bgl, &deform.bind_group_layout],
+                bind_group_layouts: &outline_pl_bgls,
                 push_constant_ranges: &[],
             });
 
         // Mask-write pipeline: renders selected objects as r=1.0 to an R8 mask
         // texture with depth testing, replacing the old stencil-based approach.
+        let outline_mask_src = if deform_enabled {
+            include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl"))
+        } else {
+            include_str!(concat!(env!("OUT_DIR"), "/outline_mask_noop.wgsl"))
+        };
         let outline_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(outline_mask_src.into()),
         });
         let outline_masks = crate::resources::mesh_pipelines::build_outline_mask_pipelines(
             device,

@@ -87,7 +87,7 @@ impl ViewportGpuResources {
             "instanced_pipeline_layout",
             &self.camera_bind_group_layout,
             &instance_bgl,
-            &self.deform.bind_group_layout,
+            self.deform.enabled.then_some(&self.deform.bind_group_layout),
         );
         let ldr_inst = crate::resources::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
             device,
@@ -216,7 +216,7 @@ impl ViewportGpuResources {
             "hdr_instanced_pipeline_layout",
             &self.camera_bind_group_layout,
             instance_bgl,
-            &self.deform.bind_group_layout,
+            self.deform.enabled.then_some(&self.deform.bind_group_layout),
         );
         let hdr_inst = crate::resources::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
             device,
@@ -257,7 +257,7 @@ impl ViewportGpuResources {
             "oit_instanced_pipeline_layout",
             &self.camera_bind_group_layout,
             instance_bgl,
-            &self.deform.bind_group_layout,
+            self.deform.enabled.then_some(&self.deform.bind_group_layout),
         );
         let pipeline = crate::resources::mesh_pipelines::build_oit_instanced_pipeline(
             device,
@@ -540,7 +540,7 @@ impl ViewportGpuResources {
             "hdr_instanced_cull_pipeline_layout",
             &self.camera_bind_group_layout,
             &cull_bgl,
-            &self.deform.bind_group_layout,
+            self.deform.enabled.then_some(&self.deform.bind_group_layout),
         );
         let hdr_solid_cull = crate::resources::mesh_pipelines::build_hdr_instanced_cull_pipeline(
             device,
@@ -565,7 +565,7 @@ impl ViewportGpuResources {
             "oit_instanced_cull_pipeline_layout",
             &self.camera_bind_group_layout,
             &cull_bgl,
-            &self.deform.bind_group_layout,
+            self.deform.enabled.then_some(&self.deform.bind_group_layout),
         );
         let oit_cull = crate::resources::mesh_pipelines::build_oit_instanced_pipeline(
             device,

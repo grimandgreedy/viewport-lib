@@ -802,33 +802,45 @@ pub(crate) fn build_oit_instanced_pipeline(
 }
 
 /// Build a pipeline layout for instanced mesh-family pipelines.
-/// Group 0=camera, 1=instance/cull, 2=deform.
+/// Groups: 0=camera, 1=instance/cull, and optionally 2=deform.
+/// Pass `None` for `deform_bgl` on devices with max_bind_groups < 3.
 pub(crate) fn instanced_pipeline_layout(
     device: &wgpu::Device,
     label: &str,
     camera_bgl: &wgpu::BindGroupLayout,
     instance_bgl: &wgpu::BindGroupLayout,
-    deform_bgl: &wgpu::BindGroupLayout,
+    deform_bgl: Option<&wgpu::BindGroupLayout>,
 ) -> wgpu::PipelineLayout {
+    let layouts: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
+        vec![camera_bgl, instance_bgl, d]
+    } else {
+        vec![camera_bgl, instance_bgl]
+    };
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: &[camera_bgl, instance_bgl, deform_bgl],
+        bind_group_layouts: &layouts,
         push_constant_ranges: &[],
     })
 }
 
 /// Build the shared mesh pipeline layout used by both LDR and HDR mesh
-/// pipelines. Camera + object + deform BGLs at slots 0, 1, 2.
+/// pipelines. Groups: 0=camera, 1=object+texture, and optionally 2=deform.
+/// Pass `None` for `deform_bgl` on devices with max_bind_groups < 3.
 pub(crate) fn mesh_pipeline_layout(
     device: &wgpu::Device,
     label: &str,
     camera_bgl: &wgpu::BindGroupLayout,
     object_bgl: &wgpu::BindGroupLayout,
-    deform_bgl: &wgpu::BindGroupLayout,
+    deform_bgl: Option<&wgpu::BindGroupLayout>,
 ) -> wgpu::PipelineLayout {
+    let layouts: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
+        vec![camera_bgl, object_bgl, d]
+    } else {
+        vec![camera_bgl, object_bgl]
+    };
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: &[camera_bgl, object_bgl, deform_bgl],
+        bind_group_layouts: &layouts,
         push_constant_ranges: &[],
     })
 }

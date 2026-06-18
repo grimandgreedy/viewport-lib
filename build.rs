@@ -48,6 +48,38 @@ fn main() {
             .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
     }
 
+    // For shaders that include deform.wgsl, produce a _noop variant where that
+    // include is replaced with deform_noop.wgsl. These are loaded at runtime by
+    // ViewportGpuResources::new when the device reports max_bind_groups < 3.
+    let deform_shaders = [
+        "mesh.wgsl",
+        "mesh_instanced.wgsl",
+        "mesh_instanced_oit.wgsl",
+        "mesh_oit.wgsl",
+        "outline_mask.wgsl",
+        "shadow.wgsl",
+        "shadow_point.wgsl",
+    ];
+    for name in &deform_shaders {
+        let src_path = shaders_dir.join(name);
+        let raw = fs::read_to_string(&src_path)
+            .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", src_path.display(), e));
+        let raw_noop = raw.replace(
+            "// #include \"deform.wgsl\"",
+            "// #include \"deform_noop.wgsl\"",
+        );
+        let preprocessed = resolve_includes(&raw_noop, &shaders_dir, name);
+        let preprocessed = if is_ios {
+            patch_for_ios(&preprocessed)
+        } else {
+            preprocessed
+        };
+        let noop_name = name.replace(".wgsl", "_noop.wgsl");
+        let out_path = PathBuf::from(&out_dir).join(&noop_name);
+        fs::write(&out_path, preprocessed)
+            .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
+    }
+
     let mut catalog = String::from("&[\n");
     for name in &shader_names {
         write!(

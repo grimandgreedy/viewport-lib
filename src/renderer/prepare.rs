@@ -5003,6 +5003,10 @@ impl ViewportRenderer {
                 });
 
                 pass.set_bind_group(0, camera_bg, &[]);
+                // Bind group 2 is required by outline_mask_pipeline and
+                // outline_mask_two_sided_pipeline. Set the dummy here so it is
+                // always valid; the mesh outline loop below overrides it per item.
+                pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                 for outlined in outlines {
                     let Some(mesh) = self.resources.mesh_store.get(outlined.mesh_id) else {
                         continue;
@@ -5165,6 +5169,7 @@ impl ViewportRenderer {
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(0, camera_bg, &[]);
                     pass.set_bind_group(1, &raw.mask_bind_group, &[]);
+                    pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                     pass.set_vertex_buffer(0, raw.vertex_buf.slice(..));
                     pass.set_index_buffer(raw.index_buf.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..raw.index_count, 0, 0..1);
@@ -5220,6 +5225,7 @@ impl ViewportRenderer {
                 // tubes use the back-face-culled pipeline; ribbons use the two-sided
                 // pipeline because they are flat surfaces with no clear front face.
                 pass.set_bind_group(0, camera_bg, &[]);
+                pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                 let curve_draw_groups = [
                     (
                         streamtube_outline_items as &[CurveMeshOutlineItem],

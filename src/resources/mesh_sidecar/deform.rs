@@ -146,6 +146,10 @@ pub(crate) struct MeshDeform {
 
 /// Renderer-side deformation state.
 pub(crate) struct DeformationState {
+    /// False when the device's max_bind_groups < 3. When false, the deform
+    /// bind group layout is not included in pipeline layouts and deformer
+    /// registration is silently skipped.
+    pub enabled: bool,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub header_buffer: wgpu::Buffer,
     /// Empty slot-layout prefix bound when a mesh has no attached data.
@@ -244,6 +248,7 @@ impl DeformationState {
         });
 
         Self {
+            enabled: true,
             bind_group_layout,
             header_buffer,
             dummy_data_buffer,
@@ -253,6 +258,17 @@ impl DeformationState {
             header_cpu,
             registrations: Vec::new(),
         }
+    }
+
+    /// Construct a disabled `DeformationState` for devices with max_bind_groups < 3.
+    ///
+    /// The returned state still allocates a minimal BGL and dummy bind group so
+    /// that render.rs can call set_bind_group(2, ...) without crashing; those
+    /// calls target a slot not present in any pipeline layout and are ignored.
+    pub fn new_disabled(device: &wgpu::Device) -> Self {
+        let mut s = Self::new(device);
+        s.enabled = false;
+        s
     }
 
     /// Returns the bind group to use for a given mesh: the per-mesh group
@@ -973,6 +989,9 @@ impl ViewportGpuResources {
     /// pipelines stay on their build-time shader modules until their
     /// factories migrate to the same rebuild flow.
     fn rebuild_mesh_pipelines(&mut self, device: &wgpu::Device) {
+        if !self.deform.enabled {
+            return;
+        }
         let registrations = self.deform.registrations.clone();
 
         // mesh.wgsl: LDR + HDR families.
@@ -988,7 +1007,7 @@ impl ViewportGpuResources {
                 "mesh_pipeline_layout",
                 &self.camera_bind_group_layout,
                 &self.object_bind_group_layout,
-                &self.deform.bind_group_layout,
+                Some(&self.deform.bind_group_layout),
             );
             let ldr = crate::resources::mesh_pipelines::build_ldr_mesh_pipelines(
                 device,
@@ -1008,7 +1027,7 @@ impl ViewportGpuResources {
                     "hdr_mesh_pipeline_layout",
                     &self.camera_bind_group_layout,
                     &self.object_bind_group_layout,
-                    &self.deform.bind_group_layout,
+                    Some(&self.deform.bind_group_layout),
                 );
                 let hdr = crate::resources::mesh_pipelines::build_hdr_mesh_pipelines(
                     device,
@@ -1036,7 +1055,7 @@ impl ViewportGpuResources {
                     "oit_pipeline_layout",
                     &self.camera_bind_group_layout,
                     &self.object_bind_group_layout,
-                    &self.deform.bind_group_layout,
+                    Some(&self.deform.bind_group_layout),
                 );
                 let oit = crate::resources::mesh_pipelines::build_oit_pipeline(
                     device,
@@ -1115,7 +1134,7 @@ impl ViewportGpuResources {
                         "instanced_pipeline_layout",
                         &self.camera_bind_group_layout,
                         instance_bgl,
-                        &self.deform.bind_group_layout,
+                        Some(&self.deform.bind_group_layout),
                     );
                     let ldr = crate::resources::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
                         device,
@@ -1133,7 +1152,7 @@ impl ViewportGpuResources {
                         "hdr_instanced_pipeline_layout",
                         &self.camera_bind_group_layout,
                         instance_bgl,
-                        &self.deform.bind_group_layout,
+                        Some(&self.deform.bind_group_layout),
                     );
                     let hdr = crate::resources::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
                         device, &layout, &shader,
@@ -1151,7 +1170,7 @@ impl ViewportGpuResources {
                         "hdr_instanced_cull_pipeline_layout",
                         &self.camera_bind_group_layout,
                         cull_bgl,
-                        &self.deform.bind_group_layout,
+                        Some(&self.deform.bind_group_layout),
                     );
                     let pl = crate::resources::mesh_pipelines::build_hdr_instanced_cull_pipeline(
                         device, &layout, &shader,
@@ -1175,7 +1194,7 @@ impl ViewportGpuResources {
                         "oit_instanced_pipeline_layout",
                         &self.camera_bind_group_layout,
                         instance_bgl,
-                        &self.deform.bind_group_layout,
+                        Some(&self.deform.bind_group_layout),
                     );
                     let pl = crate::resources::mesh_pipelines::build_oit_instanced_pipeline(
                         device,
@@ -1194,7 +1213,7 @@ impl ViewportGpuResources {
                         "oit_instanced_cull_pipeline_layout",
                         &self.camera_bind_group_layout,
                         cull_bgl,
-                        &self.deform.bind_group_layout,
+                        Some(&self.deform.bind_group_layout),
                     );
                     let pl = crate::resources::mesh_pipelines::build_oit_instanced_pipeline(
                         device,

@@ -1157,7 +1157,11 @@ impl ViewportGpuResources {
         // OIT mesh pipeline. Two color targets (`Rgba16Float` accumulation +
         // `R8Unorm` reveal) and depth-test-only.
         let oit_mesh_source = {
-            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"));
+            let base = if self.deform.enabled {
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_oit.wgsl"))
+            } else {
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_oit_noop.wgsl"))
+            };
             crate::resources::mesh_sidecar::registry::compose_shader(
                 base,
                 &self.deform.registrations,
@@ -1172,7 +1176,7 @@ impl ViewportGpuResources {
             "oit_pipeline_layout",
             &self.camera_bind_group_layout,
             &self.object_bind_group_layout,
-            &self.deform.bind_group_layout,
+            self.deform.enabled.then_some(&self.deform.bind_group_layout),
         );
         let oit_pipeline =
             crate::resources::mesh_pipelines::build_oit_pipeline(device, &oit_layout, &oit_shader);
@@ -1188,7 +1192,11 @@ impl ViewportGpuResources {
         // the HDR mesh pipeline would use the identity hook bodies even
         // though the LDR pipeline was rebuilt at registration time.
         let hdr_mesh_source = {
-            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"));
+            let base = if self.deform.enabled {
+                include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
+            } else {
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
+            };
             crate::resources::mesh_sidecar::registry::compose_shader(
                 base,
                 &self.deform.registrations,
@@ -1210,7 +1218,7 @@ impl ViewportGpuResources {
             "hdr_mesh_pipeline_layout",
             &self.camera_bind_group_layout,
             &self.object_bind_group_layout,
-            &self.deform.bind_group_layout,
+            self.deform.enabled.then_some(&self.deform.bind_group_layout),
         );
         let hdr = crate::resources::mesh_pipelines::build_hdr_mesh_pipelines(
             device,
