@@ -128,10 +128,7 @@ fn main() {
         l.shadow_bias = 0.0;
         l.shadow_cascade_count = 4;
         l.shadow_filter = ShadowFilter::Pcf;
-        l.shadow_atlas_resolution = args
-            .get(11)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(4096);
+        l.shadow_atlas_resolution = args.get(11).and_then(|s| s.parse().ok()).unwrap_or(4096);
         l.hemisphere_intensity = hemi;
         l.sky_colour = [0.8, 0.9, 1.0];
         l.ground_colour = [0.5, 0.55, 0.6];

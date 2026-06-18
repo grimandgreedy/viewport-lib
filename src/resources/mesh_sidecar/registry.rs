@@ -181,7 +181,8 @@ fn shader_source(name: &str) -> Option<&'static str> {
 /// }
 /// ```
 fn build_stage_calls(stored: &[StoredDeformer], stage: DeformStage) -> String {
-    let mut entries: Vec<&StoredDeformer> = stored.iter().filter(|d| d.desc.stage == stage).collect();
+    let mut entries: Vec<&StoredDeformer> =
+        stored.iter().filter(|d| d.desc.stage == stage).collect();
     entries.sort_by(|a, b| {
         a.desc
             .priority
@@ -260,18 +261,18 @@ fn replace_whole_word(haystack: &str, needle: &str, replacement: &str) -> String
     let mut out = String::with_capacity(haystack.len());
     let mut i = 0;
     while i < bytes.len() {
-        if i + needle_bytes.len() <= bytes.len() && &bytes[i..i + needle_bytes.len()] == needle_bytes {
-            let before_ok = i == 0
-                || {
-                    let c = bytes[i - 1] as char;
-                    !(c.is_alphanumeric() || c == '_')
-                };
+        if i + needle_bytes.len() <= bytes.len()
+            && &bytes[i..i + needle_bytes.len()] == needle_bytes
+        {
+            let before_ok = i == 0 || {
+                let c = bytes[i - 1] as char;
+                !(c.is_alphanumeric() || c == '_')
+            };
             let after_idx = i + needle_bytes.len();
-            let after_ok = after_idx == bytes.len()
-                || {
-                    let c = bytes[after_idx] as char;
-                    !(c.is_alphanumeric() || c == '_')
-                };
+            let after_ok = after_idx == bytes.len() || {
+                let c = bytes[after_idx] as char;
+                !(c.is_alphanumeric() || c == '_')
+            };
             if before_ok && after_ok {
                 out.push_str(replacement);
                 i = after_idx;
@@ -364,10 +365,12 @@ pub(crate) fn allocate_internal_slot(stored: &[StoredDeformer]) -> ViewportResul
 /// Validate `name` is a fresh, non-empty WGSL-ish identifier.
 pub(crate) fn validate_name(stored: &[StoredDeformer], name: &str) -> ViewportResult<()> {
     if name.is_empty()
-        || !name
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || name.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true)
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(true)
     {
         return Err(ViewportError::DeformShaderInvalid {
             reason: "deformer name must be a non-empty WGSL identifier (letters, digits, underscore; not starting with a digit)".to_string(),

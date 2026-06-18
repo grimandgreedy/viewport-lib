@@ -1174,11 +1174,8 @@ impl ViewportGpuResources {
             &self.object_bind_group_layout,
             &self.deform.bind_group_layout,
         );
-        let oit_pipeline = crate::resources::mesh_pipelines::build_oit_pipeline(
-            device,
-            &oit_layout,
-            &oit_shader,
-        );
+        let oit_pipeline =
+            crate::resources::mesh_pipelines::build_oit_pipeline(device, &oit_layout, &oit_shader);
 
         // oit_instanced_pipeline is created lazily by ensure_oit_instanced_pipeline()
         // once instance_bind_group_layout becomes available. Splitting it out avoids the
@@ -1215,8 +1212,11 @@ impl ViewportGpuResources {
             &self.object_bind_group_layout,
             &self.deform.bind_group_layout,
         );
-        let hdr =
-            crate::resources::mesh_pipelines::build_hdr_mesh_pipelines(device, &hdr_pipeline_layout, &hdr_shader);
+        let hdr = crate::resources::mesh_pipelines::build_hdr_mesh_pipelines(
+            device,
+            &hdr_pipeline_layout,
+            &hdr_shader,
+        );
         let hdr_solid_pipeline = hdr.solid;
         let hdr_solid_two_sided_pipeline = hdr.solid_two_sided;
         let hdr_transparent_pipeline = hdr.transparent;

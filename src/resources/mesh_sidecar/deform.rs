@@ -391,17 +391,33 @@ impl DeformationState {
         );
 
         // Rebuild instance bind groups since they bind this mesh's buffer.
-        let instance_ids: Vec<u32> =
-            self.meshes.get(&mesh_id).unwrap().instances.keys().copied().collect();
+        let instance_ids: Vec<u32> = self
+            .meshes
+            .get(&mesh_id)
+            .unwrap()
+            .instances
+            .keys()
+            .copied()
+            .collect();
         for id in instance_ids {
             let inst_buf_clone = {
-                let inst = self.meshes.get(&mesh_id).unwrap().instances.get(&id).unwrap();
+                let inst = self
+                    .meshes
+                    .get(&mesh_id)
+                    .unwrap()
+                    .instances
+                    .get(&id)
+                    .unwrap();
                 // SAFETY: as_entire_binding holds a borrow of the buffer,
                 // not the buffer itself; we reborrow per call.
                 inst.buffer.clone()
             };
-            let bg =
-                self.make_bind_group(device, "deform_mesh_instance_bg", &new_buffer, &inst_buf_clone);
+            let bg = self.make_bind_group(
+                device,
+                "deform_mesh_instance_bg",
+                &new_buffer,
+                &inst_buf_clone,
+            );
             let inst = self
                 .meshes
                 .get_mut(&mesh_id)
@@ -829,12 +845,7 @@ impl ViewportGpuResources {
 
     /// Returns `true` when the given instance of the mesh has per-instance
     /// data attached at the given slot.
-    pub fn has_deform_slot_instance(
-        &self,
-        mesh_id: MeshId,
-        instance_id: u32,
-        slot: usize,
-    ) -> bool {
+    pub fn has_deform_slot_instance(&self, mesh_id: MeshId, instance_id: u32, slot: usize) -> bool {
         self.deform.has_slot_instance(mesh_id, instance_id, slot)
     }
 
@@ -881,9 +892,7 @@ impl ViewportGpuResources {
         for shader_name in MESH_FAMILY_SHADERS {
             let Some(base) = lookup_source(shader_name) else {
                 return Err(crate::error::ViewportError::DeformShaderInvalid {
-                    reason: format!(
-                        "internal: shader '{shader_name}' missing from shader catalog"
-                    ),
+                    reason: format!("internal: shader '{shader_name}' missing from shader catalog"),
                 });
             };
             let composed = compose_shader(base, &trial);
@@ -918,9 +927,7 @@ impl ViewportGpuResources {
         for shader_name in MESH_FAMILY_SHADERS {
             let Some(base) = lookup_source(shader_name) else {
                 return Err(crate::error::ViewportError::DeformShaderInvalid {
-                    reason: format!(
-                        "internal: shader '{shader_name}' missing from shader catalog"
-                    ),
+                    reason: format!("internal: shader '{shader_name}' missing from shader catalog"),
                 });
             };
             let composed = compose_shader(base, &trial);
@@ -1129,9 +1136,7 @@ impl ViewportGpuResources {
                         &self.deform.bind_group_layout,
                     );
                     let hdr = crate::resources::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
-                        device,
-                        &layout,
-                        &shader,
+                        device, &layout, &shader,
                     );
                     self.hdr_solid_instanced_pipeline = Some(hdr.solid);
                     self.hdr_transparent_instanced_pipeline = Some(hdr.transparent);
@@ -1149,9 +1154,7 @@ impl ViewportGpuResources {
                         &self.deform.bind_group_layout,
                     );
                     let pl = crate::resources::mesh_pipelines::build_hdr_instanced_cull_pipeline(
-                        device,
-                        &layout,
-                        &shader,
+                        device, &layout, &shader,
                     );
                     self.hdr_solid_instanced_cull_pipeline = Some(pl);
                 }
@@ -1235,9 +1238,7 @@ mod tests {
         data[0] = Some(vec![1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0]);
         stride[0] = 1;
         // Slot 2: 2 vertices, stride 2 u32 each = 16 bytes
-        data[2] = Some(vec![
-            10, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 0, 40, 0, 0, 0,
-        ]);
+        data[2] = Some(vec![10, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 0, 40, 0, 0, 0]);
         stride[2] = 2;
 
         let words = DeformationState::pack(&data, &stride);
@@ -1342,10 +1343,9 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                s.attach_slot(&device, MeshId(0), DEFORM_SLOT_COUNT, 1, &[0u8; 4])
-            }));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.attach_slot(&device, MeshId(0), DEFORM_SLOT_COUNT, 1, &[0u8; 4])
+        }));
         assert!(result.is_err());
     }
 
@@ -1413,7 +1413,9 @@ mod tests {
         // deformer on a reserved slot, so we record the baseline count and
         // expect host slots to start at 0.
         let baseline = resources.registered_deformer_count();
-        let id = resources.register_deformer(&device, desc).expect("register");
+        let id = resources
+            .register_deformer(&device, desc)
+            .expect("register");
         assert_eq!(id.slot(), 0);
         assert_eq!(resources.registered_deformer_count(), baseline + 1);
 
@@ -1421,7 +1423,9 @@ mod tests {
             name: "wind",
             stage: crate::resources::mesh_sidecar::registry::DeformStage::ObjectSpace,
             priority: 0,
-            wgsl_body: "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex { return v; }".to_string(),
+            wgsl_body:
+                "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex { return v; }"
+                    .to_string(),
             per_vertex_stride: 4,
         };
         let err = resources.register_deformer(&device, dup).unwrap_err();

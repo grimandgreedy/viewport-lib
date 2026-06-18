@@ -228,7 +228,6 @@ impl Default for SurfaceLICConfig {
     }
 }
 
-
 /// World-space scene content for one frame.
 ///
 /// Groups all renderable world-space content submitted to the renderer.

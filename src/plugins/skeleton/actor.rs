@@ -21,9 +21,9 @@
 //! and per-part skinned draw calls, so callers should target this shape now.
 
 use crate::plugins::skinning::SkinWeights;
+use crate::plugins::skinning::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::resources::mesh_store::MeshId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::plugins::skinning::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::runtime::plugin::{RuntimePlugin, phase};
 
 use super::clip::AnimationClip;

@@ -815,8 +815,7 @@ impl ViewportGpuResources {
             crate::resources::volume_mesh::extract_boundary_faces(&data);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
         let (pt_id, _, _) = self.upload_projected_tet_mesh(device, &data, scalar_attribute)?;
-        let mut item =
-            crate::VolumeMeshItem::new(mesh_id, face_to_cell);
+        let mut item = crate::VolumeMeshItem::new(mesh_id, face_to_cell);
         item.projected_tet_id = Some(pt_id);
         item.volume_mesh_data = Some(std::sync::Arc::new(data));
         Ok(item)
@@ -2133,9 +2132,7 @@ impl ViewportGpuResources {
             .expect("pt_lut_bind_group_layout must exist");
         let sampler = &self.material_sampler;
 
-        match colourmap_id.and_then(|id| {
-            self.colourmap_views.get(id.0).map(|_| id.0)
-        }) {
+        match colourmap_id.and_then(|id| self.colourmap_views.get(id.0).map(|_| id.0)) {
             Some(slot) => {
                 if !self.pt_lut_bind_groups.contains_key(&slot) {
                     let lut_view = &self.colourmap_views[slot];
@@ -2848,11 +2845,8 @@ mod c4_volume_mesh_tests {
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Empty clip planes: equivalent to plain volume mesh extraction.
-        let job = resources.begin_upload_clipped_volume_mesh(
-            &device,
-            single_tet_volume(),
-            Vec::new(),
-        );
+        let job =
+            resources.begin_upload_clipped_volume_mesh(&device, single_tet_volume(), Vec::new());
         drive_until_ready(&mut resources, &device, &queue, job, "clipped_volume_mesh");
         let item = resources
             .upload_result_clipped_volume_mesh(job)
@@ -2906,7 +2900,9 @@ mod c4_volume_mesh_tests {
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let vol = single_tet_volume();
-        let _item = resources.upload_volume_mesh(&device, &vol).expect("sync ok");
+        let _item = resources
+            .upload_volume_mesh(&device, &vol)
+            .expect("sync ok");
         let _item2 = resources
             .upload_clipped_volume_mesh(&device, &vol, &[])
             .expect("clipped sync ok");

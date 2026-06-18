@@ -231,8 +231,7 @@ pub struct VolumeMeshItem {
     /// Populated by [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency).
     /// Without it, transparent items still render but cell-level picking via
     /// `renderer.pick()` falls back to face-on-boundary hits only.
-    pub volume_mesh_data:
-        Option<std::sync::Arc<crate::resources::volume_mesh::VolumeMeshData>>,
+    pub volume_mesh_data: Option<std::sync::Arc<crate::resources::volume_mesh::VolumeMeshData>>,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, opacity, pick identity, selection state).

@@ -1215,8 +1215,10 @@ mod tests {
 
     // ---- skeleton / skinning tests ------------------------------------------
 
+    use crate::plugins::skeleton::{
+        Joint, JointMatrices, Pose, Skeleton, SkeletonPlugin, apply_skin,
+    };
     use crate::plugins::skinning::{SkinWeights, SkinnedMeshUpdate};
-    use crate::plugins::skeleton::{Joint, JointMatrices, Pose, Skeleton, SkeletonPlugin, apply_skin};
 
     fn two_joint_skeleton() -> Skeleton {
         Skeleton::new(vec![

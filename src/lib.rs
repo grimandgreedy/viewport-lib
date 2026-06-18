@@ -81,14 +81,14 @@ pub mod interaction;
 /// Plugin substrate: target descriptors, shared bind layouts, WGSL helpers,
 /// pipeline builders. See [`plugin_api`] for the published extension surface.
 pub mod plugin_api;
+/// Built-in plugins: skinning, animation, constraints, physics, skeleton.
+pub mod plugins;
 /// On-surface vector quantities (intrinsic vectors, Whitney one-forms).
 pub mod quantities;
 /// Main viewport renderer wrapping all GPU resources.
 pub mod renderer;
 /// GPU resource container (pipelines, buffers, bind groups).
 pub mod resources;
-/// Built-in plugins: skinning, animation, constraints, physics, skeleton.
-pub mod plugins;
 /// Scene runtime: per-frame orchestration, plugin system, and physics hooks.
 pub mod runtime;
 /// Scene graph, material, traits, and AABB.
@@ -210,20 +210,20 @@ pub use renderer::{
     GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
     InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
     LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, ParticleMeshAlign,
+    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing,
     OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
-    OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, PassPath, PassView, PathTrack,
-    PickId, PickRectResult, PointCloudItem, PointCloudRefItem, PointRenderMode, PolylineItem,
-    PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem, RibbonRefItem,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
-    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
-    SpriteItem, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem,
-    TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem,
-    VelocityDist, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
-    VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, ParticleMeshAlign, PassPath,
+    PassView, PathTrack, PickId, PickRectResult, PointCloudItem, PointCloudRefItem,
+    PointRenderMode, PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode,
+    RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
+    ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend,
+    SpriteInstanceSetRefItem, SpriteItem, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
+    StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem,
+    TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem,
+    TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
+    VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
+    aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 pub use quantities::{
@@ -235,11 +235,6 @@ pub use quantities::{
 pub use resources::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
-pub use resources::{
-    DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,
-    DEFORM_SLOT_COUNT_PUB as DEFORM_SLOT_COUNT, DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle,
-    DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
-};
 pub use resources::mesh_store::MeshId;
 pub use resources::sparse_volume::SparseVolumeGridData;
 pub use resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData, extract_clipped_volume_faces};
@@ -248,8 +243,13 @@ pub use resources::{
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult,
     FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob,
     ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform, MatcapId, MeshData,
-    ProgressHandle, SingleLightUniform, TextureMemoryStats,
-    UploadStatus, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
+    ProgressHandle, SingleLightUniform, TextureMemoryStats, UploadStatus, ViewportGpuResources,
+    VolumeGpuId, VolumeId, lerp_attributes,
+};
+pub use resources::{
+    DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,
+    DEFORM_SLOT_COUNT_PUB as DEFORM_SLOT_COUNT, DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle,
+    DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
 };
 pub use resources::{
     GlyphSetId, GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender, PointCloudId,
@@ -260,7 +260,6 @@ pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,
     ManipulationSystem, NodeTransformOp, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
     RuntimePlugin, RuntimeStepContext, SceneRuntimeMode, SelectionOp, SelectionSystem,
-    SimulationStepContext, TransformSnapshot,
-    TransformSnapshotTable, TransformWriteback, ViewportRuntime,
+    SimulationStepContext, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
+    ViewportRuntime,
 };
-

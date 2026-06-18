@@ -807,9 +807,7 @@ impl ViewportRenderer {
         //     above via vm_cell_map (face_to_cell on the boundary surface).
         if wants_cell || wants_object {
             for item in &self.pick_volume_mesh_items {
-                if item.settings.pick_id == PickId::NONE
-                    || item.transparency.is_none()
-                {
+                if item.settings.pick_id == PickId::NONE || item.transparency.is_none() {
                     continue;
                 }
                 let Some(data) = item.volume_mesh_data.as_deref() else {
@@ -1914,9 +1912,7 @@ impl ViewportRenderer {
         //     above via vm_cell_map (face_to_cell on the boundary surface).
         if wants_cell || wants_object {
             for item in &self.pick_volume_mesh_items {
-                if item.settings.pick_id == PickId::NONE
-                    || item.transparency.is_none()
-                {
+                if item.settings.pick_id == PickId::NONE || item.transparency.is_none() {
                     continue;
                 }
                 let Some(data) = item.volume_mesh_data.as_deref() else {

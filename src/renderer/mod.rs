@@ -32,20 +32,20 @@ pub use self::types::{
     GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
     InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
     LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MAX_POINT_SHADOW_LIGHTS,
-    MeshInstanceItem, POINT_SHADOW_FACE_SIZE, PointShadowMode,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, ParticleMeshAlign,
-    OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
-    OverlayShape, OverlayShapeItem, OverlayTextureId, PathTrack, PickId, PointCloudItem,
-    PointCloudRefItem, PointRenderMode, PolylineItem, PolylineRefItem, PostProcessSettings,
-    RenderCamera, RepeatMode, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
-    ScalarBarOrientation, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
-    SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape,
-    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
-    SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
-    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist,
-    ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
-    VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem,
+    OverlayRectItem, OverlayShape, OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE,
+    ParticleMeshAlign, PathTrack, PickId, PointCloudItem, PointCloudRefItem, PointRenderMode,
+    PointShadowMode, PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode,
+    RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
+    ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend,
+    SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
+    SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig,
+    SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode,
+    ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
+    ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
+    aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -2056,11 +2056,7 @@ impl ViewportRenderer {
                 for mesh_id in &self.tvm_wireframe_draws {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(&self.resources.wireframe_pipeline);
-                        render_pass.set_bind_group(
-                            2,
-                            &self.resources.deform.dummy_bind_group,
-                            &[],
-                        );
+                        render_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(

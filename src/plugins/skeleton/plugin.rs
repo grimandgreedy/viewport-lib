@@ -2,9 +2,9 @@
 
 use super::skeleton::{JointMatrices, Pose, Skeleton, apply_skin};
 use crate::plugins::skinning::SkinWeights;
+use crate::plugins::skinning::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::resources::mesh_store::MeshId;
 use crate::runtime::context::RuntimeStepContext;
-use crate::plugins::skinning::{SkinnedMeshUpdate, SkinnedPoseUpdate};
 use crate::runtime::plugin::{RuntimePlugin, phase};
 
 /// Which deformation path a skinning plugin should emit each frame.

@@ -63,11 +63,7 @@ impl ViewportRenderer {
                 for mesh_id in &self.tvm_wireframe_draws {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(&self.resources.wireframe_pipeline);
-                        render_pass.set_bind_group(
-                            2,
-                            &self.resources.deform.dummy_bind_group,
-                            &[],
-                        );
+                        render_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(
@@ -1651,9 +1647,10 @@ impl ViewportRenderer {
                                     || item.material.is_two_sided()
                                     || item.material.matcap_id().is_some()
                                     || item.material.param_vis.is_some()
-                                    || resources
-                                        .deform
-                                        .has_per_instance_deform_data(item.mesh_id, item.deform_instance))
+                                    || resources.deform.has_per_instance_deform_data(
+                                        item.mesh_id,
+                                        item.deform_instance,
+                                    ))
                                 && resources.mesh_store.get(item.mesh_id).is_some()
                         })
                         .collect();
@@ -1717,11 +1714,7 @@ impl ViewportRenderer {
                             }
                         } else if let Some(ref pipeline) = resources.hdr_solid_instanced_pipeline {
                             render_pass.set_pipeline(pipeline);
-                            render_pass.set_bind_group(
-                                2,
-                                &resources.deform.dummy_bind_group,
-                                &[],
-                            );
+                            render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             for (_, batch) in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
@@ -1769,9 +1762,10 @@ impl ViewportRenderer {
                                 render_pass.set_pipeline(hdr_wf);
                                 render_pass.set_bind_group(
                                     2,
-                                    resources
-                                        .deform
-                                        .instance_bind_group_for(item.mesh_id, item.deform_instance),
+                                    resources.deform.instance_bind_group_for(
+                                        item.mesh_id,
+                                        item.deform_instance,
+                                    ),
                                     &[],
                                 );
                                 let bg = self
@@ -2539,10 +2533,9 @@ impl ViewportRenderer {
                         let Some(draw_bg) = system.draw_bg_mesh.as_ref() else {
                             continue;
                         };
-                        let Some(mesh) = resources
-                            .mesh_store
-                            .get(crate::resources::mesh_store::MeshId::from_index(mesh_id as usize))
-                        else {
+                        let Some(mesh) = resources.mesh_store.get(
+                            crate::resources::mesh_store::MeshId::from_index(mesh_id as usize),
+                        ) else {
                             continue;
                         };
                         pass.set_pipeline(dual.for_format(true));
@@ -3023,11 +3016,7 @@ impl ViewportRenderer {
                         }
                     } else if let Some(ref pipeline) = self.resources.oit_instanced_pipeline {
                         oit_pass.set_pipeline(pipeline);
-                        oit_pass.set_bind_group(
-                            2,
-                            &self.resources.deform.dummy_bind_group,
-                            &[],
-                        );
+                        oit_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                         for batch in &self.instanced_batches {
                             if !batch.is_transparent {
                                 continue;

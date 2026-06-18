@@ -363,10 +363,10 @@ fn pack_skin_weights_tight(packed: &[PackedSkinVertex]) -> Vec<u8> {
 
 #[cfg(test)]
 mod async_skin_tests {
+    use super::SkinWeights;
     use super::SkinningPlugin;
     use crate::ViewportGpuResources;
     use crate::geometry::primitives;
-    use super::SkinWeights;
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {

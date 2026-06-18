@@ -149,7 +149,7 @@ impl ViewportGpuResources {
         &self.deform.bind_group_layout
     }
 
-/// Number of live user-uploaded textures.
+    /// Number of live user-uploaded textures.
     ///
     /// `id` values in `0..texture_count()` are addressable via
     /// [`texture_view`](Self::texture_view), with the caveat that promoted

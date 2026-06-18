@@ -548,7 +548,12 @@ pub(crate) fn build_ldr_instanced_mesh_pipelines(
         })
     };
     LdrInstancedMeshPipelines {
-        solid: make("solid_instanced_pipeline", Some(wgpu::Face::Back), None, true),
+        solid: make(
+            "solid_instanced_pipeline",
+            Some(wgpu::Face::Back),
+            None,
+            true,
+        ),
         transparent: make(
             "transparent_instanced_pipeline",
             None,

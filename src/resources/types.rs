@@ -150,7 +150,6 @@ pub enum BuiltinColourmap {
     RdBu = 9,
 }
 
-
 /// Raw mesh data for upload to the GPU. Framework-agnostic representation.
 #[derive(Clone)]
 #[non_exhaustive]
@@ -519,11 +518,11 @@ pub(crate) struct ObjectUniform {
     pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 256
     /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
     /// no deformer registry has attached data for this mesh.
-    pub(crate) deform_flags: u32,    //   4 bytes, offset 272
+    pub(crate) deform_flags: u32, //   4 bytes, offset 272
     pub(crate) _pad_after_deform: u32, //   4 bytes, offset 276 (align next vec2 to 8)
     /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
     /// Mirrors `Material::ao_range`.
-    pub(crate) ao_range: [f32; 2],   //   8 bytes, offset 280
+    pub(crate) ao_range: [f32; 2], //   8 bytes, offset 280
     /// Min/max remap applied to the metallic sample (B channel of the MR
     /// texture). Identity `[0, 1]`. Mirrors `Material::metallic_range`.
     pub(crate) metallic_range: [f32; 2], //   8 bytes, offset 288
@@ -568,7 +567,7 @@ pub(crate) struct InstanceData {
     /// Mirrors `Material::ao_range`. The instanced mesh shaders do not sample
     /// the MR texture today, so `metallic_range` / `roughness_range` are
     /// intentionally absent from `InstanceData`.
-    pub(crate) ao_range: [f32; 2],   //   8 bytes, offset 160
+    pub(crate) ao_range: [f32; 2], //   8 bytes, offset 160
     pub(crate) _pad_ao_range: [f32; 2], //  8 bytes, offset 168 (struct stride to 16B)
 }
 
@@ -929,11 +928,11 @@ unsafe impl bytemuck::Pod for ClipVolumeUniform {}
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineUniform {
-    pub(crate) model: [[f32; 4]; 4], //  64 bytes
-    pub(crate) colour: [f32; 4],     //  16 bytes
-    pub(crate) pixel_offset: f32,    //   4 bytes
-    pub(crate) _pad: [f32; 3],       //  12 bytes
-    pub(crate) deform_flags: u32,    //   4 bytes
+    pub(crate) model: [[f32; 4]; 4],  //  64 bytes
+    pub(crate) colour: [f32; 4],      //  16 bytes
+    pub(crate) pixel_offset: f32,     //   4 bytes
+    pub(crate) _pad: [f32; 3],        //  12 bytes
+    pub(crate) deform_flags: u32,     //   4 bytes
     pub(crate) _deform_pad: [u32; 3], //  12 bytes
 }
 

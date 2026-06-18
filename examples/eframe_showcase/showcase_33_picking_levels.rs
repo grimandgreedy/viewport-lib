@@ -22,10 +22,10 @@ use viewport_lib::{
     GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
     GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
     LightingSettings, Material, MeshId, NodeId, PickId, PickMask, PickRectResult, PointCloudItem,
-    PolylineItem, PolylineSelectionInfo, RibbonItem, SceneRenderItem,
-    ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
-    TensorGlyphItem, TubeItem, ViewportRenderer, VolumeData,
-    VolumeGpuId, VolumeMeshData, VolumeMeshItem, VolumeSurfaceSliceItem,
+    PolylineItem, PolylineSelectionInfo, RibbonItem, SceneRenderItem, ScreenImageItem, ShDegree,
+    SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef, TensorGlyphItem, TubeItem,
+    ViewportRenderer, VolumeData, VolumeGpuId, VolumeMeshData, VolumeMeshItem,
+    VolumeSurfaceSliceItem,
 };
 
 use crate::App;

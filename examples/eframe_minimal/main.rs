@@ -257,7 +257,8 @@ impl eframe::App for App {
             }
 
             let mut frame_data = FrameData::new(
-                CameraFrame::from_camera(&self.camera, [w, h]),
+                CameraFrame::from_camera(&self.camera, [w, h])
+                    .with_pixels_per_point(ui.ctx().pixels_per_point()),
                 SceneFrame::from_surface_items(self.scene_items.clone()),
             );
             frame_data.effects.lighting = LightingSettings::default();

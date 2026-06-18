@@ -445,7 +445,9 @@ impl crate::resources::ViewportGpuResources {
                                 },
                                 wgpu::BindGroupEntry {
                                     binding: 1,
-                                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                                    resource: wgpu::BindingResource::Sampler(
+                                        &self.material_sampler,
+                                    ),
                                 },
                             ],
                         }));
@@ -1067,9 +1069,9 @@ impl crate::resources::ViewportGpuResources {
                     ParticleRender::Sprite { blend, lit, .. } => {
                         (*blend, ParticleDrawRoute::Sprite { lit: *lit })
                     }
-                    ParticleRender::Mesh {
-                        blend, mesh_id, ..
-                    } => (*blend, ParticleDrawRoute::Mesh { mesh_id: *mesh_id }),
+                    ParticleRender::Mesh { blend, mesh_id, .. } => {
+                        (*blend, ParticleDrawRoute::Mesh { mesh_id: *mesh_id })
+                    }
                 },
                 _ => continue,
             };

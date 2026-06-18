@@ -97,8 +97,8 @@ impl App {
 
         let mut slab = SceneRenderItem::default();
         slab.mesh_id = self.slab_mesh;
-        slab.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT))
-            .to_cols_array_2d();
+        slab.model =
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).to_cols_array_2d();
         slab.material = Material::from_colour(SLAB_COLOUR);
 
         vec![slab, floor]
