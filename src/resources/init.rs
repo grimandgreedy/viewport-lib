@@ -210,13 +210,20 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // Binding 17: point-light shadow cubemap array (depth).
+                // Binding 17: point-light shadow depth array.
+                // iOS Metal does not support cube array textures, so on that
+                // target the shader uses texture_depth_2d_array and we bind a
+                // D2Array view instead.
                 wgpu::BindGroupLayoutEntry {
                     binding: 17,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::CubeArray,
+                        view_dimension: if cfg!(target_os = "ios") {
+                            wgpu::TextureViewDimension::D2Array
+                        } else {
+                            wgpu::TextureViewDimension::CubeArray
+                        },
                         multisampled: false,
                     },
                     count: None,
@@ -582,7 +589,13 @@ impl ViewportGpuResources {
         let point_shadow_cube_view =
             point_shadow_cube_texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("point_shadow_cube_view"),
-                dimension: Some(wgpu::TextureViewDimension::CubeArray),
+                // iOS Metal does not support CubeArray views. Use D2Array instead;
+                // the shader is patched at build time to match.
+                dimension: Some(if cfg!(target_os = "ios") {
+                    wgpu::TextureViewDimension::D2Array
+                } else {
+                    wgpu::TextureViewDimension::CubeArray
+                }),
                 aspect: wgpu::TextureAspect::DepthOnly,
                 base_array_layer: 0,
                 array_layer_count: Some(point_shadow_layers),
@@ -876,12 +889,11 @@ impl ViewportGpuResources {
                 ],
                 push_constant_ranges: &[],
             });
-        let shadow_point_pipeline =
-            crate::resources::mesh_pipelines::build_shadow_point_pipeline(
-                device,
-                &shadow_point_pipeline_layout,
-                &shadow_point_shader,
-            );
+        let shadow_point_pipeline = crate::resources::mesh_pipelines::build_shadow_point_pipeline(
+            device,
+            &shadow_point_pipeline_layout,
+            &shadow_point_shader,
+        );
 
         // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
@@ -893,21 +905,20 @@ impl ViewportGpuResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let shadow_point_face_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("shadow_point_face_bind_group"),
-                layout: &shadow_point_face_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &shadow_point_face_buf,
-                        offset: 0,
-                        // Bind one PointFace slot worth (96 bytes rounded up
-                        // to 16-byte alignment is fine here).
-                        size: Some(wgpu::BufferSize::new(96).unwrap()),
-                    }),
-                }],
-            });
+        let shadow_point_face_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_point_face_bind_group"),
+            layout: &shadow_point_face_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &shadow_point_face_buf,
+                    offset: 0,
+                    // Bind one PointFace slot worth (96 bytes rounded up
+                    // to 16-byte alignment is fine here).
+                    size: Some(wgpu::BufferSize::new(96).unwrap()),
+                }),
+            }],
+        });
 
         // ------------------------------------------------------------------
         // Gizmo shader module

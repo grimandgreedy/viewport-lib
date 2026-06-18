@@ -404,25 +404,30 @@ impl ViewportGpuResources {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            self.indirect_args_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("indirect_args_buf"),
-                size: indirect_size,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::INDIRECT
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }));
-            for i in 0..4 {
-                self.shadow_indirect_bufs[i] =
-                    Some(device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some(&format!("shadow_indirect_buf_{i}")),
-                        size: indirect_size,
-                        usage: wgpu::BufferUsages::STORAGE
-                            | wgpu::BufferUsages::INDIRECT
-                            | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    }));
+            // iOS Metal and Android (emulator and older devices) do not
+            // reliably support INDIRECT_EXECUTION. Leave these as None so
+            // the renderer falls back to direct draw calls.
+            if cfg!(not(any(target_os = "ios", target_os = "android"))) {
+                self.indirect_args_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("indirect_args_buf"),
+                    size: indirect_size,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::INDIRECT
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }));
+                for i in 0..4 {
+                    self.shadow_indirect_bufs[i] =
+                        Some(device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some(&format!("shadow_indirect_buf_{i}")),
+                            size: indirect_size,
+                            usage: wgpu::BufferUsages::STORAGE
+                                | wgpu::BufferUsages::INDIRECT
+                                | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        }));
+                }
             }
             self.batch_meta_capacity = new_cap;
         }
@@ -920,7 +925,9 @@ impl ViewportGpuResources {
         let instance_bytes = bytemuck::cast_slice(&instances);
         let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh_instance_buf"),
-            size: instance_bytes.len().max(std::mem::size_of::<GpuInstanceData>()) as u64,
+            size: instance_bytes
+                .len()
+                .max(std::mem::size_of::<GpuInstanceData>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

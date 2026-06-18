@@ -29,11 +29,20 @@ fn main() {
         println!("cargo:rerun-if-changed=src/shaders/{}", name);
     }
 
+    let is_ios = std::env::var("CARGO_CFG_TARGET_OS")
+        .map(|v| v == "ios")
+        .unwrap_or(false);
+
     for name in &shader_names {
         let src_path = shaders_dir.join(name);
         let raw = fs::read_to_string(&src_path)
             .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", src_path.display(), e));
         let preprocessed = resolve_includes(&raw, &shaders_dir, name);
+        let preprocessed = if is_ios {
+            patch_for_ios(&preprocessed)
+        } else {
+            preprocessed
+        };
         let out_path = PathBuf::from(&out_dir).join(name);
         fs::write(&out_path, preprocessed)
             .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", out_path.display(), e));
@@ -57,6 +66,21 @@ fn main() {
             e
         )
     });
+}
+
+// On iOS, Metal does not support cube array textures. Replace the binding type
+// with texture_depth_2d_array (which IS supported) and stub out point shadow
+// sampling to always return 1.0 (unshadowed), since cube-direction-to-face
+// conversion would be needed for real sampling and point shadows are rarely
+// used in mobile scenes.
+fn patch_for_ios(source: &str) -> String {
+    let s = source.replace("texture_depth_cube_array", "texture_depth_2d_array");
+    // The textureSampleCompare call for point shadows takes a vec3 direction and
+    // an array index -- neither is valid for texture_depth_2d_array. Stub it out.
+    s.replace(
+        "    return textureSampleCompare(\n        point_shadow_cube_tex,\n        shadow_sampler,\n        dir,\n        light.point_shadow_slot,\n        normalised - bias,\n    );",
+        "    return 1.0;",
+    )
 }
 
 fn resolve_includes(source: &str, shaders_dir: &Path, shader_name: &str) -> String {
