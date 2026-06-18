@@ -718,8 +718,11 @@ impl eframe::App for App {
             let mut scene_frame = SceneFrame::from_surface_items(scene_items);
             scene_frame.generation = self.scene_generation;
 
-            let mut frame_data =
-                FrameData::new(CameraFrame::from_camera(&self.camera, [w, h]).with_pixels_per_point(pixels_per_point(ui.ctx().pixels_per_point())), scene_frame);
+            let mut frame_data = FrameData::new(
+                CameraFrame::from_camera(&self.camera, [w, h])
+                    .with_pixels_per_point(ui.ctx().pixels_per_point()),
+                scene_frame,
+            );
             frame_data.effects.lighting = LightingSettings::default();
             frame_data.viewport.show_grid = true;
             frame_data.viewport.show_axes_indicator = true;
