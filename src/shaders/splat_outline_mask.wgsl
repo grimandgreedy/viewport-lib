@@ -17,15 +17,17 @@ struct Camera {
     _pad:      f32,
 };
 
-// 96 bytes, matches SplatOutlineMaskUniform in Rust.
-// Padded to match OutlineUniform size (shared bind group layout).
+// 112 bytes, matches SplatOutlineMaskUniform in Rust and OutlineUniform size.
+// Both share outline_bgl; wgpu enforces the maximum required size (112) across
+// all pipelines using that layout.
 struct SplatOutlineMaskUniform {
     model:        mat4x4<f32>, // 64 bytes
     viewport_w:   f32,         //  4 bytes
     viewport_h:   f32,         //  4 bytes
     pixel_radius: f32,         //  4 bytes - unused, kept for layout compat
     _pad0:        f32,         //  4 bytes
-    _pad1:        vec4<f32>,   // 16 bytes  (total: 96)
+    _pad1:        vec4<f32>,   // 16 bytes
+    _pad2:        vec4<f32>,   // 16 bytes  (total: 112)
 };
 
 @group(0) @binding(0) var<uniform> camera:  Camera;

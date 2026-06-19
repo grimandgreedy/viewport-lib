@@ -3819,7 +3819,7 @@ impl ViewportRenderer {
                         viewport_w: vp_w,
                         viewport_h: vp_h,
                         pixel_radius,
-                        _pad: [0.0; 5],
+                        _pad: [0.0; 9],
                     };
                     let uniform_buf =
                         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -3921,7 +3921,7 @@ impl ViewportRenderer {
                         viewport_w: vp_w,
                         viewport_h: vp_h,
                         pixel_radius,
-                        _pad: [0.0; 5],
+                        _pad: [0.0; 9],
                     };
                     let uniform_buf =
                         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -3977,7 +3977,7 @@ impl ViewportRenderer {
                         viewport_w: vp_w,
                         viewport_h: vp_h,
                         pixel_radius,
-                        _pad: [0.0; 5],
+                        _pad: [0.0; 9],
                     };
                     let uniform_buf =
                         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -4032,7 +4032,7 @@ impl ViewportRenderer {
                         viewport_w: vp_w,
                         viewport_h: vp_h,
                         pixel_radius,
-                        _pad: [0.0; 5],
+                        _pad: [0.0; 9],
                     };
                     let uniform_buf =
                         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
