@@ -11,14 +11,14 @@ impl ViewportRenderer {
             &self.resources,
             &mut *render_pass,
             frame,
-            self.use_instancing,
-            &self.instanced_batches,
+            self.instancing.use_instancing,
+            &self.instancing.batches,
             camera_bg,
             grid_bg,
             &self.compute_filter_results,
             vp_slot,
-            &self.wireframe_bind_groups,
-            &self.per_item_object_bind_groups
+            &self.mesh_uniforms.wireframe_bind_groups,
+            &self.mesh_uniforms.bind_groups
         );
         emit_scivis_draw_calls!(
             &self.resources,
@@ -57,10 +57,10 @@ impl ViewportRenderer {
             }
         }
         // TransparentVolumeMesh boundary wireframe overlay.
-        if !self.tvm_wireframe_draws.is_empty() {
-            if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+        if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
+            if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                for mesh_id in &self.tvm_wireframe_draws {
+                for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(&self.resources.wireframe_pipeline);
                         render_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
@@ -319,14 +319,14 @@ impl ViewportRenderer {
                 &self.resources,
                 &mut render_pass,
                 frame,
-                self.use_instancing,
-                &self.instanced_batches,
+                self.instancing.use_instancing,
+                &self.instancing.batches,
                 camera_bg,
                 grid_bg,
                 &self.compute_filter_results,
                 Some(slot),
-                &self.wireframe_bind_groups,
-                &self.per_item_object_bind_groups
+                &self.mesh_uniforms.wireframe_bind_groups,
+                &self.mesh_uniforms.bind_groups
             );
             emit_scivis_draw_calls!(
                 &self.resources,
@@ -347,10 +347,10 @@ impl ViewportRenderer {
                 false
             );
             // TransparentVolumeMesh boundary wireframe overlay.
-            if !self.tvm_wireframe_draws.is_empty() {
-                if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+            if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
+                if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                     render_pass.set_bind_group(0, camera_bg, &[]);
-                    for mesh_id in &self.tvm_wireframe_draws {
+                    for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                         if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(&self.resources.wireframe_pipeline);
                             render_pass.set_bind_group(
@@ -985,14 +985,14 @@ impl ViewportRenderer {
                     &self.resources,
                     &mut render_pass,
                     frame,
-                    self.use_instancing,
-                    &self.instanced_batches,
+                    self.instancing.use_instancing,
+                    &self.instancing.batches,
                     camera_bg,
                     grid_bg,
                     &self.compute_filter_results,
                     Some(slot),
-                    &self.wireframe_bind_groups,
-                    &self.per_item_object_bind_groups
+                    &self.mesh_uniforms.wireframe_bind_groups,
+                    &self.mesh_uniforms.bind_groups
                 );
                 emit_scivis_draw_calls!(
                     &self.resources,
@@ -1013,10 +1013,10 @@ impl ViewportRenderer {
                     false
                 );
                 // TransparentVolumeMesh boundary wireframe overlay.
-                if !self.tvm_wireframe_draws.is_empty() {
-                    if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+                if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
+                    if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                         render_pass.set_bind_group(0, camera_bg, &[]);
-                        for mesh_id in &self.tvm_wireframe_draws {
+                        for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                             if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                                 render_pass.set_pipeline(&self.resources.wireframe_pipeline);
                                 render_pass.set_bind_group(
@@ -1527,8 +1527,8 @@ impl ViewportRenderer {
         // Must happen before camera_bg is borrowed (borrow-checker constraint).
         // -----------------------------------------------------------------------
         {
-            let needs_oit = if self.use_instancing && !self.instanced_batches.is_empty() {
-                self.instanced_batches.iter().any(|b| b.is_transparent)
+            let needs_oit = if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
+                self.instancing.batches.iter().any(|b| b.is_transparent)
             } else {
                 scene_items
                     .iter()
@@ -1632,8 +1632,8 @@ impl ViewportRenderer {
                 .is_some_and(|e| e.show_skybox)
                 && resources.ibl_skybox_view.is_some();
 
-            let use_instancing = self.use_instancing;
-            let batches = &self.instanced_batches;
+            let use_instancing = self.instancing.use_instancing;
+            let batches = &self.instancing.batches;
             let compute_filter_results = &self.compute_filter_results;
 
             if !scene_items.is_empty() {
@@ -1669,7 +1669,7 @@ impl ViewportRenderer {
                     }
 
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        let use_indirect = self.gpu_culling_enabled
+                        let use_indirect = self.instancing.gpu_culling_enabled
                             && resources.hdr_solid_instanced_cull_pipeline.is_some()
                             && resources.indirect_args_buf.is_some();
 
@@ -1769,7 +1769,7 @@ impl ViewportRenderer {
                                     &[],
                                 );
                                 let bg = self
-                                    .wireframe_bind_groups
+                                    .mesh_uniforms.wireframe_bind_groups
                                     .get(wf_idx)
                                     .unwrap_or(&mesh.object_bind_group);
                                 render_pass.set_bind_group(1, bg, &[]);
@@ -1813,7 +1813,7 @@ impl ViewportRenderer {
                                 &[],
                             );
                             let obj_bg = self
-                                .per_item_object_bind_groups
+                                .mesh_uniforms.bind_groups
                                 .get(item_idx)
                                 .and_then(|opt| opt.as_ref())
                                 .unwrap_or(&mesh.object_bind_group);
@@ -1898,7 +1898,7 @@ impl ViewportRenderer {
                             .unwrap_or(std::cmp::Ordering::Equal)
                     });
 
-                    let per_item_bgs = &self.per_item_object_bind_groups;
+                    let per_item_bgs = &self.mesh_uniforms.bind_groups;
                     let draw_item_hdr =
                         |render_pass: &mut wgpu::RenderPass<'_>,
                          item_idx: usize,
@@ -2117,11 +2117,11 @@ impl ViewportRenderer {
                 }
             }
             // TransparentVolumeMesh boundary wireframe overlay (HDR path).
-            if !self.tvm_wireframe_draws.is_empty() {
+            if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let (Some(tvm_bg), Some(hdr_wf)) =
-                    (&self.tvm_wireframe_bg, &resources.hdr_wireframe_pipeline)
+                    (&self.mesh_uniforms.tvm_wireframe_bg, &resources.hdr_wireframe_pipeline)
                 {
-                    for mesh_id in &self.tvm_wireframe_draws {
+                    for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                         if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(hdr_wf);
                             render_pass.set_bind_group(1, tvm_bg, &[]);
@@ -2884,12 +2884,12 @@ impl ViewportRenderer {
         // OIT pass: render transparent items into accum + reveal textures.
         // Completely skipped when no transparent items exist (zero overhead).
         // -----------------------------------------------------------------------
-        let has_transparent = if self.use_instancing && !self.instanced_batches.is_empty() {
+        let has_transparent = if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
             // Transparent instanced batches go through OIT. Transparent excluded items
             // (two-sided, active-attribute, matcap) are not in any instanced batch, so
             // they must also be checked here -- otherwise the OIT pass is skipped and
             // those items are invisible.
-            self.instanced_batches.iter().any(|b| b.is_transparent)
+            self.instancing.batches.iter().any(|b| b.is_transparent)
                 || scene_items.iter().any(|i| {
                     !i.settings.hidden
                         && (i.settings.opacity < 1.0 || i.material.is_blend())
@@ -2966,8 +2966,8 @@ impl ViewportRenderer {
 
                 oit_pass.set_bind_group(0, camera_bg, &[]);
 
-                if self.use_instancing && !self.instanced_batches.is_empty() {
-                    let use_indirect_oit = self.gpu_culling_enabled
+                if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
+                    let use_indirect_oit = self.instancing.gpu_culling_enabled
                         && self.resources.oit_instanced_cull_pipeline.is_some()
                         && self.resources.indirect_args_buf.is_some();
 
@@ -2983,7 +2983,7 @@ impl ViewportRenderer {
                                 &[],
                             );
                             for (batch_global_idx, batch) in
-                                self.instanced_batches.iter().enumerate()
+                                self.instancing.batches.iter().enumerate()
                             {
                                 if !batch.is_transparent {
                                     continue;
@@ -3017,7 +3017,7 @@ impl ViewportRenderer {
                     } else if let Some(ref pipeline) = self.resources.oit_instanced_pipeline {
                         oit_pass.set_pipeline(pipeline);
                         oit_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
-                        for batch in &self.instanced_batches {
+                        for batch in &self.instancing.batches {
                             if !batch.is_transparent {
                                 continue;
                             }
@@ -3078,7 +3078,7 @@ impl ViewportRenderer {
                                 .deform
                                 .instance_bind_group_for(item.mesh_id, item.deform_instance);
                             let obj_bg = self
-                                .per_item_object_bind_groups
+                                .mesh_uniforms.bind_groups
                                 .get(item_idx)
                                 .and_then(|opt| opt.as_ref())
                                 .unwrap_or(&mesh.object_bind_group);
@@ -3108,7 +3108,7 @@ impl ViewportRenderer {
                             .deform
                             .instance_bind_group_for(item.mesh_id, item.deform_instance);
                         let obj_bg = self
-                            .per_item_object_bind_groups
+                            .mesh_uniforms.bind_groups
                             .get(item_idx)
                             .and_then(|opt| opt.as_ref())
                             .unwrap_or(&mesh.object_bind_group);

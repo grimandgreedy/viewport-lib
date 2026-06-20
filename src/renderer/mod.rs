@@ -7,6 +7,12 @@
 #[macro_use]
 mod types;
 mod indirect;
+mod instancing_state;
+use instancing_state::InstancingState;
+mod per_object_state;
+use per_object_state::PerObjectState;
+mod shadow_state;
+use shadow_state::ShadowState;
 mod paths;
 pub use paths::{OwnedPath, PassPath, PassView};
 mod picking;
@@ -231,17 +237,8 @@ struct SpriteRefractionResolve {
 /// issue draw calls.
 pub struct ViewportRenderer {
     resources: ViewportGpuResources,
-    /// Instanced batches prepared for the current frame. Empty when using per-object path.
-    instanced_batches: Vec<InstancedBatch>,
-    /// Whether the current frame uses the instanced draw path.
-    use_instancing: bool,
-    /// True when the device supports `INDIRECT_FIRST_INSTANCE`.
-    gpu_culling_supported: bool,
-    /// True when GPU-driven culling is active (supported and not disabled by the caller).
-    gpu_culling_enabled: bool,
-    /// GPU culling compute pipelines and frustum buffer. Created lazily on the first
-    /// frame where `gpu_culling_enabled` is true and instance buffers are present.
-    cull_resources: Option<indirect::CullResources>,
+    /// State for the instanced (GPU-driven) mesh draw path.
+    instancing: InstancingState,
     /// Registered item-type plugins keyed by
     /// [`ItemTypePlugin::type_name`](crate::plugin_api::ItemTypePlugin::type_name).
     /// `init_gpu` is invoked once on registration; per-frame `prepare` and
@@ -252,30 +249,6 @@ pub struct ViewportRenderer {
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
-    /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
-    last_scene_generation: u64,
-    /// Last selection generation seen during prepare(). u64::MAX forces rebuild on first frame.
-    last_selection_generation: u64,
-    /// Last scene_items count seen during prepare(). usize::MAX forces rebuild on first frame.
-    /// Included in cache key so that frustum-culling changes (different visible set, different
-    /// count) correctly invalidate the instance buffer even when scene_generation is stable.
-    last_scene_items_count: usize,
-    /// Count of items that passed the instanced-path filter on the last rebuild.
-    /// Used in place of has_per_frame_mutations so scenes that mix instanced and
-    /// non-instanced items (e.g. one two-sided mesh + 10k static boxes) still hit
-    /// the instanced batch cache on frames where the filtered set is unchanged.
-    last_instancable_count: usize,
-    /// Total instance count from the last rebuild. Used as a fast length check
-    /// in `structure_preserved` and as `instance_count` for GPU cull dispatches.
-    cached_instance_count: usize,
-    /// Per-batch content hash from the last rebuild, indexed by batch position.
-    /// A hash mismatch triggers a `write_buffer` for that batch; a match skips it.
-    cached_instance_hashes: Vec<u64>,
-    /// Cached instanced batch descriptors from last rebuild.
-    cached_instanced_batches: Vec<InstancedBatch>,
-    /// When true, the next cache-miss forces a full buffer upload instead of the
-    /// per-batch partial-upload path. Set by `force_dirty()` and consumed once.
-    force_full_upload: bool,
     /// Per-frame point cloud GPU data, rebuilt in prepare(), consumed in paint().
     point_cloud_gpu_data: Vec<crate::resources::PointCloudGpuData>,
     /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
@@ -358,48 +331,10 @@ pub struct ViewportRenderer {
     /// Consumed during `paint()` to override the mesh's default index buffer.
     /// Cleared and rebuilt each frame.
     compute_filter_results: Vec<crate::resources::ComputeFilterResult>,
-    /// Per-item uniform buffers for wireframe mode. In wireframe mode multiple scene
-    /// items can share the same MeshId, but each needs its own object uniform (model
-    /// matrix, colour, etc.). The mesh's single `object_uniform_buf` gets overwritten
-    /// by the last item prepared, so we maintain a separate pool here. Indexed in the
-    /// same order as the visible scene items. Grown lazily, never shrunk.
-    wireframe_uniform_bufs: Vec<wgpu::Buffer>,
-    /// Bind groups corresponding to `wireframe_uniform_bufs`. Each bind group pairs
-    /// the per-item uniform buffer with the mesh's fallback textures so it is
-    /// compatible with the object bind group layout.
-    wireframe_bind_groups: Vec<wgpu::BindGroup>,
-    /// Per-scene-item uniform buffers for the per-object draw path. Multiple scene
-    /// items can share the same MeshId, but each needs its own object uniform
-    /// (model matrix, colour, etc.). The mesh's single `object_uniform_buf` is
-    /// stomped by the last item prepared, so we maintain a parallel pool indexed
-    /// by position in `scene_items`. Grown lazily, never shrunk.
-    per_item_object_uniform_bufs: Vec<wgpu::Buffer>,
-    /// Bind groups corresponding to `per_item_object_uniform_bufs`. Each pairs the
-    /// per-item uniform buffer with the mesh's real textures, LUT, matcap, scalar
-    /// buffer, etc. -- the same resources that `mesh.object_bind_group` references,
-    /// just with binding 0 swapped for the per-item uniform.
-    per_item_object_bind_groups: Vec<Option<wgpu::BindGroup>>,
-    /// Cache keys for `per_item_object_bind_groups`. When the key matches we only
-    /// write the uniform; otherwise we rebuild the bind group.
-    per_item_object_cache_keys: Vec<u64>,
-    /// Per-frame list of boundary mesh IDs to draw in wireframe for
-    /// TransparentVolumeMeshItems with `appearance.wireframe = true`.
-    /// Cleared and rebuilt each frame in prepare_scene_internal.
-    tvm_wireframe_draws: Vec<crate::resources::mesh_store::MeshId>,
-    /// Shared uniform buffer for TVM boundary wireframe draws (wireframe=1, model=identity).
-    /// Created once on first use, reused every frame.
-    tvm_wireframe_buf: Option<wgpu::Buffer>,
-    /// Bind group for TVM boundary wireframe draws. Pairs `tvm_wireframe_buf` with
-    /// fallback textures matching the object bind group layout.
-    tvm_wireframe_bg: Option<wgpu::BindGroup>,
-    /// Cascade-0 light-space view-projection matrix from the last shadow prepare.
-    /// Cached here so `prepare_viewport_internal` can copy it into the ground plane uniform.
-    last_cascade0_shadow_mat: glam::Mat4,
-    /// Slot allocator for the point-light cubemap shadow pool. One slot per
-    /// shadow-casting point light, evicted by LRU when capacity is exceeded.
-    point_shadow_pool: crate::renderer::point_shadow_pool::PointShadowPool,
-    /// Monotonic frame counter for point-shadow pool LRU bookkeeping.
-    point_shadow_frame: u64,
+    /// State for the non-instanced (per-object) mesh draw path.
+    mesh_uniforms: PerObjectState,
+    /// Cached shadow state carried across frames.
+    shadow: ShadowState,
     /// Current runtime mode controlling internal default behavior.
     runtime_mode: crate::renderer::stats::RuntimeMode,
     /// Optional cap on how much main-thread time `prepare` is allowed to
@@ -489,14 +424,6 @@ pub struct ViewportRenderer {
     /// Whether the staging buffer holds unread timestamp data from the previous frame.
     ts_needs_readback: bool,
 
-    // --- Indirect-args readback (GPU-driven culling visible instance count) ---
-    /// CPU-readable staging buffer for `indirect_args_buf` (batch_count x 20 bytes).
-    /// Grown lazily; never shrunk.
-    indirect_readback_buf: Option<wgpu::Buffer>,
-    /// Number of batches whose data was copied into `indirect_readback_buf` last frame.
-    indirect_readback_batch_count: u32,
-    /// True when `indirect_readback_buf` holds unread data from the previous cull pass.
-    indirect_readback_pending: bool,
 
     // --- Per-pass degradation state ---
     /// Tiered degradation ladder position (0 = none, 1 = shadows, 2 = volumes, 3 = effects).
@@ -513,31 +440,12 @@ pub struct ViewportRenderer {
     /// Set in prepare(); read by the render path.
     degradation_effects_throttled: bool,
 
-    // --- D8: shadow debug stats cache ---
-    /// Cascade count from the last prepare_scene_internal call.
-    last_cascade_count: u32,
-    /// Cascade split distances from the last prepare_scene_internal call.
-    last_cascade_splits: [f32; 4],
-    /// Shadow frustum half-extent from the last prepare_scene_internal call.
-    last_shadow_extent: f32,
-    /// Shadow atlas resolution from the last prepare_scene_internal call.
-    last_shadow_atlas_resolution: u32,
-    /// Contact shadow enabled state from the last prepare_scene_internal call.
-    last_contact_shadow_active: bool,
-    /// Cascade splits from the last tracing log emission. Sentinel [f32::MAX; 4] forces
-    /// a log on the first frame.
-    last_logged_cascade_splits: [f32; 4],
     /// Lights dropped by the CPU frustum cull on the most recent frame.
     /// Surfaced through the cluster debug overlay when enabled.
     pub(crate) last_frustum_culled_lights: u32,
     /// Most recent cluster build readback. Populated when a frame's
     /// `ViewportFrame::cluster_stats_request` was true.
     pub(crate) last_cluster_stats: Option<crate::resources::clustered::ClusterStats>,
-    /// Shadow atlas uniform from the last prepare_scene_internal call. Seeds
-    /// the shadow buffer of viewport slots created after the scene prepare has
-    /// already written existing slots, so a new viewport's first frame does
-    /// not sample shadows through a zeroed uniform.
-    pub(crate) last_shadow_atlas_uniform: crate::resources::ShadowAtlasUniform,
 }
 
 impl ViewportRenderer {
@@ -562,22 +470,10 @@ impl ViewportRenderer {
             .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         Self {
             resources: ViewportGpuResources::new(device, target_format, sample_count),
-            instanced_batches: Vec::new(),
-            use_instancing: false,
-            gpu_culling_supported,
-            gpu_culling_enabled: gpu_culling_supported,
-            cull_resources: None,
+            instancing: InstancingState::new(gpu_culling_supported),
             item_type_plugins: std::collections::HashMap::new(),
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
-            last_scene_generation: u64::MAX,
-            last_selection_generation: u64::MAX,
-            last_scene_items_count: usize::MAX,
-            last_instancable_count: usize::MAX,
-            cached_instance_count: 0,
-            cached_instance_hashes: Vec::new(),
-            cached_instanced_batches: Vec::new(),
-            force_full_upload: false,
             point_cloud_gpu_data: Vec::new(),
             glyph_gpu_data: Vec::new(),
             tensor_glyph_gpu_data: Vec::new(),
@@ -613,17 +509,8 @@ impl ViewportRenderer {
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
-            wireframe_uniform_bufs: Vec::new(),
-            wireframe_bind_groups: Vec::new(),
-            per_item_object_uniform_bufs: Vec::new(),
-            per_item_object_bind_groups: Vec::new(),
-            per_item_object_cache_keys: Vec::new(),
-            tvm_wireframe_draws: Vec::new(),
-            tvm_wireframe_buf: None,
-            tvm_wireframe_bg: None,
-            last_cascade0_shadow_mat: glam::Mat4::IDENTITY,
-            point_shadow_pool: crate::renderer::point_shadow_pool::PointShadowPool::new(),
-            point_shadow_frame: 0,
+            mesh_uniforms: PerObjectState::new(),
+            shadow: ShadowState::new(),
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
             upload_budget: None,
@@ -657,22 +544,12 @@ impl ViewportRenderer {
             ts_staging_buf: None,
             ts_period: 1.0,
             ts_needs_readback: false,
-            indirect_readback_buf: None,
-            indirect_readback_batch_count: 0,
-            indirect_readback_pending: false,
             degradation_tier: 0,
             degradation_shadows_skipped: false,
             degradation_volume_quality_reduced: false,
             degradation_effects_throttled: false,
-            last_cascade_count: 0,
-            last_cascade_splits: [0.0; 4],
-            last_shadow_extent: 20.0,
-            last_shadow_atlas_resolution: 4096,
-            last_contact_shadow_active: false,
-            last_logged_cascade_splits: [f32::MAX; 4],
             last_frustum_culled_lights: 0,
             last_cluster_stats: None,
-            last_shadow_atlas_uniform: bytemuck::Zeroable::zeroed(),
         }
     }
 
@@ -698,7 +575,7 @@ impl ViewportRenderer {
     /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`
     /// (culling is already disabled on those devices).
     pub fn disable_gpu_driven_culling(&mut self) {
-        self.gpu_culling_enabled = false;
+        self.instancing.gpu_culling_enabled = false;
     }
 
     /// Force a full instance buffer upload on the next frame.
@@ -710,18 +587,18 @@ impl ViewportRenderer {
     /// `collect_render_items` runs). The flag is consumed once and resets
     /// automatically after the next `prepare` call.
     pub fn force_dirty(&mut self) {
-        self.force_full_upload = true;
+        self.instancing.force_full_upload = true;
         // Also invalidate the generation cache so the next prepare is guaranteed
         // to enter the rebuild path even if the scene generation is unchanged.
-        self.last_scene_generation = u64::MAX;
+        self.instancing.last_scene_generation = u64::MAX;
     }
 
     /// Re-enable GPU-driven culling after a call to `disable_gpu_driven_culling`.
     ///
     /// Has no effect when the device does not support `INDIRECT_FIRST_INSTANCE`.
     pub fn enable_gpu_driven_culling(&mut self) {
-        if self.gpu_culling_supported {
-            self.gpu_culling_enabled = true;
+        if self.instancing.gpu_culling_supported {
+            self.instancing.gpu_culling_enabled = true;
         }
     }
 
@@ -813,7 +690,7 @@ impl ViewportRenderer {
     /// When true, edits to mesh.wgsl shadow sampling code have no effect - the active
     /// shader is mesh_instanced.wgsl. Check this before testing shader changes.
     pub fn is_using_instanced_path(&self) -> bool {
-        self.use_instancing
+        self.instancing.use_instancing
     }
 
     /// Returns the number of instanced batches prepared for the current frame.
@@ -821,7 +698,7 @@ impl ViewportRenderer {
     /// Zero when using the non-instanced path. Each batch corresponds to a distinct
     /// (MeshId, material) combination in the scene.
     pub fn instanced_batch_count(&self) -> usize {
-        self.instanced_batches.len()
+        self.instancing.batches.len()
     }
 
     /// Run the GPU-driven cull compute against a plugin's
@@ -850,13 +727,13 @@ impl ViewportRenderer {
         frustum: &crate::camera::frustum::Frustum,
         sub: &crate::plugin_api::CullSubmission<'_>,
     ) {
-        if !self.gpu_culling_supported {
+        if !self.instancing.gpu_culling_supported {
             return;
         }
-        if self.cull_resources.is_none() {
-            self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+        if self.instancing.cull_resources.is_none() {
+            self.instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
         }
-        let cull = self.cull_resources.as_ref().unwrap();
+        let cull = self.instancing.cull_resources.as_ref().unwrap();
         cull.dispatch(encoder, device, queue, frustum, None, sub);
     }
 
@@ -878,15 +755,15 @@ impl ViewportRenderer {
         cascade_frustum: &crate::camera::frustum::Frustum,
         sub: &crate::plugin_api::CullSubmission<'_>,
     ) {
-        if !self.gpu_culling_supported {
+        if !self.instancing.gpu_culling_supported {
             return;
         }
         debug_assert!(cascade_idx < 4, "cascade_idx must be in 0..4");
         let cascade_idx = cascade_idx.min(3);
-        if self.cull_resources.is_none() {
-            self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+        if self.instancing.cull_resources.is_none() {
+            self.instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
         }
-        let cull = self.cull_resources.as_ref().unwrap();
+        let cull = self.instancing.cull_resources.as_ref().unwrap();
         cull.dispatch(
             encoder,
             device,
@@ -981,13 +858,13 @@ impl ViewportRenderer {
         draw: crate::plugin_api::SingleMeshDraw,
         shadow_pass: bool,
     ) {
-        if !self.gpu_culling_supported {
+        if !self.instancing.gpu_culling_supported {
             return;
         }
-        if self.cull_resources.is_none() {
-            self.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+        if self.instancing.cull_resources.is_none() {
+            self.instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
         }
-        let cull = self.cull_resources.as_ref().unwrap();
+        let cull = self.instancing.cull_resources.as_ref().unwrap();
         let (meta_buf, counter_buf) = cull.scratch_single_mesh_buffers();
         let meta = crate::plugin_api::BatchMeta {
             index_count: draw.index_count,
@@ -1229,7 +1106,7 @@ impl ViewportRenderer {
     /// silently no-ops the submission and the plugin must fall back to
     /// direct draws.
     pub fn is_gpu_culling_supported(&self) -> bool {
-        self.gpu_culling_supported
+        self.instancing.gpu_culling_supported
     }
 
     /// Returns per-frame shadow and lighting pipeline statistics for debug inspection.
@@ -1238,13 +1115,13 @@ impl ViewportRenderer {
     /// behind the display). Returns default values before the first `prepare` call.
     pub fn shadow_debug_stats(&self) -> ShadowDebugStats {
         ShadowDebugStats {
-            using_instanced_path: self.use_instancing,
-            instanced_batch_count: self.instanced_batches.len(),
-            cascade_count: self.last_cascade_count,
-            cascade_splits: self.last_cascade_splits,
-            shadow_atlas_resolution: self.last_shadow_atlas_resolution,
-            shadow_extent_world: self.last_shadow_extent,
-            contact_shadow_active: self.last_contact_shadow_active,
+            using_instanced_path: self.instancing.use_instancing,
+            instanced_batch_count: self.instancing.batches.len(),
+            cascade_count: self.shadow.last_cascade_count,
+            cascade_splits: self.shadow.last_cascade_splits,
+            shadow_atlas_resolution: self.shadow.last_shadow_atlas_resolution,
+            shadow_extent_world: self.shadow.last_shadow_extent,
+            contact_shadow_active: self.shadow.last_contact_shadow_active,
         }
     }
 
@@ -1741,7 +1618,7 @@ impl ViewportRenderer {
             shadow_info_buf
                 .slice(..)
                 .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&[self.last_shadow_atlas_uniform]));
+                .copy_from_slice(bytemuck::cast_slice(&[self.shadow.last_shadow_atlas_uniform]));
             shadow_info_buf.unmap();
             let grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_grid_buf"),
@@ -2004,14 +1881,14 @@ impl ViewportRenderer {
             &self.resources,
             &mut *render_pass,
             frame,
-            self.use_instancing,
-            &self.instanced_batches,
+            self.instancing.use_instancing,
+            &self.instancing.batches,
             camera_bg,
             grid_bg,
             &self.compute_filter_results,
             vp_slot,
-            &self.wireframe_bind_groups,
-            &self.per_item_object_bind_groups
+            &self.mesh_uniforms.wireframe_bind_groups,
+            &self.mesh_uniforms.bind_groups
         );
         emit_scivis_draw_calls!(
             &self.resources,
@@ -2050,10 +1927,10 @@ impl ViewportRenderer {
             }
         }
         // TransparentVolumeMesh boundary wireframe overlay.
-        if !self.tvm_wireframe_draws.is_empty() {
-            if let Some(ref tvm_bg) = self.tvm_wireframe_bg {
+        if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
+            if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                for mesh_id in &self.tvm_wireframe_draws {
+                for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(&self.resources.wireframe_pipeline);
                         render_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
