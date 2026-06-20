@@ -350,7 +350,9 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let ppp = ctx.pixels_per_point();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
             let rect = {
                 let r = ui.available_rect_before_wrap();
                 let (r, _) = ui.allocate_exact_size(r.size(), egui::Sense::click_and_drag());
