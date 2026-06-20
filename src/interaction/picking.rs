@@ -1062,48 +1062,18 @@ pub fn pick_point_cloud_cpu(
     viewport_size: glam::Vec2,
     radius_px: f32,
 ) -> Option<PickHit> {
-    if id == 0 || item.positions.is_empty() {
-        return None;
-    }
-
+    // Same screen-space nearest-point search as gaussian splats, just sourced
+    // from a PointCloudItem instead of a bare position slice.
     let model = glam::Mat4::from_cols_array_2d(&item.model);
-    let mvp = view_proj * model;
-
-    let mut best_dist_sq = radius_px * radius_px;
-    let mut best_idx: Option<u32> = None;
-    let mut best_world = glam::Vec3::ZERO;
-
-    for (pt_idx, pos) in item.positions.iter().enumerate() {
-        let local = glam::Vec3::from(*pos);
-        let clip = mvp * local.extend(1.0);
-        if clip.w <= 0.0 {
-            continue;
-        }
-        let ndc_x = clip.x / clip.w;
-        let ndc_y = clip.y / clip.w;
-        let sx = (ndc_x + 1.0) * 0.5 * viewport_size.x;
-        let sy = (1.0 - ndc_y) * 0.5 * viewport_size.y;
-        let dx = sx - click_pos.x;
-        let dy = sy - click_pos.y;
-        let dist_sq = dx * dx + dy * dy;
-        if dist_sq < best_dist_sq {
-            best_dist_sq = dist_sq;
-            best_idx = Some(pt_idx as u32);
-            best_world = model.transform_point3(local);
-        }
-    }
-
-    let pt_idx = best_idx?;
-    #[allow(deprecated)]
-    Some(PickHit {
+    pick_gaussian_splat_cpu(
+        click_pos,
         id,
-        sub_object: Some(SubObjectRef::Point(pt_idx)),
-        world_pos: best_world,
-        normal: glam::Vec3::Y,
-        triangle_index: u32::MAX,
-        point_index: Some(pt_idx),
-        scalar_value: None,
-    })
+        &item.positions,
+        model,
+        view_proj,
+        viewport_size,
+        radius_px,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1384,6 +1354,31 @@ pub fn pick_transparent_volume_mesh_cpu(
 }
 
 // ---------------------------------------------------------------------------
+// Rect projection helpers
+// ---------------------------------------------------------------------------
+
+/// Project a local-space point through `mvp` to screen-space pixels (top-left
+/// origin). Returns `None` when the point is at or behind the camera plane.
+fn project_to_screen(
+    mvp: glam::Mat4,
+    p: glam::Vec3,
+    viewport_size: glam::Vec2,
+) -> Option<(f32, f32)> {
+    let clip = mvp * p.extend(1.0);
+    if clip.w <= 0.0 {
+        return None;
+    }
+    let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
+    let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
+    Some((sx, sy))
+}
+
+/// Inclusive screen-space rectangle containment test.
+fn in_rect(sx: f32, sy: f32, rect_min: glam::Vec2, rect_max: glam::Vec2) -> bool {
+    sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y
+}
+
+// ---------------------------------------------------------------------------
 // pick_volume_rect
 // ---------------------------------------------------------------------------
 
@@ -1433,13 +1428,10 @@ pub fn pick_volume_rect(
                 }
                 let local_center = bbox_min
                     + cell * glam::Vec3::new(ix as f32 + 0.5, iy as f32 + 0.5, iz as f32 + 0.5);
-                let clip = mvp * local_center.extend(1.0);
-                if clip.w <= 0.0 {
+                let Some((sx, sy)) = project_to_screen(mvp, local_center, viewport_size) else {
                     continue;
-                }
-                let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
-                let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
-                if sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y {
+                };
+                if in_rect(sx, sy, rect_min, rect_max) {
                     hits.push(SubObjectRef::Voxel(flat));
                 }
             }
@@ -1500,13 +1492,10 @@ pub fn pick_transparent_volume_mesh_rect(
             .map(|&vi| glam::Vec3::from(data.positions[vi as usize]))
             .sum::<glam::Vec3>()
             / nv as f32;
-        let clip = mvp * centroid.extend(1.0);
-        if clip.w <= 0.0 {
+        let Some((sx, sy)) = project_to_screen(mvp, centroid, viewport_size) else {
             continue;
-        }
-        let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
-        let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
-        if sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y {
+        };
+        if in_rect(sx, sy, rect_min, rect_max) {
             hits.push(SubObjectRef::Cell(cell_idx as u32));
         }
     }
@@ -1552,13 +1541,10 @@ pub fn pick_gaussian_splat_rect(
 
     for (i, pos) in positions.iter().enumerate() {
         let local = glam::Vec3::from(*pos);
-        let clip = mvp * local.extend(1.0);
-        if clip.w <= 0.0 {
+        let Some((sx, sy)) = project_to_screen(mvp, local, viewport_size) else {
             continue;
-        }
-        let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x;
-        let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y;
-        if sx >= rect_min.x && sx <= rect_max.x && sy >= rect_min.y && sy <= rect_max.y {
+        };
+        if in_rect(sx, sy, rect_min, rect_max) {
             hits.push(SubObjectRef::Point(i as u32));
         }
     }
