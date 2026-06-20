@@ -34,7 +34,7 @@ pub enum PivotMode {
 impl PivotMode {
     /// Advance to the next mode in the cycle.
     ///
-    /// Cycle order: `SelectionCentroid` -> `IndividualOrigins` -> `MedianPoint` -> `WorldOrigin` -> …
+    /// Cycle order: `SelectionCentroid` -> `IndividualOrigins` -> `MedianPoint` -> `WorldOrigin` -> ...
     ///
     /// `Cursor3D` is excluded from the cycle (it requires an explicit position) and
     /// falls back to `SelectionCentroid`.
@@ -468,7 +468,7 @@ fn axis_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
 }
 
 /// Get the colour for a plane handle, blending the two axis colours.
-/// On hover, RGB is brightened by 1.3× (clamped) in addition to the alpha bump.
+/// On hover, RGB is brightened by 1.3x (clamped) in addition to the alpha bump.
 fn plane_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
     let is_hovered = axis == hovered;
     let alpha = if is_hovered {
@@ -1013,7 +1013,7 @@ pub fn project_drag_onto_rotation(
     let perp_norm = perp / perp_len;
     let drag_amount = drag_delta.dot(perp_norm);
 
-    // Scale: 1 full-screen drag = 2π radians (reasonable sensitivity).
+    // Scale: 1 full-screen drag = 2pi radians (reasonable sensitivity).
     drag_amount * 0.02
 }
 
@@ -1152,7 +1152,7 @@ mod tests {
         g.space = GizmoSpace::Local;
         let center = glam::Vec3::ZERO;
         let scale = 1.0;
-        // Rotate the object 90° around Y: local X -> world -Z, local Z -> world +X.
+        // Rotate the object 90 deg around Y: local X -> world -Z, local Z -> world +X.
         let rot = glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
 
         // A ray that hits along world -Z direction should hit local X axis.
@@ -1167,7 +1167,7 @@ mod tests {
         assert_eq!(
             axis,
             GizmoAxis::X,
-            "local X axis should be along world -Z after 90° Y rotation"
+            "local X axis should be along world -Z after 90 deg Y rotation"
         );
     }
 
@@ -1259,7 +1259,7 @@ mod tests {
     #[test]
     fn test_build_mesh_rotate_produces_rings() {
         let (verts, _) = build_gizmo_mesh(GizmoMode::Rotate, GizmoAxis::None, glam::Quat::IDENTITY);
-        // 3 rings × 40 ring_segments × 8 tube_segments = 960 vertices.
+        // 3 rings x 40 ring_segments x 8 tube_segments = 960 vertices.
         assert!(
             verts.len() >= 960,
             "rotate mesh should have ring vertices, got {}",
@@ -1273,7 +1273,7 @@ mod tests {
             build_gizmo_mesh(GizmoMode::Translate, GizmoAxis::None, glam::Quat::IDENTITY);
         let (verts_scale, _) =
             build_gizmo_mesh(GizmoMode::Scale, GizmoAxis::None, glam::Quat::IDENTITY);
-        // Scale mode has cube tips (6 faces × 4 verts = 24 per axis = 72 for cube tips)
+        // Scale mode has cube tips (6 faces x 4 verts = 24 per axis = 72 for cube tips)
         // instead of cone tips (segments + 1 + segments per axis). Different counts expected.
         assert!(
             verts_scale.len() > 50,

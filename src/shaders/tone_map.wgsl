@@ -55,7 +55,7 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
     );
 }
 
-// Khronos PBR Neutral tone mapper (https://github.com/KhronosGroup/ToneMapping).
+// Khronos PBR Neutral tone mapper.
 // Passes values below ~0.76 through with only a small black-point offset,
 // then compresses highlights. Designed to preserve hand-authored SDR colours.
 fn khronos_neutral(colour: vec3<f32>) -> vec3<f32> {

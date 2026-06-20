@@ -150,7 +150,7 @@ impl App {
             });
 
         // Volume: a density field approximating the same torus + capsule shapes.
-        // The field is 64³ in normalized [-1,1]³ space mapped to ±3.5 world units,
+        // The field is 64^3 in normalized [-1,1]^3 space mapped to +/-3.5 world units,
         // so the volume torus ring sits at the same radius as the mesh torus.
         let vol_data = build_clipvol_volume();
         let vol_id = renderer.resources_mut().upload_volume(
@@ -165,10 +165,10 @@ impl App {
     }
 }
 
-/// Generate a 64³ density field approximating a torus + capsule for the volume mode.
+/// Generate a 64^3 density field approximating a torus + capsule for the volume mode.
 ///
-/// Normalized coordinates are in [-1, 1]³ and map to ±3.5 world units, so
-/// the torus ring at normalized r=0.63 appears at world r≈2.2, matching the mesh.
+/// Normalized coordinates are in [-1, 1]^3 and map to +/-3.5 world units, so
+/// the torus ring at normalized r=0.63 appears at world r~2.2, matching the mesh.
 fn build_clipvol_volume() -> Vec<f32> {
     let n = 64usize;
     let mut data = vec![0.0f32; n * n * n];
@@ -329,13 +329,13 @@ fn controls_plane(ui: &mut egui::Ui, elevation: &mut f32, azimuth: &mut f32, dis
     ui.label("Elevation:");
     ui.add(
         egui::Slider::new(elevation, -89.0..=89.0)
-            .suffix("°")
+            .suffix(" deg")
             .step_by(1.0),
     );
     ui.label("Azimuth:");
     ui.add(
         egui::Slider::new(azimuth, -180.0..=180.0)
-            .suffix("°")
+            .suffix(" deg")
             .step_by(1.0),
     );
     ui.label("Offset:");
@@ -388,7 +388,7 @@ fn controls_box(
         );
     });
     ui.label("Yaw:");
-    ui.add(egui::Slider::new(yaw, -180.0..=180.0).suffix("°"));
+    ui.add(egui::Slider::new(yaw, -180.0..=180.0).suffix(" deg"));
 }
 
 fn controls_sphere(ui: &mut egui::Ui, center: &mut [f32; 3], radius: &mut f32) {
@@ -424,8 +424,8 @@ fn controls_cylinder(
     });
     ui.label("Axis (yaw / pitch):");
     ui.horizontal(|ui| {
-        ui.add(egui::Slider::new(axis_yaw, -180.0..=180.0).suffix("° yaw"));
-        ui.add(egui::Slider::new(axis_pitch, -90.0..=90.0).suffix("° pitch"));
+        ui.add(egui::Slider::new(axis_yaw, -180.0..=180.0).suffix(" deg yaw"));
+        ui.add(egui::Slider::new(axis_pitch, -90.0..=90.0).suffix(" deg pitch"));
     });
     ui.label("Radius:");
     ui.add(egui::Slider::new(radius, 0.1..=8.0).step_by(0.05));
@@ -450,7 +450,7 @@ impl App {
         item.threshold_max = 1.0;
         item.step_scale = 1.0;
         item.enable_shading = true;
-        // ±3.5 world units : normalized [-1,1] maps to this bbox.
+        // +/-3.5 world units : normalized [-1,1] maps to this bbox.
         item.bbox_min = [-3.5, -3.5, -3.5];
         item.bbox_max = [3.5, 3.5, 3.5];
         Some(item)

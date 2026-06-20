@@ -179,7 +179,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     if glyph_uniform.scale_by_magnitude != 0u && mag > 0.0 {
         let range = glyph_uniform.mag_clamp_max - glyph_uniform.mag_clamp_min;
         if range > 0.0 {
-            // Normalize to [0, 1] so largest arrow = global_scale, smallest ≈ 0.
+            // Normalize to [0, 1] so largest arrow = global_scale, smallest ~ 0.
             let t = (eff_mag - glyph_uniform.mag_clamp_min) / range;
             scale = scale * clamp(t, 0.05, 1.0);
         }

@@ -150,7 +150,7 @@ impl OrbitCameraController {
     ///
     /// The behavior of orbit drag depends on [`Self::navigation_mode`]:
     /// - [`NavigationMode::Arcball`]: unconstrained arcball (default).
-    /// - [`NavigationMode::Turntable`]: yaw around world Z, pitch clamped to ±89°.
+    /// - [`NavigationMode::Turntable`]: yaw around world Z, pitch clamped to +/-89 deg.
     /// - [`NavigationMode::Planar`]: pan only, orbit input is ignored.
     /// - [`NavigationMode::FirstPerson`]: mouselook + WASD translation. Requires
     ///   the `ViewportAll` binding preset so that movement keys are resolved.
@@ -258,7 +258,7 @@ impl OrbitCameraController {
 /// Apply a turntable yaw + clamped pitch to the camera.
 ///
 /// Yaw rotates around world Z. Pitch changes elevation in camera-local space,
-/// but is blocked when the eye would reach ±89° above/below the XY plane.
+/// but is blocked when the eye would reach +/-89 deg above/below the XY plane.
 fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
     // Yaw: pre-multiply by a world-Z rotation (same as the yaw component of Camera::orbit).
     if yaw != 0.0 {
@@ -270,9 +270,9 @@ fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
         let proposed = (camera.orientation * glam::Quat::from_rotation_x(-pitch)).normalize();
 
         // The eye direction is `orientation * Z`. Its Z-component equals
-        // sin(elevation_angle), so clamping it to sin(±89°) keeps the camera
+        // sin(elevation_angle), so clamping it to sin(+/-89 deg) keeps the camera
         // away from the poles.
-        let max_sin_el = 89.0_f32.to_radians().sin(); // ≈ 0.9998
+        let max_sin_el = 89.0_f32.to_radians().sin(); // ~ 0.9998
         let eye_z = (proposed * glam::Vec3::Z).z;
 
         if eye_z.abs() <= max_sin_el {
@@ -383,7 +383,7 @@ mod tests {
         for _ in 0..1000 {
             apply_turntable(&mut cam, 0.0, 0.1);
         }
-        // Check eye direction Z component stays within sin(89°)
+        // Check eye direction Z component stays within sin(89 deg)
         let eye_z = (cam.orientation * glam::Vec3::Z).z;
         let max_sin = 89.0_f32.to_radians().sin();
         assert!(

@@ -1,17 +1,17 @@
 //! Demonstrates the two built-in input presets.
 //!
 //! Cmd+[ : Camera only (`ViewportPrimitives`):
-//!   Left/Middle drag -> Orbit  ·  Right drag -> Pan  ·  Scroll -> Zoom
-//!   Ctrl+Scroll -> Orbit (two-axis)  ·  Shift+Scroll -> Pan (two-axis)
+//!   Left/Middle drag -> Orbit  |  Right drag -> Pan  |  Scroll -> Zoom
+//!   Ctrl+Scroll -> Orbit (two-axis)  |  Shift+Scroll -> Pan (two-axis)
 //!
 //! Cmd+] : Full controls (`ViewportAll`) + `ManipulationController`:
-//!   Ctrl+Scroll -> Orbit  ·  Right drag -> Pan  ·  Scroll -> Zoom
-//!   Click -> select  ·  Shift+Click -> multi-select
-//!   G move  R rotate  S scale  ·  X/Y/Z constrain  ·  Shift+X/Y/Z exclude
+//!   Ctrl+Scroll -> Orbit  |  Right drag -> Pan  |  Scroll -> Zoom
+//!   Click -> select  |  Shift+Click -> multi-select
+//!   G move  R rotate  S scale  |  X/Y/Z constrain  |  Shift+X/Y/Z exclude
 //!   Tab -> cycle gizmo mode (translate / rotate / scale)
 //!   Type digits / minus / period -> numeric input while G/R/S active
-//!   Enter / left-click -> confirm  ·  Esc -> cancel
-//!   [ -> cycle pivot forward  ·  ] -> cycle pivot backward
+//!   Enter / left-click -> confirm  |  Esc -> cancel
+//!   [ -> cycle pivot forward  |  ] -> cycle pivot backward
 
 mod viewport_callback;
 
@@ -244,7 +244,7 @@ impl App {
             let to_pivot = glam::Mat4::from_translation(-pivot);
             let from_pivot = glam::Mat4::from_translation(pivot);
 
-            // translate · (from_pivot · rot · scale · to_pivot) · old_model
+            // translate * (from_pivot * rot * scale * to_pivot) * old_model
             obj.model = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * obj.model;
         }
         self.scene_generation += 1;
@@ -382,16 +382,16 @@ impl eframe::App for App {
         // ---- Mode bar ----
         egui::TopBottomPanel::top("mode_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.mode, Mode::Primitives, "Cmd+[ · Camera only");
-                ui.selectable_value(&mut self.mode, Mode::All, "Cmd+] · Manipulation");
+                ui.selectable_value(&mut self.mode, Mode::Primitives, "Cmd+[ | Camera only");
+                ui.selectable_value(&mut self.mode, Mode::All, "Cmd+] | Manipulation");
                 ui.separator();
                 match self.mode {
                     Mode::Primitives => {
-                        ui.small("Left/Middle drag: orbit  ·  Right drag: pan  ·  Scroll: zoom");
+                        ui.small("Left/Middle drag: orbit  |  Right drag: pan  |  Scroll: zoom");
                     }
                     Mode::All => {
                         ui.small(
-                            "Click: select  ·  Shift+Click: multi-select  ·  G/R/S: move/rotate/scale  ·  Tab: cycle gizmo  ·  X/Y/Z: constrain  ·  digits: numeric  ·  [/]: pivot",
+                            "Click: select  |  Shift+Click: multi-select  |  G/R/S: move/rotate/scale  |  Tab: cycle gizmo  |  X/Y/Z: constrain  |  digits: numeric  |  [/]: pivot",
                         );
                         if !self.selection.is_empty() {
                             ui.separator();

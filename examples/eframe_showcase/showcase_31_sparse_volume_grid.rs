@@ -8,16 +8,16 @@
 //! ## Shapes
 //!
 //! - **Solid sphere** (left) : all cells inside a sphere of radius 2.7 in a
-//!   5×5×5 grid (81 active cells).  Interior shared faces are discarded :
+//!   5x5x5 grid (81 active cells).  Interior shared faces are discarded :
 //!   only the outer surface is rendered.
 //!
-//! - **Hollow shell** (centre) : same 5×5×5 grid but only the cells between
+//! - **Hollow shell** (centre) : same 5x5x5 grid but only the cells between
 //!   inner radius 1.8 and outer radius 2.7 are active (54 active cells).
 //!   Because the interior is empty, `extract_sparse_boundary` produces
 //!   **two** surfaces : an outer boundary and an inner boundary : from a single
 //!   upload.
 //!
-//! - **Voxel terrain** (right) : an 8×5×8 column grid where each XZ column is
+//! - **Voxel terrain** (right) : an 8x5x8 column grid where each XZ column is
 //!   filled to a sine-wave height (the bottom face of each column and all
 //!   interior stack-faces are discarded automatically).
 //!
@@ -101,7 +101,7 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
     }
 }
 
-/// Column-major 4×4 pure-translation matrix.
+/// Column-major 4x4 pure-translation matrix.
 fn translate(tx: f32, ty: f32, tz: f32) -> [[f32; 4]; 4] {
     [
         [1.0, 0.0, 0.0, 0.0],
@@ -118,7 +118,7 @@ fn translate(tx: f32, ty: f32, tz: f32) -> [[f32; 4]; 4] {
 const GRID_N: usize = 5;
 const SPHERE_R: f32 = 2.7;
 
-/// 5×5×5 grid, all cells inside a sphere of radius 2.7 (81 active cells).
+/// 5x5x5 grid, all cells inside a sphere of radius 2.7 (81 active cells).
 fn build_sphere_grid() -> SparseVolumeGridData {
     let centre = GRID_N as f32 / 2.0; // 2.5
 
@@ -175,7 +175,7 @@ fn build_sphere_grid() -> SparseVolumeGridData {
 
 const INNER_R: f32 = 1.8;
 
-/// 5×5×5 grid, only the shell between inner radius 1.8 and outer radius 2.7
+/// 5x5x5 grid, only the shell between inner radius 1.8 and outer radius 2.7
 /// (54 active cells).  Produces both an outer and an inner boundary surface.
 fn build_hollow_shell() -> SparseVolumeGridData {
     let centre = GRID_N as f32 / 2.0;
@@ -236,7 +236,7 @@ const TERRAIN_W: usize = 8;
 const TERRAIN_H: usize = 5;
 const TERRAIN_D: usize = 8;
 
-/// 8×5×8 heightmap grid.  Each XZ column is filled up to a sine-wave height;
+/// 8x5x8 heightmap grid.  Each XZ column is filled up to a sine-wave height;
 /// only the top and outer boundary faces of each column survive extraction.
 fn build_terrain() -> SparseVolumeGridData {
     let cx = TERRAIN_W as f32 / 2.0 - 0.5; // centre of columns for hue

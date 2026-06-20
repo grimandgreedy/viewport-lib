@@ -6,7 +6,7 @@ use crate::resources::MeshData;
 pub fn cube(size: f32) -> MeshData {
     let h = size / 2.0;
 
-    // 6 faces × 4 vertices each = 24 vertices
+    // 6 faces x 4 vertices each = 24 vertices
     #[rustfmt::skip]
     let positions: Vec<[f32; 3]> = vec![
         // +Z
@@ -37,7 +37,7 @@ pub fn cube(size: f32) -> MeshData {
         .flat_map(|n| std::iter::repeat(*n).take(4))
         .collect();
 
-    // 6 faces × 2 triangles × 3 indices
+    // 6 faces x 2 triangles x 3 indices
     let indices: Vec<u32> = (0..6u32)
         .flat_map(|f| {
             let b = f * 4;
@@ -295,7 +295,7 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
     }
 }
 
-/// Cone with tip at +Z and base at −Z, centered at the origin.
+/// Cone with tip at +Z and base at -Z, centered at the origin.
 ///
 /// `radius` : base radius. `height` : total height. `sectors` : circumference subdivisions (minimum 3).
 pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
@@ -374,7 +374,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
 
 /// Capsule (cylinder body with hemispherical caps) centered at the origin, axis along Z.
 ///
-/// `radius` : sphere cap radius. `height` : total height (clamped so body ≥ 0).
+/// `radius` : sphere cap radius. `height` : total height (clamped so body >= 0).
 /// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 2).
 pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData {
     let sectors = sectors.max(3);
@@ -764,7 +764,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         indices.extend_from_slice(&[hb_center, hb_rim + next, hb_rim + j]);
     }
 
-    // V is proportional to Z: shaft_bot → 0, head_top → 1.
+    // V is proportional to Z: shaft_bot -> 0, head_top -> 1.
     let v_shaft_top = 1.0 - head_fraction; // head_fraction already clamped
     let tau = std::f32::consts::TAU;
     let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(7 * sectors as usize + 2);
@@ -842,7 +842,7 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
 
 /// Camera frustum mesh for visualization.
 ///
-/// The camera sits at the origin looking along −Z.
+/// The camera sits at the origin looking along -Z.
 /// `fov_y` : vertical field of view in radians. `aspect` : width / height.
 /// `near`, `far` : clip plane distances (positive values).
 pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
@@ -861,7 +861,7 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
     let ftr = [half_w_f, half_h_f, -far];
     let ftl = [-half_w_f, half_h_f, -far];
 
-    // 6 faces as (v0, v1, v2, v3); normal from (v1-v0) × (v3-v0)
+    // 6 faces as (v0, v1, v2, v3); normal from (v1-v0) x (v3-v0)
     let face_quads: [[[f32; 3]; 4]; 6] = [
         [ntl, ntr, nbr, nbl], // near
         [fbl, fbr, ftr, ftl], // far
@@ -1015,7 +1015,7 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
         indices.extend_from_slice(&[i0, o0, i1, i1, o0, o1]);
     }
 
-    // Inner edge v=0, outer edge v=1; u wraps 0→1 around the ring.
+    // Inner edge v=0, outer edge v=1; u wraps 0->1 around the ring.
     let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(2 * (sectors as usize + 1));
     for j in 0..=sectors {
         let u = j as f32 / sectors as f32;
@@ -1140,7 +1140,7 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
         let pny = -t.sin();
         let pnz = 0.0f32;
 
-        // Binormal = T × principal_normal
+        // Binormal = T x principal_normal
         let bx = ty * pnz - tz * pny;
         let by = tz * pnx - tx * pnz;
         let bz = tx * pny - ty * pnx;

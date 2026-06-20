@@ -1,6 +1,6 @@
 /// Procedurally generated built-in matcap textures.
 ///
-/// Each matcap is 256×256 RGBA.  The texture is stored with the upper hemisphere
+/// Each matcap is 256x256 RGBA.  The texture is stored with the upper hemisphere
 /// (normals pointing up in view space) at y = 0 (the first row in memory), so
 /// that the fragment shader sampling `uv = (nx * 0.5 + 0.5, -ny * 0.5 + 0.5)`
 /// produces the intuitively correct bright-at-top orientation.
@@ -23,12 +23,12 @@ fn to_u8(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-/// Diffuse Lambertian factor N·L, clamped to [0,1].
+/// Diffuse Lambertian factor dot(N, L), clamped to [0,1].
 fn diffuse(nx: f32, ny: f32, nz: f32, lx: f32, ly: f32, lz: f32) -> f32 {
     (nx * lx + ny * ly + nz * lz).max(0.0)
 }
 
-/// Blinn-Phong specular N·H^shininess, view direction is (0,0,1) in view space.
+/// Blinn-Phong specular dot(N, H)^shininess, view direction is (0,0,1) in view space.
 fn specular(nx: f32, ny: f32, nz: f32, lx: f32, ly: f32, lz: f32, shininess: f32) -> f32 {
     // View direction: (0, 0, 1)
     let hx = lx;
@@ -45,7 +45,7 @@ fn specular(nx: f32, ny: f32, nz: f32, lx: f32, ly: f32, lz: f32, shininess: f32
     ndoth.powf(shininess)
 }
 
-/// Generate a 256×256 RGBA matcap texture from a per-pixel closure.
+/// Generate a 256x256 RGBA matcap texture from a per-pixel closure.
 ///
 /// `f(nx, ny, nz)` receives the view-space surface normal at each pixel and
 /// returns `[r, g, b, a]` in 0..=255.  Pixels outside the unit hemisphere
@@ -295,7 +295,7 @@ pub fn mud() -> Vec<u8> {
 
 /// Normal : view-space normal visualization, RGB static.
 ///
-/// R = nx mapped [−1, 1] -> [0, 1], G = ny, B = nz.
+/// R = nx mapped [-1, 1] -> [0, 1], G = ny, B = nz.
 pub fn normal() -> Vec<u8> {
     generate(|nx, ny, nz| {
         let r = nx * 0.5 + 0.5;

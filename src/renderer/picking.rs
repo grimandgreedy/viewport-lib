@@ -140,7 +140,7 @@ fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
     strip_lengths.len().saturating_sub(1) as u32
 }
 
-/// Möller-Trumbore ray-triangle intersection.
+/// Moller-Trumbore ray-triangle intersection.
 ///
 /// Returns the ray parameter `t > 0` on hit, or `None` on miss or backface cull.
 /// Call twice with reversed winding to test both faces.
@@ -308,7 +308,7 @@ fn eval_implicit_primitive(p: glam::Vec3, prim: &crate::resources::ImplicitPrimi
     }
 }
 
-/// Polynomial smooth-min (Inigo Quilez).
+/// Polynomial smooth minimum.
 #[inline]
 fn smin_implicit(a: f32, b: f32, k: f32) -> f32 {
     let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
@@ -2964,7 +2964,7 @@ impl ViewportRenderer {
             }
         }
 
-        // --- copy 1×1 pixels to staging buffers ---
+        // --- copy 1x1 pixels to staging buffers ---
         // R32Uint: 4 bytes per pixel, min bytes_per_row = 256 (wgpu alignment)
         let bytes_per_row_aligned = 256u32; // wgpu requires multiples of 256
 

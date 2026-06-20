@@ -1,7 +1,7 @@
 /// Built-in colourmap LUT data (256 RGBA samples each).
 ///
 /// Each function returns a `[[u8; 4]; 256]` array suitable for uploading to a
-/// 256×1 GPU texture.  All values are in linear (non-sRGB) space to match the
+/// 256x1 GPU texture.  All values are in linear (non-sRGB) space to match the
 /// `Rgba8Unorm` texture format used by the LUT sampler.
 
 // ---------------------------------------------------------------------------
@@ -132,15 +132,15 @@ pub fn coolwarm_rgba() -> [[u8; 4]; 256] {
 }
 
 // ---------------------------------------------------------------------------
-// Rainbow: HSV hue sweep 240° (blue) -> 0° (red) at full saturation/value
+// Rainbow: HSV hue sweep 240 deg (blue) -> 0 deg (red) at full saturation/value
 // ---------------------------------------------------------------------------
 
-/// Rainbow colourmap: HSV hue sweep from 240° (blue) at t=0 to 0° (red) at t=1.
+/// Rainbow colourmap: HSV hue sweep from 240 deg (blue) at t=0 to 0 deg (red) at t=1.
 pub fn rainbow_rgba() -> [[u8; 4]; 256] {
     let mut lut = [[0u8; 4]; 256];
     for i in 0..256 {
         let t = i as f32 / 255.0;
-        // Hue sweeps from 240° down to 0° as t goes from 0 to 1.
+        // Hue sweeps from 240 deg down to 0 deg as t goes from 0 to 1.
         let hue = 240.0 * (1.0 - t); // degrees
         let (r, g, b) = hsv_to_rgb(hue, 1.0, 1.0);
         lut[i] = [to_u8(r), to_u8(g), to_u8(b), 255];
@@ -1511,7 +1511,7 @@ pub fn rdbu_r_rgba() -> [[u8; 4]; 256] {
 /// The result is clamped: the first stop colour fills `t < stops[0].0` and the last
 /// stop colour fills `t > stops.last().0`.
 ///
-/// Returns a `[[u8; 4]; 256]` suitable for uploading to a 256×1 GPU texture.
+/// Returns a `[[u8; 4]; 256]` suitable for uploading to a 256x1 GPU texture.
 pub fn lerp_colourmap_lut(stops: &[(f32, [u8; 4])]) -> [[u8; 4]; 256] {
     let mut lut = [[0u8; 4]; 256];
     if stops.is_empty() {

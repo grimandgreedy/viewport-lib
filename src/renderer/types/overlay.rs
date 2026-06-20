@@ -387,7 +387,7 @@ pub enum LoadingBarAnchor {
 /// use viewport_lib::{LoadingBarItem, LoadingBarAnchor};
 /// let bar = LoadingBarItem {
 ///     progress: 0.42,
-///     label: Some("Building scene… 420 000 / 1 000 000".into()),
+///     label: Some("Building scene... 420 000 / 1 000 000".into()),
 ///     anchor: LoadingBarAnchor::BottomCenter,
 ///     ..LoadingBarItem::default()
 /// };
@@ -938,7 +938,7 @@ fn apply_easing(phase: f32, easing: OverlayEasing) -> f32 {
 }
 
 /// Arbitrary-path animation track. `path` is a closure called with the eased
-/// parameter `t ∈ [0, 1]` and returns the value for the channel.
+/// parameter `t in [0, 1]` and returns the value for the channel.
 ///
 /// Use for any motion that's more than a straight line: Bezier arcs,
 /// polylines, lissajous, custom shapes. The `bezier` and `polyline` helpers
@@ -957,7 +957,7 @@ pub struct PathTrack<T: Copy + LerpAnim> {
     pub easing: OverlayEasing,
     /// What happens past the end of one cycle.
     pub repeat: RepeatMode,
-    /// Evaluator for the path. Called with `t ∈ [0, 1]` after easing and
+    /// Evaluator for the path. Called with `t in [0, 1]` after easing and
     /// repeat resolution. The closure is shared via `Arc` so the track is
     /// cheap to clone.
     pub path: std::sync::Arc<dyn Fn(f32) -> T + Send + Sync>,

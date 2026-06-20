@@ -30,7 +30,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return VertexOutput(vec4<f32>(p, 0.0, 1.0), uv);
 }
 
-// 9-tap Gaussian weights (σ ≈ 1.5, normalised to sum 1).
+// 9-tap Gaussian weights (sigma ~ 1.5, normalised to sum 1).
 const WEIGHTS: array<f32, 9> = array<f32, 9>(
     0.0162, 0.0541, 0.1216, 0.1945, 0.2272, 0.1945, 0.1216, 0.0541, 0.0162,
 );

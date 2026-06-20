@@ -17,10 +17,10 @@
 //! is the Hodge dual of the discrete one-form (Whitney reconstruction):
 //!
 //! ```text
-//! F = (w01 · R(e01) + w12 · R(e12) + w20 · R(e20)) / (2 · area)
+//! F = (w01 R(e01) + w12 R(e12) + w20 R(e20)) / (2 area)
 //! ```
 //!
-//! where `eij = pj − pi`, `R(v) = n × v` (90° rotation in the face plane),
+//! where `eij = pj - pi`, `R(v) = cross(n, v)` (90 deg rotation in the face plane),
 //! and `area` is the signed triangle area (`|n_raw| / 2`).
 
 use crate::GlyphItem;
@@ -37,7 +37,7 @@ use crate::GlyphItem;
 /// * `indices`      : triangle index list (every 3 indices form one triangle)
 /// * `edge_values`  : one scalar per directed edge, in triangle-local order
 ///                    (see [module-level docs](self) for the convention).
-///                    Length must be `3 × num_triangles`.
+///                    Length must be `3 x num_triangles`.
 /// * `scale`        : global arrow scale (see [`GlyphItem::scale`])
 ///
 /// Triangles whose `edge_values` slice is shorter than expected are skipped.
@@ -71,7 +71,7 @@ pub fn edge_one_form_to_glyphs(
         let e20 = p0 - p2;
 
         // Face normal (unnormalised; length = 2 * area).
-        let n_raw = e01.cross(-e20); // (p1-p0) × (p2-p0)
+        let n_raw = e01.cross(-e20); // (p1-p0) x (p2-p0)
         let area2 = n_raw.length();
 
         if area2 < 1e-12 {
@@ -84,7 +84,7 @@ pub fn edge_one_form_to_glyphs(
         let w12 = edge_values[3 * tri + 1];
         let w20 = edge_values[3 * tri + 2];
 
-        // R(v) = face_normal × v  (rotates v by 90° within the face plane)
+        // R(v) = face_normal x v  (rotates v by 90 deg within the face plane)
         let f = (w01 * face_normal.cross(e01)
             + w12 * face_normal.cross(e12)
             + w20 * face_normal.cross(e20))

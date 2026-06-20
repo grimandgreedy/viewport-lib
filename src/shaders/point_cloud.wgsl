@@ -214,13 +214,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var colour = in.colour;
 
     if pc_uniform.gaussian != 0u {
-        // Soft Gaussian splat: alpha falls off as exp(-3*d²).
+        // Soft Gaussian splat: alpha falls off as exp(-3*d^2).
         colour.a = colour.a * exp(-3.0 * d2);
     } else if pc_uniform.render_mode == 1u {
         // Sphere shading: reconstruct a hemisphere normal from the billboard UV.
         // uv.xy lie in [-1,1]; z is the front-facing hemisphere depth.
         let nz  = sqrt(1.0 - d2); // always >= 0 since d2 <= 1
-        let n   = vec3<f32>(in.uv.x, in.uv.y, nz); // already unit length (d2+nz²=1)
+        let n   = vec3<f32>(in.uv.x, in.uv.y, nz); // already unit length (d2+nz^2=1)
 
         // Fixed view-space light direction (upper-left, slightly in front).
         let light = normalize(vec3<f32>(-0.4, 0.6, 1.0));

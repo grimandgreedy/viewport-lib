@@ -45,7 +45,7 @@ fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let frag_depth = textureSample(depth_texture, depth_sampler, in.uv);
 
-    // Skip sky fragments (depth ≈ 1.0).
+    // Skip sky fragments (depth ~ 1.0).
     if frag_depth >= 0.9999 {
         return vec4<f32>(1.0);
     }

@@ -116,7 +116,7 @@ impl Default for VolumeState {
 impl App {
     /// One-time GPU setup for Showcase 17.
     ///
-    /// Generates a 64³ scalar field (sum of Gaussian blobs), uploads it to the
+    /// Generates a 64^3 scalar field (sum of Gaussian blobs), uploads it to the
     /// GPU as a volume texture, and runs an initial isosurface extraction.
     pub(crate) fn build_volume_scene(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
         let field = make_gaussian_field(64);
@@ -416,7 +416,7 @@ pub(crate) fn controls_volume(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
 // Procedural field generation
 // ---------------------------------------------------------------------------
 
-/// Generate a 64³ scalar field from a sum of three Gaussian blobs.
+/// Generate a 64^3 scalar field from a sum of three Gaussian blobs.
 ///
 /// Values are in [0, 1]. Three blobs at asymmetric positions make named-view
 /// navigation meaningful: they are visible from different angles.

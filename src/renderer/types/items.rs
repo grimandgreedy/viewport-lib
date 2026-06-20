@@ -360,7 +360,7 @@ pub struct PointCloudItem {
     /// Optional per-point opacity values in `[0, 1]`. If non-empty, scales each point's alpha.
     pub transparencies: Vec<f32>,
     /// When true, each point is rendered as a soft Gaussian splat instead of a flat circle.
-    /// The alpha falls off as `exp(-3 * d²)` where `d` is the normalised distance from the
+    /// The alpha falls off as `exp(-3 * d^2)` where `d` is the normalised distance from the
     /// point centre. Default: false.
     pub gaussian: bool,
     /// Optional per-point scalars that drive the splat radius.  If non-empty, these values

@@ -268,7 +268,7 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
 
 /// Generate a unit sphere as an icosphere with 2 subdivisions.
 ///
-/// Starts from a regular icosahedron and subdivides each triangle 2×.
+/// Starts from a regular icosahedron and subdivides each triangle 2x.
 pub(super) fn build_glyph_sphere() -> (Vec<Vertex>, Vec<u32>) {
     let white = [1.0f32, 1.0, 1.0, 1.0];
 

@@ -389,7 +389,7 @@ impl ViewportGpuResources {
             let meta_size =
                 (new_cap * std::mem::size_of::<crate::resources::types::BatchMeta>()) as u64;
             let counter_size = (new_cap * std::mem::size_of::<u32>()) as u64;
-            // wgpu::util::DrawIndexedIndirect is 5 × u32 = 20 bytes.
+            // wgpu::util::DrawIndexedIndirect is 5 x u32 = 20 bytes.
             let indirect_size = (new_cap * 20) as u64;
 
             self.batch_meta_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {

@@ -36,12 +36,12 @@ use super::types::{AttributeData, MeshData};
 // viewed from outside the cell (outward normal convention).
 //
 // Verified normal directions:
-//   0  -X : [0,0,0],[0,0,1],[0,1,1],[0,1,0]  normal = cross([0,0,1],[0,1,1]) = [-1,0,0] ✓
-//   1  +X : [1,0,0],[1,1,0],[1,1,1],[1,0,1]  normal = cross([0,1,0],[0,1,1]) = [+1,0,0] ✓
-//   2  -Y : [0,0,0],[1,0,0],[1,0,1],[0,0,1]  normal = cross([1,0,0],[1,0,1]) = [0,-1,0] ✓
-//   3  +Y : [0,1,0],[0,1,1],[1,1,1],[1,1,0]  normal = cross([0,0,1],[1,0,1]) = [0,+1,0] ✓
-//   4  -Z : [0,0,0],[0,1,0],[1,1,0],[1,0,0]  normal = cross([0,1,0],[1,1,0]) = [0,0,-1] ✓
-//   5  +Z : [0,0,1],[1,0,1],[1,1,1],[0,1,1]  normal = cross([1,0,0],[1,1,0]) = [0,0,+1] ✓
+//   0  -X : [0,0,0],[0,0,1],[0,1,1],[0,1,0]  normal = cross([0,0,1],[0,1,1]) = [-1,0,0] ok
+//   1  +X : [1,0,0],[1,1,0],[1,1,1],[1,0,1]  normal = cross([0,1,0],[0,1,1]) = [+1,0,0] ok
+//   2  -Y : [0,0,0],[1,0,0],[1,0,1],[0,0,1]  normal = cross([1,0,0],[1,0,1]) = [0,-1,0] ok
+//   3  +Y : [0,1,0],[0,1,1],[1,1,1],[1,1,0]  normal = cross([0,0,1],[1,0,1]) = [0,+1,0] ok
+//   4  -Z : [0,0,0],[0,1,0],[1,1,0],[1,0,0]  normal = cross([0,1,0],[1,1,0]) = [0,0,-1] ok
+//   5  +Z : [0,0,1],[1,0,1],[1,1,1],[0,1,1]  normal = cross([1,0,0],[1,1,0]) = [0,0,+1] ok
 
 const FACE_CORNERS: [[[u32; 3]; 4]; 6] = [
     [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]], // 0: -X
@@ -366,7 +366,7 @@ mod tests {
     fn single_active_cell_has_twelve_boundary_triangles() {
         let data = single_cell();
         let mesh = extract_sparse_boundary(&data);
-        // 6 faces × 2 triangles = 12 triangles → 36 indices
+        // 6 faces x 2 triangles = 12 triangles -> 36 indices
         assert_eq!(
             mesh.indices.len(),
             36,
@@ -378,8 +378,8 @@ mod tests {
     fn two_adjacent_cells_share_one_face() {
         let data = two_adjacent_cells();
         let mesh = extract_sparse_boundary(&data);
-        // 2 × 6 quads = 12 quads, minus 2 shared quads (one from each cell) = 10 quads
-        // 10 quads × 2 triangles = 20 triangles → 60 indices
+        // 2 x 6 quads = 12 quads, minus 2 shared quads (one from each cell) = 10 quads
+        // 10 quads x 2 triangles = 20 triangles -> 60 indices
         assert_eq!(
             mesh.indices.len(),
             60,
@@ -391,8 +391,8 @@ mod tests {
     fn three_cells_in_a_line_share_two_faces() {
         let data = three_cells_in_a_line();
         let mesh = extract_sparse_boundary(&data);
-        // 3 × 6 = 18 quads minus 4 shared (2 interior boundaries × 2 cells each) = 14 quads
-        // 14 × 2 = 28 triangles → 84 indices
+        // 3 x 6 = 18 quads minus 4 shared (2 interior boundaries x 2 cells each) = 14 quads
+        // 14 x 2 = 28 triangles -> 84 indices
         assert_eq!(
             mesh.indices.len(),
             84,
@@ -444,7 +444,7 @@ mod tests {
         let mesh = extract_sparse_boundary(&data);
         match mesh.attributes.get("pressure") {
             Some(AttributeData::Face(vals)) => {
-                // 6 quads × 2 triangles = 12 entries
+                // 6 quads x 2 triangles = 12 entries
                 assert_eq!(vals.len(), 12, "one value per boundary triangle");
                 for &v in vals {
                     assert_eq!(v, 42.0, "scalar must match cell value");
@@ -477,7 +477,7 @@ mod tests {
         // Node grid: W=2, H=2. All 8 corners set to 1.0.
         // All 4-corner averages = 1.0.
         let mut data = single_cell();
-        let node_vals = vec![1.0f32; 8]; // 2×2×2
+        let node_vals = vec![1.0f32; 8]; // 2x2x2
         data.node_scalars.insert("dist".to_string(), node_vals);
         let mesh = extract_sparse_boundary(&data);
         match mesh.attributes.get("dist") {

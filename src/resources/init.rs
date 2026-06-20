@@ -304,7 +304,7 @@ impl ViewportGpuResources {
                     },
                     count: None,
                 },
-                // binding 5: LUT (colourmap) texture (256×1 Rgba8Unorm, FRAGMENT, filterable)
+                // binding 5: LUT (colourmap) texture (256x1 Rgba8Unorm, FRAGMENT, filterable)
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -652,7 +652,7 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
-        // IBL fallback textures: 1×1 black (Rgba16Float) placeholder for all IBL slots,
+        // IBL fallback textures: 1x1 black (Rgba16Float) placeholder for all IBL slots,
         // and a linear/repeat sampler. Never sampled : the `ibl_enabled` uniform guard
         // prevents IBL calculations when no environment map is uploaded.
         // ------------------------------------------------------------------
@@ -847,8 +847,8 @@ impl ViewportGpuResources {
             Some(wgpu::Face::Front),
         );
 
-        // Shadow pass uniform buffer : 4 cascade slots × 256 bytes (wgpu dynamic-offset alignment).
-        // Each slot holds one 4×4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
+        // Shadow pass uniform buffer : 4 cascade slots x 256 bytes (wgpu dynamic-offset alignment).
+        // Each slot holds one 4x4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
         const SHADOW_SLOT_STRIDE: u64 = 256;
         let shadow_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow_uniform_buf"),
@@ -1296,7 +1296,7 @@ impl ViewportGpuResources {
                 bias: wgpu::DepthBiasState {
                     // Push grid depth slightly behind coplanar geometry to prevent
                     // z-fighting when object faces coincide with the grid plane.
-                    // 4 × the minimum representable Depth24 unit ≈ 2.4e-7 : invisible
+                    // 4 x the minimum representable Depth24 unit ~ 2.4e-7 : invisible
                     // at any distance but reliably loses the depth test to geometry.
                     constant: 4,
                     slope_scale: 0.0,
@@ -1664,7 +1664,7 @@ impl ViewportGpuResources {
         });
 
         // ------------------------------------------------------------------
-        // Fallback normal map: 1×1 [128, 128, 255, 255] : flat tangent-space normal
+        // Fallback normal map: 1x1 [128, 128, 255, 255] : flat tangent-space normal
         // ------------------------------------------------------------------
         let fallback_normal_map = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("fallback_normal_map"),
@@ -1684,7 +1684,7 @@ impl ViewportGpuResources {
             fallback_normal_map.create_view(&wgpu::TextureViewDescriptor::default());
 
         // ------------------------------------------------------------------
-        // Fallback AO map: 1×1 [255, 255, 255, 255] : no occlusion
+        // Fallback AO map: 1x1 [255, 255, 255, 255] : no occlusion
         // ------------------------------------------------------------------
         let fallback_ao_map = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("fallback_ao_map"),
@@ -1704,7 +1704,7 @@ impl ViewportGpuResources {
             fallback_ao_map.create_view(&wgpu::TextureViewDescriptor::default());
 
         // ------------------------------------------------------------------
-        // Fallback metallic-roughness texture: 1×1 Rgba8Unorm.
+        // Fallback metallic-roughness texture: 1x1 Rgba8Unorm.
         // Content is uninitialized: shader only samples when has_metallic_roughness_tex != 0.
         // ------------------------------------------------------------------
         let fallback_metallic_roughness_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1725,7 +1725,7 @@ impl ViewportGpuResources {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         // ------------------------------------------------------------------
-        // Fallback emissive texture: 1×1 Rgba8Unorm.
+        // Fallback emissive texture: 1x1 Rgba8Unorm.
         // Content is uninitialized: shader only samples when has_emissive_tex != 0.
         // ------------------------------------------------------------------
         let fallback_emissive_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1746,7 +1746,7 @@ impl ViewportGpuResources {
             fallback_emissive_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // ------------------------------------------------------------------
-        // Fallback texture: 1×1 white RGBA (used when no albedo texture is assigned)
+        // Fallback texture: 1x1 white RGBA (used when no albedo texture is assigned)
         // ------------------------------------------------------------------
         let fallback_texture = {
             let tex = device.create_texture(&wgpu::TextureDescriptor {

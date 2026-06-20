@@ -65,10 +65,9 @@ impl Default for ItemSettings {
 /// per-item bypass on [`ItemSettings`] is checked independently and takes
 /// precedence over the shading model.
 ///
-/// New shading models (Toon, SSS, Gooch, ...) are added here in future phases
-/// of `docs/plans/shading-models-plan.md`. The glTF PBR extensions (clearcoat,
-/// sheen, anisotropy, iridescence) layer on top of `Pbr` as separate fields on
-/// `Material` rather than as variants here.
+/// New shading models (Toon, SSS, Gooch, ...) are added here as new variants.
+/// The glTF PBR extensions (clearcoat, sheen, anisotropy, iridescence) layer on
+/// top of `Pbr` as separate fields on `Material` rather than as variants here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ShadingModel {
@@ -262,7 +261,7 @@ impl Default for AlphaMode {
 ///
 /// This struct is `#[non_exhaustive]`: construct via [`Material::default`],
 /// [`Material::from_colour`], or spread syntax (`..Default::default()`). This allows new
-/// fields to be added in future phases without breaking downstream code.
+/// fields to be added later without breaking downstream code.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

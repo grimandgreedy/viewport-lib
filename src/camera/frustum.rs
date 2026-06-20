@@ -5,7 +5,7 @@
 
 use crate::scene::aabb::Aabb;
 
-/// A plane in 3D space: `normal · point + d = 0`.
+/// A plane in 3D space: `dot(normal, point) + d = 0`.
 #[derive(Debug, Clone, Copy)]
 pub struct Plane {
     /// Unit normal of the plane.
@@ -78,9 +78,9 @@ impl Frustum {
     ///
     /// The cone has its apex at `apex`, points along the unit vector `axis`,
     /// has an outer half-angle of `half_angle` radians, and reaches `range`
-    /// units along the axis. The test is the standard "cone vs plane" check
-    /// from Akine-Moller et al. : project the apex onto the plane normal and
-    /// add the cone's spread at the far end.
+    /// units along the axis. The test is the standard "cone vs plane" check:
+    /// project the apex onto the plane normal and add the cone's spread at the
+    /// far end.
     ///
     /// Conservative: cones partially inside the frustum are kept.
     pub fn cull_cone(

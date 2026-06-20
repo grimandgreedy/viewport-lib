@@ -136,7 +136,7 @@ pub enum BuiltinColourmap {
     Greyscale = 2,
     /// Coolwarm : diverging blue->white->red.
     Coolwarm = 3,
-    /// Rainbow : HSV hue sweep 240°->0°.
+    /// Rainbow : HSV hue sweep 240 deg->0 deg.
     Rainbow = 4,
     /// Magma : perceptually uniform (black -> purple -> orange -> near-white).
     Magma = 5,
@@ -162,7 +162,7 @@ pub struct MeshData {
     pub indices: Vec<u32>,
     /// Optional per-vertex UV coordinates. `None` means zero-fill [0.0, 0.0].
     pub uvs: Option<Vec<[f32; 2]>>,
-    /// Optional per-vertex tangents [tx, ty, tz, w] where w is handedness (±1.0).
+    /// Optional per-vertex tangents [tx, ty, tz, w] where w is handedness (+/-1.0).
     ///
     /// `None` = auto-compute from UVs if available, or zero-fill otherwise.
     /// Tangents are required for correct normal map rendering.
@@ -205,7 +205,7 @@ impl MeshData {
 /// - normal:   [f32; 3]  : offset 12, 12 bytes
 /// - colour:    [f32; 4]  : offset 24, 16 bytes
 /// - uv:       [f32; 2]  : offset 40,  8 bytes
-/// - tangent:  [f32; 4]  : offset 48, 16 bytes  (xyz=tangent direction, w=handedness ±1)
+/// - tangent:  [f32; 4]  : offset 48, 16 bytes  (xyz=tangent direction, w=handedness +/-1)
 ///
 /// `tangent.w` is the bitangent handedness. Reconstruct bitangent as:
 /// `bitangent = cross(normal, tangent.xyz) * tangent.w`
@@ -220,7 +220,7 @@ pub struct Vertex {
     pub colour: [f32; 4],
     /// UV texture coordinates (shader location 3).
     pub uv: [f32; 2],
-    /// Tangent vector [tx, ty, tz, handedness] (shader location 4). `w` is ±1.
+    /// Tangent vector [tx, ty, tz, handedness] (shader location 4). `w` is +/-1.
     pub tangent: [f32; 4],
 }
 
@@ -266,7 +266,7 @@ impl Vertex {
     }
 }
 
-/// Default shadow atlas resolution (width = height). The atlas is a 2×2 grid of tiles.
+/// Default shadow atlas resolution (width = height). The atlas is a 2x2 grid of tiles.
 pub(crate) const SHADOW_ATLAS_SIZE: u32 = 4096;
 
 /// Per-frame camera uniform: view-projection and eye position.
@@ -579,7 +579,7 @@ const _: () = assert!(std::mem::size_of::<InstanceData>() == 176);
 /// fields needed by the full [`InstanceData`] struct.
 ///
 /// Layout (80 bytes):
-/// - model_c0..model_c3: vec4<f32> × 4 = 64 bytes (model matrix, column-major)
+/// - model_c0..model_c3: vec4<f32> x 4 = 64 bytes (model matrix, column-major)
 /// - object_id: u32                     =  4 bytes  (sentinel: scene_items_index + 1)
 /// - _pad: [u32; 3]                     = 12 bytes  (align to 16)
 /// Total: 80 bytes
@@ -665,7 +665,7 @@ pub(crate) struct FrustumPlane {
 
 /// Six-plane frustum uniform uploaded to the GPU cull pass.
 ///
-/// Matches `FrustumUniform` in `cull.wgsl` (112 bytes = 6 × 16 + 4 + 4 + 8).
+/// Matches `FrustumUniform` in `cull.wgsl` (112 bytes = 6 x 16 + 4 + 4 + 8).
 /// Planes are in Gribb-Hartmann order: left, right, bottom, top, near, far.
 /// Each plane normal points inward; `distance` is the signed offset from origin
 /// along the normal (`d` in the CPU `Plane` struct).
@@ -673,7 +673,7 @@ pub(crate) struct FrustumPlane {
 /// `instance_count` and `batch_count` are the valid element counts in the
 /// AABB and batch-meta storage buffers, respectively. The cull shaders use
 /// these instead of `arrayLength()` to avoid processing stale data that
-/// remains in oversized (2× headroom) buffers after scene shrinks.
+/// remains in oversized (2x headroom) buffers after scene shrinks.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct FrustumUniform {
@@ -1121,11 +1121,11 @@ pub(crate) struct DofUniform {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ShadowAtlasUniform {
-    /// 4 cascade view-projection matrices (each 64 bytes = 4×4 f32). Flattened.
+    /// 4 cascade view-projection matrices (each 64 bytes = 4x4 f32). Flattened.
     pub(crate) cascade_view_proj: [[f32; 4]; 16], // 256 bytes
     /// Distance-based split values for cascade selection (eye-to-fragment distance).
     pub(crate) cascade_splits: [f32; 4], //  16 bytes
-    /// Number of active cascades (1–4).
+    /// Number of active cascades (1-4).
     pub(crate) cascade_count: u32, //   4 bytes
     /// Backing atlas texture size in pixels (always `SHADOW_ATLAS_SIZE`).
     ///
@@ -1138,7 +1138,7 @@ pub(crate) struct ShadowAtlasUniform {
     pub(crate) shadow_filter: u32, //   4 bytes
     /// PCSS light source radius in UV space.
     pub(crate) pcss_light_radius: f32, //   4 bytes
-    /// Per-slot atlas UV rects: [uv_min.x, uv_min.y, uv_max.x, uv_max.y] × 8 slots.
+    /// Per-slot atlas UV rects: [uv_min.x, uv_min.y, uv_max.x, uv_max.y] x 8 slots.
     pub(crate) atlas_rects: [[f32; 4]; 8], // 128 bytes
 }
 // Total: 256 + 16 + 16 + 128 = 416 bytes
@@ -1764,7 +1764,7 @@ pub struct GpuMesh {
     /// Per-object uniform buffer (model matrix, material, selection state).
     pub object_uniform_buf: wgpu::Buffer,
     /// Bind group (group 1) combining `object_uniform_buf` with texture views.
-    /// Texture views are the fallback 1×1 textures by default; rebuilt when material
+    /// Texture views are the fallback 1x1 textures by default; rebuilt when material
     /// texture assignment changes (tracked via `last_tex_key`).
     pub object_bind_group: wgpu::BindGroup,
     /// Last texture/attribute key used to build `object_bind_group`. `u64::MAX` = fallback / none.
@@ -1778,7 +1778,7 @@ pub struct GpuMesh {
     pub attribute_buffers: std::collections::HashMap<String, wgpu::Buffer>,
     /// Scalar range `(min, max)` per attribute, computed at upload time.
     pub attribute_ranges: std::collections::HashMap<String, (f32, f32)>,
-    /// Non-indexed vertex buffer containing 3×N expanded vertices for face-attribute rendering.
+    /// Non-indexed vertex buffer containing 3xN expanded vertices for face-attribute rendering.
     /// `None` if no `Face` or `FaceColour` attributes exist for this mesh.
     pub face_vertex_buffer: Option<wgpu::Buffer>,
     /// Named face scalar buffers: 3N `f32` entries (value replicated for all 3 vertices of each tri).
@@ -2548,7 +2548,7 @@ pub struct ViewportGpuResources {
     /// data fall back to the renderer-owned dummy bind group.
     pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
     // --- Shadow map resources ---
-    /// Shadow atlas depth texture (Depth32Float, atlas_size × atlas_size, 2×2 tile grid).
+    /// Shadow atlas depth texture (Depth32Float, atlas_size x atlas_size, 2x2 tile grid).
     pub shadow_map_texture: wgpu::Texture,
     /// Depth texture view for binding as a shader resource (sampling).
     pub shadow_map_view: wgpu::TextureView,
@@ -2663,19 +2663,19 @@ pub struct ViewportGpuResources {
     // --- Texture system ---
     /// Bind group layout for texture group (group 2: albedo + sampler + normal_map + ao_map).
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
-    /// Fallback 1×1 white texture used when material.texture_id is None.
+    /// Fallback 1x1 white texture used when material.texture_id is None.
     pub fallback_texture: GpuTexture,
-    /// Fallback 1×1 flat normal map [128,128,255,255] (tangent-space neutral).
+    /// Fallback 1x1 flat normal map [128,128,255,255] (tangent-space neutral).
     pub(crate) fallback_normal_map: wgpu::Texture,
     pub(crate) fallback_normal_map_view: wgpu::TextureView,
-    /// Fallback 1×1 AO map [255,255,255,255] (no occlusion).
+    /// Fallback 1x1 AO map [255,255,255,255] (no occlusion).
     pub(crate) fallback_ao_map: wgpu::Texture,
     pub(crate) fallback_ao_map_view: wgpu::TextureView,
-    /// Fallback 1×1 metallic-roughness texture [0, 255, 255, 255].
+    /// Fallback 1x1 metallic-roughness texture [0, 255, 255, 255].
     /// G=1.0 and B=1.0 so scalar factors pass through unchanged when no ORM texture is set.
     pub(crate) fallback_metallic_roughness_texture: wgpu::Texture,
     pub(crate) fallback_metallic_roughness_texture_view: wgpu::TextureView,
-    /// Fallback 1×1 emissive texture [0, 0, 0, 255] (no emission).
+    /// Fallback 1x1 emissive texture [0, 0, 0, 255] (no emission).
     pub(crate) fallback_emissive_texture: wgpu::Texture,
     pub(crate) fallback_emissive_texture_view: wgpu::TextureView,
     /// Shared linear-repeat sampler for material textures.
@@ -2868,13 +2868,13 @@ pub struct ViewportGpuResources {
     pub(crate) texture_allocated_bytes: u64,
 
     // --- Matcap texture system ---
-    /// Matcap textures (256×256 RGBA), indexed by `MatcapId::index`.
+    /// Matcap textures (256x256 RGBA), indexed by `MatcapId::index`.
     pub(crate) matcap_textures: Vec<wgpu::Texture>,
     /// Texture views for each uploaded matcap.
     pub(crate) matcap_views: Vec<wgpu::TextureView>,
     /// Linear-clamp sampler shared by all matcap texture lookups.
     pub(crate) matcap_sampler: Option<wgpu::Sampler>,
-    /// Fallback 1×1 white view bound to binding 7 when no matcap is active.
+    /// Fallback 1x1 white view bound to binding 7 when no matcap is active.
     pub(crate) fallback_matcap_view: Option<wgpu::TextureView>,
     /// Whether built-in matcaps have been uploaded to the GPU.
     pub(crate) matcaps_initialized: bool,
@@ -3070,7 +3070,7 @@ pub struct ViewportGpuResources {
     /// SSAO blur result texture (R8Unorm, full res).
     pub(crate) ssao_blur_texture: Option<wgpu::Texture>,
     pub(crate) ssao_blur_view: Option<wgpu::TextureView>,
-    /// 4×4 random rotation noise texture (Rgba8Unorm, REPEAT).
+    /// 4x4 random rotation noise texture (Rgba8Unorm, REPEAT).
     pub(crate) ssao_noise_texture: Option<wgpu::Texture>,
     pub(crate) ssao_noise_view: Option<wgpu::TextureView>,
     /// 64-sample hemisphere kernel (storage buffer, `vec4<f32>` per sample).
@@ -3107,11 +3107,11 @@ pub struct ViewportGpuResources {
     /// 1x1 R8Unorm white placeholder bound to tone_map binding 7 when LIC is not active.
     pub(crate) lic_placeholder_view: Option<wgpu::TextureView>,
 
-    /// 1×1 black Rgba16Float placeholder used when bloom is disabled.
+    /// 1x1 black Rgba16Float placeholder used when bloom is disabled.
     pub(crate) bloom_placeholder_view: Option<wgpu::TextureView>,
-    /// 1×1 white R8Unorm placeholder used when SSAO is disabled.
+    /// 1x1 white R8Unorm placeholder used when SSAO is disabled.
     pub(crate) ao_placeholder_view: Option<wgpu::TextureView>,
-    /// 1×1 white R8Unorm placeholder used when contact shadows are disabled.
+    /// 1x1 white R8Unorm placeholder used when contact shadows are disabled.
     pub(crate) cs_placeholder_view: Option<wgpu::TextureView>,
 
     /// Shared post-process linear-clamp sampler.
@@ -3143,7 +3143,7 @@ pub struct ViewportGpuResources {
     pub(crate) colourmap_views: Vec<wgpu::TextureView>,
     /// CPU-side copy of each colourmap for egui scalar bar rendering. Index = ColourmapId value.
     pub(crate) colourmaps_cpu: Vec<[[u8; 4]; 256]>,
-    /// Fallback 1×1 LUT texture (bound when has_attribute=0; content irrelevant to the shader).
+    /// Fallback 1x1 LUT texture (bound when has_attribute=0; content irrelevant to the shader).
     #[allow(dead_code)]
     pub(crate) fallback_lut_texture: wgpu::Texture,
     /// View of fallback_lut_texture.
@@ -3493,7 +3493,7 @@ pub struct ViewportGpuResources {
     pub(crate) ibl_sampler: wgpu::Sampler,
     /// Skybox / full-res environment equirect texture view (binding 11). None until uploaded.
     pub ibl_skybox_view: Option<wgpu::TextureView>,
-    /// Fallback 1×1 black Rgba16Float texture for IBL slots when no environment is loaded.
+    /// Fallback 1x1 black Rgba16Float texture for IBL slots when no environment is loaded.
     #[allow(dead_code)]
     pub(crate) ibl_fallback_texture: wgpu::Texture,
     /// View of ibl_fallback_texture.

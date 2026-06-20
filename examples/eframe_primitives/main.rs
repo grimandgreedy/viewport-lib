@@ -61,7 +61,7 @@ fn main() -> eframe::Result {
             let m_plane = mesh!(primitives::plane(1.8, 1.8));
             let m_grid_plane = mesh!(primitives::grid_plane(1.8, 1.8, 8, 8));
             let m_frustum = mesh!(primitives::frustum(
-                std::f32::consts::FRAC_PI_4, // 45° fov — tighter than 60°
+                std::f32::consts::FRAC_PI_4, // 45 deg fov  :  tighter than 60 deg
                 4.0 / 3.0,
                 0.12,
                 1.1
@@ -103,7 +103,7 @@ fn main() -> eframe::Result {
                 item(m_plane, cx[0], rz[3], [0.60, 0.55, 0.75]),
                 item(m_grid_plane, cx[1], rz[3], [0.80, 0.50, 0.25]),
                 {
-                    // Rotate 180° around X so the frustum opens upward (+Z) in the z-up scene.
+                    // Rotate 180 deg around X so the frustum opens upward (+Z) in the z-up scene.
                     let mut s = item(m_frustum, cx[2], rz[3], [0.30, 0.65, 0.90]);
                     s.model = (glam::Mat4::from_translation(glam::Vec3::new(cx[2], 0.0, rz[3]))
                         * glam::Mat4::from_rotation_x(std::f32::consts::PI))
@@ -132,8 +132,8 @@ impl App {
             camera: Camera {
                 center: glam::Vec3::ZERO,
                 distance: 28.0,
-                // Z-up: compose a 30° azimuth around Z with a ~57° tilt from vertical.
-                // orientation * Y ≈ world Z (screen up), orientation * Z points from center to eye.
+                // Z-up: compose a 30 deg azimuth around Z with a ~57 deg tilt from vertical.
+                // orientation * Y ~ world Z (screen up), orientation * Z points from center to eye.
                 orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
                 ..Camera::default()
             },

@@ -1,4 +1,4 @@
-// mc_classify.wgsl - Phase 17 GPU marching cubes: classify pass.
+// mc_classify.wgsl - GPU marching cubes: classify pass.
 //
 // One thread per cell. Reads 8 corner scalar values, computes the 8-bit case
 // index (matching the CPU extract_isosurface Bourke ordering), looks up the

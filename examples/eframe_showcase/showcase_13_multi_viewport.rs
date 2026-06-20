@@ -1,15 +1,15 @@
 //! Showcase 13: Multi-Viewport : build, update, and controls.
 //!
-//! Renders the same scene from four independent cameras in a 2×2 quad layout:
+//! Renders the same scene from four independent cameras in a 2x2 quad layout:
 //!
 //! ```text
-//! ┌─────────────────┬─────────────────┐
-//! │  Perspective    │  Top (ortho)    │
-//! │  (orbit)        │  looking −Z     │
-//! ├─────────────────┼─────────────────┤
-//! │  Front (ortho)  │  Right (ortho)  │
-//! │  looking −Y     │  looking −X     │
-//! └─────────────────┴─────────────────┘
+//! +-----------------+-----------------+
+//! |  Perspective    |  Top (ortho)    |
+//! |  (orbit)        |  looking -Z     |
+//! +-----------------+-----------------+
+//! |  Front (ortho)  |  Right (ortho)  |
+//! |  looking -Y     |  looking -X     |
+//! +-----------------+-----------------+
 //! ```
 //!
 //! Each quadrant has its own `OrbitCameraController`. Mouse input is routed to

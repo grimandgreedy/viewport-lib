@@ -364,7 +364,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Decode the combined shadow_params.w slot:
     //   combined = border_mode + 3 * inset_shadow_flag
     // border_mode: 0=inset border, 1=outer border, 2=centre border
-    // inset_shadow_flag: 0=outer shadow (legacy), 1=inner shadow (Phase 19).
+    // inset_shadow_flag: 0=outer shadow, 1=inner shadow.
     let combined_w = i32(in.shadow_params.w + 0.5);
     let inset_shadow = combined_w >= 3;
     let border_mode = combined_w % 3;

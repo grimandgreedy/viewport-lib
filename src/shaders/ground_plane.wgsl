@@ -116,7 +116,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
         // Smooth power-of-2 LOD: target ~64 screen pixels per tile.
         // scale is based purely on screen-space zoom : tile_size is NOT in the denominator.
         // n is therefore zoom-driven only; multiplying by tile_size afterwards means a
-        // tile_size=2 plane always has tiles 2× larger on screen than tile_size=1,
+        // tile_size=2 plane always has tiles 2x larger on screen than tile_size=1,
         // at every zoom level, instead of converging to the same apparent size.
         let scale  = max(nadir_px_world * 64.0, 1.0);
         let log_s  = log2(scale);
@@ -155,7 +155,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
         //   1. Camera-forward distance selects cascade index.
         //   2. Project hit into that cascade's clip space.
         //   3. Map tile UV through the cascade's atlas rect.
-        //   4. 3×3 PCF.
+        //   4. 3x3 PCF.
         // ------------------------------------------------------------------
 
         // Camera-forward distance to the hit point (same metric the mesh shader uses).
@@ -192,7 +192,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
         );
         let shadow_depth = ndc.z - gp.shadow_bias;
 
-        // 3×3 PCF filter.
+        // 3x3 PCF filter.
         let texel_size = 1.0 / shadow_atlas.atlas_size;
         var shadow_sum = 0.0;
         for (var dy = -1; dy <= 1; dy++) {

@@ -41,7 +41,7 @@ pub struct Layer {
     pub visible: bool,
     /// When true, nodes on this layer render but cannot appear selected.
     pub locked: bool,
-    /// Display colour for this layer (RGBA, each component 0.0–1.0).
+    /// Display colour for this layer (RGBA, each component 0.0-1.0).
     pub colour: [f32; 4],
     /// Sort order for layer display. Lower values appear first.
     pub order: u32,

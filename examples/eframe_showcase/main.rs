@@ -2354,7 +2354,7 @@ impl App {
                     );
                     self.perf_state.scene_items_version = current_ver;
                 }
-                // Arc::clone is a single atomic refcount increment — no data copy.
+                // Arc::clone is a single atomic refcount increment  :  no data copy.
                 perf_arc = Some(std::sync::Arc::clone(&self.perf_state.scene_items_cache));
                 let sg = self.perf_state.scene.version();
                 let ss = self.perf_state.selection.version();
@@ -3325,7 +3325,7 @@ impl App {
             self.dc_push_screen_image(&mut fd);
         }
 
-        // Implicit surface (Showcase 30) : CPU sphere-march, GPU implicit, or GPU MC — re-submitted every frame.
+        // Implicit surface (Showcase 30) : CPU sphere-march, GPU implicit, or GPU MC  :  re-submitted every frame.
         if self.mode == ShowcaseMode::ImplicitSurface {
             self.push_implicit_screen_image(&mut fd, w as u32, h as u32);
             self.push_gpu_implicit(&mut fd);
@@ -3352,7 +3352,7 @@ impl App {
             showcase_14_isolines::submit_iso_items(self, &mut fd);
         }
 
-        // Post-process settings (Showcases 6–8).
+        // Post-process settings (Showcases 6-8).
         // Note: the full HDR pipeline uses renderer.render() which requires direct
         // surface access. In the eframe callback model we use prepare()+paint(),
         // so the post-process pass is not applied. Settings are stored for reference.

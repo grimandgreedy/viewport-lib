@@ -25,7 +25,7 @@ pub enum NavigationMode {
     /// Equivalent to the behavior before navigation modes were introduced.
     #[default]
     Arcball,
-    /// Yaw around the world Z axis; pitch clamped to ±89°.
+    /// Yaw around the world Z axis; pitch clamped to +/-89 deg.
     ///
     /// The up vector always stays vertical : the camera cannot roll or go
     /// upside-down. Preferred by users who expect a fixed-up-axis orbit

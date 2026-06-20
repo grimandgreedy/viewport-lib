@@ -1446,7 +1446,7 @@ impl ViewportGpuResources {
     /// Compute per-vertex tangents using Gram-Schmidt orthogonalization with handedness.
     ///
     /// Returns a `Vec<[f32; 4]>` of length `positions.len()` where each element is
-    /// `[tx, ty, tz, w]` with `w = ±1.0` encoding bitangent handedness.
+    /// `[tx, ty, tz, w]` with `w = +/-1.0` encoding bitangent handedness.
     ///
     /// Requires triangulated indices (every 3 indices = one triangle).
     /// If any triangle is degenerate (zero-area or zero UV area), its contribution is skipped.
@@ -1462,8 +1462,8 @@ impl ViewportGpuResources {
         // Accumulate sdir/tdir contributions per vertex. Sequential.
         //
         // **Do not** use rayon parallel iterators in this function. This
-        // routine is already invoked from a rayon worker — every mesh
-        // upload runs `prep_mesh_data → compute_tangents` inside a
+        // routine is already invoked from a rayon worker : every mesh
+        // upload runs `prep_mesh_data -> compute_tangents` inside a
         // `submit_cpu` job (see `upload_jobs::Runner::submit_cpu`).
         // Adding intra-mesh parallelism causes nested rayon work:
         // a worker enters `par_chunks(3).fold(...)`, parks at a join,
@@ -1475,15 +1475,15 @@ impl ViewportGpuResources {
         //
         // The pathology was observed on the Leartes Roman Street pack
         // loaded by `drake-demo-aaa --example romanstreet_district`:
-        // hero statues 16–27 MB FBX, ~500 k tri each, ~3 000
+        // hero statues 16-27 MB FBX, ~500 k tri each, ~3 000
         // simultaneous mesh-prep jobs. The stack-overflow backtrace
         // showed `compute_tangents +432` (the Gram-Schmidt collect) and
         // `compute_tangents +184` (the par_chunks fold) interleaved at
-        // many stack levels — the signature of work-stealing while
+        // many stack levels : the signature of work-stealing while
         // suspended inside a parallel iter.
         //
         // The function is cache-friendly and runs at ~30 ns / triangle
-        // sequentially (≈ 15 ms for a 500 k-tri mesh). Per-mesh
+        // sequentially (~ 15 ms for a 500 k-tri mesh). Per-mesh
         // parallelism comes from the upload job pool, not from inside
         // this function.
         let mut tan1 = vec![[0.0f32; 3]; n];

@@ -1,4 +1,4 @@
-// ssao_blur.wgsl : simple 4×4 box blur for the SSAO result.
+// ssao_blur.wgsl : simple 4x4 box blur for the SSAO result.
 // Smooths the noisy SSAO output without requiring per-sample blurring.
 
 @group(0) @binding(0) var ssao_tex:  texture_2d<f32>;
@@ -25,7 +25,7 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = 1.0 / vec2<f32>(textureDimensions(ssao_tex));
     var result: f32 = 0.0;
-    // 4×4 box blur centered at [-1.5, +1.5] in each axis.
+    // 4x4 box blur centered at [-1.5, +1.5] in each axis.
     for (var x: i32 = -1; x <= 2; x = x + 1) {
         for (var y: i32 = -1; y <= 2; y = y + 1) {
             let off = vec2<f32>(f32(x), f32(y)) * texel;

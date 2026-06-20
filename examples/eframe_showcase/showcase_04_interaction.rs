@@ -281,8 +281,8 @@ pub(crate) fn controls_interaction(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.separator();
-    ui.label("Shortcuts: G move · R rotate · S scale");
-    ui.label("X / Y / Z : constrain axis  ·  Enter / click : confirm  ·  Esc : cancel");
+    ui.label("Shortcuts: G move | R rotate | S scale");
+    ui.label("X / Y / Z : constrain axis  |  Enter / click : confirm  |  Esc : cancel");
     ui.separator();
     ui.label("View presets:");
     egui::Grid::new("view_presets_grid")

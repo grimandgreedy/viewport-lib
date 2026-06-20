@@ -10,7 +10,7 @@ use super::ViewportGpuResources;
 /// Owned by the viewport slot; created or recreated whenever the render scale
 /// or surface size changes.
 pub(crate) struct DynResTarget {
-    /// Scaled colour texture (render_scale × surface_size).
+    /// Scaled colour texture (render_scale x surface_size).
     pub _colour_texture: wgpu::Texture,
     /// View of `colour_texture`.
     pub colour_view: wgpu::TextureView,

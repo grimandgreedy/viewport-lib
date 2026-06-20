@@ -120,12 +120,12 @@ const TET_FACES: [[usize; 3]; 4] = [
 //
 // Six quad faces.  Verified to produce outward normals (from-cell CCW):
 //
-//   bottom (-Y): [0,1,2,3]  : normal = (1,0,0)×(1,0,1) = (0,-1,0) ✓
-//   top    (+Y): [4,7,6,5]  : normal = (0,0,1)×(1,0,1) = (0,+1,0) ✓
-//   front  (-Z): [0,4,5,1]  : normal = (0,1,0)×(1,1,0) = (0,0,-1) ✓
-//   back   (+Z): [2,6,7,3]  : normal = (0,1,0)×(-1,1,0)= (0,0,+1) ✓
-//   left   (-X): [0,3,7,4]  : normal = (0,0,1)×(0,1,1) = (-1,0,0) ✓
-//   right  (+X): [1,5,6,2]  : normal = (0,1,0)×(0,1,1) = (+1,0,0) ✓
+//   bottom (-Y): [0,1,2,3]  : normal = (1,0,0)x(1,0,1) = (0,-1,0) ok
+//   top    (+Y): [4,7,6,5]  : normal = (0,0,1)x(1,0,1) = (0,+1,0) ok
+//   front  (-Z): [0,4,5,1]  : normal = (0,1,0)x(1,1,0) = (0,0,-1) ok
+//   back   (+Z): [2,6,7,3]  : normal = (0,1,0)x(-1,1,0)= (0,0,+1) ok
+//   left   (-X): [0,3,7,4]  : normal = (0,0,1)x(0,1,1) = (-1,0,0) ok
+//   right  (+X): [1,5,6,2]  : normal = (0,1,0)x(0,1,1) = (+1,0,0) ok
 //
 // The geometric winding-correction step acts as a safety net in case any
 // cell is degenerate or oriented unexpectedly.

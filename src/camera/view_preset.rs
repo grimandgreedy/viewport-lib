@@ -22,7 +22,7 @@ pub enum ViewPreset {
     Top,
     /// Bottom view : looking up along +Z from the -Z side, with Y forward.
     Bottom,
-    /// True isometric view at 45° yaw (around Z) and ~35.26° pitch.
+    /// True isometric view at 45 deg yaw (around Z) and ~35.26 deg pitch.
     Isometric,
 }
 
@@ -61,7 +61,7 @@ impl ViewPreset {
         use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
         // Front view basis: eye at +Y, viewport up = world Z.
         // Derived: orientation * Vec3::Z = Vec3::Y, orientation * Vec3::Y = Vec3::Z.
-        // This is a 180° rotation around the (0, 1, 1)/√2 axis.
+        // This is a 180 deg rotation around the (0, 1, 1)/sqrt2 axis.
         let frac_1_sqrt_2 = std::f32::consts::FRAC_1_SQRT_2;
         let front = glam::Quat::from_xyzw(0.0, frac_1_sqrt_2, frac_1_sqrt_2, 0.0);
         match self {
@@ -78,7 +78,7 @@ impl ViewPreset {
             // Eye at -Z, up = +Y.
             Self::Bottom => glam::Quat::from_rotation_y(PI),
             Self::Isometric => {
-                // True isometric: yaw 45° around Z, then arctan(1/√2) ≈ 35.264° pitch.
+                // True isometric: yaw 45 deg around Z, then arctan(1/sqrt2) ~ 35.264 deg pitch.
                 // The negative pitch keeps the eye on the +Z side so the default
                 // isometric view sits above the XY plane in this Z-up world.
                 let iso_pitch = (1.0_f32 / 2.0_f32.sqrt()).atan();
@@ -145,11 +145,11 @@ mod tests {
         for (a, b) in &pairs {
             let qa = a.orientation();
             let qb = b.orientation();
-            // The angle between opposite views should be ~180° = π radians.
+            // The angle between opposite views should be ~180 deg = pi radians.
             let angle = qa.angle_between(qb);
             assert!(
                 (angle - std::f32::consts::PI).abs() < 0.01,
-                "{:?}/{:?}: angle = {angle:.4}, expected π",
+                "{:?}/{:?}: angle = {angle:.4}, expected pi",
                 a,
                 b
             );

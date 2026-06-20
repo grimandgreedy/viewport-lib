@@ -36,7 +36,7 @@ pub enum Projection {
 /// maps camera-space axes to world-space: eye = center + orientation * (Z * distance).
 /// Pan translates the center in camera-space. Zoom adjusts the distance.
 ///
-/// Using a quaternion avoids gimbal lock and allows full 360° orbit in any direction.
+/// Using a quaternion avoids gimbal lock and allows full 360 deg orbit in any direction.
 /// All matrices are computed right-handed (wgpu NDC convention).
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -70,8 +70,8 @@ impl Default for Camera {
             projection: Projection::Perspective,
             center: glam::Vec3::ZERO,
             distance: 5.0,
-            // Default: eye slightly above the x-y plane (Z-up world), ~27° elevation.
-            // from_rotation_x(1.1) ≈ 63° from top = 27° above horizontal.
+            // Default: eye slightly above the x-y plane (Z-up world), ~27 deg elevation.
+            // from_rotation_x(1.1) ~ 63 deg from top = 27 deg above horizontal.
             orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
             fov_y: std::f32::consts::FRAC_PI_4,
             aspect: 1.5,
@@ -322,7 +322,7 @@ impl Camera {
     /// Compute `(center, distance)` that would frame a bounding sphere in view,
     /// preserving the current orientation.
     ///
-    /// A 1.2× padding factor is applied so the object doesn't touch the edges.
+    /// A 1.2x padding factor is applied so the object doesn't touch the edges.
     pub fn fit_sphere(&self, center: glam::Vec3, radius: f32) -> (glam::Vec3, f32) {
         let distance = match self.projection {
             Projection::Perspective => radius / (self.fov_y / 2.0).tan() * 1.2,
@@ -451,7 +451,7 @@ mod tests {
         let (center, dist) = cam.fit_aabb(&aabb);
         assert!(center.length() < 1e-5, "center should be origin");
         assert!(dist > 0.0, "distance should be positive");
-        // Half-diagonal of unit cube = sqrt(0.75) ≈ 0.866
+        // Half-diagonal of unit cube = sqrt(0.75) ~ 0.866
         let radius = aabb.half_extents().length();
         let expected = radius / (cam.fov_y / 2.0).tan() * 1.2;
         assert!(

@@ -23,7 +23,7 @@
 //!     ..IsolineItem::default()
 //! };
 //! let (positions, strip_lengths) = extract_isolines(&item);
-//! // feed into PolylineItem …
+//! // feed into PolylineItem ...
 //! ```
 
 /// Describes a contour-line extraction request for one mesh / scalar field.
@@ -231,7 +231,7 @@ fn edge_crossing(pa: glam::Vec3, pb: glam::Vec3, sa: f32, sb: f32, iso: f32) -> 
     Some(pa + t * (pb - pa))
 }
 
-/// Apply a 4×4 model matrix to a 3-D point (homogeneous w=1, divide by w).
+/// Apply a 4x4 model matrix to a 3-D point (homogeneous w=1, divide by w).
 #[inline]
 fn transform_point(m: glam::Mat4, p: glam::Vec3) -> [f32; 3] {
     m.transform_point3(p).to_array()

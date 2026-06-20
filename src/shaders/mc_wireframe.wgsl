@@ -1,4 +1,4 @@
-// mc_wireframe.wgsl - Phase 17 GPU marching cubes wireframe overlay.
+// mc_wireframe.wgsl - GPU marching cubes wireframe overlay.
 //
 // Draws the triangle edges of the MC surface output procedurally from the vertex
 // storage buffer.  No vertex buffer is bound; positions are fetched via vertex_index.

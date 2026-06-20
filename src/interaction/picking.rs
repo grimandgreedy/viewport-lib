@@ -344,7 +344,7 @@ pub struct ProbeBinding<'a> {
 
 /// Compute barycentric coordinates of point `p` on the triangle `(a, b, c)`.
 ///
-/// Returns `(u, v, w)` where `p ≈ u*a + v*b + w*c` and `u + v + w ≈ 1`.
+/// Returns `(u, v, w)` where `p ~ u*a + v*b + w*c` and `u + v + w ~ 1`.
 /// Uses the robust area-ratio method (Cramer's rule on the edge vectors).
 fn barycentric(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: glam::Vec3) -> (f32, f32, f32) {
     let v0 = b - a;
@@ -585,8 +585,8 @@ impl RectPickResult {
 /// * `scene_items` : visible scene render items for this frame
 /// * `mesh_lookup` : CPU-side mesh data keyed by `SceneRenderItem::mesh_index`
 /// * `point_clouds` : point cloud items for this frame
-/// * `view_proj` : combined view × projection matrix
-/// * `viewport_size` : viewport width × height in pixels
+/// * `view_proj` : combined view x projection matrix
+/// * `viewport_size` : viewport width x height in pixels
 pub fn pick_rect(
     rect_min: glam::Vec2,
     rect_max: glam::Vec2,
@@ -1048,12 +1048,12 @@ pub fn voxel_world_aabb(
 /// `None` when no point is within that radius.
 ///
 /// # Arguments
-/// * `click_pos`     – screen-space click position in viewport pixels (top-left origin)
-/// * `id`            – object identifier to embed in the returned [`PickHit`]
-/// * `item`          – the point cloud item to search
-/// * `view_proj`     – combined view × projection matrix
-/// * `viewport_size` – viewport width × height in pixels
-/// * `radius_px`     – maximum screen-space distance in pixels to accept as a hit
+/// * `click_pos`     - screen-space click position in viewport pixels (top-left origin)
+/// * `id`            - object identifier to embed in the returned [`PickHit`]
+/// * `item`          - the point cloud item to search
+/// * `view_proj`     - combined view x projection matrix
+/// * `viewport_size` - viewport width x height in pixels
+/// * `radius_px`     - maximum screen-space distance in pixels to accept as a hit
 pub fn pick_point_cloud_cpu(
     click_pos: glam::Vec2,
     id: u64,
@@ -2151,7 +2151,7 @@ mod tests {
         assert!((v - 1.0).abs() < 1e-5, "v={v}");
         assert!(w.abs() < 1e-5, "w={w}");
 
-        // At centroid: u=v=w≈1/3.
+        // At centroid: u=v=w~1/3.
         let centroid = (a + b + c) / 3.0;
         let (u, v, w) = super::barycentric(centroid, a, b, c);
         assert!((u - 1.0 / 3.0).abs() < 1e-4, "u={u}");
@@ -2217,7 +2217,7 @@ mod tests {
         let iz = flat / (nx * ny);
         assert_eq!((ix, iy, iz), (1, 2, 1), "expected top-centre voxel");
 
-        // Entry point should be on the top bbox face (y≈3).
+        // Entry point should be on the top bbox face (y~3).
         assert!(hit.world_pos.y > 2.9, "world_pos.y={}", hit.world_pos.y);
 
         // Normal should point upward (ray entered through the +y face).

@@ -52,7 +52,7 @@ pub struct MaskTargetDesc {
     /// Depth attachment. The mask pass uses the scene depth buffer for
     /// correct occlusion, so the format matches the scene depth.
     pub depth_format: wgpu::TextureFormat,
-    /// MSAA sample count. Mask runs at sample count 1 (the mask is a 1×
+    /// MSAA sample count. Mask runs at sample count 1 (the mask is a 1x
     /// auxiliary target).
     pub sample_count: u32,
 }

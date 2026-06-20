@@ -45,7 +45,7 @@ use rayon::prelude::*;
 /// Configuration for sphere-marching an implicit surface.
 ///
 /// Resolution, step quality, and appearance can all be tuned here. Reducing
-/// `width`/`height` is the most effective way to improve performance — halving
+/// `width`/`height` is the most effective way to improve performance : halving
 /// both dimensions cuts render time to ~1/4 while still producing a readable
 /// result.
 #[derive(Clone, Debug)]
@@ -130,7 +130,7 @@ where
 /// The closure `sdf_colour` returns `(sdf_value, rgba8_colour)`. The SDF value
 /// drives the ray-march; the colour is modulated by the same diffuse + ambient
 /// shading as [`march_implicit_surface`]. The colour closure is also called
-/// (6 times per hit point) for normal estimation — only the SDF value is
+/// (6 times per hit point) for normal estimation : only the SDF value is
 /// used in those calls.
 ///
 /// The returned item has `depth: Some(depths)`. Background pixels carry depth
@@ -324,7 +324,7 @@ mod tests {
             surface_colour: [255, 0, 0, 255],
             ..Default::default()
         };
-        // Unit sphere at origin — camera is at z=6, looking at origin.
+        // Unit sphere at origin : camera is at z=6, looking at origin.
         let img = march_implicit_surface(&cam, &opts, |p| p.length() - 1.0);
 
         assert_eq!(img.pixels.len(), 64 * 64);
@@ -371,7 +371,7 @@ mod tests {
             width: 8,
             height: 8,
             max_steps: 64,
-            max_distance: 0.01, // effectively no march — all rays miss
+            max_distance: 0.01, // effectively no march : all rays miss
             background: [0, 0, 0, 0],
             ..Default::default()
         };

@@ -75,7 +75,7 @@ impl Default for LightSource {
         Self {
             kind: LightKind::Directional {
                 // Surface-to-light direction. Z is up in the default coordinate system.
-                // ~65° elevation: mostly overhead, slight front-right bias.
+                // ~65 deg elevation: mostly overhead, slight front-right bias.
                 direction: [0.4, 0.3, 1.5],
             },
             colour: [1.0, 1.0, 1.0],

@@ -17,7 +17,7 @@ pub fn compute_vertex_tangent_frames(normals: &[[f32; 3]]) -> Vec<([f32; 3], [f3
 
 /// Reconstruct `(tangent, bitangent)` pairs from explicit tangent data.
 ///
-/// `tangents[i]` is `[tx, ty, tz, w]` where `w = ±1` is the bitangent handedness.
+/// `tangents[i]` is `[tx, ty, tz, w]` where `w = +/-1` is the bitangent handedness.
 /// Bitangent is reconstructed as `cross(normal, tangent.xyz) * w`.
 ///
 /// `normals` and `tangents` must have the same length.

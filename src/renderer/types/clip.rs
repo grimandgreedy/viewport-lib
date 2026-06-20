@@ -30,7 +30,7 @@ pub enum ClipShape {
         center: [f32; 3],
         /// Half-extents along each local axis.
         half_extents: [f32; 3],
-        /// 3×3 rotation matrix columns.
+        /// 3x3 rotation matrix columns.
         orientation: [[f32; 3]; 3],
     },
     /// Sphere : fragments inside the sphere are kept.

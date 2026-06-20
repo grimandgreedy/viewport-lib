@@ -480,9 +480,9 @@ pub struct ViewportRenderer {
     /// Timestamp query set with 2 entries (scene-pass begin + end).
     /// `None` when `TIMESTAMP_QUERY` is unavailable or not yet initialized.
     ts_query_set: Option<wgpu::QuerySet>,
-    /// Resolve buffer: 2 × u64, GPU-only (`QUERY_RESOLVE | COPY_SRC`).
+    /// Resolve buffer: 2 x u64, GPU-only (`QUERY_RESOLVE | COPY_SRC`).
     ts_resolve_buf: Option<wgpu::Buffer>,
-    /// Staging buffer: 2 × u64, CPU-readable (`COPY_DST | MAP_READ`).
+    /// Staging buffer: 2 x u64, CPU-readable (`COPY_DST | MAP_READ`).
     ts_staging_buf: Option<wgpu::Buffer>,
     /// Nanoseconds per GPU timestamp tick, from `queue.get_timestamp_period()`.
     ts_period: f32,
@@ -490,7 +490,7 @@ pub struct ViewportRenderer {
     ts_needs_readback: bool,
 
     // --- Indirect-args readback (GPU-driven culling visible instance count) ---
-    /// CPU-readable staging buffer for `indirect_args_buf` (batch_count × 20 bytes).
+    /// CPU-readable staging buffer for `indirect_args_buf` (batch_count x 20 bytes).
     /// Grown lazily; never shrunk.
     indirect_readback_buf: Option<wgpu::Buffer>,
     /// Number of batches whose data was copied into `indirect_readback_buf` last frame.
@@ -2122,7 +2122,7 @@ impl ViewportRenderer {
         }
     }
 
-    /// Ensure per-viewport HDR state exists for `viewport_index` at dimensions `w`×`h`.
+    /// Ensure per-viewport HDR state exists for `viewport_index` at dimensions `w`x`h`.
     ///
     /// Calls `ensure_hdr_shared` once to initialise shared pipelines/BGLs/samplers, then
     /// lazily creates or resizes the `ViewportHdrState` inside the slot. Idempotent: if the

@@ -4623,7 +4623,7 @@ impl ViewportRenderer {
         );
         if is_bgra {
             for pixel in pixels.chunks_exact_mut(4) {
-                pixel.swap(0, 2); // B ↔ R
+                pixel.swap(0, 2); // B <-> R
             }
         }
 

@@ -1,11 +1,11 @@
-// SSAA resolve pass : box-filter downsample from an N× supersampled texture to native resolution.
+// SSAA resolve pass : box-filter downsample from an Nx supersampled texture to native resolution.
 //
-// Group 0, binding 0: ssaa_texture (Rgba16Float, w*factor × h*factor)
+// Group 0, binding 0: ssaa_texture (Rgba16Float, w*factor x h*factor)
 // Group 0, binding 1: sampler (nearest : we do the averaging manually)
 // Group 0, binding 2: uniform { factor: u32, _pad: [u32;3] }
 //
 // The vertex shader emits a fullscreen triangle. The fragment shader reads
-// factor² texels per output pixel and averages them (box filter).
+// factor^2 texels per output pixel and averages them (box filter).
 
 struct SsaaUniform {
     factor: u32,
@@ -40,7 +40,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let dims = vec2<u32>(textureDimensions(ssaa_texture));
     // Output pixel in the native-res target.
     let out_px = vec2<u32>(in.pos.xy);
-    // Accumulate factor² SSAA texels.
+    // Accumulate factor^2 SSAA texels.
     var sum = vec4<f32>(0.0);
     for (var dy = 0u; dy < factor; dy = dy + 1u) {
         for (var dx = 0u; dx < factor; dx = dx + 1u) {

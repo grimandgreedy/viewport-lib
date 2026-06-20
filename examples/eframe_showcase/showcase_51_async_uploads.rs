@@ -13,7 +13,7 @@
 //! - Skin weights: a sphere on the left is marked skinnable.
 //!
 //! Other asset buttons (volume, sprite set, gaussian splat, overlay
-//! texture) are greyed out and land in J5.
+//! texture) are greyed out until their uploads are wired up.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -2346,7 +2346,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
 
     ui.add_space(6.0);
     ui.separator();
-    // J5 is done — all formerly greyed-out buttons are now live above.
+    // All formerly greyed-out buttons are now live above.
 
     if !(clicked_env
         || clicked_mesh

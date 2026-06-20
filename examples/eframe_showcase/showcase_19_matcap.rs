@@ -61,8 +61,8 @@ impl App {
     /// Build Showcase 19: Matcap Shading demo.
     ///
     /// Layout:
-    ///   Top row    (z = +1.5): Clay · Wax · Candy · Flat           : blendable
-    ///   Bottom row (z = -1.5): Ceramic · Jade · Mud · Normal       : static
+    ///   Top row    (z = +1.5): Clay | Wax | Candy | Flat           : blendable
+    ///   Bottom row (z = -1.5): Ceramic | Jade | Mud | Normal       : static
     ///   Center-front (y = -3.5): Custom procedural matcap upload demo
     pub(crate) fn build_matcap_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.matcap_state.scene = Scene::new();
@@ -173,8 +173,8 @@ impl App {
 
 pub(crate) fn controls_matcap(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Frame) {
     ui.label("Eight built-in matcap presets arranged in two rows:");
-    ui.label("  North (z+): Clay · Wax · Candy · Flat  (blendable)");
-    ui.label("  South (z-): Ceramic · Jade · Mud · Normal  (static)");
+    ui.label("  North (z+): Clay | Wax | Candy | Flat  (blendable)");
+    ui.label("  South (z-): Ceramic | Jade | Mud | Normal  (static)");
     ui.label("  Front (y-): custom procedural upload");
 
     ui.separator();
@@ -200,7 +200,7 @@ pub(crate) fn controls_matcap(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
     let hue_changed = ui
         .add(
             egui::Slider::new(&mut app.matcap_state.custom_hue, 0.0..=360.0)
-                .suffix("°")
+                .suffix(" deg")
                 .step_by(1.0),
         )
         .changed();
@@ -220,7 +220,7 @@ pub(crate) fn controls_matcap(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
 // Custom matcap generator
 // ---------------------------------------------------------------------------
 
-/// Generate a `size×size` RGBA matcap image with a metallic look at `hue_deg` (0..360).
+/// Generate a `sizexsize` RGBA matcap image with a metallic look at `hue_deg` (0..360).
 ///
 /// Pixels outside the unit circle are transparent so the object silhouette is preserved.
 pub(crate) fn generate_custom_matcap(size: usize, hue_deg: f32) -> Vec<u8> {

@@ -14,7 +14,7 @@ pub enum ButtonState {
 /// Scroll delta units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScrollUnits {
-    /// Delta in logical line units (one notch ≈ 1.0).
+    /// Delta in logical line units (one notch ~ 1.0).
     Lines,
     /// Delta in physical pixels.
     Pixels,

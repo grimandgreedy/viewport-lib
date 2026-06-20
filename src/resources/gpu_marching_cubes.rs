@@ -170,7 +170,7 @@ fn case_triangle_count_table() -> [u32; 256] {
     out
 }
 
-/// Flat TRI_TABLE for the GPU: 256 × 16 i32 values.
+/// Flat TRI_TABLE for the GPU: 256 x 16 i32 values.
 fn case_table_flat() -> [i32; 256 * 16] {
     let mut out = [-1i32; 256 * 16];
     for (i, row) in TRI_TABLE.iter().enumerate() {
@@ -551,7 +551,7 @@ pub(crate) fn build_mc_volume_gpu_data(
         let max_limit = max_binding.min(max_buf);
 
         // Worst-case vertex buffer bytes per Z-cell-layer:
-        // (nx-1)*(ny-1) cells × 5 triangles × 3 vertices × 24 bytes = cells_xy × 360.
+        // (nx-1)*(ny-1) cells x 5 triangles x 3 vertices x 24 bytes = cells_xy x 360.
         // Compute how many Z-cell layers fit within the effective limit.
         let cells_xy = (nx - 1) as u64 * (ny - 1) as u64;
         let max_cells_per_slab = max_limit / (15 * 24);
@@ -587,7 +587,7 @@ pub(crate) fn build_mc_volume_gpu_data(
             let slab_block_count = slab_cell_count.div_ceil(256);
             let slab_cell_bytes = (slab_cell_count as u64) * 4;
             let slab_block_bytes = (slab_block_count as u64) * 4;
-            // At most 15 vertices per cell (5 triangles × 3 vertices) × 24 bytes each.
+            // At most 15 vertices per cell (5 triangles x 3 vertices) x 24 bytes each.
             let slab_vertex_bytes = (slab_cell_count as u64) * 15 * 24;
 
             // Scalar data is x-fastest: index = x + y*nx + z*nx*ny.

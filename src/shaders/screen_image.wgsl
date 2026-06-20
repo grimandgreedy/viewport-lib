@@ -1,4 +1,4 @@
-// Screen-space image overlay shader (Phase 10B).
+// Screen-space image overlay shader.
 //
 // Renders a textured quad anchored to a viewport corner or center.
 // No vertex buffer : corners are generated from vertex_index (0-5).

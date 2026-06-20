@@ -820,7 +820,7 @@ mod tests {
         let flipped_pct = flipped as f32 / total as f32 * 100.0;
         assert!(
             flipped_pct < 5.0,
-            "{}/{} triangles ({:.1}%) have geometric normal opposing the gradient — winding is wrong",
+            "{}/{} triangles ({:.1}%) have geometric normal opposing the gradient : winding is wrong",
             flipped,
             total,
             flipped_pct

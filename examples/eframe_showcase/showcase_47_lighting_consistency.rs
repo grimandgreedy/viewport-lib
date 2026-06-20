@@ -13,8 +13,7 @@
 //!   - Global scene lighting: light direction, intensity, hemisphere ambient
 //!   - Broadcast `ItemSettings`: hidden, unlit, opacity, wireframe
 //!
-//! The point is to demonstrate the consistency guarantees in
-//! `docs/plans/lighting-shading-consistency-plan.md`: flipping a single
+//! The point is to demonstrate the consistency guarantees: flipping a single
 //! broadcast toggle produces a coherent visual response across every item type
 //! that supports it, and a documented no-op on types that don't.
 //!

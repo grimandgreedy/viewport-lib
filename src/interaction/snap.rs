@@ -8,7 +8,7 @@
 pub struct SnapConfig {
     /// Translation snap increment in world units (e.g. 0.25, 0.5, 1.0).
     pub translation: Option<f32>,
-    /// Rotation snap increment in radians (e.g. `PI / 12` for 15°).
+    /// Rotation snap increment in radians (e.g. `PI / 12` for 15 deg).
     pub rotation: Option<f32>,
     /// Scale snap increment as a fraction (e.g. 0.1 for 10% steps).
     pub scale: Option<f32>,
@@ -101,18 +101,18 @@ mod tests {
         let deg40 = 40.0_f32.to_radians();
         let snapped_20 = snap_angle(deg20, deg15);
         let snapped_40 = snap_angle(deg40, deg15);
-        // 20° -> 15° (1 × 15)
+        // 20 deg -> 15 deg (1 x 15)
         assert!(
             (snapped_20 - deg15).abs() < 1e-5,
-            "20° snapped to {}, expected {}",
+            "20 deg snapped to {}, expected {}",
             snapped_20.to_degrees(),
             15.0
         );
-        // 40° -> 45° (3 × 15)
+        // 40 deg -> 45 deg (3 x 15)
         let deg45 = 45.0_f32.to_radians();
         assert!(
             (snapped_40 - deg45).abs() < 1e-5,
-            "40° snapped to {}, expected {}",
+            "40 deg snapped to {}, expected {}",
             snapped_40.to_degrees(),
             45.0
         );

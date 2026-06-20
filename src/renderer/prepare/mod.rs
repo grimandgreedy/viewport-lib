@@ -540,7 +540,8 @@ impl ViewportRenderer {
 
         // -------------------------------------------------------------------
         // Compute CSM cascade matrices for lights[0] (directional).
-        // Uses frame.camera : see multi-viewport-plan.md § shadow strategy.
+        // Cascades are fit to frame.camera, not to any per-viewport camera, so
+        // every split viewport shares one shadow atlas.
         // -------------------------------------------------------------------
         let cascade_count = lighting.shadow_cascade_count.clamp(1, 4) as usize;
         let atlas_res = lighting.shadow_atlas_resolution.max(64);

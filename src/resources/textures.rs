@@ -935,7 +935,7 @@ impl ViewportGpuResources {
     // Matcap texture API
     // -----------------------------------------------------------------------
 
-    /// Upload a 256×256 RGBA matcap texture and return its `MatcapId`.
+    /// Upload a 256x256 RGBA matcap texture and return its `MatcapId`.
     ///
     /// `rgba_data` must be exactly `256 * 256 * 4 = 262_144` bytes.
     /// Set `blendable = true` for matcaps whose alpha channel tints the base
@@ -1014,7 +1014,7 @@ impl ViewportGpuResources {
         self.matcap_views.push(view);
 
         // Lazily initialise the fallback matcap view to binding 7 of the
-        // first uploaded texture (a plain white 1×1 is fine as fallback).
+        // first uploaded texture (a plain white 1x1 is fine as fallback).
         if self.fallback_matcap_view.is_none() {
             self.fallback_matcap_view = Some(
                 self.fallback_texture

@@ -192,7 +192,7 @@ pub(crate) fn build_nine_slice_texture() -> (u32, u32, Vec<u8>) {
 }
 
 /// Evaluate the row-5 demo's closed-Bezier "infinity" path at parameter
-/// `t ∈ [0, 1]`, centred on `(cx, cy)`. Four cubic Bezier segments stitched
+/// `t in [0, 1]`, centred on `(cx, cy)`. Four cubic Bezier segments stitched
 /// into a stylised figure-eight: the curve sweeps out, crosses through the
 /// centre, sweeps to the other side, and comes back. Used by both the
 /// `PathTrack` closure driving the moving dot and by the polyline trace
@@ -1086,7 +1086,7 @@ pub(crate) fn build_overlay_frame(
             });
             x5 += row5_h + gap;
 
-            // Multi-channel animation demos (Phase 18). Each shape isolates
+            // Multi-channel animation demos. Each shape isolates
             // one channel of OverlayAnimations so the system is obvious:
             // position, size, fill, rotation.
             let base_x = x5;
@@ -1200,7 +1200,7 @@ pub(crate) fn build_overlay_frame(
             });
             x5 += row5_h + gap;
 
-            // Phase 27 + 28: a small circle following a closed cubic Bezier
+            // A small circle following a closed cubic Bezier
             // figure-eight, with the path itself traced underneath using
             // the new OverlayPolylineItem primitive.
             {

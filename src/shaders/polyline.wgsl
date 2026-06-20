@@ -12,7 +12,7 @@
 //
 // Group 0: Camera uniform + ClipPlanes + ClipVolume (matching camera_bgl layout).
 // Group 1: PolylineUniform (line_width, scalar mapping, viewport dims, colour)
-//          + LUT texture (256×1 Rgba8Unorm)
+//          + LUT texture (256x1 Rgba8Unorm)
 //          + LUT sampler.
 //
 // Instance input (per segment, VertexStepMode::Instance, 112 bytes):
@@ -165,7 +165,7 @@ fn miter_extrusion(dir_in: vec2<f32>, dir_out: vec2<f32>) -> vec2<f32> {
     let perp_in  = vec2<f32>(-dir_in.y,  dir_in.x);
     let perp_out = vec2<f32>(-dir_out.y, dir_out.x);
     let bisect   = normalize(perp_in + perp_out);
-    // dot(bisect, perp_out) = cos(half_angle).  Clamp to 0.25 to cap miter at 4× width.
+    // dot(bisect, perp_out) = cos(half_angle).  Clamp to 0.25 to cap miter at 4x width.
     let cos_half = max(dot(bisect, perp_out), 0.25f);
     return bisect / cos_half;
 }

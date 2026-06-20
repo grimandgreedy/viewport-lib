@@ -412,9 +412,9 @@ fn integrate_streamlines(seed_count: usize, step_size: f32) -> (Vec<Vec<[f32; 3]
 /// Analytic velocity field: a spiraling vortex with a gentle upward drift.
 ///
 /// The field is:
-///   vx = -y / (r² + ε)  (tangential)
-///   vy =  x / (r² + ε)
-///   vz =  0.3 * exp(-r² / 4)  (upwelling near origin)
+///   vx = -y / (r^2 + epsilon)  (tangential)
+///   vy =  x / (r^2 + epsilon)
+///   vz =  0.3 * exp(-r^2 / 4)  (upwelling near origin)
 fn velocity(p: [f32; 3]) -> [f32; 3] {
     let x = p[0];
     let y = p[1];

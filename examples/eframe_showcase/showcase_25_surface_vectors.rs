@@ -412,7 +412,7 @@ fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
         // Poloidal direction: tangent to the circle of major radius at this point.
         // For a torus with axis Z and major circle in XY:
         //   radial direction = (cx, cy, 0) / major_r  (from tube centre projected to XY)
-        //   poloidal tangent = (-ry, rx, 0)             (90° rotation of radial in XY)
+        //   poloidal tangent = (-ry, rx, 0)             (90 deg rotation of radial in XY)
         let tube_center_xy = Vec3::new(centroid.x, centroid.y, 0.0);
         let poloidal = if tube_center_xy.length_squared() > 1e-6 {
             let radial = tube_center_xy.normalize() * major_r;

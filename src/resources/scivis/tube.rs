@@ -392,7 +392,7 @@ impl ViewportGpuResources {
                     if sin_a > 1e-6 {
                         let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
                         let ax = axis / sin_a;
-                        // Rodrigues: u' = u cos(a) + (ax×u) sin(a) + ax(ax·u)(1−cos(a))
+                        // Rodrigues: u' = u cos(a) + cross(ax, u) sin(a) + ax dot(ax, u) (1 - cos(a))
                         u = u * cos_a + ax.cross(u) * sin_a + ax * ax.dot(u) * (1.0 - cos_a);
                         u = u.normalize_or_zero();
                     }
@@ -419,7 +419,7 @@ impl ViewportGpuResources {
 
                 // Emit quad strip between ring k-1 and ring k.
                 // Winding: outward-facing CCW (right-hand rule gives outward normal).
-                // Verified: T1=(r0+s, r0+s1, r1+s) has normal·Y > 0 for s=0 on Z-axis tube.
+                // Verified: T1=(r0+s, r0+s1, r1+s) has dot(normal, Y) > 0 for s=0 on Z-axis tube.
                 if k > 0 {
                     let r0 = ring_base + ((k - 1) * SIDES) as u32;
                     let r1 = ring_base + (k * SIDES) as u32;

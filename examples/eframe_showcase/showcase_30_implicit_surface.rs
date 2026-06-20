@@ -7,7 +7,7 @@
 //!   single organic fused shape. Colour is blended between the three spheres.
 //! - **Separate spheres** : sphere-marching with plain min(), so the three
 //!   spheres stay distinct with sharp junctions.
-//! - **Marching cubes** : the same smin SDF sampled onto a 64³ grid and
+//! - **Marching cubes** : the same smin SDF sampled onto a 64^3 grid and
 //!   triangulated. Renders as a normal mesh; shows the tessellation faceting
 //!   that sphere-marching avoids.
 //!
@@ -127,7 +127,7 @@ impl App {
             .upload_mesh_data(&self.device, &sphere)
             .expect("implicit showcase sphere mesh");
 
-        // Marching cubes: sample the blob smin SDF on a 64³ grid over [-3.5, 3.5]³.
+        // Marching cubes: sample the blob smin SDF on a 64^3 grid over [-3.5, 3.5]^3.
         let mc_mesh = {
             let n: u32 = 64;
             let origin = [-3.5_f32; 3];
@@ -162,7 +162,7 @@ impl App {
             self.is_state.mc_mesh_id = Some(id);
         }
 
-        // GPU marching cubes: upload a 64³ gyroid scalar field for live isovalue scrubbing.
+        // GPU marching cubes: upload a 64^3 gyroid scalar field for live isovalue scrubbing.
         {
             let n: u32 = 64;
             let origin = [-4.0_f32; 3];
@@ -506,7 +506,7 @@ impl App {
 // SDF helpers
 // ---------------------------------------------------------------------------
 
-/// Smooth minimum (inigo quilez polynomial blend).
+/// Smooth minimum using a polynomial blend.
 #[inline]
 fn smin(a: f32, b: f32, k: f32) -> f32 {
     let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
