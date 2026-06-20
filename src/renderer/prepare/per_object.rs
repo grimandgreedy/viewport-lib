@@ -121,41 +121,37 @@ impl ViewportRenderer {
                 } else {
                     (0u32, 0.0, 1.0)
                 };
+                let cm = common_material(item);
                 let obj_uniform = ObjectUniform {
-                    model: item.model,
-                    colour: [
-                        m.base_colour[0],
-                        m.base_colour[1],
-                        m.base_colour[2],
-                        item.settings.opacity,
-                    ],
-                    selected: if item.settings.selected { 1 } else { 0 },
+                    model: cm.model,
+                    colour: cm.colour,
+                    selected: cm.selected,
                     wireframe: if frame.viewport.wireframe_mode || item.settings.wireframe {
                         1
                     } else {
                         0
                     },
-                    ambient: m.ambient,
-                    diffuse: m.diffuse,
-                    specular: m.specular,
-                    shininess: m.shininess,
-                    has_texture: if m.texture_id.is_some() { 1 } else { 0 },
-                    use_pbr: if m.is_pbr() { 1 } else { 0 },
-                    metallic: m.metallic,
-                    roughness: m.roughness,
-                    has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
-                    has_ao_map: if m.ao_map_id.is_some() { 1 } else { 0 },
+                    ambient: cm.ambient,
+                    diffuse: cm.diffuse,
+                    specular: cm.specular,
+                    shininess: cm.shininess,
+                    has_texture: cm.has_texture,
+                    use_pbr: cm.use_pbr,
+                    metallic: cm.metallic,
+                    roughness: cm.roughness,
+                    has_normal_map: cm.has_normal_map,
+                    has_ao_map: cm.has_ao_map,
                     has_attribute: has_attr,
                     scalar_min: s_min,
                     scalar_max: s_max,
-                    receive_shadows: if item.settings.receive_shadows { 1 } else { 0 },
+                    receive_shadows: cm.receive_shadows,
                     nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
                     use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
                     use_matcap: if m.matcap_id().is_some() { 1 } else { 0 },
                     matcap_blendable: m
                         .matcap_id()
                         .map_or(0, |id| if id.blendable { 1 } else { 0 }),
-                    unlit: if item.settings.unlit { 1 } else { 0 },
+                    unlit: cm.unlit,
                     use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
                         a.kind == crate::resources::AttributeKind::FaceColour
                     })),
@@ -212,7 +208,7 @@ impl ViewportRenderer {
                         }
                     },
                     emissive: m.emissive,
-                    use_flat: if m.is_flat() { 1 } else { 0 },
+                    use_flat: cm.use_flat,
                     alpha_mode: match m.alpha_mode {
                         crate::scene::material::AlphaMode::Opaque => 0,
                         crate::scene::material::AlphaMode::Mask(_) => 1,
@@ -232,10 +228,10 @@ impl ViewportRenderer {
                     } else {
                         0
                     },
-                    uv_transform: [m.uv_offset[0], m.uv_offset[1], m.uv_scale[0], m.uv_scale[1]],
+                    uv_transform: cm.uv_transform,
                     deform_flags: resources.deform.flag_bits(item.mesh_id),
                     _pad_after_deform: 0,
-                    ao_range: m.ao_range,
+                    ao_range: cm.ao_range,
                     metallic_range: m.metallic_range,
                     roughness_range: m.roughness_range,
                 };

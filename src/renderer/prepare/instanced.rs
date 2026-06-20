@@ -171,42 +171,28 @@ impl ViewportRenderer {
                         let mesh_index_count = batch_mesh.map(|m| m.index_count).unwrap_or(0);
 
                         for item in batch_items {
-                            let m = &item.material;
+                            let cm = common_material(item);
                             all_instances.push(InstanceData {
-                                model: item.model,
-                                colour: [
-                                    m.base_colour[0],
-                                    m.base_colour[1],
-                                    m.base_colour[2],
-                                    item.settings.opacity,
-                                ],
-                                selected: if item.settings.selected { 1 } else { 0 },
+                                model: cm.model,
+                                colour: cm.colour,
+                                selected: cm.selected,
                                 wireframe: 0, // always 0 : wireframe uses per-object pipeline
-                                ambient: m.ambient,
-                                diffuse: m.diffuse,
-                                specular: m.specular,
-                                shininess: m.shininess,
-                                has_texture: if m.texture_id.is_some() { 1 } else { 0 },
-                                use_pbr: if m.is_pbr() { 1 } else { 0 },
-                                metallic: m.metallic,
-                                roughness: m.roughness,
-                                has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
-                                has_ao_map: if m.ao_map_id.is_some() { 1 } else { 0 },
-                                unlit: if item.settings.unlit { 1 } else { 0 },
-                                receive_shadows: if item.settings.receive_shadows {
-                                    1
-                                } else {
-                                    0
-                                },
-                                use_flat: if m.is_flat() { 1 } else { 0 },
+                                ambient: cm.ambient,
+                                diffuse: cm.diffuse,
+                                specular: cm.specular,
+                                shininess: cm.shininess,
+                                has_texture: cm.has_texture,
+                                use_pbr: cm.use_pbr,
+                                metallic: cm.metallic,
+                                roughness: cm.roughness,
+                                has_normal_map: cm.has_normal_map,
+                                has_ao_map: cm.has_ao_map,
+                                unlit: cm.unlit,
+                                receive_shadows: cm.receive_shadows,
+                                use_flat: cm.use_flat,
                                 _pad_inst: 0,
-                                uv_transform: [
-                                    m.uv_offset[0],
-                                    m.uv_offset[1],
-                                    m.uv_scale[0],
-                                    m.uv_scale[1],
-                                ],
-                                ao_range: m.ao_range,
+                                uv_transform: cm.uv_transform,
+                                ao_range: cm.ao_range,
                                 _pad_ao_range: [0.0, 0.0],
                             });
                             if let Some(mesh) = batch_mesh {

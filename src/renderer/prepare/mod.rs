@@ -8,6 +8,7 @@ mod overlay_geometry;
 mod projection;
 mod instanced;
 mod lighting;
+mod mesh_material;
 mod per_object;
 mod shadow_pass;
 mod scene_uploads;
@@ -17,6 +18,7 @@ mod viewport_overlays;
 mod wireframe;
 
 use math::*;
+use mesh_material::*;
 use overlay_geometry::*;
 use projection::*;
 use wireframe::*;
