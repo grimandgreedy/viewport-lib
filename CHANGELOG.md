@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.18.3]
+### Improvements
+- Refactored and modularised the prepare and paint passes.
+
 ## [0.18.2]
 
 ### Features
