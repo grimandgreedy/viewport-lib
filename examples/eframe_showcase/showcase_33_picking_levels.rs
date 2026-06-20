@@ -1108,39 +1108,68 @@ impl App {
 
         match self.pl_state.level {
             PlPickLevel::Object => {
-                // Use box_select (object-level by position).
-                let objects: Vec<&dyn viewport_lib::traits::ViewportObject> = self
-                    .pl_state
-                    .scene
-                    .nodes()
-                    .map(|n| n as &dyn viewport_lib::traits::ViewportObject)
-                    .collect();
-                let hits =
-                    viewport_lib::picking::box_select(r_min, r_max, &objects, view_proj, vp_size);
-                for id in hits {
-                    self.pl_state.selection.add(id);
+                // Object-level: collect nodes whose origin projects into the rect.
+                for node in self.pl_state.scene.nodes() {
+                    if !viewport_lib::traits::ViewportObject::is_visible(node) {
+                        continue;
+                    }
+                    let id = viewport_lib::traits::ViewportObject::id(node);
+                    let pos = viewport_lib::traits::ViewportObject::position(node);
+                    let clip = view_proj * pos.extend(1.0);
+                    if clip.w <= 0.0 {
+                        continue;
+                    }
+                    let ndc = glam::Vec2::new(clip.x / clip.w, -clip.y / clip.w);
+                    let screen = (ndc * 0.5 + glam::Vec2::splat(0.5)) * vp_size;
+                    if screen.x >= r_min.x
+                        && screen.x <= r_max.x
+                        && screen.y >= r_min.y
+                        && screen.y <= r_max.y
+                    {
+                        self.pl_state.selection.add(id);
+                    }
                 }
             }
 
             PlPickLevel::Face => {
-                let mesh_lookup_usize = self.pl_pick_mesh_lookup_usize();
-                let scene_items = self
-                    .pl_state
-                    .scene
-                    .collect_render_items(&viewport_lib::Selection::new());
-                let result = viewport_lib::picking::pick_rect(
-                    r_min,
-                    r_max,
-                    &scene_items,
-                    &mesh_lookup_usize,
-                    &[],
-                    view_proj,
-                    vp_size,
-                );
-                for (obj_id, subs) in &result.hits {
-                    for &sub in subs {
-                        if sub.is_face() {
-                            self.pl_state.sub_selection.add(*obj_id, sub);
+                // Face-level: collect triangles whose centroid projects into the rect.
+                for node in self.pl_state.scene.nodes() {
+                    let node_id = viewport_lib::traits::ViewportObject::id(node);
+                    let model = viewport_lib::traits::ViewportObject::model_matrix(node);
+                    let Some(key) = viewport_lib::traits::ViewportObject::mesh_id(node) else {
+                        continue;
+                    };
+                    let Some((positions, indices)) = self.pl_state.mesh_lookup.get(&key) else {
+                        continue;
+                    };
+                    for (tri_idx, chunk) in indices.chunks(3).enumerate() {
+                        if chunk.len() < 3 {
+                            continue;
+                        }
+                        let [i0, i1, i2] =
+                            [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize];
+                        if i0 >= positions.len() || i1 >= positions.len() || i2 >= positions.len() {
+                            continue;
+                        }
+                        let centroid = (glam::Vec3::from(positions[i0])
+                            + glam::Vec3::from(positions[i1])
+                            + glam::Vec3::from(positions[i2]))
+                            / 3.0;
+                        let world = model.transform_point3(centroid);
+                        let clip = view_proj * world.extend(1.0);
+                        if clip.w <= 0.0 {
+                            continue;
+                        }
+                        let ndc = glam::Vec2::new(clip.x / clip.w, -clip.y / clip.w);
+                        let screen = (ndc * 0.5 + glam::Vec2::splat(0.5)) * vp_size;
+                        if screen.x >= r_min.x
+                            && screen.x <= r_max.x
+                            && screen.y >= r_min.y
+                            && screen.y <= r_max.y
+                        {
+                            self.pl_state
+                                .sub_selection
+                                .add(node_id, SubObjectRef::Face(tri_idx as u32));
                         }
                     }
                 }
@@ -1385,15 +1414,6 @@ impl App {
     /// Mesh lookup map for `pick_scene_nodes_cpu` (key = u64 mesh id).
     pub(crate) fn pl_pick_mesh_lookup(&self) -> HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> {
         self.pl_state.mesh_lookup.clone()
-    }
-
-    /// Mesh lookup map for `pick_rect` (key = usize mesh index).
-    fn pl_pick_mesh_lookup_usize(&self) -> HashMap<usize, (Vec<[f32; 3]>, Vec<u32>)> {
-        self.pl_state
-            .mesh_lookup
-            .iter()
-            .map(|(&k, v)| (k as usize, v.clone()))
-            .collect()
     }
 
     /// Display name for a node ID.

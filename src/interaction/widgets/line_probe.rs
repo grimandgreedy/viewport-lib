@@ -1,6 +1,6 @@
 //! Line probe widget: two draggable endpoint handles connected by a line segment.
 
-use crate::interaction::clip_plane::ray_plane_intersection;
+use crate::geometry::intersect::ray_plane_intersection;
 use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 
 use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point_dist};

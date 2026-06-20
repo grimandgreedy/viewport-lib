@@ -5,14 +5,13 @@
 use super::*;
 
 impl ViewportRenderer {
-
     pub(super) fn prepare_clip_uniforms(
         &mut self,
         queue: &wgpu::Queue,
         frame: &FrameData,
         viewport_fx: &ViewportEffects<'_>,
     ) {
-        let gp_cascade0_mat = self.last_cascade0_shadow_mat.to_cols_array_2d();
+        let gp_cascade0_mat = self.shadow.last_cascade0_shadow_mat.to_cols_array_2d();
 
         {
             let resources = &mut self.resources;

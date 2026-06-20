@@ -1,6 +1,6 @@
 //! Cylinder widget: two endpoint handles controlling the axis, plus a radius handle.
 
-use crate::interaction::clip_plane::ray_plane_intersection;
+use crate::geometry::intersect::ray_plane_intersection;
 use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
@@ -168,19 +168,11 @@ impl CylinderWidget {
         let mut strip_lengths: Vec<u32> = Vec::new();
 
         // Bottom cap circle
-        for i in 0..=STEPS {
-            let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
-            let (s, c) = a.sin_cos();
-            positions.push((self.start + u * (c * r) + v * (s * r)).to_array());
-        }
+        crate::geometry::polyline::push_circle_loop(&mut positions, self.start, u, v, r, STEPS);
         strip_lengths.push((STEPS + 1) as u32);
 
         // Top cap circle
-        for i in 0..=STEPS {
-            let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
-            let (s, c) = a.sin_cos();
-            positions.push((self.end + u * (c * r) + v * (s * r)).to_array());
-        }
+        crate::geometry::polyline::push_circle_loop(&mut positions, self.end, u, v, r, STEPS);
         strip_lengths.push((STEPS + 1) as u32);
 
         // Four longitudinal lines at 0, 90, 180, 270 degrees

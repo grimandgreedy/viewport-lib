@@ -1258,7 +1258,9 @@ impl VolumeMeshData {
     /// other cell shape is dropped and counted in the returned
     /// [`ConversionReport`]. Returns an error if no tet cells are present or
     /// if a cell references a vertex index out of range.
-    pub fn to_tet_mesh(&self) -> Result<(super::tetmesh::TetMesh, ConversionReport), ToTetMeshError> {
+    pub fn to_tet_mesh(
+        &self,
+    ) -> Result<(super::tetmesh::TetMesh, ConversionReport), ToTetMeshError> {
         use glam::Vec3;
 
         let mut tet_indices: Vec<[u32; 4]> = Vec::new();
@@ -1300,7 +1302,12 @@ impl VolumeMeshData {
             tets.push(out);
         }
 
-        Ok((super::tetmesh::TetMesh::new(positions, tets), ConversionReport { dropped_non_tet_cells: dropped }))
+        Ok((
+            super::tetmesh::TetMesh::new(positions, tets),
+            ConversionReport {
+                dropped_non_tet_cells: dropped,
+            },
+        ))
     }
 }
 

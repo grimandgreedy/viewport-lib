@@ -33,7 +33,11 @@ pub struct TetMesh {
 
 impl TetMesh {
     pub fn new(positions: Vec<Vec3>, tets: Vec<[u32; 4]>) -> Self {
-        Self { positions, tets, attributes: TetMeshAttributes::default() }
+        Self {
+            positions,
+            tets,
+            attributes: TetMeshAttributes::default(),
+        }
     }
 
     pub fn with_attributes(mut self, attributes: TetMeshAttributes) -> Self {
@@ -85,6 +89,8 @@ impl TetMesh {
     }
 
     pub fn total_volume(&self) -> f32 {
-        (0..self.tets.len()).map(|i| self.signed_volume(i).abs()).sum()
+        (0..self.tets.len())
+            .map(|i| self.signed_volume(i).abs())
+            .sum()
     }
 }

@@ -24,7 +24,7 @@ rayon = "1"
 half = "2"
 fontdue = "0.9"
 thiserror = "2.0"
-tracing = "0.1"
+tracing = { version = "0.1", features = ["log"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 
 [features]

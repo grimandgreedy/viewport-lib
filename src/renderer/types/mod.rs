@@ -563,11 +563,11 @@ macro_rules! emit_draw_calls {
 
         // Axes indicator pass (screen-space, last so it draws on top).
         if let Some(slot) = _vp_slot {
-            if frame.viewport.show_axes_indicator && slot.axes_vertex_count > 0 {
-                render_pass.set_pipeline(&resources.axes_pipeline);
-                render_pass.set_vertex_buffer(0, slot.axes_vertex_buffer.slice(..));
-                render_pass.draw(0..slot.axes_vertex_count, 0..1);
-            }
+            slot.draw_axes_indicator(
+                &mut *render_pass,
+                resources,
+                frame.viewport.show_axes_indicator,
+            );
         }
     }};
 }

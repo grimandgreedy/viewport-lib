@@ -66,7 +66,6 @@ impl ViewportRenderer {
                     });
             }
         }
-
     }
 
     pub(super) fn prepare_splat_wireframe(
@@ -109,7 +108,6 @@ impl ViewportRenderer {
                 }
             }
         }
-
     }
 
     pub(super) fn prepare_sprite_wireframe(
@@ -147,14 +145,9 @@ impl ViewportRenderer {
                 }
             }
         }
-
     }
 
-    pub(super) fn prepare_debug_buffer(
-        &mut self,
-        device: &wgpu::Device,
-        frame: &FrameData,
-    ) {
+    pub(super) fn prepare_debug_buffer(&mut self, device: &wgpu::Device, frame: &FrameData) {
         // Debug fragment buffer: allocate or resize when debug_vis is active.
         // Must use physical pixels: clip_pos in the shader is in physical pixels,
         // and viewport_width in ClipPlanesUniform (the buffer stride) is now physical too.
@@ -202,7 +195,6 @@ impl ViewportRenderer {
                 self.viewport_slots[vp_idx].camera_bind_group = new_bg;
             }
         }
-
     }
 
     pub(super) fn prepare_atlas_blit(
@@ -252,5 +244,4 @@ impl ViewportRenderer {
             );
         }
     }
-
 }

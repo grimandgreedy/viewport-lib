@@ -1,6 +1,6 @@
 //! Disk widget: a bounded circular plane with center, normal, and radius handles.
 
-use crate::interaction::clip_plane::ray_plane_intersection;
+use crate::geometry::intersect::ray_plane_intersection;
 use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
@@ -166,11 +166,7 @@ impl DiskWidget {
         let r = self.radius;
 
         let mut positions: Vec<[f32; 3]> = Vec::with_capacity(STEPS + 1 + 2);
-        for i in 0..=STEPS {
-            let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
-            let (s, co) = a.sin_cos();
-            positions.push((c + u * (co * r) + v * (s * r)).to_array());
-        }
+        crate::geometry::polyline::push_circle_loop(&mut positions, c, u, v, r, STEPS);
         positions.push(c.to_array());
         positions.push(self.normal_tip_pos().to_array());
 

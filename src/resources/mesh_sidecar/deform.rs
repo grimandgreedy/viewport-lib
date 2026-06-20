@@ -1015,6 +1015,7 @@ impl ViewportGpuResources {
                 &shader,
                 self.target_format,
                 self.sample_count,
+                None,
             );
             self.solid_pipeline = ldr.solid;
             self.solid_two_sided_pipeline = ldr.solid_two_sided;
@@ -1087,6 +1088,7 @@ impl ViewportGpuResources {
                 &layout,
                 &shader,
                 Some(wgpu::Face::Front),
+                None,
             );
         }
 
@@ -1111,6 +1113,7 @@ impl ViewportGpuResources {
                 &layout,
                 &shader,
                 wgpu::TextureFormat::R8Unorm,
+                None,
             );
             self.outline_mask_pipeline = masks.mask;
             self.outline_mask_two_sided_pipeline = masks.mask_two_sided;

@@ -3,7 +3,11 @@
 /// Project a world-space position to NDC.
 /// Returns `None` only if the point is behind the camera (`clip.w <= 0`).
 /// Does NOT reject points outside the [-1,1] viewport box.
-pub(super) fn project_to_ndc(pos: [f32; 3], view: &glam::Mat4, proj: &glam::Mat4) -> Option<[f32; 2]> {
+pub(super) fn project_to_ndc(
+    pos: [f32; 3],
+    view: &glam::Mat4,
+    proj: &glam::Mat4,
+) -> Option<[f32; 2]> {
     let clip = *proj * *view * glam::Vec3::from(pos).extend(1.0);
     if clip.w <= 0.0 {
         return None;
