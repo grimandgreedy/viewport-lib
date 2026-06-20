@@ -916,11 +916,7 @@ impl ViewportRenderer {
         }
     }
 
-    pub(super) fn prepare_overlay_shapes(
-        &mut self,
-        device: &wgpu::Device,
-        frame: &FrameData,
-    ) {
+    pub(super) fn prepare_overlay_shapes(&mut self, device: &wgpu::Device, frame: &FrameData) {
         // ------------------------------------------------------------------
         // SDF overlay shapes
         // ------------------------------------------------------------------
@@ -1571,5 +1567,4 @@ impl ViewportRenderer {
             }
         }
     }
-
 }

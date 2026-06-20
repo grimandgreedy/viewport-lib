@@ -58,7 +58,8 @@ impl ViewportRenderer {
             // Make sure the per-item object pool can index every scene item.
             // Pool entries for items that go through the instanced path stay None.
             if mesh_uniforms.bind_groups.len() < scene_items.len() {
-                mesh_uniforms.bind_groups
+                mesh_uniforms
+                    .bind_groups
                     .resize_with(scene_items.len(), || None);
             }
             if mesh_uniforms.cache_keys.len() < scene_items.len() {

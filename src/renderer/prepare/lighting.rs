@@ -390,7 +390,9 @@ impl ViewportRenderer {
         ) && lighting.shadows_enabled
         {
             shadow.point_shadow_frame = shadow.point_shadow_frame.wrapping_add(1);
-            shadow.point_shadow_pool.begin_frame(shadow.point_shadow_frame);
+            shadow
+                .point_shadow_pool
+                .begin_frame(shadow.point_shadow_frame);
             for (i, src) in combined_lights.iter().enumerate() {
                 if !src.cast_shadows {
                     continue;

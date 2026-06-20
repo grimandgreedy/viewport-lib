@@ -5,7 +5,6 @@
 use super::*;
 
 impl ViewportRenderer {
-
     pub(super) fn prepare_clip_uniforms(
         &mut self,
         queue: &wgpu::Queue,

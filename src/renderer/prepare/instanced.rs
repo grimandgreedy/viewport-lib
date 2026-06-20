@@ -158,11 +158,7 @@ impl ViewportRenderer {
                                     min: world_aabb.min.into(),
                                     batch_index: batch_idx,
                                     max: world_aabb.max.into(),
-                                    cast_shadows: if item.settings.cast_shadows {
-                                        1
-                                    } else {
-                                        0
-                                    },
+                                    cast_shadows: if item.settings.cast_shadows { 1 } else { 0 },
                                 });
                             }
                         }
@@ -225,7 +221,8 @@ impl ViewportRenderer {
                 // Ensure the hash vec is the right length (it should already be,
                 // but guard against a first-run edge case).
                 if instancing.cached_instance_hashes.len() != instanced_batches.len() {
-                    instancing.cached_instance_hashes
+                    instancing
+                        .cached_instance_hashes
                         .resize(instanced_batches.len(), 0);
                 }
                 for (bi, batch) in instanced_batches.iter().enumerate() {
@@ -243,9 +240,8 @@ impl ViewportRenderer {
                             );
                         }
                         if let Some(aabb_buf) = resources.instance_aabb_buf.as_ref() {
-                            let aabb_bytes = bytemuck::cast_slice::<InstanceAabb, u8>(
-                                &all_aabbs[start..end],
-                            );
+                            let aabb_bytes =
+                                bytemuck::cast_slice::<InstanceAabb, u8>(&all_aabbs[start..end]);
                             queue.write_buffer(
                                 aabb_buf,
                                 batch.instance_offset as u64 * aabb_stride,
@@ -269,7 +265,9 @@ impl ViewportRenderer {
                     let end = start + batch.instance_count as usize;
                     let bytes =
                         bytemuck::cast_slice::<InstanceData, u8>(&all_instances[start..end]);
-                    instancing.cached_instance_hashes.push(hash_instance_bytes(bytes));
+                    instancing
+                        .cached_instance_hashes
+                        .push(hash_instance_bytes(bytes));
                 }
             }
 
@@ -347,10 +345,9 @@ impl ViewportRenderer {
                 let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
 
                 let cull = instancing.cull_resources.as_ref().unwrap();
-                let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("cull_encoder"),
-                    });
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("cull_encoder"),
+                });
                 let sub = crate::plugin_api::CullSubmission {
                     instance_aabbs: aabb_buf,
                     instance_count,
@@ -366,7 +363,11 @@ impl ViewportRenderer {
                 // Copy indirect_args_buf to the CPU-readable staging buffer so the
                 // visible instance count can be read back next frame (one-frame lag).
                 let indirect_bytes = batch_count as u64 * 20;
-                if instancing.indirect_readback_buf.as_ref().map_or(0, |b| b.size()) < indirect_bytes
+                if instancing
+                    .indirect_readback_buf
+                    .as_ref()
+                    .map_or(0, |b| b.size())
+                    < indirect_bytes
                 {
                     instancing.indirect_readback_buf =
                         Some(device.create_buffer(&wgpu::BufferDescriptor {

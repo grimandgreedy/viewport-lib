@@ -7,7 +7,6 @@
 use super::*;
 
 impl ViewportRenderer {
-
     pub(super) fn upload_geometry_glyphs(
         resources: &mut ViewportGpuResources,
         point_cloud_gpu_data: &mut Vec<crate::resources::PointCloudGpuData>,
@@ -197,7 +196,6 @@ impl ViewportRenderer {
                 tensor_glyph_gpu_data.push(gpu_data);
             }
         }
-
     }
 
     pub(super) fn upload_polylines(
@@ -225,8 +223,7 @@ impl ViewportRenderer {
                     resources.upload_polyline_per_frame(device, queue, item, vp_size);
                 gpu_data.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
                 if frame.interaction.outline_selected && item.settings.selected {
-                    polyline_selected_gpu_indices
-                        .push(polyline_gpu_data.len());
+                    polyline_selected_gpu_indices.push(polyline_gpu_data.len());
                 }
                 polyline_gpu_data.push(gpu_data);
 
@@ -278,8 +275,7 @@ impl ViewportRenderer {
                 let mut gpu_data = entry;
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if frame.interaction.outline_selected && ref_item.settings.selected {
-                    polyline_selected_gpu_indices
-                        .push(polyline_gpu_data.len());
+                    polyline_selected_gpu_indices.push(polyline_gpu_data.len());
                 }
                 polyline_gpu_data.push(gpu_data);
             }
@@ -352,7 +348,6 @@ impl ViewportRenderer {
                 polyline_gpu_data.push(gpu_data);
             }
         }
-
     }
 
     pub(super) fn upload_implicit_decals_mc(
@@ -459,7 +454,6 @@ impl ViewportRenderer {
                 }
             }
         }
-
     }
 
     pub(super) fn upload_images(
@@ -513,7 +507,6 @@ impl ViewportRenderer {
                 overlay_image_gpu_data.push(gpu);
             }
         }
-
     }
 
     pub(super) fn upload_tubes_ribbons(
@@ -547,8 +540,7 @@ impl ViewportRenderer {
                     resources.upload_streamtube_per_frame(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
-                        streamtube_selected_gpu_indices
-                            .push(streamtube_gpu_data.len());
+                        streamtube_selected_gpu_indices.push(streamtube_gpu_data.len());
                     }
                     streamtube_gpu_data.push(gpu_data);
                 }
@@ -573,8 +565,7 @@ impl ViewportRenderer {
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
-                        streamtube_selected_gpu_indices
-                            .push(streamtube_gpu_data.len());
+                        streamtube_selected_gpu_indices.push(streamtube_gpu_data.len());
                     }
                     streamtube_gpu_data.push(gpu_data);
                 }
@@ -599,8 +590,7 @@ impl ViewportRenderer {
                 let gpu_data = resources.upload_tube_per_frame(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
-                        tube_selected_gpu_indices
-                            .push(tube_gpu_data.len());
+                        tube_selected_gpu_indices.push(tube_gpu_data.len());
                     }
                     tube_gpu_data.push(gpu_data);
                 }
@@ -625,8 +615,7 @@ impl ViewportRenderer {
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
-                        tube_selected_gpu_indices
-                            .push(tube_gpu_data.len());
+                        tube_selected_gpu_indices.push(tube_gpu_data.len());
                     }
                     tube_gpu_data.push(gpu_data);
                 }
@@ -651,8 +640,7 @@ impl ViewportRenderer {
                 let gpu_data = resources.upload_ribbon_per_frame(device, queue, item, wireframe);
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
-                        ribbon_selected_gpu_indices
-                            .push(ribbon_gpu_data.len());
+                        ribbon_selected_gpu_indices.push(ribbon_gpu_data.len());
                     }
                     ribbon_gpu_data.push(gpu_data);
                 }
@@ -677,14 +665,12 @@ impl ViewportRenderer {
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
-                        ribbon_selected_gpu_indices
-                            .push(ribbon_gpu_data.len());
+                        ribbon_selected_gpu_indices.push(ribbon_gpu_data.len());
                     }
                     ribbon_gpu_data.push(gpu_data);
                 }
             }
         }
-
     }
 
     pub(super) fn upload_slices(
@@ -729,5 +715,4 @@ impl ViewportRenderer {
 
         // ------------------------------------------------------------------
     }
-
 }

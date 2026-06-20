@@ -1176,7 +1176,9 @@ impl ViewportGpuResources {
             "oit_pipeline_layout",
             &self.camera_bind_group_layout,
             &self.object_bind_group_layout,
-            self.deform.enabled.then_some(&self.deform.bind_group_layout),
+            self.deform
+                .enabled
+                .then_some(&self.deform.bind_group_layout),
         );
         let oit_pipeline =
             crate::resources::mesh_pipelines::build_oit_pipeline(device, &oit_layout, &oit_shader);
@@ -1218,7 +1220,9 @@ impl ViewportGpuResources {
             "hdr_mesh_pipeline_layout",
             &self.camera_bind_group_layout,
             &self.object_bind_group_layout,
-            self.deform.enabled.then_some(&self.deform.bind_group_layout),
+            self.deform
+                .enabled
+                .then_some(&self.deform.bind_group_layout),
         );
         let hdr = crate::resources::mesh_pipelines::build_hdr_mesh_pipelines(
             device,

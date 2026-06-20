@@ -24,11 +24,12 @@ mod init;
 mod instancing;
 /// Built-in matcap texture data (procedurally generated).
 pub mod matcap_data;
-/// Slotted GPU mesh storage with free-list removal.
-pub mod mesh_store;
 /// Factory functions for the mesh-family pipelines that share a single
 /// shader source. Used at init time and on `register_deformer` rebuild.
 pub(crate) mod mesh_pipelines;
+pub(crate) mod mesh_sidecar;
+/// Slotted GPU mesh storage with free-list removal.
+pub mod mesh_store;
 mod meshes;
 mod overlay_shape;
 mod overlay_text;
@@ -38,15 +39,14 @@ mod postprocess;
 /// Scatter-volume participating-media pipeline state and uploads.
 pub mod scatter_volume;
 mod scivis;
-pub(crate) mod mesh_sidecar;
 /// Sparse voxel grid topology processing (boundary face extraction).
 pub mod sparse_volume;
+/// Unstructured volume mesh topology processing (tet / hex boundary extraction).
+pub mod tetmesh;
 mod textures;
 mod types;
 /// Background runner for long-running uploads.
 pub mod upload_jobs;
-/// Unstructured volume mesh topology processing (tet / hex boundary extraction).
-pub mod tetmesh;
 pub mod volume_mesh;
 mod volumes;
 
@@ -60,6 +60,12 @@ pub use self::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, Part
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };
+pub use self::mesh_sidecar::deform::{
+    DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, deform_slot_params_byte_offset,
+};
+pub use self::mesh_sidecar::registry::{
+    DEFORM_PARAMS_PER_SLOT_PUB, DEFORM_SLOT_COUNT_PUB, DeformStage, DeformerDesc, DeformerId,
+};
 pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
     SHADOW_DEPTH_FORMAT,
@@ -72,13 +78,9 @@ pub(crate) use self::scivis::curve_store::{
     GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
-pub use self::mesh_sidecar::deform::{
-    DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, deform_slot_params_byte_offset,
-};
-pub use self::mesh_sidecar::registry::{
-    DEFORM_PARAMS_PER_SLOT_PUB, DEFORM_SLOT_COUNT_PUB, DeformStage, DeformerDesc, DeformerId,
-};
 pub use self::sparse_volume::SparseVolumeGridData;
+#[allow(deprecated)]
+pub use self::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::types::BatchMeta;
 #[allow(deprecated)]
 pub use self::types::ClipVolumeUniform;
@@ -106,8 +108,6 @@ pub use self::types::{
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
-#[allow(deprecated)]
-pub use self::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
 };
