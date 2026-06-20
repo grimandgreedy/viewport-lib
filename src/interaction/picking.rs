@@ -1,19 +1,32 @@
-/// Ray-cast picking for the 3D viewport.
-///
-/// Uses parry3d 0.26's glam-native API (no nalgebra required).
-/// All conversions are contained here at the picking boundary.
-///
-/// # Skinned meshes
-///
-/// The CPU picking entry points in this module test against whatever
-/// positions are passed in via `mesh_lookup`. On the GPU skinning path the
-/// vertex buffer is never rewritten, so the natural CPU view of a skinned
-/// mesh is the bind pose: clicks land on the bind-pose silhouette. See the
-/// module-level documentation on [`crate::PickAccelerator`] for the two
-/// supported strategies (bind-pose with padded AABBs, or per-frame refresh
-/// against deformed positions). GPU picking
-/// (`crate::renderer::picking`) reads the rasterised object-ID buffer and
-/// therefore picks the deformed silhouette automatically.
+//! Renderer-free CPU picking primitives.
+//!
+//! These functions pick directly off caller-supplied data (a `Scene`, a slice of
+//! items, or a `mesh_lookup`), so they need no `ViewportRenderer` and cost nothing
+//! per frame. That makes them the right choice for tests, headless/CPU-only tools,
+//! and picking heavy or dynamic data at click time. They cover a subset of item
+//! types: surface meshes, light glyphs, point clouds, gaussian splats, ray-marched
+//! volumes, and transparent volume-mesh cells.
+//!
+//! For the full set of item types (curves, implicit surfaces, marching cubes,
+//! overlays) and sub-element masks, use the unified
+//! [`ViewportRenderer::pick`](crate::renderer::ViewportRenderer::pick) /
+//! `pick_rect`. Those read the renderer's per-frame pick cache, which is off by
+//! default and enabled with
+//! [`set_cpu_pick_cache`](crate::renderer::ViewportRenderer::set_cpu_pick_cache).
+//!
+//! Uses parry3d 0.26's glam-native API (no nalgebra required). All conversions are
+//! contained here at the picking boundary.
+//!
+//! # Skinned meshes
+//!
+//! The CPU picking entry points in this module test against whatever positions are
+//! passed in via `mesh_lookup`. On the GPU skinning path the vertex buffer is never
+//! rewritten, so the natural CPU view of a skinned mesh is the bind pose: clicks land
+//! on the bind-pose silhouette. See the module-level documentation on
+//! [`crate::PickAccelerator`] for the two supported strategies (bind-pose with padded
+//! AABBs, or per-frame refresh against deformed positions). GPU picking
+//! (`crate::renderer::picking`) reads the rasterised object-ID buffer and therefore
+//! picks the deformed silhouette automatically.
 use crate::geometry::marching_cubes::VolumeData;
 use crate::interaction::sub_object::SubObjectRef;
 use crate::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
@@ -568,170 +581,6 @@ impl RectPickResult {
     pub fn total_count(&self) -> usize {
         self.hits.values().map(|v| v.len()).sum()
     }
-}
-
-/// Sub-object (triangle / point) selection inside a screen-space rectangle.
-///
-/// Projects triangle centroids (for mesh scene items) and point positions (for
-/// point clouds) through `view_proj`, then tests NDC containment against the
-/// rectangle defined by `rect_min`..`rect_max` (viewport-local pixels, top-left
-/// origin).
-///
-/// This is a **pure CPU** operation : no GPU readback is required.
-///
-/// # Arguments
-/// * `rect_min` : top-left corner of the selection rect in viewport pixels
-/// * `rect_max` : bottom-right corner of the selection rect in viewport pixels
-/// * `scene_items` : visible scene render items for this frame
-/// * `mesh_lookup` : CPU-side mesh data keyed by `SceneRenderItem::mesh_index`
-/// * `point_clouds` : point cloud items for this frame
-/// * `view_proj` : combined view x projection matrix
-/// * `viewport_size` : viewport width x height in pixels
-pub fn pick_rect(
-    rect_min: glam::Vec2,
-    rect_max: glam::Vec2,
-    scene_items: &[crate::renderer::SceneRenderItem],
-    mesh_lookup: &std::collections::HashMap<usize, (Vec<[f32; 3]>, Vec<u32>)>,
-    point_clouds: &[crate::renderer::PointCloudItem],
-    view_proj: glam::Mat4,
-    viewport_size: glam::Vec2,
-) -> RectPickResult {
-    // Convert screen rect to NDC rect.
-    // Screen: x right, y down. NDC: x right, y up.
-    let ndc_min = glam::Vec2::new(
-        rect_min.x / viewport_size.x * 2.0 - 1.0,
-        1.0 - rect_max.y / viewport_size.y * 2.0, // rect_max.y is the bottom in screen space
-    );
-    let ndc_max = glam::Vec2::new(
-        rect_max.x / viewport_size.x * 2.0 - 1.0,
-        1.0 - rect_min.y / viewport_size.y * 2.0, // rect_min.y is the top in screen space
-    );
-
-    let mut result = RectPickResult::default();
-
-    // --- Mesh scene items ---
-    for item in scene_items {
-        if item.settings.hidden {
-            continue;
-        }
-        let Some((positions, indices)) = mesh_lookup.get(&item.mesh_id.index()) else {
-            continue;
-        };
-
-        let model = glam::Mat4::from_cols_array_2d(&item.model);
-        let mvp = view_proj * model;
-
-        let mut tri_hits: Vec<SubObjectRef> = Vec::new();
-
-        for (tri_idx, chunk) in indices.chunks(3).enumerate() {
-            if chunk.len() < 3 {
-                continue;
-            }
-            let i0 = chunk[0] as usize;
-            let i1 = chunk[1] as usize;
-            let i2 = chunk[2] as usize;
-
-            if i0 >= positions.len() || i1 >= positions.len() || i2 >= positions.len() {
-                continue;
-            }
-
-            let p0 = glam::Vec3::from(positions[i0]);
-            let p1 = glam::Vec3::from(positions[i1]);
-            let p2 = glam::Vec3::from(positions[i2]);
-            let centroid = (p0 + p1 + p2) / 3.0;
-
-            let clip = mvp * centroid.extend(1.0);
-            if clip.w <= 0.0 {
-                // Behind the camera : skip.
-                continue;
-            }
-            let ndc = glam::Vec2::new(clip.x / clip.w, clip.y / clip.w);
-
-            if ndc.x >= ndc_min.x && ndc.x <= ndc_max.x && ndc.y >= ndc_min.y && ndc.y <= ndc_max.y
-            {
-                tri_hits.push(SubObjectRef::Face(tri_idx as u32));
-            }
-        }
-
-        if !tri_hits.is_empty() {
-            result.hits.insert(item.settings.pick_id.0, tri_hits);
-        }
-    }
-
-    // --- Point cloud items ---
-    for pc in point_clouds {
-        if pc.settings.pick_id == crate::renderer::PickId::NONE {
-            // Not pickable.
-            continue;
-        }
-
-        let model = glam::Mat4::from_cols_array_2d(&pc.model);
-        let mvp = view_proj * model;
-
-        let mut pt_hits: Vec<SubObjectRef> = Vec::new();
-
-        for (pt_idx, pos) in pc.positions.iter().enumerate() {
-            let p = glam::Vec3::from(*pos);
-            let clip = mvp * p.extend(1.0);
-            if clip.w <= 0.0 {
-                continue;
-            }
-            let ndc = glam::Vec2::new(clip.x / clip.w, clip.y / clip.w);
-
-            if ndc.x >= ndc_min.x && ndc.x <= ndc_max.x && ndc.y >= ndc_min.y && ndc.y <= ndc_max.y
-            {
-                pt_hits.push(SubObjectRef::Point(pt_idx as u32));
-            }
-        }
-
-        if !pt_hits.is_empty() {
-            result.hits.insert(pc.settings.pick_id.0, pt_hits);
-        }
-    }
-
-    result
-}
-
-/// Select all visible objects whose world-space position projects inside a
-/// screen-space rectangle.
-///
-/// Projects each object's position via `view_proj` to screen coordinates,
-/// then tests containment in the rectangle defined by `rect_min`..`rect_max`
-/// (in viewport-local pixels, top-left origin).
-///
-/// Returns the IDs of all objects inside the rectangle.
-pub fn box_select(
-    rect_min: glam::Vec2,
-    rect_max: glam::Vec2,
-    objects: &[&dyn ViewportObject],
-    view_proj: glam::Mat4,
-    viewport_size: glam::Vec2,
-) -> Vec<u64> {
-    let mut hits = Vec::new();
-    for obj in objects {
-        if !obj.is_visible() {
-            continue;
-        }
-        let pos = obj.position();
-        let clip = view_proj * pos.extend(1.0);
-        // Behind the camera : skip.
-        if clip.w <= 0.0 {
-            continue;
-        }
-        let ndc = glam::Vec3::new(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
-        let screen = glam::Vec2::new(
-            (ndc.x + 1.0) * 0.5 * viewport_size.x,
-            (1.0 - ndc.y) * 0.5 * viewport_size.y,
-        );
-        if screen.x >= rect_min.x
-            && screen.x <= rect_max.x
-            && screen.y >= rect_min.y
-            && screen.y <= rect_max.y
-        {
-            hits.push(obj.id());
-        }
-    }
-    hits
 }
 
 // ---------------------------------------------------------------------------
@@ -1720,66 +1569,6 @@ mod tests {
     }
 
     #[test]
-    fn test_box_select_hits_inside_rect() {
-        // Place object at origin, use an identity-like view_proj so it projects to screen center.
-        let view = glam::Mat4::look_at_rh(
-            glam::Vec3::new(0.0, 0.0, 5.0),
-            glam::Vec3::ZERO,
-            glam::Vec3::Y,
-        );
-        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-        let viewport_size = glam::Vec2::new(800.0, 600.0);
-
-        let obj = TestObject {
-            id: 42,
-            mesh_id: 1,
-            position: glam::Vec3::ZERO,
-            visible: true,
-        };
-        let objects: Vec<&dyn ViewportObject> = vec![&obj];
-
-        // Rectangle around screen center should capture the object.
-        let result = box_select(
-            glam::Vec2::new(300.0, 200.0),
-            glam::Vec2::new(500.0, 400.0),
-            &objects,
-            vp,
-            viewport_size,
-        );
-        assert_eq!(result, vec![42]);
-    }
-
-    #[test]
-    fn test_box_select_skips_hidden() {
-        let view = glam::Mat4::look_at_rh(
-            glam::Vec3::new(0.0, 0.0, 5.0),
-            glam::Vec3::ZERO,
-            glam::Vec3::Y,
-        );
-        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        let vp = proj * view;
-        let viewport_size = glam::Vec2::new(800.0, 600.0);
-
-        let obj = TestObject {
-            id: 42,
-            mesh_id: 1,
-            position: glam::Vec3::ZERO,
-            visible: false,
-        };
-        let objects: Vec<&dyn ViewportObject> = vec![&obj];
-
-        let result = box_select(
-            glam::Vec2::new(0.0, 0.0),
-            glam::Vec2::new(800.0, 600.0),
-            &objects,
-            vp,
-            viewport_size,
-        );
-        assert!(result.is_empty());
-    }
-
-    #[test]
     fn test_pick_scene_nodes_hit() {
         let (positions, indices) = unit_cube_mesh();
         let mut mesh_lookup = HashMap::new();
@@ -1950,154 +1739,6 @@ mod tests {
     // ---------------------------------------------------------------------------
     // pick_rect tests
     // ---------------------------------------------------------------------------
-
-    /// Build a simple perspective view_proj looking at the origin from +Z.
-    fn make_view_proj() -> glam::Mat4 {
-        let view = glam::Mat4::look_at_rh(
-            glam::Vec3::new(0.0, 0.0, 5.0),
-            glam::Vec3::ZERO,
-            glam::Vec3::Y,
-        );
-        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
-        proj * view
-    }
-
-    #[test]
-    fn test_pick_rect_mesh_full_screen() {
-        // A full-screen rect should capture all triangle centroids of the unit cube.
-        let (positions, indices) = unit_cube_mesh();
-        let mut mesh_lookup: std::collections::HashMap<usize, (Vec<[f32; 3]>, Vec<u32>)> =
-            std::collections::HashMap::new();
-        mesh_lookup.insert(0, (positions, indices.clone()));
-
-        let item = crate::renderer::SceneRenderItem {
-            mesh_id: crate::resources::mesh_store::MeshId(0),
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            ..Default::default()
-        };
-
-        let view_proj = make_view_proj();
-        let viewport = glam::Vec2::new(800.0, 600.0);
-
-        let result = pick_rect(
-            glam::Vec2::ZERO,
-            viewport,
-            &[item],
-            &mesh_lookup,
-            &[],
-            view_proj,
-            viewport,
-        );
-
-        // The cube has 12 triangles; front-facing ones project inside the full-screen rect.
-        assert!(!result.is_empty(), "expected at least one triangle hit");
-        assert!(result.total_count() > 0);
-    }
-
-    #[test]
-    fn test_pick_rect_miss() {
-        // A rect far off-screen should return empty results.
-        let (positions, indices) = unit_cube_mesh();
-        let mut mesh_lookup: std::collections::HashMap<usize, (Vec<[f32; 3]>, Vec<u32>)> =
-            std::collections::HashMap::new();
-        mesh_lookup.insert(0, (positions, indices));
-
-        let item = crate::renderer::SceneRenderItem {
-            mesh_id: crate::resources::mesh_store::MeshId(0),
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            ..Default::default()
-        };
-
-        let view_proj = make_view_proj();
-        let viewport = glam::Vec2::new(800.0, 600.0);
-
-        let result = pick_rect(
-            glam::Vec2::new(700.0, 500.0), // bottom-right corner, cube projects to center
-            glam::Vec2::new(799.0, 599.0),
-            &[item],
-            &mesh_lookup,
-            &[],
-            view_proj,
-            viewport,
-        );
-
-        assert!(result.is_empty(), "expected no hits in off-center rect");
-    }
-
-    #[test]
-    fn test_pick_rect_point_cloud() {
-        // Points at the origin should be captured by a full-screen rect.
-        let view_proj = make_view_proj();
-        let viewport = glam::Vec2::new(800.0, 600.0);
-
-        let pc = crate::renderer::PointCloudItem {
-            positions: vec![[0.0, 0.0, 0.0], [0.1, 0.1, 0.0]],
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            settings: crate::scene::material::ItemSettings {
-                pick_id: crate::renderer::PickId(99),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let result = pick_rect(
-            glam::Vec2::ZERO,
-            viewport,
-            &[],
-            &std::collections::HashMap::new(),
-            &[pc],
-            view_proj,
-            viewport,
-        );
-
-        assert!(!result.is_empty(), "expected point cloud hits");
-        let hits = result.hits.get(&99).expect("expected hits for id 99");
-        assert_eq!(
-            hits.len(),
-            2,
-            "both points should be inside the full-screen rect"
-        );
-        // Verify the hits are typed as Point sub-objects.
-        assert!(
-            hits.iter().all(|s| s.is_point()),
-            "expected SubObjectRef::Point entries"
-        );
-        assert_eq!(hits[0], SubObjectRef::Point(0));
-        assert_eq!(hits[1], SubObjectRef::Point(1));
-    }
-
-    #[test]
-    fn test_pick_rect_skips_invisible() {
-        let (positions, indices) = unit_cube_mesh();
-        let mut mesh_lookup: std::collections::HashMap<usize, (Vec<[f32; 3]>, Vec<u32>)> =
-            std::collections::HashMap::new();
-        mesh_lookup.insert(0, (positions, indices));
-
-        let item = crate::renderer::SceneRenderItem {
-            mesh_id: crate::resources::mesh_store::MeshId(0),
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            settings: crate::scene::material::ItemSettings {
-                hidden: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let view_proj = make_view_proj();
-        let viewport = glam::Vec2::new(800.0, 600.0);
-
-        let result = pick_rect(
-            glam::Vec2::ZERO,
-            viewport,
-            &[item],
-            &mesh_lookup,
-            &[],
-            view_proj,
-            viewport,
-        );
-
-        assert!(result.is_empty(), "invisible items should be skipped");
-    }
 
     #[test]
     fn test_pick_rect_result_type() {

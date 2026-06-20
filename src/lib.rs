@@ -183,7 +183,7 @@ pub use interaction::clip_plane::{
 pub use interaction::pick_mask::PickMask;
 pub use interaction::picking::{
     GpuPickHit, PickHit, ProbeBinding, RectPickResult, nearest_vertex_on_hit,
-    pick_gaussian_splat_cpu, pick_gaussian_splat_rect, pick_point_cloud_cpu, pick_rect,
+    pick_gaussian_splat_cpu, pick_gaussian_splat_rect, pick_point_cloud_cpu,
     pick_scene_accelerated_with_probe_cpu, pick_scene_nodes_with_probe_cpu,
     pick_scene_with_probe_cpu, pick_transparent_volume_mesh_cpu, pick_transparent_volume_mesh_rect,
     pick_volume_cpu, pick_volume_rect, voxel_world_aabb,

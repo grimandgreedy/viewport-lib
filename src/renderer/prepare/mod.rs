@@ -3,15 +3,15 @@ use super::*;
 use crate::resources::CurveMeshOutlineItem;
 use wgpu::util::DeviceExt;
 
-mod math;
-mod overlay_geometry;
-mod projection;
 mod instanced;
 mod lighting;
+mod math;
 mod mesh_material;
+mod overlay_geometry;
 mod per_object;
-mod shadow_pass;
+mod projection;
 mod scene_uploads;
+mod shadow_pass;
 mod viewport_interaction;
 mod viewport_misc;
 mod viewport_overlays;
@@ -170,12 +170,67 @@ impl ViewportRenderer {
             (0, 0)
         };
 
-        Self::upload_geometry_glyphs(resources, &mut self.point_cloud_gpu_data, &mut self.glyph_gpu_data, &mut self.sprite_gpu_data, &mut self.mesh_instance_gpu_data, &mut self.particle_gpu_data, &mut self.tensor_glyph_gpu_data, device, queue, frame);
-        Self::upload_polylines(resources, &mut self.polyline_gpu_data, &mut self.polyline_selected_gpu_indices, &mut self.glyph_gpu_data, device, queue, frame);
-        Self::upload_implicit_decals_mc(resources, &mut self.implicit_gpu_data, &mut self.pick_implicit_items, &mut self.decal_gpu_data, &mut self.decal_exclude_items, &mut self.mc_gpu_data, &mut self.pick_mc_items, device, queue, frame);
-        Self::upload_images(resources, &mut self.screen_image_gpu_data, &mut self.overlay_image_gpu_data, device, queue, frame);
-        Self::upload_tubes_ribbons(resources, &mut self.streamtube_gpu_data, &mut self.streamtube_selected_gpu_indices, &mut self.tube_gpu_data, &mut self.tube_selected_gpu_indices, &mut self.ribbon_gpu_data, &mut self.ribbon_selected_gpu_indices, device, queue, frame);
-        Self::upload_slices(resources, &mut self.image_slice_gpu_data, &mut self.volume_surface_slice_gpu_data, device, queue, frame);
+        Self::upload_geometry_glyphs(
+            resources,
+            &mut self.point_cloud_gpu_data,
+            &mut self.glyph_gpu_data,
+            &mut self.sprite_gpu_data,
+            &mut self.mesh_instance_gpu_data,
+            &mut self.particle_gpu_data,
+            &mut self.tensor_glyph_gpu_data,
+            device,
+            queue,
+            frame,
+        );
+        Self::upload_polylines(
+            resources,
+            &mut self.polyline_gpu_data,
+            &mut self.polyline_selected_gpu_indices,
+            &mut self.glyph_gpu_data,
+            device,
+            queue,
+            frame,
+        );
+        Self::upload_implicit_decals_mc(
+            resources,
+            &mut self.implicit_gpu_data,
+            &mut self.pick_implicit_items,
+            &mut self.decal_gpu_data,
+            &mut self.decal_exclude_items,
+            &mut self.mc_gpu_data,
+            &mut self.pick_mc_items,
+            device,
+            queue,
+            frame,
+        );
+        Self::upload_images(
+            resources,
+            &mut self.screen_image_gpu_data,
+            &mut self.overlay_image_gpu_data,
+            device,
+            queue,
+            frame,
+        );
+        Self::upload_tubes_ribbons(
+            resources,
+            &mut self.streamtube_gpu_data,
+            &mut self.streamtube_selected_gpu_indices,
+            &mut self.tube_gpu_data,
+            &mut self.tube_selected_gpu_indices,
+            &mut self.ribbon_gpu_data,
+            &mut self.ribbon_selected_gpu_indices,
+            device,
+            queue,
+            frame,
+        );
+        Self::upload_slices(
+            resources,
+            &mut self.image_slice_gpu_data,
+            &mut self.volume_surface_slice_gpu_data,
+            device,
+            queue,
+            frame,
+        );
         let vp_size = frame.camera.viewport_size;
         // Surface LIC GPU data upload.
         // ------------------------------------------------------------------
@@ -319,9 +374,13 @@ impl ViewportRenderer {
             if resources.mesh_store.get(item.boundary_mesh_id).is_none() {
                 continue;
             }
-            self.mesh_uniforms.tvm_wireframe_draws.push(item.boundary_mesh_id);
+            self.mesh_uniforms
+                .tvm_wireframe_draws
+                .push(item.boundary_mesh_id);
         }
-        if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() && self.mesh_uniforms.tvm_wireframe_bg.is_none() {
+        if !self.mesh_uniforms.tvm_wireframe_draws.is_empty()
+            && self.mesh_uniforms.tvm_wireframe_bg.is_none()
+        {
             use wgpu::util::DeviceExt;
             let mut tvm_wf_uniform: crate::resources::ObjectUniform = bytemuck::Zeroable::zeroed();
             tvm_wf_uniform.model = glam::Mat4::IDENTITY.to_cols_array_2d();
@@ -705,34 +764,15 @@ impl ViewportRenderer {
         self.degradation_effects_throttled =
             !in_capture && self.degradation_tier >= 3 && eff_allow_effects;
 
-        // Cache scene items for renderer.pick() dispatch.
+        // Cache pickable items for the CPU pick path. Disabled by default: this copies
+        // all inline point/glyph/curve geometry each frame, so scenes that do not use
+        // renderer.pick()/pick_rect() leave it off (see set_cpu_pick_cache).
+        if self.cpu_pick_cache_enabled {
+            self.cache_pick_items(frame);
+        }
+
+        // Prepare scatter volumes for rendering. Independent of picking: always runs.
         {
-            let surfaces = match &frame.scene.surfaces {
-                SurfaceSubmission::Flat(items) => items.as_ref(),
-            };
-            // Mirror the rendering-side scene_items construction: opaque
-            // volume meshes appear as boundary SceneRenderItems for face/vertex
-            // picking via the BVH; cell-level remapping is then driven from
-            // `pick_volume_mesh_items` (which keeps the full VolumeMeshItem so
-            // `face_to_cell` is available).
-            self.pick_scene_items = surfaces
-                .iter()
-                .cloned()
-                .chain(
-                    frame
-                        .scene
-                        .volume_meshes
-                        .iter()
-                        .filter(|item| item.transparency.is_none())
-                        .map(|item| item.to_render_item()),
-                )
-                .collect();
-            self.pick_point_cloud_items = frame.scene.point_clouds.clone();
-            self.pick_splat_items = frame.scene.gaussian_splats.clone();
-            self.pick_volume_items = frame.scene.volumes.clone();
-            // Picking iterates the unified volume_meshes collection; no separate
-            // transparent-only cache is needed any more.
-            self.pick_scatter_volume_items = frame.scene.scatter_volumes.clone();
             self.prepared_scatter_volumes.clear();
             self.prepared_refraction_volumes.clear();
             let global_wireframe = frame.viewport.wireframe_mode;
@@ -792,17 +832,6 @@ impl ViewportRenderer {
                 let db = far_corner(&aabb_b);
                 db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
             });
-            self.pick_volume_mesh_items = frame.scene.volume_meshes.clone();
-            self.pick_polyline_items = frame.scene.polylines.clone();
-            self.pick_glyph_items = frame.scene.glyphs.clone();
-            self.pick_tensor_glyph_items = frame.scene.tensor_glyphs.clone();
-            self.pick_sprite_items = frame.scene.sprite_items.clone();
-            self.pick_streamtube_items = frame.scene.streamtube_items.clone();
-            self.pick_tube_items = frame.scene.tube_items.clone();
-            self.pick_ribbon_items = frame.scene.ribbon_items.clone();
-            self.pick_image_slice_items = frame.scene.image_slices.clone();
-            self.pick_volume_surface_slice_items = frame.scene.volume_surface_slices.clone();
-            self.pick_screen_image_items = frame.scene.screen_images.clone();
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();

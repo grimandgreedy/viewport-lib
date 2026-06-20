@@ -42,6 +42,11 @@ impl ViewportRenderer {
         use parry3d::math::{Pose, Vector};
         use parry3d::query::{Ray, RayCast};
 
+        if !self.cpu_pick_cache_enabled {
+            warn_pick_cache_disabled();
+            return None;
+        }
+
         if viewport_size.x <= 0.0 || viewport_size.y <= 0.0 {
             return None;
         }

@@ -124,7 +124,10 @@ fn main() -> eframe::Result {
             let queue = wgpu_render_state.queue.clone();
             let format = wgpu_render_state.target_format;
 
-            let renderer = ViewportRenderer::new(&device, format);
+            let mut renderer = ViewportRenderer::new(&device, format);
+            // Several showcases (Picking Levels, Tensor Glyphs) use the CPU
+            // renderer.pick()/pick_rect() path, which needs the pick cache.
+            renderer.set_cpu_pick_cache(true);
             wgpu_render_state
                 .renderer
                 .write()
