@@ -3126,9 +3126,7 @@ impl ViewportRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                axes_pass.set_pipeline(&self.resources.axes_pipeline);
-                axes_pass.set_vertex_buffer(0, slot.axes_vertex_buffer.slice(..));
-                axes_pass.draw(0..slot.axes_vertex_count, 0..1);
+                slot.draw_axes_indicator(&mut axes_pass, &self.resources, true);
             }
         }
     }

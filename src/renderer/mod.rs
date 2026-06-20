@@ -202,6 +202,25 @@ pub(crate) struct ViewportSlot {
     pub sub_highlight_generation: u64,
 }
 
+impl ViewportSlot {
+    /// Draw the axes orientation indicator into an already-begun render pass.
+    ///
+    /// Shared by the LDR and HDR paths; both draw it last in screen space so it
+    /// sits on top. Does nothing when the indicator is disabled or empty.
+    pub(crate) fn draw_axes_indicator(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        resources: &ViewportGpuResources,
+        show_axes_indicator: bool,
+    ) {
+        if show_axes_indicator && self.axes_vertex_count > 0 {
+            render_pass.set_pipeline(&resources.axes_pipeline);
+            render_pass.set_vertex_buffer(0, self.axes_vertex_buffer.slice(..));
+            render_pass.draw(0..self.axes_vertex_count, 0..1);
+        }
+    }
+}
+
 /// Retained pick state for one GPU implicit surface, built during `prepare()`.
 struct GpuImplicitPickItem {
     id: u64,

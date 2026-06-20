@@ -1,7 +1,7 @@
 //! Spline widget: N draggable control points connected by a Catmull-Rom spline.
 
 use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point_dist};
-use crate::interaction::clip_plane::ray_plane_intersection;
+use crate::geometry::intersect::ray_plane_intersection;
 use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 
 /// An interactive spline widget with N draggable Catmull-Rom control points.

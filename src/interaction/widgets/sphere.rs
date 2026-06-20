@@ -1,6 +1,6 @@
 //! Sphere widget: draggable center handle and radius handle.
 
-use crate::interaction::clip_plane::ray_plane_intersection;
+use crate::geometry::intersect::ray_plane_intersection;
 use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
@@ -167,17 +167,14 @@ impl SphereWidget {
         let c = self.center;
         let r = self.radius;
 
-        for ring in 0..3_usize {
-            for i in 0..=STEPS {
-                let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
-                let (s, co) = a.sin_cos();
-                let p = match ring {
-                    0 => glam::Vec3::new(co * r, s * r, 0.0),
-                    1 => glam::Vec3::new(co * r, 0.0, s * r),
-                    _ => glam::Vec3::new(0.0, co * r, s * r),
-                };
-                positions.push((c + p).to_array());
-            }
+        // Three great circles, one in each coordinate plane.
+        let bases = [
+            (glam::Vec3::X, glam::Vec3::Y),
+            (glam::Vec3::X, glam::Vec3::Z),
+            (glam::Vec3::Y, glam::Vec3::Z),
+        ];
+        for (u, v) in bases {
+            crate::geometry::polyline::push_circle_loop(&mut positions, c, u, v, r, STEPS);
             strip_lengths.push((STEPS + 1) as u32);
         }
 
