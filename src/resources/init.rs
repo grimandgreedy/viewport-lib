@@ -10,7 +10,59 @@ impl ViewportGpuResources {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
+        Self::new_with_cache(device, target_format, sample_count, None)
+    }
+
+    /// Like [`new`](Self::new), but seeds a `wgpu::PipelineCache` from previously
+    /// saved data so shader compilation can be skipped on later launches.
+    ///
+    /// `pipeline_cache_data` should come from a prior
+    /// [`ViewportRenderer::pipeline_cache_data`](crate::renderer::ViewportRenderer::pipeline_cache_data)
+    /// call, or `None` on first run. The cache is only created when the device
+    /// enables `Features::PIPELINE_CACHE`; otherwise this behaves exactly like
+    /// `new` and the data is ignored.
+    pub fn new_with_cache(
+        device: &wgpu::Device,
+        target_format: wgpu::TextureFormat,
+        sample_count: u32,
+        pipeline_cache_data: Option<&[u8]>,
+    ) -> Self {
         use wgpu;
+
+        // A pipeline cache records compiled pipelines so a later run (seeded with
+        // saved data) skips recompilation. Only available when the device enables
+        // `Features::PIPELINE_CACHE`; `fallback: true` discards stale/invalid data
+        // rather than failing. Safety: the data, if any, came from a prior
+        // `PipelineCache::get_data` call as the API requires.
+        let pipeline_cache = if device.features().contains(wgpu::Features::PIPELINE_CACHE) {
+            Some(unsafe {
+                device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+                    label: Some("viewport_pipeline_cache"),
+                    data: pipeline_cache_data,
+                    fallback: true,
+                })
+            })
+        } else {
+            None
+        };
+
+        // Cold-start instrumentation. Pipeline compilation and large depth-texture
+        // allocation can dominate construction on some backends (notably Adreno
+        // Vulkan, where pipeline creation compiles shaders synchronously). These
+        // marks attribute the per-phase cost. Filter with
+        // `RUST_LOG=viewport_lib::init=info`.
+        let init_start = std::time::Instant::now();
+        let mut init_ckpt = init_start;
+        let mut mark = |section: &str| {
+            let now = std::time::Instant::now();
+            tracing::info!(
+                target: "viewport_lib::init",
+                section,
+                ms = now.duration_since(init_ckpt).as_secs_f32() * 1000.0,
+                "gpu resources init phase"
+            );
+            init_ckpt = now;
+        };
 
         // ------------------------------------------------------------------
         // Shader module
@@ -464,6 +516,8 @@ impl ViewportGpuResources {
             ],
         });
 
+        mark("shaders_and_bind_group_layouts");
+
         // ------------------------------------------------------------------
         // Per-vertex deformation sidecar. Constructed early because every
         // mesh-family pipeline layout binds its group(2) BGL.
@@ -498,11 +552,14 @@ impl ViewportGpuResources {
             &shader,
             target_format,
             sample_count,
+            pipeline_cache.as_ref(),
         );
         let solid_pipeline = ldr.solid;
         let solid_two_sided_pipeline = ldr.solid_two_sided;
         let transparent_pipeline = ldr.transparent;
         let wireframe_pipeline = ldr.wireframe;
+
+        mark("mesh_pipelines");
 
         // ------------------------------------------------------------------
         // Camera uniform buffer and bind group
@@ -634,6 +691,11 @@ impl ViewportGpuResources {
             })
             .collect();
 
+        // Includes the 4096^2 directional atlas and the point-shadow cube array
+        // (POINT_SHADOW_FACE_SIZE^2 * MAX_POINT_SHADOW_LIGHTS * 6 layers), both
+        // allocated unconditionally here. Watch this number on mobile.
+        mark("buffers_and_shadow_textures");
+
         let shadow_atlas_depth_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow_atlas_depth_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -713,6 +775,9 @@ impl ViewportGpuResources {
         });
 
         let clustered = crate::resources::clustered::ClusteredResources::new(device);
+
+        mark("clustered");
+
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
             layout: &camera_bgl,
@@ -845,6 +910,7 @@ impl ViewportGpuResources {
             &shadow_pipeline_layout,
             &shadow_shader,
             Some(wgpu::Face::Front),
+            pipeline_cache.as_ref(),
         );
 
         // Shadow pass uniform buffer : 4 cascade slots x 256 bytes (wgpu dynamic-offset alignment).
@@ -919,6 +985,7 @@ impl ViewportGpuResources {
             device,
             &shadow_point_pipeline_layout,
             &shadow_point_shader,
+            pipeline_cache.as_ref(),
         );
 
         // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
@@ -945,6 +1012,8 @@ impl ViewportGpuResources {
                 }),
             }],
         });
+
+        mark("shadow_pipelines");
 
         // ------------------------------------------------------------------
         // Gizmo shader module
@@ -1029,7 +1098,7 @@ impl ViewportGpuResources {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-            cache: None,
+            cache: pipeline_cache.as_ref(),
         });
 
         // ------------------------------------------------------------------
@@ -1178,7 +1247,7 @@ impl ViewportGpuResources {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-            cache: None,
+            cache: pipeline_cache.as_ref(),
         });
 
         // ------------------------------------------------------------------
@@ -1229,7 +1298,7 @@ impl ViewportGpuResources {
                     alpha_to_coverage_enabled: false,
                 },
                 multiview: None,
-                cache: None,
+                cache: pipeline_cache.as_ref(),
             });
 
         // ------------------------------------------------------------------
@@ -1309,7 +1378,7 @@ impl ViewportGpuResources {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-            cache: None,
+            cache: pipeline_cache.as_ref(),
         });
         // Default-zero uniform : overwritten every frame in prepare().
         let grid_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1430,7 +1499,7 @@ impl ViewportGpuResources {
                     alpha_to_coverage_enabled: false,
                 },
                 multiview: None,
-                cache: None,
+                cache: pipeline_cache.as_ref(),
             });
         let ground_plane_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ground_plane_uniform_buf"),
@@ -1568,7 +1637,7 @@ impl ViewportGpuResources {
                     alpha_to_coverage_enabled: false,
                 },
                 multiview: None,
-                cache: None,
+                cache: pipeline_cache.as_ref(),
             });
 
         // ------------------------------------------------------------------
@@ -1628,7 +1697,7 @@ impl ViewportGpuResources {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-            cache: None,
+            cache: pipeline_cache.as_ref(),
         });
 
         // Pre-allocate vertex buffer (resized in prepare if needed).
@@ -1638,6 +1707,8 @@ impl ViewportGpuResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        mark("ui_pipelines");
 
         // ------------------------------------------------------------------
         // Shared material sampler (linear + repeat : reused for all material textures)
@@ -1972,6 +2043,7 @@ impl ViewportGpuResources {
             &outline_pipeline_layout,
             &outline_mask_shader,
             wgpu::TextureFormat::R8Unorm,
+            pipeline_cache.as_ref(),
         );
         let outline_mask_pipeline = outline_masks.mask;
         let outline_mask_two_sided_pipeline = outline_masks.mask_two_sided;
@@ -2043,7 +2115,7 @@ impl ViewportGpuResources {
                     alpha_to_coverage_enabled: false,
                 },
                 multiview: None,
-                cache: None,
+                cache: pipeline_cache.as_ref(),
             });
 
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
@@ -2118,7 +2190,7 @@ impl ViewportGpuResources {
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
-                cache: None,
+                cache: pipeline_cache.as_ref(),
             });
 
         // X-ray pipeline: render selected objects through all geometry as a semi-transparent tint.
@@ -2159,7 +2231,7 @@ impl ViewportGpuResources {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-            cache: None,
+            cache: pipeline_cache.as_ref(),
         });
 
         // Skybox pipeline: fullscreen triangle that samples the equirect environment map.
@@ -2209,14 +2281,17 @@ impl ViewportGpuResources {
             }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
-            cache: None,
+            cache: pipeline_cache.as_ref(),
         });
+
+        mark("misc_pipelines");
 
         // `deform` is constructed earlier (before the mesh pipeline layout).
 
         let resources = Self {
             target_format,
             sample_count,
+            pipeline_cache,
             solid_pipeline,
             deform,
             solid_two_sided_pipeline,
@@ -2693,6 +2768,11 @@ impl ViewportGpuResources {
         // `viewport_lib::plugins::skinning::SkinningPlugin::install(&mut resources, &device)`
         // before uploading any skin data. The renderer otherwise carries no
         // skinning state.
+        tracing::info!(
+            target: "viewport_lib::init",
+            ms = init_start.elapsed().as_secs_f32() * 1000.0,
+            "gpu resources init total"
+        );
         resources
     }
 }

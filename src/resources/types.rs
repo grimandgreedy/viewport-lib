@@ -2510,6 +2510,11 @@ pub struct ViewportGpuResources {
     pub target_format: wgpu::TextureFormat,
     /// MSAA sample count used by all render pipelines.
     pub sample_count: u32,
+    /// Optional pipeline cache shared by every pipeline built here. `Some` only
+    /// when the device enables `Features::PIPELINE_CACHE`. Persist its contents
+    /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
+    /// recompilation on later launches.
+    pub pipeline_cache: Option<wgpu::PipelineCache>,
     /// Solid-shaded render pipeline (TriangleList topology, no blending).
     pub solid_pipeline: wgpu::RenderPipeline,
     /// Solid-shaded render pipeline with back-face culling disabled (two-sided surfaces).

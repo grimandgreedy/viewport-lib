@@ -10,7 +10,10 @@ impl ViewportRenderer {
         resources: &mut ViewportGpuResources,
         instancing: &mut InstancingState,
         compute_filter_results: &[crate::resources::ComputeFilterResult],
-        plugins: &std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::ItemTypePlugin>>,
+        plugins: &std::collections::HashMap<
+            &'static str,
+            Box<dyn crate::plugin_api::ItemTypePlugin>,
+        >,
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
         scene_items: &[SceneRenderItem],
@@ -21,6 +24,18 @@ impl ViewportRenderer {
         queue: &wgpu::Queue,
         frame: &FrameData,
     ) {
+        // Shadow-pass instrumentation. The stall reported on some mobile backends
+        // shows up at `present` because the shadow depth work is GPU-bound and only
+        // forced to completion later. When the `viewport_lib::shadow` target is
+        // enabled at debug level, bracket the pass and poll the device to completion
+        // so the shadow GPU cost is attributed here instead of hiding inside present.
+        // The poll is skipped entirely (zero overhead) when the target is off.
+        // Enable with `RUST_LOG=viewport_lib::shadow=debug`. For non-perturbing
+        // timing in shipping builds, use GPU timestamp queries instead.
+        let shadow_instrument =
+            tracing::enabled!(target: "viewport_lib::shadow", tracing::Level::DEBUG);
+        let shadow_start = std::time::Instant::now();
+
         // Shadow depth pass : CSM: render each cascade into its atlas tile.
         // Skip the pass entirely when over budget and shadow reduction is allowed.
         // ------------------------------------------------------------------
@@ -514,7 +529,10 @@ impl ViewportRenderer {
         // via `shadow_point_pipeline`. Per-face culling uses the standard
         // CPU frustum from the face's view-projection.
         // ----------------------------------------------------------------
-        if lighting.shadows_enabled && !scene_items.is_empty() && !light.point_shadow_faces.is_empty() {
+        if lighting.shadows_enabled
+            && !scene_items.is_empty()
+            && !light.point_shadow_faces.is_empty()
+        {
             // Make sure each casting item's `mesh.object_uniform_buf` carries
             // the item's current world model matrix. When instancing is on,
             // the per-item write-buffer pass earlier in `prepare_scene_internal`
@@ -602,6 +620,28 @@ impl ViewportRenderer {
                 }
             }
             queue.submit(std::iter::once(enc.finish()));
+        }
+
+        if shadow_instrument && lighting.shadows_enabled {
+            // Force the just-submitted shadow work to finish so the measured time
+            // reflects shadow GPU execution rather than landing later at present.
+            // Other work submitted before this point in prepare is minor, so this
+            // is a good attribution of the shadow cost.
+            device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: None,
+                    timeout: Some(std::time::Duration::from_millis(2000)),
+                })
+                .ok();
+            tracing::debug!(
+                target: "viewport_lib::shadow",
+                ms = shadow_start.elapsed().as_secs_f32() * 1000.0,
+                cascades = light.effective_cascade_count,
+                atlas = resources.shadow_atlas_size,
+                draws = last_stats.shadow_draw_calls,
+                point_faces = light.point_shadow_faces.len(),
+                "shadow pass + gpu completion"
+            );
         }
     }
 }

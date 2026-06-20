@@ -20,6 +20,7 @@ pub(crate) fn build_ldr_mesh_pipelines(
     shader: &wgpu::ShaderModule,
     target_format: wgpu::TextureFormat,
     sample_count: u32,
+    cache: Option<&wgpu::PipelineCache>,
 ) -> LdrMeshPipelines {
     let depth_stencil = wgpu::DepthStencilState {
         format: wgpu::TextureFormat::Depth24PlusStencil8,
@@ -72,7 +73,7 @@ pub(crate) fn build_ldr_mesh_pipelines(
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-            cache: None,
+            cache,
         })
     };
 
@@ -326,6 +327,7 @@ pub(crate) fn build_shadow_pipeline(
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
     cull_mode: Option<wgpu::Face>,
+    cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::RenderPipeline {
     let label = match cull_mode {
         Some(wgpu::Face::Front) => "shadow_pipeline",
@@ -364,7 +366,7 @@ pub(crate) fn build_shadow_pipeline(
             alpha_to_coverage_enabled: false,
         },
         multiview: None,
-        cache: None,
+        cache,
     })
 }
 
@@ -382,6 +384,7 @@ pub(crate) fn build_shadow_point_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
+    cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("shadow_point_pipeline"),
@@ -425,7 +428,7 @@ pub(crate) fn build_shadow_point_pipeline(
             alpha_to_coverage_enabled: false,
         },
         multiview: None,
-        cache: None,
+        cache,
     })
 }
 
@@ -441,6 +444,7 @@ pub(crate) fn build_outline_mask_pipelines(
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
     mask_format: wgpu::TextureFormat,
+    cache: Option<&wgpu::PipelineCache>,
 ) -> OutlineMaskPipelines {
     let make = |label: &str, cull: Option<wgpu::Face>| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -480,7 +484,7 @@ pub(crate) fn build_outline_mask_pipelines(
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-            cache: None,
+            cache,
         })
     };
     OutlineMaskPipelines {

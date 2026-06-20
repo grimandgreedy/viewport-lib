@@ -410,6 +410,10 @@ pub struct ViewportRenderer {
     pick_implicit_items: Vec<GpuImplicitPickItem>,
     /// GPU marching cubes jobs from the last `prepare()` call, retained for `pick()` dispatch.
     pick_mc_items: Vec<GpuMcPickItem>,
+    /// When `false`, `prepare()` skips populating the CPU pick caches above, so
+    /// scenes that never call `pick()`/`pick_rect()` avoid a per-frame deep copy
+    /// of all inline geometry. Enable with `set_cpu_pick_cache(true)`.
+    cpu_pick_cache_enabled: bool,
 
     // --- GPU timestamp queries ---
     /// Timestamp query set with 2 entries (scene-pass begin + end).
@@ -423,7 +427,6 @@ pub struct ViewportRenderer {
     ts_period: f32,
     /// Whether the staging buffer holds unread timestamp data from the previous frame.
     ts_needs_readback: bool,
-
 
     // --- Per-pass degradation state ---
     /// Tiered degradation ladder position (0 = none, 1 = shadows, 2 = volumes, 3 = effects).
@@ -465,11 +468,49 @@ impl ViewportRenderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
+        Self::with_sample_count_and_cache(device, target_format, sample_count, None)
+    }
+
+    /// Create a renderer, seeding the GPU pipeline cache from previously saved
+    /// data so shader compilation can be skipped on later launches.
+    ///
+    /// Pass the bytes returned by an earlier [`pipeline_cache_data`](Self::pipeline_cache_data)
+    /// call, or `None` on first run. The cache only takes effect when the device
+    /// was created with `Features::PIPELINE_CACHE`; otherwise the data is ignored
+    /// and this matches [`new`](Self::new).
+    pub fn new_with_pipeline_cache(
+        device: &wgpu::Device,
+        target_format: wgpu::TextureFormat,
+        pipeline_cache_data: Option<&[u8]>,
+    ) -> Self {
+        Self::with_sample_count_and_cache(device, target_format, 1, pipeline_cache_data)
+    }
+
+    /// Returns the current contents of the GPU pipeline cache, suitable for
+    /// persisting and feeding back into [`new_with_pipeline_cache`](Self::new_with_pipeline_cache)
+    /// on the next launch. `None` when the device lacks `Features::PIPELINE_CACHE`.
+    pub fn pipeline_cache_data(&self) -> Option<Vec<u8>> {
+        self.resources.pipeline_cache.as_ref()?.get_data()
+    }
+
+    /// Like [`with_sample_count`](Self::with_sample_count) with an MSAA count and
+    /// an optional saved pipeline cache.
+    pub fn with_sample_count_and_cache(
+        device: &wgpu::Device,
+        target_format: wgpu::TextureFormat,
+        sample_count: u32,
+        pipeline_cache_data: Option<&[u8]>,
+    ) -> Self {
         let gpu_culling_supported = device
             .features()
             .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         Self {
-            resources: ViewportGpuResources::new(device, target_format, sample_count),
+            resources: ViewportGpuResources::new_with_cache(
+                device,
+                target_format,
+                sample_count,
+                pipeline_cache_data,
+            ),
             instancing: InstancingState::new(gpu_culling_supported),
             item_type_plugins: std::collections::HashMap::new(),
             plugin_frame_index: 0,
@@ -539,6 +580,7 @@ impl ViewportRenderer {
             pick_screen_image_items: Vec::new(),
             pick_implicit_items: Vec::new(),
             pick_mc_items: Vec::new(),
+            cpu_pick_cache_enabled: false,
             ts_query_set: None,
             ts_resolve_buf: None,
             ts_staging_buf: None,
@@ -633,6 +675,26 @@ impl ViewportRenderer {
     /// Return the current runtime mode.
     pub fn runtime_mode(&self) -> crate::renderer::stats::RuntimeMode {
         self.runtime_mode
+    }
+
+    /// Enable or disable the CPU pick cache.
+    ///
+    /// When enabled, `prepare()` retains a copy of the frame's pickable items so
+    /// `pick()` and `pick_rect()` can run later (e.g. on a mouse click) without the
+    /// scene data. This copies all inline point/glyph/curve geometry each frame, so it
+    /// is disabled by default: turn it on only when using the CPU `pick()`/`pick_rect()`
+    /// path. The GPU path (`pick_scene_gpu`) and the renderer-free
+    /// `interaction::picking` functions do not need it.
+    pub fn set_cpu_pick_cache(&mut self, enabled: bool) {
+        if !enabled && self.cpu_pick_cache_enabled {
+            self.clear_pick_cache();
+        }
+        self.cpu_pick_cache_enabled = enabled;
+    }
+
+    /// Whether the CPU pick cache is enabled. See `set_cpu_pick_cache`.
+    pub fn cpu_pick_cache(&self) -> bool {
+        self.cpu_pick_cache_enabled
     }
 
     /// Set the performance policy controlling target FPS, render scale bounds,
@@ -731,7 +793,8 @@ impl ViewportRenderer {
             return;
         }
         if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+            self.instancing.cull_resources =
+                Some(crate::renderer::indirect::CullResources::new(device));
         }
         let cull = self.instancing.cull_resources.as_ref().unwrap();
         cull.dispatch(encoder, device, queue, frustum, None, sub);
@@ -761,7 +824,8 @@ impl ViewportRenderer {
         debug_assert!(cascade_idx < 4, "cascade_idx must be in 0..4");
         let cascade_idx = cascade_idx.min(3);
         if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+            self.instancing.cull_resources =
+                Some(crate::renderer::indirect::CullResources::new(device));
         }
         let cull = self.instancing.cull_resources.as_ref().unwrap();
         cull.dispatch(
@@ -862,7 +926,8 @@ impl ViewportRenderer {
             return;
         }
         if self.instancing.cull_resources.is_none() {
-            self.instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+            self.instancing.cull_resources =
+                Some(crate::renderer::indirect::CullResources::new(device));
         }
         let cull = self.instancing.cull_resources.as_ref().unwrap();
         let (meta_buf, counter_buf) = cull.scratch_single_mesh_buffers();
@@ -1618,7 +1683,9 @@ impl ViewportRenderer {
             shadow_info_buf
                 .slice(..)
                 .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&[self.shadow.last_shadow_atlas_uniform]));
+                .copy_from_slice(bytemuck::cast_slice(&[self
+                    .shadow
+                    .last_shadow_atlas_uniform]));
             shadow_info_buf.unmap();
             let grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_grid_buf"),
