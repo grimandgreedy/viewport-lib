@@ -11,6 +11,7 @@ impl ViewportRenderer {
         mesh_uniforms: &mut PerObjectState,
         use_instancing: bool,
         scene_items: &[SceneRenderItem],
+        compute_filter_results: &[crate::resources::ComputeFilterResult],
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
@@ -78,23 +79,15 @@ impl ViewportRenderer {
                 // leaves the flag at the default 0, the shader ignores the
                 // override binding, and the consumer's compute output silently
                 // does nothing.
-                let mesh_has_override = resources.mesh_store.get(item.mesh_id).map_or(false, |m| {
-                    m.position_override_buffer.is_some() || m.normal_override_buffer.is_some()
-                });
-                let item_is_skinned = resources
-                    .deform
-                    .has_per_instance_deform_data(item.mesh_id, item.deform_instance);
+                // Items that go through the instanced path do not need a per-item
+                // uniform write, unless something forces them back to per-object:
+                // wireframe mode, a wireframe or warp item, or normal visualization.
                 if use_instancing
+                    && is_instanceable(item, resources, compute_filter_results)
                     && !frame.viewport.wireframe_mode
-                    && item.active_attribute.is_none()
-                    && !item.material.is_two_sided()
-                    && item.material.matcap_id().is_none()
-                    && item.material.param_vis.is_none()
                     && !item.settings.wireframe
                     && item.warp_attribute.is_none()
                     && !item.show_normals
-                    && !mesh_has_override
-                    && !item_is_skinned
                 {
                     continue;
                 }

@@ -150,6 +150,7 @@ impl ViewportRenderer {
             &mut self.mesh_uniforms,
             self.instancing.use_instancing,
             scene_items,
+            &self.compute_filter_results,
             device,
             queue,
             frame,

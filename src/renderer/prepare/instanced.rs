@@ -39,27 +39,7 @@ impl ViewportRenderer {
         // filtered set is unchanged.
         let instancable_count = scene_items
             .iter()
-            .filter(|item| {
-                !item.settings.hidden
-                    && item.active_attribute.is_none()
-                    && !item.material.is_two_sided()
-                    && item.material.matcap_id().is_none()
-                    && item.material.param_vis.is_none()
-                    && resources.mesh_store.get(item.mesh_id).is_some()
-                    && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
-                    // Items whose mesh has a GPU position/normal override
-                    // bound must use the per-object pipeline. `mesh_instanced.wgsl`
-                    // has no awareness of the override binding, so an
-                    // instanced draw silently ignores the consumer's
-                    // compute output.
-                    && resources
-                        .mesh_store
-                        .get(item.mesh_id)
-                        .map_or(true, |m| {
-                            m.position_override_buffer.is_none()
-                                && m.normal_override_buffer.is_none()
-                        })
-            })
+            .filter(|item| is_instanceable(item, resources, compute_filter_results))
             .count();
         let cache_valid = instancable_count == instancing.last_instancable_count
             && frame.scene.generation == instancing.last_scene_generation
@@ -70,31 +50,7 @@ impl ViewportRenderer {
             // Cache miss : rebuild batches and upload instance data.
             let mut sorted_items: Vec<&SceneRenderItem> = scene_items
                 .iter()
-                .filter(|item| {
-                    !item.settings.hidden
-                        && item.active_attribute.is_none()
-                        && !item.material.is_two_sided()
-                        && item.material.matcap_id().is_none()
-                        && item.material.param_vis.is_none()
-                        && resources.mesh_store.get(item.mesh_id).is_some()
-                        && !compute_filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
-                        // Items with per-instance deformer data need their
-                        // own bind group at draw time and cannot share an
-                        // instance batch.
-                        && !resources
-                            .deform
-                            .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
-                        // Items with a position/normal override must use
-                        // the per-object pipeline; see the matching check
-                        // in `instancable_count` above.
-                        && resources
-                            .mesh_store
-                            .get(item.mesh_id)
-                            .map_or(true, |m| {
-                                m.position_override_buffer.is_none()
-                                    && m.normal_override_buffer.is_none()
-                            })
-                })
+                .filter(|item| is_instanceable(item, resources, compute_filter_results))
                 .collect();
 
             sorted_items.sort_unstable_by(|a, b| {

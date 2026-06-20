@@ -1,14 +1,41 @@
-//! Per-item material fields shared by the instanced and per-object draw paths.
-//!
-//! `ObjectUniform` (per-object) and `InstanceData` (instanced) are different GPU
-//! structs, but the material and shading fields they have in common are derived
-//! from the item the same way. This computes that common core once so the two
-//! builders cannot drift apart. Each path fills its own extra fields separately:
-//! the instanced path forces `wireframe` off, and the per-object path adds the
-//! features the instanced shader does not handle (scalar attributes, matcaps,
-//! per-side borders, overrides, and so on).
+//! Logic shared between the instanced and per-object mesh draw paths: the
+//! common per-item material fields, and the predicate deciding which path an
+//! item takes.
 
 use super::*;
+
+/// Whether an item can be drawn through the instanced path.
+///
+/// The instanced shader (`mesh_instanced.wgsl`) handles only the common case: a
+/// plain mesh with a simple material. Anything that needs per-item state the
+/// instanced shader does not read falls back to the per-object path. This is the
+/// single source of truth for that decision, used both when building the batches
+/// and when deciding the instanced-batch cache key. An item is excluded when it
+/// is hidden, carries a scalar attribute, uses a two-sided material, a matcap, or
+/// param-vis, has a pending compute-filter result (which needs a per-item index
+/// buffer), has per-instance deform data, or its mesh has a position/normal
+/// override buffer bound.
+pub(super) fn is_instanceable(
+    item: &SceneRenderItem,
+    resources: &ViewportGpuResources,
+    compute_filter_results: &[crate::resources::ComputeFilterResult],
+) -> bool {
+    !item.settings.hidden
+        && item.active_attribute.is_none()
+        && !item.material.is_two_sided()
+        && item.material.matcap_id().is_none()
+        && item.material.param_vis.is_none()
+        && resources.mesh_store.get(item.mesh_id).is_some()
+        && !compute_filter_results
+            .iter()
+            .any(|r| r.mesh_id == item.mesh_id)
+        && !resources
+            .deform
+            .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
+        && resources.mesh_store.get(item.mesh_id).map_or(true, |m| {
+            m.position_override_buffer.is_none() && m.normal_override_buffer.is_none()
+        })
+}
 
 pub(super) struct CommonMaterial {
     pub(super) model: [[f32; 4]; 4],
