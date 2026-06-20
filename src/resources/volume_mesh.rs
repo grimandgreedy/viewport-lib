@@ -1251,6 +1251,73 @@ impl VolumeMeshData {
     pub fn push_hex(&mut self, verts: [u32; 8]) {
         self.cells.push(verts);
     }
+
+    /// Extract all tetrahedral cells and return a [`TetMesh`].
+    ///
+    /// Cells whose slots `[4..8]` are all [`CELL_SENTINEL`] are tets; every
+    /// other cell shape is dropped and counted in the returned
+    /// [`ConversionReport`]. Returns an error if no tet cells are present or
+    /// if a cell references a vertex index out of range.
+    pub fn to_tet_mesh(&self) -> Result<(super::tetmesh::TetMesh, ConversionReport), ToTetMeshError> {
+        use glam::Vec3;
+
+        let mut tet_indices: Vec<[u32; 4]> = Vec::new();
+        let mut dropped = 0usize;
+        for cell in &self.cells {
+            if cell[4] == CELL_SENTINEL
+                && cell[5] == CELL_SENTINEL
+                && cell[6] == CELL_SENTINEL
+                && cell[7] == CELL_SENTINEL
+            {
+                tet_indices.push([cell[0], cell[1], cell[2], cell[3]]);
+            } else {
+                dropped += 1;
+            }
+        }
+
+        if tet_indices.is_empty() {
+            return Err(ToTetMeshError::NoTetCells);
+        }
+
+        let vertex_count = self.positions.len();
+        let mut remap = vec![u32::MAX; vertex_count];
+        let mut positions: Vec<Vec3> = Vec::new();
+        let mut tets: Vec<[u32; 4]> = Vec::with_capacity(tet_indices.len());
+        for raw in tet_indices {
+            let mut out = [0_u32; 4];
+            for (slot, &idx) in raw.iter().enumerate() {
+                let idx_usize = idx as usize;
+                if idx_usize >= vertex_count {
+                    return Err(ToTetMeshError::OutOfRangeIndex(idx));
+                }
+                if remap[idx_usize] == u32::MAX {
+                    remap[idx_usize] = positions.len() as u32;
+                    let p = self.positions[idx_usize];
+                    positions.push(Vec3::new(p[0], p[1], p[2]));
+                }
+                out[slot] = remap[idx_usize];
+            }
+            tets.push(out);
+        }
+
+        Ok((super::tetmesh::TetMesh::new(positions, tets), ConversionReport { dropped_non_tet_cells: dropped }))
+    }
+}
+
+/// Side data returned by [`VolumeMeshData::to_tet_mesh`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ConversionReport {
+    /// Non-tet cells (pyramid, wedge, hex) dropped during extraction.
+    pub dropped_non_tet_cells: usize,
+}
+
+/// Error returned by [`VolumeMeshData::to_tet_mesh`].
+#[derive(Debug)]
+pub enum ToTetMeshError {
+    /// The mesh contained no tetrahedral cells.
+    NoTetCells,
+    /// A cell referenced a vertex index beyond the position array.
+    OutOfRangeIndex(u32),
 }
 
 // ---------------------------------------------------------------------------

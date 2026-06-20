@@ -46,6 +46,7 @@ mod types;
 /// Background runner for long-running uploads.
 pub mod upload_jobs;
 /// Unstructured volume mesh topology processing (tet / hex boundary extraction).
+pub mod tetmesh;
 pub mod volume_mesh;
 mod volumes;
 
@@ -106,6 +107,7 @@ pub use self::types::{
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
 #[allow(deprecated)]
+pub use self::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
 };

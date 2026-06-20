@@ -2,6 +2,15 @@
 
 ## [Unreleased Changes]
 
+### Features
+
+#### Fill support for polyline overlays
+Closed polyline overlays -- whether specified by segments or by a closure, now support colour, gradient and texture fill.
+
+#### TetMesh type and extraction from VolumeMeshData
+
+`TetMesh` is a new data type for pure tetrahedral meshes. It holds vertex positions, tet index arrays, and optional per-vertex attributes. `VolumeMeshData::to_tet_mesh` extracts all tet cells from an existing volume mesh into a `TetMesh`.
+
 ### Bug Fixes
 
 #### White tips on polylines coloured by an edge-scalar colourmap
@@ -16,7 +25,6 @@ A thin slab, plate, or panel facing the sun no longer picks up a sharp dark patc
 
 In scenes with a first-person camera, shadows from buildings and other distant objects often did not appear on the ground until the camera moved close to them. Shadow coverage is now derived from the camera's actual view distance rather than from an internal field that only made sense for orbit cameras, so casters across a typical-sized scene render their shadows at all distances. Scenes that were already setting a manual shadow extent are unaffected.
 
-### Features
 
 #### Per-material range remaps for ambient occlusion, metallic, and roughness textures
 
