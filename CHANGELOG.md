@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased Changes]
+## [0.18.2]
 
 ### Features
 
