@@ -848,6 +848,7 @@ impl ViewportRenderer {
                     for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                         if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(hdr_wf);
+                            render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             render_pass.set_bind_group(1, tvm_bg, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             render_pass.set_index_buffer(
