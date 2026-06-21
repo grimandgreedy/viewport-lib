@@ -37,11 +37,14 @@ pub enum NavigationMode {
     /// adjusts the zoom level. Intended for 2D data inspection where orbit
     /// would be disorienting.
     Planar,
-    /// First-person fly-through.
+    /// Free-fly through the scene.
     ///
     /// Mouse drag acts as mouselook (yaw + pitch with the eye held fixed).
     /// WASD / Q / E translate the camera position at [`super::controller::OrbitCameraController::fly_speed`]
     /// units per frame. The `ViewportAll` binding preset must be active for
     /// the movement keys to be resolved.
-    FirstPerson,
+    ///
+    /// This flies the camera itself; it is distinct from the body-attached
+    /// `FirstPersonCameraController`, which follows a position you supply.
+    Fly,
 }

@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking changes
+
+#### `NavigationMode::FirstPerson` renamed to `NavigationMode::Fly`
+
+The free-fly orbit navigation mode is now `NavigationMode::Fly`, freeing the
+"first person" name for a dedicated body-attached first-person camera
+controller. Update any `NavigationMode::FirstPerson` reference to
+`NavigationMode::Fly`; behaviour is unchanged.
+
+### Improvements
+
+#### `OrbitCameraController::apply` for a shared action frame
+
+`OrbitCameraController` gained `apply(&mut Camera, &ActionFrame)`, which applies
+an already-resolved frame without draining the event queue, so a host can own
+one input resolver and feed the same frame to several controllers.
+`apply_to_camera` is unchanged and now delegates to it. A new `set_viewport_size`
+setter records the viewport size used for pan when calling `apply` directly.
+
 ## [0.18.3]
 ### Improvements
 - Refactored and modularised the prepare and paint passes.

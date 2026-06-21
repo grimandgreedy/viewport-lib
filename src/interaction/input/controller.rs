@@ -51,7 +51,7 @@ pub struct OrbitCameraController {
     ///
     /// Defaults to [`NavigationMode::Arcball`].
     pub navigation_mode: NavigationMode,
-    /// Movement speed for [`NavigationMode::FirstPerson`], in world units per frame.
+    /// Movement speed for [`NavigationMode::Fly`], in world units per frame.
     ///
     /// Defaults to `0.1`. Scale this to match your scene : a value of `0.1` is
     /// suitable for a scene with objects a few units across.
@@ -124,6 +124,13 @@ impl OrbitCameraController {
         self.input.begin_frame(ctx);
     }
 
+    /// Record the viewport size used for pan when applying a frame through
+    /// [`apply`](Self::apply) without going through
+    /// [`begin_frame`](Self::begin_frame).
+    pub fn set_viewport_size(&mut self, viewport_size: [f32; 2]) {
+        self.viewport_size = viewport_size;
+    }
+
     /// Push a single viewport-scoped event into the accumulator.
     ///
     /// Call this from the host's event handler whenever a relevant native event
@@ -152,10 +159,27 @@ impl OrbitCameraController {
     /// - [`NavigationMode::Arcball`]: unconstrained arcball (default).
     /// - [`NavigationMode::Turntable`]: yaw around world Z, pitch clamped to +/-89 deg.
     /// - [`NavigationMode::Planar`]: pan only, orbit input is ignored.
-    /// - [`NavigationMode::FirstPerson`]: mouselook + WASD translation. Requires
+    /// - [`NavigationMode::Fly`]: mouselook + WASD translation. Requires
     ///   the `ViewportAll` binding preset so that movement keys are resolved.
     pub fn apply_to_camera(&mut self, camera: &mut Camera) -> ActionFrame {
         let frame = self.input.resolve();
+        self.apply(camera, &frame);
+        frame
+    }
+
+    /// Apply an already-resolved [`ActionFrame`] to the camera without draining
+    /// the event queue.
+    ///
+    /// Use this when the host owns a single [`ViewportInput`] resolver shared
+    /// across several controllers (orbit, first-person, third-person) and feeds
+    /// the same frame to whichever one is active.
+    /// [`apply_to_camera`](Self::apply_to_camera) is the convenience wrapper
+    /// that resolves and applies in one call.
+    ///
+    /// Pan needs the viewport height, read from the size recorded by the last
+    /// [`begin_frame`](Self::begin_frame) or
+    /// [`set_viewport_size`](Self::set_viewport_size).
+    pub fn apply(&self, camera: &mut Camera, frame: &ActionFrame) {
         let nav = &frame.navigation;
         let h = self.viewport_size[1];
 
@@ -206,15 +230,15 @@ impl OrbitCameraController {
                 }
             }
 
-            NavigationMode::FirstPerson => {
+            NavigationMode::Fly => {
                 // Mouselook: drag rotates the view while the eye stays fixed.
                 if nav.orbit != glam::Vec2::ZERO {
                     let yaw = nav.orbit.x * self.orbit_sensitivity;
                     let pitch = nav.orbit.y * self.orbit_sensitivity;
-                    apply_firstperson_look(camera, yaw, pitch);
+                    apply_fly_look(camera, yaw, pitch);
                 }
                 if nav.twist != 0.0 && self.gesture_sensitivity != 0.0 {
-                    apply_firstperson_look(camera, nav.twist * self.gesture_sensitivity, 0.0);
+                    apply_fly_look(camera, nav.twist * self.gesture_sensitivity, 0.0);
                 }
 
                 // WASD / QE translation.
@@ -246,8 +270,6 @@ impl OrbitCameraController {
                 camera.center += move_delta;
             }
         }
-
-        frame
     }
 }
 
@@ -286,7 +308,7 @@ fn apply_turntable(camera: &mut Camera, yaw: f32, pitch: f32) {
 ///
 /// The orbit center is adjusted so that `eye = center + orientation * Z * distance`
 /// remains constant after the rotation.
-fn apply_firstperson_look(camera: &mut Camera, yaw: f32, pitch: f32) {
+fn apply_fly_look(camera: &mut Camera, yaw: f32, pitch: f32) {
     let eye = camera.eye_position();
     camera.orientation = (glam::Quat::from_rotation_z(-yaw)
         * camera.orientation
@@ -393,10 +415,10 @@ mod tests {
     }
 
     #[test]
-    fn firstperson_look_preserves_eye() {
+    fn fly_look_preserves_eye() {
         let mut cam = Camera::default();
         let eye_before = cam.eye_position();
-        apply_firstperson_look(&mut cam, 0.3, 0.2);
+        apply_fly_look(&mut cam, 0.3, 0.2);
         let eye_after = cam.eye_position();
         let diff = (eye_after - eye_before).length();
         assert!(
@@ -406,9 +428,9 @@ mod tests {
     }
 
     #[test]
-    fn firstperson_fly_moves_camera() {
+    fn fly_moves_camera() {
         let mut ctrl = OrbitCameraController::viewport_all();
-        ctrl.navigation_mode = NavigationMode::FirstPerson;
+        ctrl.navigation_mode = NavigationMode::Fly;
         ctrl.fly_speed = 1.0;
         ctrl.begin_frame(make_ctx());
         let mut cam = Camera::default();
