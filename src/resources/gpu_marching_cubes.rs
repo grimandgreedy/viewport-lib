@@ -148,7 +148,13 @@ struct McSurfaceRaw {
     roughness: f32,
     unlit: u32,
     opacity: f32,
-    _pad: [u32; 2],
+    /// Per-material ambient scalar from `Material::ambient`. Added to the
+    /// hemisphere ambient term so the MC shaded result matches the regular
+    /// mesh shader's Blinn-Phong path on materials that use the default
+    /// `ambient = 0.15`. Without this field the MC surface reads notably
+    /// darker on its shadowed side than an equivalent regular mesh.
+    ambient: f32,
+    _pad: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -882,7 +888,8 @@ impl ViewportGpuResources {
                 roughness: job.material.roughness,
                 unlit: job.settings.unlit as u32,
                 opacity: job.settings.opacity,
-                _pad: [0; 2],
+                ambient: job.material.ambient,
+                _pad: 0,
             };
             let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mc_surface_mat"),

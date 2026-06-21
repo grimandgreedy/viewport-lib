@@ -412,8 +412,24 @@ fn sample_shadow_csm(
         // bias with the cascade too, so wide cascades pushed thin
         // perpendicular receivers (a 0.01-thick slab top) past their own
         // back face into the recorded caster depth and they self-shadowed.
-        let bias_floor = 0.001;
-        normal_bias = mix(texel_world * 1.5, bias_floor, clamp(abs(n_dot_l), 0.0, 1.0));
+        //
+        // Two-sided materials (`backface_policy != 0`) cast through the
+        // cull-none shadow pipeline, where the receiver and caster are the
+        // same surface. Their receiver bias has to stay well below that
+        // pipeline's caster-side bias (`CSM_SHADOW_BIAS_TWO_SIDED`) across
+        // every cascade or the surface self-shadows uniformly, reading as a
+        // broad dark patch. A 0.0001-world floor clears the much smaller
+        // cull-front caster bias (closed solids shadowing a two-sided
+        // receiver) while staying under the cull-none caster bias; larger
+        // values produce cascade-boundary seams on self-cast two-sided
+        // receivers (cloth, foliage).
+        let bias_floor_cull = 0.001;
+        let bias_floor_two_sided = 0.0001;
+        if object.backface_policy != 0u {
+            normal_bias = bias_floor_two_sided;
+        } else {
+            normal_bias = mix(texel_world * 1.5, bias_floor_cull, clamp(abs(n_dot_l), 0.0, 1.0));
+        }
         offset_world = world_pos - light_dir * normal_bias;
     } else {
         normal_bias = texel_world * mix(1.5, 0.0, clamp(abs(n_dot_l), 0.0, 1.0));

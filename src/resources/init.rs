@@ -902,14 +902,25 @@ impl ViewportGpuResources {
             });
 
         // Depth-only pass through the shared factory so register_deformer
-        // can rebuild it from composed source. Cull-front: back faces are
-        // the casters, so a closed solid's own front face is never compared
-        // against itself in the shadow map.
+        // can rebuild it from composed source. Two variants:
+        // - cull-front (default) for closed solids: back faces are the
+        //   casters, so a solid's own front face is never compared against
+        //   itself in the shadow map.
+        // - cull-none for two-sided materials (`BackfacePolicy::Identical`):
+        //   both sides of cloth and planar surfaces rasterise; a larger
+        //   caster-side bias keeps the receiver from self-shadowing.
         let shadow_pipeline = crate::resources::mesh_pipelines::build_shadow_pipeline(
             device,
             &shadow_pipeline_layout,
             &shadow_shader,
             Some(wgpu::Face::Front),
+            pipeline_cache.as_ref(),
+        );
+        let shadow_pipeline_two_sided = crate::resources::mesh_pipelines::build_shadow_pipeline(
+            device,
+            &shadow_pipeline_layout,
+            &shadow_shader,
+            None,
             pipeline_cache.as_ref(),
         );
 
@@ -2320,6 +2331,7 @@ impl ViewportGpuResources {
             shadow_point_face_buf,
             shadow_point_face_bind_group,
             shadow_pipeline,
+            shadow_pipeline_two_sided,
             shadow_camera_bind_group_layout: shadow_camera_bgl,
             shadow_uniform_buf,
             shadow_bind_group,

@@ -27,6 +27,20 @@ one input resolver and feed the same frame to several controllers.
 setter records the viewport size used for pan when calling `apply` directly.
 - Refactored and modularised the prepare and paint passes.
 
+### Bug Fixes
+
+#### Flat and two-sided surfaces shadowing themselves
+
+A surface that is visible from both sides, like a water plane, a sheet, or cloth, no longer goes dark by casting a shadow onto itself. These surfaces now cast their shadow from both faces and use a gentler shadow setting so the surface does not fall into its own shadow. The showcase wave and the playback grid both looked muddy and too dark before this; they now light up properly.
+
+#### Shadows in the wrong place for animated and repeated shapes
+
+When a shape is moved around on the graphics card each frame, the shadow now follows where the shape actually is. Before, the shadow was drawn from the shape's original resting position instead of where it had moved to. This showed up two ways: an animated wave cast dark stripes across itself because the shadow came from the flat starting shape, and a grid of identical floating markers all cast a single shadow at the centre because every copy still sat stacked at the origin when the shadow was drawn. Both now cast their shadows from their real positions.
+
+#### Marching-cubes surfaces darker than matching regular meshes
+
+A surface built with marching cubes no longer looks noticeably darker on its shaded side than the same shape drawn as an ordinary mesh. The marching-cubes path was leaving out the small base brightness that ordinary meshes add, so it now uses the same amount.
+
 
 ## [0.18.2]
 

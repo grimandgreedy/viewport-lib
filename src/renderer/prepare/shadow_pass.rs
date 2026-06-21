@@ -336,7 +336,6 @@ impl ViewportRenderer {
                             light.tile_size,
                             light.tile_size,
                         );
-                        shadow_pass.set_pipeline(&resources.shadow_pipeline);
                         shadow_pass.set_bind_group(
                             0,
                             &resources.shadow_bind_group,
@@ -385,6 +384,15 @@ impl ViewportRenderer {
                                 continue;
                             }
 
+                            // Two-sided materials cast through the cull-none
+                            // pipeline so both faces rasterise; its larger
+                            // caster-side bias keeps the surface from
+                            // self-shadowing where it is its own receiver.
+                            if item.material.is_two_sided() {
+                                shadow_pass.set_pipeline(&resources.shadow_pipeline_two_sided);
+                            } else {
+                                shadow_pass.set_pipeline(&resources.shadow_pipeline);
+                            }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             shadow_pass.set_bind_group(
                                 2,
@@ -426,7 +434,6 @@ impl ViewportRenderer {
                             &resources.shadow_bind_group,
                             &[cascade as u32 * 256],
                         );
-                        shadow_pass.set_pipeline(&resources.shadow_pipeline);
 
                         let cascade_frustum = crate::camera::frustum::Frustum::from_view_proj(
                             &light.cascade_view_projs[cascade],
@@ -453,6 +460,13 @@ impl ViewportRenderer {
                                 continue;
                             }
 
+                            // Two-sided materials cast through the cull-none
+                            // pipeline (see the instanced path above).
+                            if item.material.is_two_sided() {
+                                shadow_pass.set_pipeline(&resources.shadow_pipeline_two_sided);
+                            } else {
+                                shadow_pass.set_pipeline(&resources.shadow_pipeline);
+                            }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             shadow_pass.set_bind_group(
                                 2,

@@ -45,8 +45,12 @@ struct McSurfaceUniform {
     roughness:  f32,
     unlit:      u32,
     opacity:    f32,
+    // Per-material ambient scalar (`Material::ambient`). Folded into the
+    // hemisphere ambient so the MC path matches the regular mesh shader's
+    // Blinn-Phong ambient term, which otherwise leaves the MC dark side
+    // visibly darker than an equivalent regular mesh.
+    ambient:    f32,
     _pad1:      u32,
-    _pad2:      u32,
 };
 
 @group(1) @binding(0) var<uniform> material: McSurfaceUniform;
@@ -89,13 +93,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let N = normalize(in.world_norm);
     let V = normalize(camera.eye_pos - in.world_pos);
 
-    // Hemisphere ambient (Z-up world).
+    // Hemisphere ambient (Z-up world) plus the per-material ambient scalar
+    // the regular mesh shader's Blinn-Phong path also adds. Without the
+    // material term the MC path reads darker than an equivalent regular
+    // mesh on the side facing away from the light.
     let up_dot = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
-    let ambient = mix(
+    let hemi_ambient = mix(
         lights.ground_colour * lights.hemisphere_intensity,
         lights.sky_colour    * lights.hemisphere_intensity,
         up_dot,
     );
+    let ambient = hemi_ambient + vec3<f32>(material.ambient);
 
     // Accumulate all light types. Iterate the cluster's light list when the
     // build pass is active, or the full active-light array under the small-N

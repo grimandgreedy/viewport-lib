@@ -2586,10 +2586,16 @@ pub struct ViewportGpuResources {
     ///
     /// Culls front faces, so closed solids cast shadow from their back face
     /// and a solid's own front face is never compared against itself in the
-    /// shadow map. Two-sided surfaces with a single quad facing the light
-    /// (planes, cloth) have their only face culled here and do not cast a
-    /// shadow; the receiver-side bias path covers their self-shadow case.
+    /// shadow map. Two-sided materials (`BackfacePolicy::Identical` and
+    /// friends) are routed to `shadow_pipeline_two_sided` instead so both
+    /// sides of cloth, foliage, and planar surfaces cast shadows.
     pub shadow_pipeline: wgpu::RenderPipeline,
+    /// Shadow caster pipeline for two-sided materials. Same layout and shader
+    /// as `shadow_pipeline` but with `cull_mode: None` and a larger caster-side
+    /// depth bias (`CSM_SHADOW_BIAS_TWO_SIDED`) so both sides of a two-sided
+    /// mesh rasterise into the shadow atlas without the surface self-shadowing
+    /// where it is its own receiver.
+    pub shadow_pipeline_two_sided: wgpu::RenderPipeline,
     /// Bind group layout for the shadow camera uniform (group 0 of the
     /// shadow pass). Kept on the renderer so `register_deformer` can rebuild
     /// the shadow pipeline from a freshly composed shader module.

@@ -311,6 +311,29 @@ pub(crate) const CSM_SHADOW_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     clamp: 0.0,
 };
 
+/// Depth bias for the cull-none variant used by two-sided materials
+/// (`BackfacePolicy::Identical` and friends). On the cull-none path the
+/// receiver and caster are the same surface (e.g. a plane rasterised into
+/// the shadow map at its own depth, then sampled by its own fragment), so
+/// the caster-side bias has to outpace the receiver-side normal bias in
+/// `sample_shadow_csm` or the receiver self-shadows uniformly. With the
+/// default cull-front caster bias this surface reads as a broad dark patch.
+///
+/// `constant: 1000` in Depth32Float is ~1e-4 NDC, comfortably above the
+/// perpendicular-receiver bias floor. `slope_scale: 1.0` tracks the
+/// per-shadow-texel depth variation across tilted two-sided surfaces so the
+/// receiver-side bias only needs to clear the per-pipeline constant, keeping
+/// contact shadows tight instead of detaching them.
+///
+/// The cost is a small Peter-Panning offset (~1cm at typical cascade scale)
+/// at the foot of two-sided contact shadows. That is the trade for getting a
+/// two-sided surface to cast on both sides without shadowing itself.
+pub(crate) const CSM_SHADOW_BIAS_TWO_SIDED: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: 1000,
+    slope_scale: 1.0,
+    clamp: 0.0,
+};
+
 /// `shadow.wgsl`: depth-only shadow pass pipeline.
 ///
 /// `cull_mode` selects which faces are rasterised into the shadow atlas:
@@ -358,7 +381,11 @@ pub(crate) fn build_shadow_pipeline(
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilState::default(),
-            bias: CSM_SHADOW_BIAS,
+            bias: if cull_mode.is_none() {
+                CSM_SHADOW_BIAS_TWO_SIDED
+            } else {
+                CSM_SHADOW_BIAS
+            },
         }),
         multisample: wgpu::MultisampleState {
             count: 1,

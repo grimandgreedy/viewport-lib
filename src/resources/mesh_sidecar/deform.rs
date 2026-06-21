@@ -1090,6 +1090,10 @@ impl ViewportGpuResources {
                 Some(wgpu::Face::Front),
                 None,
             );
+            self.shadow_pipeline_two_sided =
+                crate::resources::mesh_pipelines::build_shadow_pipeline(
+                    device, &layout, &shader, None, None,
+                );
         }
 
         // outline_mask.wgsl: mask-write pass for the selection silhouette.
