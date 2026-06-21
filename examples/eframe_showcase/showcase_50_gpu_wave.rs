@@ -376,13 +376,12 @@ fn run_gpu_path(app: &mut App, dt: f32) {
     // wave plugin writes its position buffer; the buoy plugin reads that same
     // buffer and writes its own. Two separate queue.submit calls would also
     // work; bundling them in one keeps the chained-compute story tight.
-    let ctx = viewport_lib::runtime::GpuFrameContext {
-        camera: &app.camera,
-        viewport_size: app.wave_state.viewport_size,
+    let ctx = viewport_lib::runtime::GpuFrameContext::new(
+        &app.camera,
+        app.wave_state.viewport_size,
         dt,
-        frame_index: app.wave_state.frame_index,
-        viewport_id: None,
-    };
+        app.wave_state.frame_index,
+    );
     let mut bufs: Vec<wgpu::CommandBuffer> = Vec::new();
     if let Some(plugin) = app.wave_state.plugin.as_deref_mut() {
         plugin.set_amplitude(app.wave_state.amplitude);

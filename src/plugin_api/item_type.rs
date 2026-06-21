@@ -24,6 +24,7 @@ use crate::scene::material::ItemSettings;
 /// + view-projection matrix and forwards the same ray to every plugin's
 /// [`ItemTypePlugin::pick`] method.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct PickRay {
     /// World-space origin (camera eye in perspective; near-plane point in ortho).
     pub origin: glam::Vec3,
@@ -83,6 +84,7 @@ pub trait PluginItemCollection: Any + Send + Sync {
 /// uploads do: submit CPU work that returns a typed value, poll the
 /// returned `JobId` next frame, and take the result when the status
 /// reports `Ready`. See [`crate::resources::Jobs`] for the surface.
+#[non_exhaustive]
 pub struct ItemFrameContext<'a> {
     /// Active render-camera snapshot for this viewport: view + projection
     /// matrices, eye position, near/far. Use
@@ -107,6 +109,7 @@ pub struct ItemFrameContext<'a> {
 /// bind group already bound. Plugin pipelines built via
 /// [`build_opaque_pipeline`](crate::resources::ViewportGpuResources::build_opaque_pipeline)
 /// drop in without further setup.
+#[non_exhaustive]
 pub struct PaintContext<'a> {
     /// Active render-camera snapshot for this viewport.
     pub camera: &'a crate::RenderCamera,
@@ -125,6 +128,7 @@ pub struct PaintContext<'a> {
 /// [`shadow_target_desc`](crate::resources::ViewportGpuResources::shadow_target_desc)
 /// and draws depth-only into the cascade tile selected by the lib's
 /// `set_viewport` / `set_scissor_rect` calls.
+#[non_exhaustive]
 pub struct ShadowCastContext<'a> {
     /// Cascade index, in `0..cascade_count`.
     pub cascade_idx: u32,
@@ -146,6 +150,7 @@ pub struct ShadowCastContext<'a> {
 /// builds its mask pipeline against
 /// [`mask_target_desc`](crate::resources::ViewportGpuResources::mask_target_desc)
 /// and draws into it with any value `> 0` for covered pixels.
+#[non_exhaustive]
 pub struct OutlineMaskContext<'a> {
     /// Active render-camera snapshot.
     pub camera: &'a crate::RenderCamera,
@@ -167,9 +172,17 @@ pub struct OutlineMaskContext<'a> {
 /// against the collection submitted under the same name on
 /// [`SceneFrame`](crate::renderer::SceneFrame).
 ///
-/// The current surface is `init_gpu`, `prepare`, and `paint`. Picking,
-/// outline-mask, shadow casting, and culling arrive as additional
-/// default-empty methods when those integrations land.
+/// Beyond `init_gpu`, `prepare`, and `paint`, the trait exposes
+/// `paint_transparent`, `outline_mask`, `cull`, `cast_shadow_pass`, and
+/// `pick` as default-empty hooks; implement the ones an item type needs.
+///
+/// Registration model: item-type plugins are singleton-by-type. The
+/// `type_name` is the identity scene items reference to route themselves to a
+/// renderer, so two plugins under the same name would be ambiguous and the
+/// second registration replaces the first. This behavior is frozen. Runtime
+/// and GPU plugins differ deliberately: they carry no external identity and
+/// are multi-instance. See [`RuntimePlugin`](crate::runtime::RuntimePlugin)
+/// and [`GpuPlugin`](crate::runtime::GpuPlugin).
 pub trait ItemTypePlugin: Send + Sync + 'static {
     /// Stable name used as the [`SceneFrame::plugin_items`](crate::renderer::SceneFrame::plugin_items)
     /// key. Each registered plugin must have a unique name; registering a

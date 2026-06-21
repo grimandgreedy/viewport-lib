@@ -87,6 +87,14 @@ pub enum RuntimeEvent {
 /// the runtime calls `submit`, then `step` (once or more for simulate phases),
 /// then `collect`.
 ///
+/// Registration model: runtime plugins are multi-instance. They carry no
+/// external identity, so registering two of the same type runs both, in
+/// priority order; the runtime does not deduplicate. This is intentional (two
+/// emitters, two solvers with different config are valid) and is frozen
+/// behavior. Item-type plugins differ: they are singleton-by-type because
+/// their `type_name` is referenced externally. See
+/// [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).
+///
 /// # Example
 ///
 /// ```rust,ignore

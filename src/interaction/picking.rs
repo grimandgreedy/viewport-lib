@@ -81,6 +81,20 @@ pub struct PickHit {
 impl PickHit {
     /// Construct a minimal `PickHit` for cases where no sub-object is identified
     /// (e.g. volume AABB hits). `normal` is an approximate inward normal.
+    ///
+    /// This is also the constructor a plugin's
+    /// [`ItemTypePlugin::pick`](crate::plugin_api::ItemTypePlugin::pick) uses to
+    /// return a hit: `PickHit` is `#[non_exhaustive]`, so out-of-crate code
+    /// cannot build one with a struct literal and goes through this instead.
+    ///
+    /// ```
+    /// use viewport_lib::PickHit;
+    /// use glam::Vec3;
+    ///
+    /// let hit = PickHit::object_hit(7, Vec3::new(1.0, 2.0, 3.0), Vec3::Z);
+    /// assert_eq!(hit.id, 7);
+    /// assert!(hit.sub_object.is_none());
+    /// ```
     #[allow(deprecated)]
     pub fn object_hit(id: u64, world_pos: glam::Vec3, normal: glam::Vec3) -> Self {
         Self {

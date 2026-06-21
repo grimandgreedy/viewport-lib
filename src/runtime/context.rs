@@ -42,6 +42,7 @@ pub struct RuntimeFrameContext {
 /// buffer, output accumulator, and shared resource registry. To write transforms,
 /// call [`TransformWriteback::set`] on `self.writeback`. To share state between
 /// plugins, use `self.resources`.
+#[non_exhaustive]
 pub struct RuntimeStepContext<'a> {
     /// The numeric priority of the plugin executing in this context.
     pub priority: i32,
@@ -104,6 +105,7 @@ impl<'a> RuntimeStepContext<'a> {
 ///
 /// Constructed via [`RuntimeStepContext::as_simulation`] inside a simulate-range
 /// plugin to get the current simulation step count alongside scene and writeback access.
+#[non_exhaustive]
 pub struct SimulationStepContext<'a> {
     /// Fixed step size in seconds.
     pub dt: f32,

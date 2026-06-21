@@ -54,6 +54,7 @@ pub mod gpu_phase {
 /// `color_view` should encode into a sibling target it owns; the host then
 /// composites that overlay into the final image. The lib does not compose
 /// plugin output back into the rendered color target for you.
+#[non_exhaustive]
 pub struct PostPaintTargets<'a> {
     /// View of the just-rendered color target.
     pub color_view: &'a wgpu::TextureView,
@@ -68,10 +69,34 @@ pub struct PostPaintTargets<'a> {
     pub color_format: wgpu::TextureFormat,
 }
 
+impl<'a> PostPaintTargets<'a> {
+    /// Construct targets without a pick-id view. A host that rendered a pick-id
+    /// texture this frame chains [`with_pick_id_view`](Self::with_pick_id_view).
+    pub fn new(
+        color_view: &'a wgpu::TextureView,
+        depth_view: &'a wgpu::TextureView,
+        color_format: wgpu::TextureFormat,
+    ) -> Self {
+        Self {
+            color_view,
+            depth_view,
+            pick_id_view: None,
+            color_format,
+        }
+    }
+
+    /// Supply the pick-id target view (`R32Uint`) for plugins that read it.
+    pub fn with_pick_id_view(mut self, pick_id_view: &'a wgpu::TextureView) -> Self {
+        self.pick_id_view = Some(pick_id_view);
+        self
+    }
+}
+
 /// Per-frame, read-only context passed to a [`GpuPlugin`].
 ///
 /// Mirrors the render-relevant fields of [`RuntimeFrameContext`](super::RuntimeFrameContext)
 /// without the input or pick state, which GPU plugins do not consume.
+#[non_exhaustive]
 pub struct GpuFrameContext<'a> {
     /// Active camera for this frame.
     pub camera: &'a Camera,
@@ -92,6 +117,29 @@ pub struct GpuFrameContext<'a> {
     pub viewport_id: Option<ViewportId>,
 }
 
+impl<'a> GpuFrameContext<'a> {
+    /// Construct a context for a single-viewport host. Multi-viewport hosts that
+    /// call `pre_prepare` / `post_paint` once per viewport chain
+    /// [`with_viewport`](Self::with_viewport) to scope the call.
+    pub fn new(camera: &'a Camera, viewport_size: glam::Vec2, dt: f32, frame_index: u64) -> Self {
+        Self {
+            camera,
+            viewport_size,
+            dt,
+            frame_index,
+            viewport_id: None,
+        }
+    }
+
+    /// Associate this context with a specific viewport. Plugins registered via
+    /// [`ViewportRuntime::with_gpu_plugin_for_viewport`](super::ViewportRuntime::with_gpu_plugin_for_viewport)
+    /// run only when this id matches the one they were scoped to.
+    pub fn with_viewport(mut self, viewport_id: ViewportId) -> Self {
+        self.viewport_id = Some(viewport_id);
+        self
+    }
+}
+
 /// A plugin that encodes GPU work into the per-frame command stream.
 ///
 /// Register with [`ViewportRuntime::with_gpu_plugin`](super::ViewportRuntime::with_gpu_plugin).
@@ -99,6 +147,11 @@ pub struct GpuFrameContext<'a> {
 /// host calls [`ViewportRuntime::pre_prepare`](super::ViewportRuntime::pre_prepare),
 /// which invokes every registered plugin's `pre_prepare` in ascending priority
 /// order and returns the concatenated command buffers for submission.
+///
+/// Registration model: GPU plugins are multi-instance, like
+/// [`RuntimePlugin`](crate::runtime::RuntimePlugin) and unlike item-type
+/// plugins. Registering two of the same type runs both in priority order; the
+/// runtime does not deduplicate. This is intentional and frozen behavior.
 ///
 /// # Example
 ///
@@ -357,13 +410,7 @@ mod tests {
             });
 
         let camera = Camera::default();
-        let ctx = GpuFrameContext {
-            camera: &camera,
-            viewport_size: glam::Vec2::new(800.0, 600.0),
-            dt: 1.0 / 60.0,
-            frame_index: 0,
-            viewport_id: None,
-        };
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::new(800.0, 600.0), 1.0 / 60.0, 0);
 
         let bufs = runtime.pre_prepare(&device, &queue, &ctx);
         assert!(
@@ -395,12 +442,11 @@ mod tests {
             wgpu::TextureFormat::Depth32Float,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        let targets = PostPaintTargets {
-            color_view: &color_view,
-            depth_view: &depth_view,
-            pick_id_view: None,
-            color_format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        };
+        let targets = PostPaintTargets::new(
+            &color_view,
+            &depth_view,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
 
         let bufs = runtime.post_paint(&device, &queue, &targets, &ctx);
         assert!(bufs.is_empty());
@@ -438,13 +484,7 @@ mod tests {
             });
 
         let camera = Camera::default();
-        let ctx = GpuFrameContext {
-            camera: &camera,
-            viewport_size: glam::Vec2::new(1.0, 1.0),
-            dt: 0.0,
-            frame_index: 0,
-            viewport_id: None,
-        };
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::new(1.0, 1.0), 0.0, 0);
 
         let _ = runtime.pre_prepare(&device, &queue, &ctx);
         assert_eq!(*init_count.lock().unwrap(), 1);
@@ -491,21 +531,10 @@ mod tests {
         );
 
         let camera = Camera::default();
-        let ctx_a = GpuFrameContext {
-            camera: &camera,
-            viewport_size: glam::Vec2::new(1.0, 1.0),
-            dt: 0.0,
-            frame_index: 0,
-            viewport_id: Some(vp_a),
-        };
-        let ctx_b = GpuFrameContext {
-            viewport_id: Some(vp_b),
-            ..ctx_a
-        };
-        let ctx_none = GpuFrameContext {
-            viewport_id: None,
-            ..ctx_a
-        };
+        let sz = glam::Vec2::new(1.0, 1.0);
+        let ctx_a = GpuFrameContext::new(&camera, sz, 0.0, 0).with_viewport(vp_a);
+        let ctx_b = GpuFrameContext::new(&camera, sz, 0.0, 0).with_viewport(vp_b);
+        let ctx_none = GpuFrameContext::new(&camera, sz, 0.0, 0);
 
         let _ = runtime.pre_prepare(&device, &queue, &ctx_a);
         let _ = runtime.pre_prepare(&device, &queue, &ctx_b);
