@@ -36,8 +36,16 @@ pub mod context;
 pub mod controller;
 /// Framework-agnostic viewport events.
 pub mod event;
+/// Body-attached first-person camera controller.
+pub mod first_person;
+/// Shared look-basis math for the character cameras.
+mod look;
+/// Movement-input helper for the character cameras.
+pub mod movement;
 /// Named control presets.
 pub mod preset;
+/// Body-attached third-person camera controller.
+pub mod third_person;
 /// Viewport gesture and binding types.
 pub mod viewport_binding;
 /// Stateful viewport input accumulator and resolver.
@@ -55,7 +63,10 @@ pub use action_frame::{ActionFrame, NavigationActions, ResolvedActionState};
 pub use context::ViewportContext;
 pub use controller::OrbitCameraController;
 pub use event::{ButtonState, ScrollUnits, ViewportEvent};
+pub use first_person::FirstPersonCameraController;
+pub use movement::wish_xy_from_actions;
 pub use preset::{BindingPreset, viewport_all_bindings};
+pub use third_person::ThirdPersonCameraController;
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 pub use viewport_input::ViewportInput;
 

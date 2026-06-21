@@ -448,4 +448,21 @@ mod tests {
             "FlyForward should move camera center"
         );
     }
+
+    #[test]
+    fn apply_consumes_external_frame() {
+        // The frame-consumer path applies an already-resolved ActionFrame
+        // without draining events, the basis for sharing one resolver across
+        // the controller family.
+        let ctrl = OrbitCameraController::viewport_primitives();
+        let mut cam = Camera::default();
+        let before = cam.orientation;
+        let mut frame = ActionFrame::default();
+        frame.navigation.orbit = glam::Vec2::new(20.0, 0.0);
+        ctrl.apply(&mut cam, &frame);
+        assert_ne!(
+            cam.orientation, before,
+            "apply(&frame) should orbit from the frame's nav delta"
+        );
+    }
 }

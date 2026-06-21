@@ -1,7 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [0.18.3]
 
+### Features
+
+#### First-person and third-person camera controllers
+
+`FirstPersonCameraController` and `ThirdPersonCameraController` are body-attached camera controllers that follow a world-space position supplied each frame.
 ### Breaking changes
 
 #### `NavigationMode::FirstPerson` renamed to `NavigationMode::Fly`
@@ -20,10 +25,8 @@ an already-resolved frame without draining the event queue, so a host can own
 one input resolver and feed the same frame to several controllers.
 `apply_to_camera` is unchanged and now delegates to it. A new `set_viewport_size`
 setter records the viewport size used for pan when calling `apply` directly.
-
-## [0.18.3]
-### Improvements
 - Refactored and modularised the prepare and paint passes.
+
 
 ## [0.18.2]
 

@@ -158,9 +158,10 @@ pub use interaction::input::{
 };
 // New input pipeline : re-exported at crate root for convenience.
 pub use interaction::input::{
-    ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions,
-    OrbitCameraController, ResolvedActionState, ScrollUnits, ViewportBinding, ViewportContext,
-    ViewportEvent, ViewportGesture, ViewportInput, viewport_all_bindings,
+    ActionFrame, BindingPreset, ButtonState, FirstPersonCameraController, ModifiersMatch,
+    NavigationActions, OrbitCameraController, ResolvedActionState, ScrollUnits,
+    ThirdPersonCameraController, ViewportBinding, ViewportContext, ViewportEvent, ViewportGesture,
+    ViewportInput, viewport_all_bindings, wish_xy_from_actions,
 };
 pub use interaction::manipulation::solvers::{
     angular_rotation_from_cursor, constrained_scale, constrained_translation,
