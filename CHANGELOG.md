@@ -52,7 +52,9 @@ The per-object and instanced batch paths now share a single per-frame instanceab
 
 The per-object draw path now caches each item's bind group keyed on its stable pick id rather than its position in the frame's item list. Previously the bind group was rebuilt every frame for every item that misses the instanced fast path: the cache was keyed on the item's slot index, so any frame where the host reordered its item list missed the cache and called `create_bind_group` again. For a scene with thousands of such items (for example two-sided foliage) this was the dominant prepare cost. Bind groups for unchanged objects are now reused across frames regardless of list order, and entries for objects no longer drawn are dropped after a short grace period. A new `FrameStats::per_object_items` counts how many items take the per-object path, and `FrameStats::per_object_bind_groups_built` counts how many bind groups were actually built this frame, so a missing cache is visible.
 
-### Bug Fixes
+#### Per-object uniform writes skipped when unchanged
+
+The per-object path now skips re-uploading an item's `ObjectUniform` when it has not changed since the last frame, keyed on the same stable pick id as the bind-group cache. Static geometry the camera only moves past no longer pays a uniform write per item per frame. The normal-visualization uniform is also written only for items actually showing normals, rather than for every per-object item. For a scene with thousands of static per-object items (for example two-sided foliage) this removes the bulk of the remaining per-object prepare cost.
 
 #### Flat and two-sided surfaces shadowing themselves
 

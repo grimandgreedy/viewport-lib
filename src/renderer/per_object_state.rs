@@ -19,6 +19,9 @@ pub(crate) struct PerObjectCacheEntry {
     pub(crate) bind_group: Option<wgpu::BindGroup>,
     /// Material/texture fingerprint the bind group was built from.
     pub(crate) cache_key: u64,
+    /// Last `ObjectUniform` written to `uniform_buf`, used to skip the uniform
+    /// write when the object is unchanged. `None` until first written.
+    pub(crate) last_uniform: Option<crate::resources::ObjectUniform>,
     /// Frame index this entry was last used, for pruning evicted objects.
     pub(crate) last_frame: u64,
 }

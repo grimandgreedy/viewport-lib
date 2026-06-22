@@ -219,72 +219,68 @@ impl ViewportRenderer {
                     roughness_range: m.roughness_range,
                 };
 
-                let normal_obj_uniform = ObjectUniform {
-                    model: item.model,
-                    colour: [1.0, 1.0, 1.0, 1.0],
-                    selected: 0,
-                    wireframe: 0,
-                    ambient: 0.15,
-                    diffuse: 0.75,
-                    specular: 0.4,
-                    shininess: 32.0,
-                    has_texture: 0,
-                    use_pbr: 0,
-                    metallic: 0.0,
-                    roughness: 0.5,
-                    has_normal_map: 0,
-                    has_ao_map: 0,
-                    has_attribute: 0,
-                    scalar_min: 0.0,
-                    scalar_max: 1.0,
-                    receive_shadows: 1,
-                    nan_colour: [0.0; 4],
-                    use_nan_colour: 0,
-                    use_matcap: 0,
-                    matcap_blendable: 0,
-                    unlit: 0,
-                    use_face_colour: 0,
-                    uv_vis_mode: 0,
-                    uv_vis_scale: 8.0,
-                    backface_policy: 0,
-                    backface_colour: [0.0; 4],
-                    has_warp: 0,
-                    warp_scale: 1.0,
-                    has_position_override: 0,
-                    has_normal_override: 0,
-                    emissive: [0.0; 3],
-                    use_flat: 0,
-                    alpha_mode: 0,
-                    alpha_cutoff: 0.5,
-                    has_metallic_roughness_tex: 0,
-                    has_emissive_tex: 0,
-                    uv_transform: [0.0, 0.0, 1.0, 1.0],
-                    deform_flags: 0,
-                    _pad_after_deform: 0,
-                    ao_range: [0.0, 1.0],
-                    metallic_range: [0.0, 1.0],
-                    roughness_range: [0.0, 1.0],
-                };
-
                 // Collect per-item uniform for wireframe per-item bind groups.
                 if collect_wf_uniforms && !item.settings.hidden {
                     wireframe_uniforms.push(obj_uniform);
                 }
 
-                // Write uniform data : use get() to read buffer references, then drop.
-                {
-                    let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
-                    queue.write_buffer(
-                        &mesh.object_uniform_buf,
-                        0,
-                        bytemuck::cast_slice(&[obj_uniform]),
-                    );
-                    queue.write_buffer(
-                        &mesh.normal_uniform_buf,
-                        0,
-                        bytemuck::cast_slice(&[normal_obj_uniform]),
-                    );
-                } // mesh borrow dropped here
+                // The normal-visualization uniform feeds only the normal-line
+                // pass, so assemble and write it only for items showing normals.
+                if item.show_normals {
+                    let normal_obj_uniform = ObjectUniform {
+                        model: item.model,
+                        colour: [1.0, 1.0, 1.0, 1.0],
+                        selected: 0,
+                        wireframe: 0,
+                        ambient: 0.15,
+                        diffuse: 0.75,
+                        specular: 0.4,
+                        shininess: 32.0,
+                        has_texture: 0,
+                        use_pbr: 0,
+                        metallic: 0.0,
+                        roughness: 0.5,
+                        has_normal_map: 0,
+                        has_ao_map: 0,
+                        has_attribute: 0,
+                        scalar_min: 0.0,
+                        scalar_max: 1.0,
+                        receive_shadows: 1,
+                        nan_colour: [0.0; 4],
+                        use_nan_colour: 0,
+                        use_matcap: 0,
+                        matcap_blendable: 0,
+                        unlit: 0,
+                        use_face_colour: 0,
+                        uv_vis_mode: 0,
+                        uv_vis_scale: 8.0,
+                        backface_policy: 0,
+                        backface_colour: [0.0; 4],
+                        has_warp: 0,
+                        warp_scale: 1.0,
+                        has_position_override: 0,
+                        has_normal_override: 0,
+                        emissive: [0.0; 3],
+                        use_flat: 0,
+                        alpha_mode: 0,
+                        alpha_cutoff: 0.5,
+                        has_metallic_roughness_tex: 0,
+                        has_emissive_tex: 0,
+                        uv_transform: [0.0, 0.0, 1.0, 1.0],
+                        deform_flags: 0,
+                        _pad_after_deform: 0,
+                        ao_range: [0.0, 1.0],
+                        metallic_range: [0.0, 1.0],
+                        roughness_range: [0.0, 1.0],
+                    };
+                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                        queue.write_buffer(
+                            &mesh.normal_uniform_buf,
+                            0,
+                            bytemuck::cast_slice(&[normal_obj_uniform]),
+                        );
+                    }
+                }
 
                 // Rebuild the object bind group if material/attribute/LUT/matcap/warp changed.
                 resources.update_mesh_texture_bind_group(
@@ -322,14 +318,39 @@ impl ViewportRenderer {
                             uniform_buf: buf,
                             bind_group: None,
                             cache_key: 0,
+                            last_uniform: None,
                             last_frame: frame_index,
                         }
                     });
                     entry.last_frame = frame_index;
 
-                    // The transform changes each frame, so the uniform is always
-                    // rewritten; this is a buffer write, not a bind-group build.
-                    queue.write_buffer(&entry.uniform_buf, 0, bytemuck::cast_slice(&[obj_uniform]));
+                    // Skip the uniform write when nothing about this object's
+                    // ObjectUniform changed (the common case for static scene
+                    // geometry the camera only moves past). Writing it is the
+                    // bulk of the per-object cost at scale.
+                    let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
+                        bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)
+                    });
+                    if uniform_changed {
+                        queue.write_buffer(
+                            &entry.uniform_buf,
+                            0,
+                            bytemuck::cast_slice(&[obj_uniform]),
+                        );
+                        entry.last_uniform = Some(obj_uniform);
+                        // Keep the mesh's shared object uniform in sync too. It
+                        // feeds the fallback bind group and the point-shadow
+                        // pass; per-object items draw via their own bind group,
+                        // so a stale shared buffer for an unchanged item is
+                        // harmless, but a changed one must be propagated.
+                        if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                            queue.write_buffer(
+                                &mesh.object_uniform_buf,
+                                0,
+                                bytemuck::cast_slice(&[obj_uniform]),
+                            );
+                        }
+                    }
 
                     // Pass the cached key so the build skips create_bind_group
                     // when nothing changed. Only treat the stored key as valid
