@@ -447,6 +447,10 @@ pub struct ViewportRenderer {
     /// Whether the staging buffer holds unread timestamp data from the previous frame.
     ts_needs_readback: bool,
 
+    /// Per-phase CPU timings accumulated during the current `prepare()` call,
+    /// copied into `FrameStats::prepare_breakdown` at the end of the frame.
+    prepare_breakdown: crate::renderer::stats::PrepareBreakdown,
+
     // --- Per-pass degradation state ---
     /// Tiered degradation ladder position (0 = none, 1 = shadows, 2 = volumes, 3 = effects).
     /// Advanced one step per over-budget frame once render scale hits minimum;
@@ -534,6 +538,7 @@ impl ViewportRenderer {
             item_type_plugins: std::collections::HashMap::new(),
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
+            prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             point_cloud_gpu_data: Vec::new(),
             glyph_gpu_data: Vec::new(),
             tensor_glyph_gpu_data: Vec::new(),

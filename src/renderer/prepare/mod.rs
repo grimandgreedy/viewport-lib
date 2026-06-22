@@ -111,6 +111,7 @@ impl ViewportRenderer {
         };
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
+        let lighting_start = std::time::Instant::now();
         let lighting_frame = Self::prepare_lighting(
             resources,
             &mut self.shadow,
@@ -122,6 +123,7 @@ impl ViewportRenderer {
             queue,
             frame,
         );
+        let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
 
         // -- Instancing preparation --
         // Determine instancing mode BEFORE per-object uniforms so we can skip them.
@@ -145,6 +147,7 @@ impl ViewportRenderer {
             );
         }
 
+        let per_object_start = std::time::Instant::now();
         Self::prepare_per_object(
             resources,
             &mut self.mesh_uniforms,
@@ -155,7 +158,9 @@ impl ViewportRenderer {
             queue,
             frame,
         );
+        let uniforms_ms = per_object_start.elapsed().as_secs_f32() * 1000.0;
 
+        let instanced_start = std::time::Instant::now();
         let (batches_reuploaded, batches_skipped) = if self.instancing.use_instancing {
             Self::prepare_instanced(
                 resources,
@@ -169,7 +174,9 @@ impl ViewportRenderer {
         } else {
             (0, 0)
         };
+        let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
+        let geometry_start = std::time::Instant::now();
         Self::upload_geometry_glyphs(
             resources,
             &mut self.point_cloud_gpu_data,
@@ -476,6 +483,8 @@ impl ViewportRenderer {
             self.mesh_uniforms.tvm_wireframe_bg = Some(bg);
         }
 
+        let geometry_ms = geometry_start.elapsed().as_secs_f32() * 1000.0;
+
         // -- Frame stats --
         {
             let total = scene_items.len() as u32;
@@ -529,6 +538,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
+        let shadow_start = std::time::Instant::now();
         Self::prepare_shadow_pass(
             resources,
             &mut self.instancing,
@@ -544,6 +554,15 @@ impl ViewportRenderer {
             queue,
             frame,
         );
+        let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0;
+
+        // The `resources` borrow ends with the shadow pass above, so record the
+        // scene-phase timings into the breakdown now.
+        self.prepare_breakdown.lighting_ms = lighting_ms;
+        self.prepare_breakdown.uniforms_ms = uniforms_ms;
+        self.prepare_breakdown.instancing_ms = instancing_ms;
+        self.prepare_breakdown.geometry_ms = geometry_ms;
+        self.prepare_breakdown.shadow_ms = shadow_ms;
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
@@ -587,6 +606,9 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = std::time::Instant::now();
+        self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
+
+        let plugin_start = std::time::Instant::now();
 
         // Dispatch item-type plugin prepare work first so any GPU outputs
         // the plugin produces are visible to the rest of `prepare`.
@@ -602,6 +624,7 @@ impl ViewportRenderer {
             let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
             self.dispatch_plugin_cull(&frustum, frame);
         }
+        self.prepare_breakdown.plugin_ms = plugin_start.elapsed().as_secs_f32() * 1000.0;
 
         // Read back GPU timestamps from the previous frame, if available.
         // By the time prepare() is called, the previous frame's queue.submit() has
@@ -836,9 +859,24 @@ impl ViewportRenderer {
 
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx);
+
+        let viewport_start = std::time::Instant::now();
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
+        self.prepare_breakdown.viewport_ms = viewport_start.elapsed().as_secs_f32() * 1000.0;
 
         let cpu_prepare_ms = prepare_start.elapsed().as_secs_f32() * 1000.0;
+        // Remainder: timestamp readback, scatter sort, degradation logic, stats
+        // assembly, and anything else not bracketed by a phase timer above.
+        let b = &mut self.prepare_breakdown;
+        b.other_ms = (cpu_prepare_ms
+            - b.plugin_ms
+            - b.lighting_ms
+            - b.uniforms_ms
+            - b.instancing_ms
+            - b.geometry_ms
+            - b.shadow_ms
+            - b.viewport_ms)
+            .max(0.0);
 
         let budget_ms = policy.target_fps.map(|fps| 1000.0 / fps);
 
@@ -876,6 +914,7 @@ impl ViewportRenderer {
 
         let stats = crate::renderer::stats::FrameStats {
             cpu_prepare_ms,
+            prepare_breakdown: self.prepare_breakdown,
             // gpu_frame_ms is updated by the timestamp readback above when available;
             // propagate the most recent value from last_stats.
             gpu_frame_ms: self.last_stats.gpu_frame_ms,

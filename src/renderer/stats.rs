@@ -138,6 +138,44 @@ impl Default for PerformancePolicy {
     }
 }
 
+/// CPU time spent in each phase of `prepare()`, in milliseconds.
+///
+/// `FrameStats::cpu_prepare_ms` is the total. This splits that total across the
+/// main phases so a slow `prepare` can be attributed to a specific one instead
+/// of guessing. The fields sum to roughly `cpu_prepare_ms`; `other_ms` carries
+/// the remainder (timestamp readback, scatter-volume sort, stats assembly, and
+/// other small per-frame work).
+///
+/// All values are wall-clock CPU time on the thread calling `prepare`, measured
+/// with `Instant`. They measure how long it takes to record and submit the work,
+/// not how long the GPU spends running it; use `gpu_frame_ms` for GPU cost.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PrepareBreakdown {
+    /// Item-type plugin prepare and cull dispatch. Skinning and other vertex
+    /// deformers run here, so a heavy skinned crowd shows up in this field.
+    pub plugin_ms: f32,
+    /// Lighting setup: directional shadow cascade matrices, point-light cube-map
+    /// faces, and light clustering.
+    pub lighting_ms: f32,
+    /// Per-object uniform writes on the non-instanced path. Zero when the scene
+    /// is above the instancing threshold and all meshes batch.
+    pub uniforms_ms: f32,
+    /// Building and uploading instanced batches (grouping items by mesh and
+    /// material, writing instance data).
+    pub instancing_ms: f32,
+    /// Uploading non-mesh geometry: glyphs, point clouds, polylines, decals,
+    /// images, tubes, ribbons, slices, and volumes.
+    pub geometry_ms: f32,
+    /// Recording the shadow depth pass (directional cascades and point-light
+    /// cube-map faces) into the atlas.
+    pub shadow_ms: f32,
+    /// Per-viewport prepare: camera and clip uniforms, grid, overlays, and
+    /// interaction state. Runs once per viewport.
+    pub viewport_ms: f32,
+    /// Remainder of `prepare` not covered by the fields above.
+    pub other_ms: f32,
+}
+
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameStats {
@@ -171,6 +209,8 @@ pub struct FrameStats {
     pub shadow_draw_calls: u32,
     /// CPU time spent in `prepare()`, in milliseconds.
     pub cpu_prepare_ms: f32,
+    /// Per-phase split of `cpu_prepare_ms`. See [`PrepareBreakdown`].
+    pub prepare_breakdown: PrepareBreakdown,
     /// GPU scene-pass time in milliseconds, if timestamp queries are available.
     ///
     /// Measured with `TIMESTAMP_QUERY` around the main scene render pass.

@@ -445,6 +445,86 @@ impl Scene {
         }
     }
 
+    /// Remove several nodes and all their descendants in one pass. Returns
+    /// every removed ID. IDs that are not in the scene are skipped, and a node
+    /// listed more than once (or nested under another removed node) appears
+    /// only once in the result.
+    ///
+    /// This is equivalent to calling [`remove`](Self::remove) for each ID, but
+    /// it scans the roots list, group membership, and the version counter once
+    /// for the whole batch instead of once per node. Removing N individual root
+    /// nodes one at a time is O(N * roots) because each `remove` rescans the
+    /// roots list; `remove_many` collapses that to a single scan. Use it when
+    /// evicting many nodes at once: a streaming cell, a layer toggle, or
+    /// tearing down part of a scene.
+    pub fn remove_many(&mut self, ids: &[NodeId]) -> Vec<NodeId> {
+        // Collect the full removal set: the given nodes plus all descendants,
+        // de-duplicated so overlapping subtrees are visited once.
+        let mut removed = Vec::new();
+        let mut removed_set = HashSet::new();
+        for &id in ids {
+            if self.nodes.contains_key(&id) {
+                self.collect_subtree(id, &mut removed_set, &mut removed);
+            }
+        }
+        if removed.is_empty() {
+            return removed;
+        }
+
+        // Detach surviving parents from the removed nodes. Parents that are
+        // themselves being removed are skipped: their child lists are about to
+        // be dropped. Gather distinct parents first so a parent shared by
+        // several removed children is rewritten only once.
+        let mut parents_to_fix = HashSet::new();
+        for &id in ids {
+            if let Some(parent_id) = self.nodes.get(&id).and_then(|n| n.parent) {
+                if !removed_set.contains(&parent_id) {
+                    parents_to_fix.insert(parent_id);
+                }
+            }
+        }
+        for parent_id in parents_to_fix {
+            if let Some(parent) = self.nodes.get_mut(&parent_id) {
+                parent.children.retain(|c| !removed_set.contains(c));
+            }
+        }
+
+        // Remove from the spatial index before the nodes are gone. Each removal
+        // follows the node's stored path, so this is cheap per node.
+        if self.spatial_built {
+            for &rid in &removed {
+                self.spatial.remove_node(rid);
+            }
+        }
+
+        for &rid in &removed {
+            self.nodes.remove(&rid);
+        }
+
+        // One pass each over roots and group membership for the whole batch.
+        self.roots.retain(|r| !removed_set.contains(r));
+        for group in &mut self.groups {
+            group.members.retain(|m| !removed_set.contains(m));
+        }
+
+        self.version = self.version.wrapping_add(1);
+        removed
+    }
+
+    /// Push `id` and all its descendants into `out`, using `seen` to skip nodes
+    /// already collected (so overlapping subtrees are not visited twice).
+    fn collect_subtree(&self, id: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+        if !seen.insert(id) {
+            return;
+        }
+        out.push(id);
+        if let Some(node) = self.nodes.get(&id) {
+            for &child in &node.children {
+                self.collect_subtree(child, seen, out);
+            }
+        }
+    }
+
     // -- Hierarchy --
 
     /// Reparent a node. `None` makes it a root node.
@@ -1364,6 +1444,68 @@ mod tests {
         assert!(removed.contains(&child1));
         assert!(removed.contains(&child2));
         assert_eq!(scene.node_count(), 0);
+    }
+
+    #[test]
+    fn test_remove_many_clears_roots_and_descendants() {
+        let mut scene = Scene::new();
+        let a = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let b = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let b_child = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        scene.set_parent(b_child, Some(b));
+        // A node left out of the batch survives.
+        let keep = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+
+        let removed = scene.remove_many(&[a, b]);
+        assert_eq!(removed.len(), 3);
+        assert!(removed.contains(&a));
+        assert!(removed.contains(&b));
+        assert!(removed.contains(&b_child));
+        assert!(scene.node(a).is_none());
+        assert!(scene.node(b_child).is_none());
+        assert!(scene.node(keep).is_some());
+        assert_eq!(scene.node_count(), 1);
+    }
+
+    #[test]
+    fn test_remove_many_dedups_overlapping_and_missing() {
+        let mut scene = Scene::new();
+        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let child = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        scene.set_parent(child, Some(parent));
+
+        // child is nested under parent, parent is listed twice, and 9999 is not
+        // in the scene. Each live node should appear exactly once.
+        let removed = scene.remove_many(&[parent, child, parent, 9999_u64]);
+        assert_eq!(removed.len(), 2);
+        assert!(removed.contains(&parent));
+        assert!(removed.contains(&child));
+        assert_eq!(scene.node_count(), 0);
+    }
+
+    #[test]
+    fn test_remove_many_detaches_surviving_parent() {
+        let mut scene = Scene::new();
+        let parent = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let child1 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let child2 = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        scene.set_parent(child1, Some(parent));
+        scene.set_parent(child2, Some(parent));
+
+        scene.remove_many(&[child1, child2]);
+        assert!(scene.node(parent).is_some());
+        assert!(scene.node(parent).unwrap().children().is_empty());
+    }
+
+    #[test]
+    fn test_remove_many_empty_is_noop() {
+        let mut scene = Scene::new();
+        scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let before = scene.version();
+        let removed = scene.remove_many(&[]);
+        assert!(removed.is_empty());
+        assert_eq!(scene.version(), before);
+        assert_eq!(scene.node_count(), 1);
     }
 
     #[test]
