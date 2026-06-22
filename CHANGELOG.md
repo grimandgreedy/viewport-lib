@@ -48,6 +48,10 @@ The GPU timestamp and visible-instance-count readbacks no longer block the CPU w
 
 The per-object and instanced batch paths now share a single per-frame instanceability pass instead of recomputing it separately in the per-object skip test and the batch filter. This removes several redundant per-item passes (each doing mesh-store and deform lookups) over the resident set on large scenes.
 
+#### Per-object bind groups cached by object identity
+
+The per-object draw path now caches each item's bind group keyed on its stable pick id rather than its position in the frame's item list. Previously the bind group was rebuilt every frame for every item that misses the instanced fast path: the cache was keyed on the item's slot index, so any frame where the host reordered its item list missed the cache and called `create_bind_group` again. For a scene with thousands of such items (for example two-sided foliage) this was the dominant prepare cost. Bind groups for unchanged objects are now reused across frames regardless of list order, and entries for objects no longer drawn are dropped after a short grace period. A new `FrameStats::per_object_items` counts how many items take the per-object path, and `FrameStats::per_object_bind_groups_built` counts how many bind groups were actually built this frame, so a missing cache is visible.
+
 ### Bug Fixes
 
 #### Flat and two-sided surfaces shadowing themselves

@@ -622,6 +622,7 @@ impl ViewportGpuResources {
         warp_attr: Option<&str>,
         metallic_roughness_id: Option<u64>,
         emissive_texture_id: Option<u64>,
+        prev_key: Option<u64>,
     ) -> Option<(wgpu::BindGroup, u64)> {
         let hash_str = |name: &str| -> u64 {
             use std::hash::{Hash, Hasher};
@@ -659,6 +660,14 @@ impl ViewportGpuResources {
             nrm_override_gen.hash(&mut h);
             h.finish()
         };
+
+        // Cache hit: the previously built bind group is still valid, so skip the
+        // create_bind_group below. The caller keeps its existing bind group. The
+        // per-item uniform write happens at the call site regardless, since the
+        // transform changes each frame.
+        if prev_key == Some(cache_key) {
+            return None;
+        }
 
         let albedo_view = match albedo_id {
             Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,

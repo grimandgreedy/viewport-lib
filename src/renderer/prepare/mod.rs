@@ -160,12 +160,13 @@ impl ViewportRenderer {
             .iter()
             .map(|item| is_instanceable(item, resources, &self.compute_filter_results))
             .collect();
-        Self::prepare_per_object(
+        let per_object_bind_groups_built = Self::prepare_per_object(
             resources,
             &mut self.mesh_uniforms,
             self.instancing.use_instancing,
             scene_items,
             &instanceable,
+            self.frame_counter,
             device,
             queue,
             frame,
@@ -543,6 +544,7 @@ impl ViewportRenderer {
                 draw_calls,
                 instanced_batches: instanced_batch_count,
                 per_object_items,
+                per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
                 triangles_submitted: triangles,

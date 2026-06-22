@@ -199,6 +199,14 @@ pub struct FrameStats {
     /// build in `prepare`, so a large count here means `prepare` is paying
     /// per-object cost across much of the scene rather than batching it.
     pub per_object_items: u32,
+    /// Per-object bind groups actually (re)built this frame.
+    ///
+    /// The per-object path caches bind groups and skips the rebuild when the
+    /// item's textures, attributes, and overrides are unchanged. A value near
+    /// `per_object_items` means the cache is missing most frames (for example
+    /// because items move between slots); a value near zero means the remaining
+    /// per-object cost is the uniform writes, not the bind-group builds.
+    pub per_object_bind_groups_built: u32,
     /// Instanced batches whose GPU sub-range was re-uploaded this frame.
     ///
     /// Non-zero only on cache-miss frames where at least one batch's instance

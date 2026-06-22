@@ -3,14 +3,33 @@
 //! transparent-volume-mesh wireframe draw resources.
 
 use crate::resources::mesh_store::MeshId;
+use std::collections::HashMap;
+
+/// One cached per-object draw resource, keyed by the item's stable `pick_id`.
+///
+/// Keying on `pick_id` rather than the item's index in the frame's item list
+/// means the cache survives the host reordering or rebuilding that list each
+/// frame: a static object keeps its uniform buffer and bind group, so the bind
+/// group is not rebuilt every frame.
+pub(crate) struct PerObjectCacheEntry {
+    /// This object's own uniform buffer (rewritten each frame; its transform changes).
+    pub(crate) uniform_buf: wgpu::Buffer,
+    /// Bind group pairing the uniform with the object's mesh textures.
+    /// `None` until first built.
+    pub(crate) bind_group: Option<wgpu::BindGroup>,
+    /// Material/texture fingerprint the bind group was built from.
+    pub(crate) cache_key: u64,
+    /// Frame index this entry was last used, for pruning evicted objects.
+    pub(crate) last_frame: u64,
+}
 
 pub(crate) struct PerObjectState {
-    /// Per-item uniform buffers for the per-object draw path (one per scene item).
-    pub(crate) uniform_bufs: Vec<wgpu::Buffer>,
-    /// Per-item bind groups pairing the per-item uniform with the item's mesh textures.
+    /// Per-object draw resources keyed by stable `pick_id`.
+    pub(crate) cache: HashMap<u64, PerObjectCacheEntry>,
+    /// Per-item bind groups for the current frame, indexed by the item's position
+    /// in the frame's item list. Populated from `cache` each frame (cheap
+    /// reference-counted clones) so the render path can index by item slot.
     pub(crate) bind_groups: Vec<Option<wgpu::BindGroup>>,
-    /// Cache keys for per-item bind group reuse (material/texture fingerprint).
-    pub(crate) cache_keys: Vec<u64>,
     /// Per-item uniform buffers used in wireframe mode.
     pub(crate) wireframe_uniform_bufs: Vec<wgpu::Buffer>,
     /// Per-item bind groups pairing wireframe uniforms with fallback textures.
@@ -26,9 +45,8 @@ pub(crate) struct PerObjectState {
 impl PerObjectState {
     pub(crate) fn new() -> Self {
         Self {
-            uniform_bufs: Vec::new(),
+            cache: HashMap::new(),
             bind_groups: Vec::new(),
-            cache_keys: Vec::new(),
             wireframe_uniform_bufs: Vec::new(),
             wireframe_bind_groups: Vec::new(),
             tvm_wireframe_draws: Vec::new(),

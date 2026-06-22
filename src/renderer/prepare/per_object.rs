@@ -12,10 +12,14 @@ impl ViewportRenderer {
         use_instancing: bool,
         scene_items: &[SceneRenderItem],
         instanceable: &[bool],
+        frame_index: u64,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
-    ) {
+    ) -> u32 {
+        // Count of per-item bind groups actually (re)built this frame, reported
+        // in FrameStats so a cache that is silently missing is visible.
+        let mut bind_groups_built = 0u32;
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
@@ -38,15 +42,17 @@ impl ViewportRenderer {
             || any_non_instanceable
             || any_wireframe_or_normals
         {
-            // Make sure the per-item object pool can index every scene item.
-            // Pool entries for items that go through the instanced path stay None.
+            // The per-frame slot Vec maps this frame's item index to a bind
+            // group for the render path. Clear it and size it to the item list:
+            // slots for items on the instanced path stay None, and stale entries
+            // from a previous frame's different item must not leak through.
             if mesh_uniforms.bind_groups.len() < scene_items.len() {
                 mesh_uniforms
                     .bind_groups
                     .resize_with(scene_items.len(), || None);
             }
-            if mesh_uniforms.cache_keys.len() < scene_items.len() {
-                mesh_uniforms.cache_keys.resize(scene_items.len(), 0);
+            for slot in mesh_uniforms.bind_groups.iter_mut() {
+                *slot = None;
             }
             for (item_idx, item) in scene_items.iter().enumerate() {
                 // When instancing is active, skip items that will be rendered
@@ -295,33 +301,44 @@ impl ViewportRenderer {
                     item.material.emissive_texture_id,
                 );
 
-                // Per-item object pool: ensure this slot has its own uniform buffer +
-                // bind group keyed on the item's position in scene_items. Multiple
+                // Per-object draw resources are cached by the item's stable
+                // pick_id, not by its index in this frame's item list. Multiple
                 // scene items can share the same MeshId; the mesh's shared
-                // object_uniform_buf above is stomped by whichever item wrote last,
-                // so we maintain this parallel pool to guarantee each item draws
-                // with its own transform/material.
+                // object_uniform_buf is stomped by whichever item wrote last, so
+                // each object keeps its own uniform buffer and bind group. Keying
+                // on pick_id means a static object reuses its bind group across
+                // frames even when the host reorders the item list.
                 {
+                    let pick = item.settings.pick_id.0;
                     let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
-                    while mesh_uniforms.uniform_bufs.len() <= item_idx {
+                    let entry = mesh_uniforms.cache.entry(pick).or_insert_with(|| {
                         let buf = device.create_buffer(&wgpu::BufferDescriptor {
                             label: Some("per_item_object_uniform"),
                             size: uniform_size,
                             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                             mapped_at_creation: false,
                         });
-                        mesh_uniforms.uniform_bufs.push(buf);
-                    }
-                    queue.write_buffer(
-                        &mesh_uniforms.uniform_bufs[item_idx],
-                        0,
-                        bytemuck::cast_slice(&[obj_uniform]),
-                    );
+                        crate::renderer::per_object_state::PerObjectCacheEntry {
+                            uniform_buf: buf,
+                            bind_group: None,
+                            cache_key: 0,
+                            last_frame: frame_index,
+                        }
+                    });
+                    entry.last_frame = frame_index;
 
+                    // The transform changes each frame, so the uniform is always
+                    // rewritten; this is a buffer write, not a bind-group build.
+                    queue.write_buffer(&entry.uniform_buf, 0, bytemuck::cast_slice(&[obj_uniform]));
+
+                    // Pass the cached key so the build skips create_bind_group
+                    // when nothing changed. Only treat the stored key as valid
+                    // when a bind group has already been built for this object.
+                    let prev_key = entry.bind_group.as_ref().map(|_| entry.cache_key);
                     let built = resources.build_per_item_object_bind_group(
                         device,
                         item.mesh_id,
-                        &mesh_uniforms.uniform_bufs[item_idx],
+                        &entry.uniform_buf,
                         item.material.texture_id,
                         item.material.normal_map_id,
                         item.material.ao_map_id,
@@ -331,18 +348,35 @@ impl ViewportRenderer {
                         item.warp_attribute.as_deref(),
                         item.material.metallic_roughness_texture_id,
                         item.material.emissive_texture_id,
+                        prev_key,
                     );
+                    // `built` is Some only on a miss (or first build); on a hit
+                    // the build returns None and the cached bind group is kept.
                     if let Some((bg, key)) = built {
-                        let need_rebuild = mesh_uniforms.bind_groups[item_idx].is_none()
-                            || mesh_uniforms.cache_keys[item_idx] != key;
-                        if need_rebuild {
-                            mesh_uniforms.bind_groups[item_idx] = Some(bg);
-                            mesh_uniforms.cache_keys[item_idx] = key;
-                        }
+                        bind_groups_built += 1;
+                        entry.bind_group = Some(bg);
+                        entry.cache_key = key;
                     }
+
+                    // Populate this frame's slot for the render path (cheap
+                    // reference-counted clone of the cached bind group). Clone
+                    // into a local first so the `entry` borrow of `cache` ends
+                    // before the disjoint `bind_groups` field is written.
+                    let slot_bg = entry.bind_group.clone();
+                    mesh_uniforms.bind_groups[item_idx] = slot_bg;
                 }
             }
         }
+
+        // Drop cache entries for objects not seen for a while, so a long
+        // streaming session does not carry resources for evicted objects
+        // forever. The grace window tolerates an object briefly leaving the
+        // per-object path (a frame of frustum-edge culling) without losing its
+        // bind group.
+        const CACHE_GRACE_FRAMES: u64 = 60;
+        mesh_uniforms
+            .cache
+            .retain(|_, e| e.last_frame + CACHE_GRACE_FRAMES >= frame_index);
 
         // Build per-item wireframe bind groups so each visible item gets its own
         // object uniform, avoiding the shared-MeshId overwrite problem.
@@ -454,5 +488,7 @@ impl ViewportRenderer {
                 );
             }
         }
+
+        bind_groups_built
     }
 }
