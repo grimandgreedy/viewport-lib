@@ -617,6 +617,7 @@ impl ViewportRenderer {
         vp_idx: usize,
         frame: &FrameData,
     ) -> wgpu::CommandBuffer {
+        let paint_start = std::time::Instant::now();
         // Read scene items from the surface submission, then extend with the
         // boundary draws contributed by opaque volume meshes (see the matching
         // construction in `prepare.rs`).
@@ -680,7 +681,7 @@ impl ViewportRenderer {
             self.ts_period = queue.get_timestamp_period();
         }
 
-        if !frame.effects.post_process.enabled {
+        let cmd_buf = if !frame.effects.post_process.enabled {
             self.render_frame_ldr(device, queue, output_view, vp_idx, frame, bg_colour, w, h)
         } else {
             self.render_frame_hdr(
@@ -695,7 +696,11 @@ impl ViewportRenderer {
                 h,
                 ssaa_factor,
             )
-        }
+        };
+        // CPU time spent encoding the paint pass (draw-call recording), separate
+        // from prepare. Latched so last_frame_stats() reflects it after render.
+        self.last_stats.cpu_paint_ms = paint_start.elapsed().as_secs_f32() * 1000.0;
+        cmd_buf
     }
 
     /// Render a frame to an offscreen texture and return raw RGBA bytes.

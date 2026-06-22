@@ -229,6 +229,16 @@ pub struct FrameStats {
     pub cpu_prepare_ms: f32,
     /// Per-phase split of `cpu_prepare_ms`. See [`PrepareBreakdown`].
     pub prepare_breakdown: PrepareBreakdown,
+    /// CPU time spent encoding the paint pass (draw-call recording) in
+    /// milliseconds, separate from `cpu_prepare_ms`.
+    ///
+    /// Measured around the render/paint encode and latched after it, so
+    /// `last_frame_stats()` reflects the current frame once `render` has run.
+    /// The value carried in the `FrameStats` returned by `prepare()` is the
+    /// previous frame's paint, since paint runs after prepare. For
+    /// multi-viewport rendering this reflects the most recently painted
+    /// viewport, not the sum.
+    pub cpu_paint_ms: f32,
     /// GPU scene-pass time in milliseconds, if timestamp queries are available.
     ///
     /// Measured with `TIMESTAMP_QUERY` around the main scene render pass.
