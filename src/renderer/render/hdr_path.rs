@@ -253,15 +253,19 @@ impl ViewportRenderer {
         self.hdr_tonemap_resolve(&ctx, &mut encoder);
         self.hdr_scene_overlays(&ctx, &mut encoder);
         self.hdr_final_overlay(&ctx, &mut encoder);
-        // Resolve timestamp queries -> staging buffer (HDR path).
-        if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
-            self.ts_query_set.as_ref(),
-            self.ts_resolve_buf.as_ref(),
-            self.ts_staging_buf.as_ref(),
-        ) {
-            encoder.resolve_query_set(qs, 0..2, res_buf, 0);
-            encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, 16);
-            self.ts_needs_readback = true;
+        // Resolve timestamp queries -> staging buffer (HDR path). Skip while a
+        // readback is unread or in flight so the single staging buffer is not
+        // overwritten before prepare() reads it.
+        if !self.ts_data_ready && !self.ts_map_inflight {
+            if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
+                self.ts_query_set.as_ref(),
+                self.ts_resolve_buf.as_ref(),
+                self.ts_staging_buf.as_ref(),
+            ) {
+                encoder.resolve_query_set(qs, 0..2, res_buf, 0);
+                encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, 16);
+                self.ts_data_ready = true;
+            }
         }
 
         encoder.finish()

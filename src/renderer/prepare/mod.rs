@@ -148,12 +148,24 @@ impl ViewportRenderer {
         }
 
         let per_object_start = std::time::Instant::now();
+        // Evaluate instanceability once per frame and share the result. Each
+        // `is_instanceable` call does several mesh-store and deform lookups plus
+        // a linear scan over the compute-filter results, so computing it once
+        // here instead of separately in the per-object skip test and the
+        // instanced batch filter keeps this O(items) rather than running the
+        // same per-item work three times over. At city scale (tens of thousands
+        // of resident meshes) that is the difference between a few milliseconds
+        // and a few hundred.
+        let instanceable: Vec<bool> = scene_items
+            .iter()
+            .map(|item| is_instanceable(item, resources, &self.compute_filter_results))
+            .collect();
         Self::prepare_per_object(
             resources,
             &mut self.mesh_uniforms,
             self.instancing.use_instancing,
             scene_items,
-            &self.compute_filter_results,
+            &instanceable,
             device,
             queue,
             frame,
@@ -165,7 +177,7 @@ impl ViewportRenderer {
             Self::prepare_instanced(
                 resources,
                 &mut self.instancing,
-                &self.compute_filter_results,
+                &instanceable,
                 scene_items,
                 device,
                 queue,
@@ -516,12 +528,21 @@ impl ViewportRenderer {
                 }
             }
 
+            // Visible items that miss the instanced fast path. Reuses the
+            // instanceable bitset computed above, so this is just a count.
+            let per_object_items = scene_items
+                .iter()
+                .zip(instanceable.iter())
+                .filter(|(item, inst)| !item.settings.hidden && !**inst)
+                .count() as u32;
+
             self.last_stats = crate::renderer::stats::FrameStats {
                 total_objects: total,
                 visible_objects: visible,
                 culled_objects: total.saturating_sub(visible),
                 draw_calls,
                 instanced_batches: instanced_batch_count,
+                per_object_items,
                 batches_reuploaded,
                 batches_skipped,
                 triangles_submitted: triangles,
@@ -626,57 +647,63 @@ impl ViewportRenderer {
         }
         self.prepare_breakdown.plugin_ms = plugin_start.elapsed().as_secs_f32() * 1000.0;
 
-        // Read back GPU timestamps from the previous frame, if available.
-        // By the time prepare() is called, the previous frame's queue.submit() has
-        // already happened, so it is safe to initiate the map here.
-        if self.ts_needs_readback {
-            if let Some(ref stg_buf) = self.ts_staging_buf {
-                let (tx, rx) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
-                stg_buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                    let _ = tx.send(r);
-                });
-                // Non-blocking poll: flush any completed callbacks. GPU work from the
-                // previous frame is almost certainly done by the time CPU reaches here.
-                device
-                    .poll(wgpu::PollType::Wait {
-                        submission_index: None,
-                        timeout: Some(std::time::Duration::from_millis(100)),
-                    })
-                    .ok();
-                if rx.try_recv().unwrap_or(Err(wgpu::BufferAsyncError)).is_ok() {
-                    let data = stg_buf.slice(..).get_mapped_range();
-                    let t0 = u64::from_le_bytes(data[0..8].try_into().unwrap());
-                    let t1 = u64::from_le_bytes(data[8..16].try_into().unwrap());
-                    drop(data);
-                    // ts_period is nanoseconds/tick; convert delta to milliseconds.
-                    let gpu_ms = t1.saturating_sub(t0) as f32 * self.ts_period / 1_000_000.0;
-                    self.last_stats.gpu_frame_ms = Some(gpu_ms);
+        // Read back GPU timestamps without blocking. The staging buffer is
+        // mapped on one frame and read on a later one; a non-blocking poll
+        // pumps the map callback, and the value is consumed once the map
+        // completes. A blocking wait here would stall the CPU on the previous
+        // frame's GPU work, which on this workload is most of the frame.
+        use std::sync::atomic::Ordering;
+        if self.ts_map_inflight {
+            let _ = device.poll(wgpu::PollType::Poll);
+            match self.ts_map_status.load(Ordering::Acquire) {
+                1 => {
+                    if let Some(ref stg_buf) = self.ts_staging_buf {
+                        let data = stg_buf.slice(..).get_mapped_range();
+                        let t0 = u64::from_le_bytes(data[0..8].try_into().unwrap());
+                        let t1 = u64::from_le_bytes(data[8..16].try_into().unwrap());
+                        drop(data);
+                        // ts_period is nanoseconds/tick; convert delta to milliseconds.
+                        let gpu_ms = t1.saturating_sub(t0) as f32 * self.ts_period / 1_000_000.0;
+                        // Metal can report equal begin/end timestamps at pass
+                        // boundaries; treat a zero delta as no sample rather than
+                        // a real 0 ms frame.
+                        if gpu_ms > 0.0 {
+                            self.last_stats.gpu_frame_ms = Some(gpu_ms);
+                        }
+                        stg_buf.unmap();
+                    }
+                    self.ts_map_inflight = false;
                 }
-                stg_buf.unmap();
+                2 => {
+                    // Map failed; the buffer is left unmapped. Drop this sample
+                    // and let the next frame start a fresh readback.
+                    self.ts_map_inflight = false;
+                }
+                _ => {}
             }
-            self.ts_needs_readback = false;
+        } else if self.ts_data_ready {
+            if let Some(ref stg_buf) = self.ts_staging_buf {
+                self.ts_map_status.store(0, Ordering::Release);
+                let status = self.ts_map_status.clone();
+                stg_buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    status.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
+                });
+                // Pump once so the map can complete immediately when the GPU has
+                // already finished; otherwise it completes on a later frame.
+                let _ = device.poll(wgpu::PollType::Poll);
+                self.ts_map_inflight = true;
+                self.ts_data_ready = false;
+            }
         }
 
-        // Read back GPU-visible instance count from the previous frame's indirect args copy.
-        // The cull pass from the previous frame has already been submitted and is almost
-        // certainly done by the time prepare() is called; a short poll is enough.
-        if self.instancing.indirect_readback_pending {
-            if let Some(ref stg_buf) = self.instancing.indirect_readback_buf {
-                let bytes = self.instancing.indirect_readback_batch_count as u64 * 20;
-                if bytes > 0 {
-                    let (tx, rx) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
-                    stg_buf
-                        .slice(..bytes)
-                        .map_async(wgpu::MapMode::Read, move |r| {
-                            let _ = tx.send(r);
-                        });
-                    device
-                        .poll(wgpu::PollType::Wait {
-                            submission_index: None,
-                            timeout: Some(std::time::Duration::from_millis(100)),
-                        })
-                        .ok();
-                    if rx.try_recv().unwrap_or(Err(wgpu::BufferAsyncError)).is_ok() {
+        // Read back the GPU-visible instance count without blocking, using the
+        // same map-on-one-frame, read-on-a-later-frame scheme as the timestamps.
+        let bytes = self.instancing.indirect_readback_batch_count as u64 * 20;
+        if self.instancing.indirect_map_inflight {
+            let _ = device.poll(wgpu::PollType::Poll);
+            match self.instancing.indirect_map_status.load(Ordering::Acquire) {
+                1 => {
+                    if let Some(ref stg_buf) = self.instancing.indirect_readback_buf {
                         let data = stg_buf.slice(..bytes).get_mapped_range();
                         let mut visible: u32 = 0;
                         for i in 0..self.instancing.indirect_readback_batch_count as usize {
@@ -688,11 +715,34 @@ impl ViewportRenderer {
                         }
                         drop(data);
                         self.last_stats.gpu_visible_instances = Some(visible);
+                        stg_buf.unmap();
                     }
-                    stg_buf.unmap();
+                    self.instancing.indirect_map_inflight = false;
+                }
+                2 => {
+                    self.instancing.indirect_map_inflight = false;
+                }
+                _ => {}
+            }
+        } else if self.instancing.indirect_readback_pending {
+            // Clear the flag whether or not we map, so a zero-batch frame does
+            // not leave it stuck and block the cull pass from copying again.
+            self.instancing.indirect_readback_pending = false;
+            if bytes > 0 {
+                if let Some(ref stg_buf) = self.instancing.indirect_readback_buf {
+                    self.instancing
+                        .indirect_map_status
+                        .store(0, Ordering::Release);
+                    let status = self.instancing.indirect_map_status.clone();
+                    stg_buf
+                        .slice(..bytes)
+                        .map_async(wgpu::MapMode::Read, move |r| {
+                            status.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
+                        });
+                    let _ = device.poll(wgpu::PollType::Poll);
+                    self.instancing.indirect_map_inflight = true;
                 }
             }
-            self.instancing.indirect_readback_pending = false;
         }
 
         // Wall-clock duration since the previous prepare() call approximates the frame interval.

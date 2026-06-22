@@ -11,49 +11,32 @@ impl ViewportRenderer {
         mesh_uniforms: &mut PerObjectState,
         use_instancing: bool,
         scene_items: &[SceneRenderItem],
-        compute_filter_results: &[crate::resources::ComputeFilterResult],
+        instanceable: &[bool],
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
     ) {
-        let has_scalar_items = scene_items.iter().any(|i| i.active_attribute.is_some());
-        let has_two_sided_items = scene_items.iter().any(|i| i.material.is_two_sided());
-        let has_matcap_items = scene_items.iter().any(|i| i.material.matcap_id().is_some());
-        let has_param_vis_items = scene_items.iter().any(|i| i.material.param_vis.is_some());
-        let has_wireframe_items = scene_items.iter().any(|i| i.settings.wireframe);
-        let has_normal_vis_items = scene_items.iter().any(|i| i.show_normals);
-        // Items whose mesh has a position or normal override bound. The shader
-        // flag that drives the override binding lives in the per-item
-        // ObjectUniform, so we must enter the write loop for those items even
-        // if no other "special" flag is set anywhere in the scene.
-        let has_override_items = scene_items.iter().any(|i| {
-            resources.mesh_store.get(i.mesh_id).map_or(false, |m| {
-                m.position_override_buffer.is_some() || m.normal_override_buffer.is_some()
-            })
-        });
-        // Skinned items are excluded from the batched-instanced path (the
-        // instanced shader does not consume the skin palette), so they need
-        // per-item object uniform writes too.
-        let has_skinned_items = scene_items.iter().any(|i| {
-            resources
-                .deform
-                .has_per_instance_deform_data(i.mesh_id, i.deform_instance)
-        });
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
         let mut wireframe_uniforms: Vec<ObjectUniform> = Vec::new();
         let collect_wf_uniforms = frame.viewport.wireframe_mode;
+        // Enter the per-object write loop when at least one item needs it. An
+        // item is non-instanceable for any of the reasons is_instanceable
+        // tests (scalar colouring, two-sided, matcap, param-vis, a position or
+        // normal override, skinning, a compute filter, or hidden), so
+        // `instanceable` already folds all of those in: scanning it is cheaper
+        // than rescanning the materials once per flag. Wireframe and
+        // normal-visualization items take the per-object path even when they
+        // would otherwise instance, so test those two directly.
+        let any_non_instanceable = instanceable.iter().any(|&b| !b);
+        let any_wireframe_or_normals = scene_items
+            .iter()
+            .any(|i| i.settings.wireframe || i.show_normals);
         if !use_instancing
             || frame.viewport.wireframe_mode
-            || has_scalar_items
-            || has_two_sided_items
-            || has_matcap_items
-            || has_param_vis_items
-            || has_wireframe_items
-            || has_normal_vis_items
-            || has_override_items
-            || has_skinned_items
+            || any_non_instanceable
+            || any_wireframe_or_normals
         {
             // Make sure the per-item object pool can index every scene item.
             // Pool entries for items that go through the instanced path stay None.
@@ -84,7 +67,7 @@ impl ViewportRenderer {
                 // uniform write, unless something forces them back to per-object:
                 // wireframe mode, a wireframe or warp item, or normal visualization.
                 if use_instancing
-                    && is_instanceable(item, resources, compute_filter_results)
+                    && instanceable[item_idx]
                     && !frame.viewport.wireframe_mode
                     && !item.settings.wireframe
                     && item.warp_attribute.is_none()

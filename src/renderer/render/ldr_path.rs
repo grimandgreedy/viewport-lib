@@ -266,15 +266,20 @@ impl ViewportRenderer {
             }
         }
 
-        // Resolve timestamp queries -> staging buffer.
-        if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
-            self.ts_query_set.as_ref(),
-            self.ts_resolve_buf.as_ref(),
-            self.ts_staging_buf.as_ref(),
-        ) {
-            encoder.resolve_query_set(qs, 0..2, res_buf, 0);
-            encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, 16);
-            self.ts_needs_readback = true;
+        // Resolve timestamp queries -> staging buffer, but only when the
+        // previous readback has finished. Skipping while a map is in flight or
+        // the buffer holds unread data keeps the single staging buffer from
+        // being overwritten before prepare() has read it.
+        if !self.ts_data_ready && !self.ts_map_inflight {
+            if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
+                self.ts_query_set.as_ref(),
+                self.ts_resolve_buf.as_ref(),
+                self.ts_staging_buf.as_ref(),
+            ) {
+                encoder.resolve_query_set(qs, 0..2, res_buf, 0);
+                encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, 16);
+                self.ts_data_ready = true;
+            }
         }
 
         // Upscale blit from dyn_res intermediate to output_view.

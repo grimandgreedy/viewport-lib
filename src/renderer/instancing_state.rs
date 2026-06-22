@@ -46,8 +46,15 @@ pub(crate) struct InstancingState {
     pub(crate) indirect_readback_buf: Option<wgpu::Buffer>,
     /// Number of batches whose data was copied into `indirect_readback_buf` last frame.
     pub(crate) indirect_readback_batch_count: u32,
-    /// True when `indirect_readback_buf` holds unread data from the previous cull pass.
+    /// True when `indirect_readback_buf` holds resolved data that has not yet
+    /// been mapped for readback.
     pub(crate) indirect_readback_pending: bool,
+    /// True when a map of `indirect_readback_buf` is in flight. The cull pass
+    /// skips the copy while this is set so the buffer is not overwritten before
+    /// `prepare()` has read it.
+    pub(crate) indirect_map_inflight: bool,
+    /// In-flight indirect map status: 0 = pending, 1 = mapped, 2 = failed.
+    pub(crate) indirect_map_status: std::sync::Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl InstancingState {
@@ -69,6 +76,8 @@ impl InstancingState {
             indirect_readback_buf: None,
             indirect_readback_batch_count: 0,
             indirect_readback_pending: false,
+            indirect_map_inflight: false,
+            indirect_map_status: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
         }
     }
 }

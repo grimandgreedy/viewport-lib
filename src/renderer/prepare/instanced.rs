@@ -10,7 +10,7 @@ impl ViewportRenderer {
     pub(super) fn prepare_instanced(
         resources: &mut ViewportGpuResources,
         instancing: &mut InstancingState,
-        compute_filter_results: &[crate::resources::ComputeFilterResult],
+        instanceable: &[bool],
         scene_items: &[SceneRenderItem],
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -37,10 +37,7 @@ impl ViewportRenderer {
         // scenes that mix instanced and non-instanced items (e.g. one two-sided mesh +
         // many static boxes) to still hit the instanced batch cache on frames where the
         // filtered set is unchanged.
-        let instancable_count = scene_items
-            .iter()
-            .filter(|item| is_instanceable(item, resources, compute_filter_results))
-            .count();
+        let instancable_count = instanceable.iter().filter(|&&b| b).count();
         let cache_valid = instancable_count == instancing.last_instancable_count
             && frame.scene.generation == instancing.last_scene_generation
             && frame.interaction.selection_generation == instancing.last_selection_generation
@@ -50,7 +47,9 @@ impl ViewportRenderer {
             // Cache miss : rebuild batches and upload instance data.
             let mut sorted_items: Vec<&SceneRenderItem> = scene_items
                 .iter()
-                .filter(|item| is_instanceable(item, resources, compute_filter_results))
+                .enumerate()
+                .filter(|(idx, _)| instanceable[*idx])
+                .map(|(_, item)| item)
                 .collect();
 
             sorted_items.sort_unstable_by(|a, b| {
@@ -361,28 +360,37 @@ impl ViewportRenderer {
                 cull.dispatch(&mut encoder, device, queue, &cpu_frustum, None, &sub);
 
                 // Copy indirect_args_buf to the CPU-readable staging buffer so the
-                // visible instance count can be read back next frame (one-frame lag).
-                let indirect_bytes = batch_count as u64 * 20;
-                if instancing
-                    .indirect_readback_buf
-                    .as_ref()
-                    .map_or(0, |b| b.size())
-                    < indirect_bytes
-                {
-                    instancing.indirect_readback_buf =
-                        Some(device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("indirect_readback_buf"),
-                            size: indirect_bytes,
-                            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                            mapped_at_creation: false,
-                        }));
-                }
-                if let Some(ref rb_buf) = instancing.indirect_readback_buf {
-                    encoder.copy_buffer_to_buffer(indirect_buf, 0, rb_buf, 0, indirect_bytes);
+                // visible instance count can be read back on a later frame. Only
+                // when the previous readback has been consumed: while a map is
+                // in flight or unread, the buffer must not be overwritten. The
+                // cull dispatch itself is always submitted below.
+                let do_readback =
+                    !instancing.indirect_readback_pending && !instancing.indirect_map_inflight;
+                if do_readback {
+                    let indirect_bytes = batch_count as u64 * 20;
+                    if instancing
+                        .indirect_readback_buf
+                        .as_ref()
+                        .map_or(0, |b| b.size())
+                        < indirect_bytes
+                    {
+                        instancing.indirect_readback_buf =
+                            Some(device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("indirect_readback_buf"),
+                                size: indirect_bytes,
+                                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                                mapped_at_creation: false,
+                            }));
+                    }
+                    if let Some(ref rb_buf) = instancing.indirect_readback_buf {
+                        encoder.copy_buffer_to_buffer(indirect_buf, 0, rb_buf, 0, indirect_bytes);
+                    }
                 }
                 queue.submit(std::iter::once(encoder.finish()));
-                instancing.indirect_readback_batch_count = batch_count;
-                instancing.indirect_readback_pending = true;
+                if do_readback {
+                    instancing.indirect_readback_batch_count = batch_count;
+                    instancing.indirect_readback_pending = true;
+                }
             }
         }
         (batches_reuploaded, batches_skipped)

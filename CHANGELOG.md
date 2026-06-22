@@ -7,6 +7,19 @@
 #### First-person and third-person camera controllers
 
 `FirstPersonCameraController` and `ThirdPersonCameraController` are body-attached camera controllers that follow a world-space position supplied each frame.
+
+#### Per-phase prepare timing in `FrameStats`
+
+`FrameStats::prepare_breakdown` (a `PrepareBreakdown`) splits `cpu_prepare_ms` across the main phases of `prepare`: plugins, lighting, per-object uniforms, instanced batch build, geometry upload, the shadow pass, per-viewport work, and a remainder. The fields sum to roughly `cpu_prepare_ms`, so a slow prepare can be attributed to a specific phase instead of guessed at.
+
+#### `Scene::remove_many` for bulk node removal
+
+`Scene::remove_many(&[NodeId])` removes several nodes and all their descendants in one pass, scanning the roots list and group membership once for the whole batch rather than once per node. Evicting many nodes at a time (a streaming cell, a layer toggle, tearing down part of a scene) is now linear in the number removed instead of rescanning the roots list for each one.
+
+#### `FrameStats::per_object_items`
+
+A new counter for visible items that miss the instanced fast path and are drawn one at a time: two-sided, matcap, scalar-attribute, parameter-visualization, position/normal override, skinned, or compute-filtered items. Each costs a uniform write and a bind-group build in `prepare`, so a large count means much of the scene is paying per-object cost rather than batching.
+
 ### Breaking changes
 
 #### `NavigationMode::FirstPerson` renamed to `NavigationMode::Fly`
@@ -26,6 +39,14 @@ one input resolver and feed the same frame to several controllers.
 `apply_to_camera` is unchanged and now delegates to it. A new `set_viewport_size`
 setter records the viewport size used for pan when calling `apply` directly.
 - Refactored and modularised the prepare and paint passes.
+
+#### Non-blocking GPU stats readback
+
+The GPU timestamp and visible-instance-count readbacks no longer block the CPU waiting on the previous frame's GPU work. They map the staging buffer on one frame and read it on a later one, which removes a per-frame CPU stall that could be most of the frame on a GPU-bound scene. `FrameStats::gpu_frame_ms` is now reported on nearly every frame on backends that support timestamp queries, where it was previously sampled only sparsely. Zero-delta timestamps, which some Metal drivers report at render-pass boundaries, are treated as no sample rather than reported as a 0 ms frame.
+
+#### Instanceability computed once per frame in prepare
+
+The per-object and instanced batch paths now share a single per-frame instanceability pass instead of recomputing it separately in the per-object skip test and the batch filter. This removes several redundant per-item passes (each doing mesh-store and deform lookups) over the resident set on large scenes.
 
 ### Bug Fixes
 

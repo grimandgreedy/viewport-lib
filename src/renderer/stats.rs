@@ -189,6 +189,16 @@ pub struct FrameStats {
     pub draw_calls: u32,
     /// Number of instanced batches (0 when using per-object path).
     pub instanced_batches: u32,
+    /// Visible items that miss the instanced fast path and are drawn one at a
+    /// time through the per-object path.
+    ///
+    /// An item is non-instanceable when it is two-sided, uses a matcap, has a
+    /// scalar attribute or parameter visualization, carries a position/normal
+    /// override, has per-instance deform data (skinning), or is hit by a
+    /// compute filter. Each such item costs a uniform write and a bind-group
+    /// build in `prepare`, so a large count here means `prepare` is paying
+    /// per-object cost across much of the scene rather than batching it.
+    pub per_object_items: u32,
     /// Instanced batches whose GPU sub-range was re-uploaded this frame.
     ///
     /// Non-zero only on cache-miss frames where at least one batch's instance

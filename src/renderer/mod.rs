@@ -444,8 +444,17 @@ pub struct ViewportRenderer {
     ts_staging_buf: Option<wgpu::Buffer>,
     /// Nanoseconds per GPU timestamp tick, from `queue.get_timestamp_period()`.
     ts_period: f32,
-    /// Whether the staging buffer holds unread timestamp data from the previous frame.
-    ts_needs_readback: bool,
+    /// True when the staging buffer holds resolved timestamps that have not yet
+    /// been mapped for readback.
+    ts_data_ready: bool,
+    /// True when a map of the timestamp staging buffer is in flight. The render
+    /// path skips the resolve/copy while this is set so the single staging
+    /// buffer is not overwritten before `prepare()` has read it.
+    ts_map_inflight: bool,
+    /// In-flight timestamp map status, set from the map callback: 0 = pending,
+    /// 1 = mapped, 2 = failed. An `Arc<AtomicU8>` rather than an mpsc channel so
+    /// `ViewportRenderer` stays `Sync` (mpsc receivers are not).
+    ts_map_status: std::sync::Arc<std::sync::atomic::AtomicU8>,
 
     /// Per-phase CPU timings accumulated during the current `prepare()` call,
     /// copied into `FrameStats::prepare_breakdown` at the end of the frame.
@@ -609,7 +618,9 @@ impl ViewportRenderer {
             ts_resolve_buf: None,
             ts_staging_buf: None,
             ts_period: 1.0,
-            ts_needs_readback: false,
+            ts_data_ready: false,
+            ts_map_inflight: false,
+            ts_map_status: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             degradation_tier: 0,
             degradation_shadows_skipped: false,
             degradation_volume_quality_reduced: false,
