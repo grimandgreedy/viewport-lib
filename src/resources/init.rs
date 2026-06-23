@@ -2452,6 +2452,7 @@ impl ViewportGpuResources {
             instance_storage_capacity: 0,
             instance_bind_groups: std::collections::HashMap::new(),
             solid_instanced_pipeline: None,
+            solid_two_sided_instanced_pipeline: None,
             transparent_instanced_pipeline: None,
             shadow_instanced_pipeline: None,
             shadow_instanced_cascade_bufs: [None, None, None, None],
@@ -2470,6 +2471,7 @@ impl ViewportGpuResources {
             instance_cull_bind_group_layout: None,
             instance_cull_bind_groups: std::collections::HashMap::new(),
             hdr_solid_instanced_cull_pipeline: None,
+            hdr_solid_instanced_cull_two_sided_pipeline: None,
             oit_instanced_cull_pipeline: None,
             // GPU culling shadow cascade extension.
             shadow_instanced_cull_pipeline: None,
@@ -2542,6 +2544,7 @@ impl ViewportGpuResources {
             hdr_transparent_pipeline: None,
             hdr_wireframe_pipeline: None,
             hdr_solid_instanced_pipeline: None,
+            hdr_solid_two_sided_instanced_pipeline: None,
             hdr_transparent_instanced_pipeline: None,
             hdr_instanced_additive_pipeline: None,
             hdr_instanced_premultiplied_pipeline: None,

@@ -361,9 +361,11 @@ impl ViewportRenderer {
                             // `sorted_items` (instancing builder). When
                             // every condition holds, the item was drawn by
                             // the instanced shadow path and must not be
-                            // drawn again here.
+                            // drawn again here. Two-sided (`Identical`) meshes
+                            // are now in the instanced batches, so they are
+                            // excluded here via `backface_needs_per_object`.
                             let in_instanced_batch = item.active_attribute.is_none()
-                                && !item.material.is_two_sided()
+                                && !backface_needs_per_object(item)
                                 && item.material.matcap_id().is_none()
                                 && item.material.param_vis.is_none()
                                 && !filter_results.iter().any(|r| r.mesh_id == item.mesh_id)

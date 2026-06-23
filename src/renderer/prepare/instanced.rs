@@ -54,17 +54,21 @@ impl ViewportRenderer {
 
             sorted_items.sort_unstable_by(|a, b| {
                 // Batch grouping key (must match the batch-split condition).
+                // two_sided is part of the key because the two pipelines differ
+                // in cull mode, so a batch must not mix one- and two-sided items.
                 let batch_ord = (
                     a.mesh_id.index(),
                     a.material.texture_id,
                     a.material.normal_map_id,
                     a.material.ao_map_id,
+                    a.material.is_two_sided(),
                 )
                     .cmp(&(
                         b.mesh_id.index(),
                         b.material.texture_id,
                         b.material.normal_map_id,
                         b.material.ao_map_id,
+                        b.material.is_two_sided(),
                     ));
                 if batch_ord != std::cmp::Ordering::Equal {
                     return batch_ord;
@@ -109,6 +113,7 @@ impl ViewportRenderer {
                             || a.material.texture_id != b.material.texture_id
                             || a.material.normal_map_id != b.material.normal_map_id
                             || a.material.ao_map_id != b.material.ao_map_id
+                            || a.material.is_two_sided() != b.material.is_two_sided()
                     };
 
                     if at_end || key_changed {
@@ -183,6 +188,7 @@ impl ViewportRenderer {
                             instance_offset,
                             instance_count: batch_items.len() as u32,
                             is_transparent,
+                            two_sided: rep.material.is_two_sided(),
                         });
 
                         batch_start = i;
@@ -211,6 +217,7 @@ impl ViewportRenderer {
                         a.mesh_id == b.mesh_id
                             && a.instance_offset == b.instance_offset
                             && a.instance_count == b.instance_count
+                            && a.two_sided == b.two_sided
                     });
             let force = std::mem::replace(&mut instancing.force_full_upload, false);
 

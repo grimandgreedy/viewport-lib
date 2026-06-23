@@ -525,6 +525,9 @@ pub(crate) fn build_outline_mask_pipelines(
 /// group 1.
 pub(crate) struct LdrInstancedMeshPipelines {
     pub solid: wgpu::RenderPipeline,
+    /// Same as `solid` but with `cull_mode: None` for two-sided (`Identical`
+    /// backface policy) meshes.
+    pub solid_two_sided: wgpu::RenderPipeline,
     pub transparent: wgpu::RenderPipeline,
 }
 
@@ -585,6 +588,7 @@ pub(crate) fn build_ldr_instanced_mesh_pipelines(
             None,
             true,
         ),
+        solid_two_sided: make("solid_two_sided_instanced_pipeline", None, None, true),
         transparent: make(
             "transparent_instanced_pipeline",
             None,
@@ -598,6 +602,9 @@ pub(crate) fn build_ldr_instanced_mesh_pipelines(
 /// additive and premultiplied variants the particle system draws into.
 pub(crate) struct HdrInstancedMeshPipelines {
     pub solid: wgpu::RenderPipeline,
+    /// Same as `solid` but with `cull_mode: None` for two-sided (`Identical`
+    /// backface policy) meshes.
+    pub solid_two_sided: wgpu::RenderPipeline,
     pub transparent: wgpu::RenderPipeline,
     pub additive: wgpu::RenderPipeline,
     pub premultiplied: wgpu::RenderPipeline,
@@ -682,6 +689,7 @@ pub(crate) fn build_hdr_instanced_mesh_pipelines(
             None,
             true,
         ),
+        solid_two_sided: make("hdr_solid_two_sided_instanced_pipeline", None, None, true),
         transparent: make(
             "hdr_transparent_instanced_pipeline",
             None,
@@ -711,8 +719,40 @@ pub(crate) fn build_hdr_instanced_cull_pipeline(
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
 ) -> wgpu::RenderPipeline {
+    build_hdr_instanced_cull_pipeline_with(
+        device,
+        layout,
+        shader,
+        "hdr_solid_instanced_cull_pipeline",
+        Some(wgpu::Face::Back),
+    )
+}
+
+/// Two-sided (`cull_mode: None`) variant of the GPU-cull HDR solid pipeline,
+/// used for instanced batches whose material has the `Identical` backface policy.
+pub(crate) fn build_hdr_instanced_cull_two_sided_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    build_hdr_instanced_cull_pipeline_with(
+        device,
+        layout,
+        shader,
+        "hdr_solid_instanced_cull_two_sided_pipeline",
+        None,
+    )
+}
+
+fn build_hdr_instanced_cull_pipeline_with(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    label: &str,
+    cull_mode: Option<wgpu::Face>,
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("hdr_solid_instanced_cull_pipeline"),
+        label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
@@ -732,7 +772,7 @@ pub(crate) fn build_hdr_instanced_cull_pipeline(
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: Some(wgpu::Face::Back),
+            cull_mode,
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {

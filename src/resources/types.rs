@@ -2968,6 +2968,9 @@ pub struct ViewportGpuResources {
     pub(crate) instance_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
     /// Instanced solid render pipeline (TriangleList, opaque).
     pub(crate) solid_instanced_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `solid_instanced_pipeline` for
+    /// `Identical` backface-policy meshes.
+    pub(crate) solid_two_sided_instanced_pipeline: Option<wgpu::RenderPipeline>,
     /// Instanced transparent render pipeline (TriangleList, alpha blending).
     pub(crate) transparent_instanced_pipeline: Option<wgpu::RenderPipeline>,
     /// Instanced shadow render pipeline (depth-only).
@@ -3005,6 +3008,9 @@ pub struct ViewportGpuResources {
         std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
     /// HDR-pass solid instanced pipeline using `vs_main_cull` (indirect draw path).
     pub(crate) hdr_solid_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `hdr_solid_instanced_cull_pipeline`
+    /// for `Identical` backface-policy meshes (indirect draw path).
+    pub(crate) hdr_solid_instanced_cull_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
     pub(crate) oit_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
 
@@ -3137,6 +3143,9 @@ pub struct ViewportGpuResources {
     pub(crate) hdr_transparent_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_wireframe_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_solid_instanced_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `hdr_solid_instanced_pipeline`
+    /// for `Identical` backface-policy meshes (direct draw path).
+    pub(crate) hdr_solid_two_sided_instanced_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_transparent_instanced_pipeline: Option<wgpu::RenderPipeline>,
     /// Instanced HDR pipeline with additive blend, no depth write. Used by
     /// `MeshInstanceItem` batches that opt into [`SpriteBlend::Additive`].

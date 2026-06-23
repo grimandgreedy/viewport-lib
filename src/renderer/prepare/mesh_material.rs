@@ -11,10 +11,13 @@ use super::*;
 /// instanced shader does not read falls back to the per-object path. This is the
 /// single source of truth for that decision, used both when building the batches
 /// and when deciding the instanced-batch cache key. An item is excluded when it
-/// is hidden, carries a scalar attribute, uses a two-sided material, a matcap, or
-/// param-vis, has a pending compute-filter result (which needs a per-item index
-/// buffer), has per-instance deform data, or its mesh has a position/normal
-/// override buffer bound.
+/// is hidden, carries a scalar attribute, uses a styled back-face policy
+/// (`DifferentColour`/`Tint`/`Pattern`, which need per-item back-face state), a
+/// matcap, or param-vis, has a pending compute-filter result (which needs a
+/// per-item index buffer), has per-instance deform data, or its mesh has a
+/// position/normal override buffer bound. `Cull` and `Identical` back-face
+/// policies both render through the instanced path: `Identical` batches use the
+/// two-sided (`cull_mode: None`) instanced pipeline.
 pub(super) fn is_instanceable(
     item: &SceneRenderItem,
     resources: &ViewportGpuResources,
@@ -22,7 +25,7 @@ pub(super) fn is_instanceable(
 ) -> bool {
     !item.settings.hidden
         && item.active_attribute.is_none()
-        && !item.material.is_two_sided()
+        && !backface_needs_per_object(item)
         && item.material.matcap_id().is_none()
         && item.material.param_vis.is_none()
         && resources.mesh_store.get(item.mesh_id).is_some()
@@ -35,6 +38,23 @@ pub(super) fn is_instanceable(
         && resources.mesh_store.get(item.mesh_id).map_or(true, |m| {
             m.position_override_buffer.is_none() && m.normal_override_buffer.is_none()
         })
+}
+
+/// Whether an item's back-face handling forces it onto the per-object path.
+///
+/// The instanced path admits the `Cull` and `Identical` policies (the latter via
+/// the two-sided `cull_mode: None` solid pipeline), but only for opaque items: the
+/// transparent instanced pipeline (OIT) is back-face culled, so a two-sided
+/// transparent item would lose its back faces there and must stay per-object. The
+/// styled policies (`DifferentColour`/`Tint`/`Pattern`) always go per-object. This
+/// is the single predicate the instanced filter and both paint-path excluded
+/// filters share, so they cannot drift.
+pub(crate) fn backface_needs_per_object(item: &SceneRenderItem) -> bool {
+    if item.material.backface_needs_per_object() {
+        return true;
+    }
+    let transparent = item.settings.opacity < 1.0 || item.material.is_blend();
+    item.material.is_two_sided() && transparent
 }
 
 pub(super) struct CommonMaterial {

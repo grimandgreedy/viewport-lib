@@ -401,6 +401,23 @@ impl Material {
         !matches!(self.backface_policy, BackfacePolicy::Cull)
     }
 
+    /// Returns `true` if back faces need the per-object draw path.
+    ///
+    /// `Cull` and `Identical` render correctly through the instanced path: `Cull`
+    /// uses back-face culling and `Identical` disables culling but shades back
+    /// faces with the geometric normal, neither of which needs per-item state the
+    /// instanced shader does not carry. The styled policies (`DifferentColour`,
+    /// `Tint`, `Pattern`) flip the normal and read a per-item back-face colour, so
+    /// they stay on the per-object path.
+    pub fn backface_needs_per_object(&self) -> bool {
+        matches!(
+            self.backface_policy,
+            BackfacePolicy::DifferentColour(_)
+                | BackfacePolicy::Tint(_)
+                | BackfacePolicy::Pattern(_)
+        )
+    }
+
     /// Returns `true` if this material uses alpha blending and should go through the OIT pass.
     pub fn is_blend(&self) -> bool {
         matches!(self.alpha_mode, AlphaMode::Blend)

@@ -1151,6 +1151,7 @@ impl ViewportGpuResources {
                         self.sample_count,
                     );
                     self.solid_instanced_pipeline = Some(ldr.solid);
+                    self.solid_two_sided_instanced_pipeline = Some(ldr.solid_two_sided);
                     self.transparent_instanced_pipeline = Some(ldr.transparent);
                 }
                 if self.hdr_solid_instanced_pipeline.is_some() {
@@ -1165,6 +1166,7 @@ impl ViewportGpuResources {
                         device, &layout, &shader,
                     );
                     self.hdr_solid_instanced_pipeline = Some(hdr.solid);
+                    self.hdr_solid_two_sided_instanced_pipeline = Some(hdr.solid_two_sided);
                     self.hdr_transparent_instanced_pipeline = Some(hdr.transparent);
                     self.hdr_instanced_additive_pipeline = Some(hdr.additive);
                     self.hdr_instanced_premultiplied_pipeline = Some(hdr.premultiplied);
@@ -1183,6 +1185,11 @@ impl ViewportGpuResources {
                         device, &layout, &shader,
                     );
                     self.hdr_solid_instanced_cull_pipeline = Some(pl);
+                    let pl_two_sided =
+                        crate::resources::mesh_pipelines::build_hdr_instanced_cull_two_sided_pipeline(
+                            device, &layout, &shader,
+                        );
+                    self.hdr_solid_instanced_cull_two_sided_pipeline = Some(pl_two_sided);
                 }
             }
         }

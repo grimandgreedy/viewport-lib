@@ -21,6 +21,9 @@ pub(crate) struct InstancedBatch {
     pub instance_offset: u32,
     pub instance_count: u32,
     pub is_transparent: bool,
+    /// `true` when the batch's material uses the `Identical` backface policy, so
+    /// it must be drawn with the two-sided (`cull_mode: None`) instanced pipeline.
+    pub two_sided: bool,
 }
 
 mod clip;
@@ -202,7 +205,7 @@ macro_rules! emit_draw_calls {
                         .filter(|(_, item)| {
                             !item.settings.hidden
                                 && (item.active_attribute.is_some()
-                                    || item.material.is_two_sided()
+                                    || crate::renderer::prepare::backface_needs_per_object(item)
                                     || item.material.matcap_id().is_some()
                                     || item.material.param_vis.is_some()
                                     || resources
@@ -229,9 +232,14 @@ macro_rules! emit_draw_calls {
 
                     // Draw opaque instanced batches.
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if let Some(ref pipeline) = resources.solid_instanced_pipeline {
-                            render_pass.set_pipeline(pipeline);
+                        if let (Some(pipeline), Some(pipeline_two_sided)) = (
+                            &resources.solid_instanced_pipeline,
+                            &resources.solid_two_sided_instanced_pipeline,
+                        ) {
                             render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
+                            // Batches are sorted with two_sided in the key, so one- and
+                            // two-sided runs are contiguous; switch pipeline on change.
+                            let mut cur_two_sided: Option<bool> = None;
                             for batch in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
@@ -241,6 +249,10 @@ macro_rules! emit_draw_calls {
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
                                 let Some(inst_tex_bg) = resources.instance_bind_groups.get(&mat_key) else { continue };
+                                if cur_two_sided != Some(batch.two_sided) {
+                                    render_pass.set_pipeline(if batch.two_sided { pipeline_two_sided } else { pipeline });
+                                    cur_two_sided = Some(batch.two_sided);
+                                }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

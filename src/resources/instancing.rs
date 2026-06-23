@@ -99,6 +99,7 @@ impl ViewportGpuResources {
             self.sample_count,
         );
         let solid_instanced = ldr_inst.solid;
+        let solid_two_sided_instanced = ldr_inst.solid_two_sided;
         let transparent_instanced = ldr_inst.transparent;
 
         // Shadow instanced pipeline.
@@ -186,6 +187,7 @@ impl ViewportGpuResources {
 
         self.instance_bind_group_layout = Some(instance_bgl);
         self.solid_instanced_pipeline = Some(solid_instanced);
+        self.solid_two_sided_instanced_pipeline = Some(solid_two_sided_instanced);
         self.transparent_instanced_pipeline = Some(transparent_instanced);
         self.shadow_instanced_pipeline = Some(shadow_instanced);
     }
@@ -228,6 +230,7 @@ impl ViewportGpuResources {
             &inst_shader,
         );
         self.hdr_solid_instanced_pipeline = Some(hdr_inst.solid);
+        self.hdr_solid_two_sided_instanced_pipeline = Some(hdr_inst.solid_two_sided);
         self.hdr_transparent_instanced_pipeline = Some(hdr_inst.transparent);
         self.hdr_instanced_additive_pipeline = Some(hdr_inst.additive);
         self.hdr_instanced_premultiplied_pipeline = Some(hdr_inst.premultiplied);
@@ -555,6 +558,12 @@ impl ViewportGpuResources {
             &inst_cull_layout,
             &instanced_shader,
         );
+        let hdr_solid_cull_two_sided =
+            crate::resources::mesh_pipelines::build_hdr_instanced_cull_two_sided_pipeline(
+                device,
+                &inst_cull_layout,
+                &instanced_shader,
+            );
 
         // OIT cull pipeline: Rgba16Float + R8Unorm targets, vs_main_cull, no depth write.
         let oit_shader = {
@@ -587,6 +596,7 @@ impl ViewportGpuResources {
 
         self.instance_cull_bind_group_layout = Some(cull_bgl);
         self.hdr_solid_instanced_cull_pipeline = Some(hdr_solid_cull);
+        self.hdr_solid_instanced_cull_two_sided_pipeline = Some(hdr_solid_cull_two_sided);
         self.oit_instanced_cull_pipeline = Some(oit_cull);
 
         // Shadow instanced cull pipeline.

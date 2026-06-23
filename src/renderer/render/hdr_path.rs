@@ -369,7 +369,7 @@ impl ViewportRenderer {
                         .filter(|(_, item)| {
                             !item.settings.hidden
                                 && (item.active_attribute.is_some()
-                                    || item.material.is_two_sided()
+                                    || crate::renderer::prepare::backface_needs_per_object(item)
                                     || item.material.matcap_id().is_some()
                                     || item.material.param_vis.is_some()
                                     || resources.deform.has_per_instance_deform_data(
@@ -399,16 +399,20 @@ impl ViewportRenderer {
                             && resources.indirect_args_buf.is_some();
 
                         if use_indirect {
-                            if let (Some(pipeline), Some(indirect_buf)) = (
+                            if let (Some(pipeline), Some(pipeline_two_sided), Some(indirect_buf)) = (
                                 &resources.hdr_solid_instanced_cull_pipeline,
+                                &resources.hdr_solid_instanced_cull_two_sided_pipeline,
                                 &resources.indirect_args_buf,
                             ) {
-                                render_pass.set_pipeline(pipeline);
                                 render_pass.set_bind_group(
                                     2,
                                     &resources.deform.dummy_bind_group,
                                     &[],
                                 );
+                                // Batches are sorted with two_sided in the key, so
+                                // one- and two-sided runs are contiguous; switch the
+                                // pipeline only when the flag changes.
+                                let mut cur_two_sided: Option<bool> = None;
                                 for (batch_global_idx, batch) in &opaque_batches {
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
@@ -423,6 +427,14 @@ impl ViewportRenderer {
                                     else {
                                         continue;
                                     };
+                                    if cur_two_sided != Some(batch.two_sided) {
+                                        render_pass.set_pipeline(if batch.two_sided {
+                                            pipeline_two_sided
+                                        } else {
+                                            pipeline
+                                        });
+                                        cur_two_sided = Some(batch.two_sided);
+                                    }
                                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                     render_pass.set_index_buffer(
@@ -437,9 +449,12 @@ impl ViewportRenderer {
                                     );
                                 }
                             }
-                        } else if let Some(ref pipeline) = resources.hdr_solid_instanced_pipeline {
-                            render_pass.set_pipeline(pipeline);
+                        } else if let (Some(pipeline), Some(pipeline_two_sided)) = (
+                            &resources.hdr_solid_instanced_pipeline,
+                            &resources.hdr_solid_two_sided_instanced_pipeline,
+                        ) {
                             render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
+                            let mut cur_two_sided: Option<bool> = None;
                             for (_, batch) in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
@@ -454,6 +469,14 @@ impl ViewportRenderer {
                                 else {
                                     continue;
                                 };
+                                if cur_two_sided != Some(batch.two_sided) {
+                                    render_pass.set_pipeline(if batch.two_sided {
+                                        pipeline_two_sided
+                                    } else {
+                                        pipeline
+                                    });
+                                    cur_two_sided = Some(batch.two_sided);
+                                }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
