@@ -905,7 +905,27 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         item: &crate::renderer::MeshInstanceItem,
     ) -> Option<crate::resources::types::MeshInstanceGpuData> {
-        let instance_count = item.transforms.len() as u32;
+        let mesh_id = crate::resources::mesh_store::MeshId(item.mesh_id as usize);
+        self.upload_mesh_instance_from(device, queue, item, mesh_id, None)
+    }
+
+    /// Build a mesh-instance batch from a subset of an item's instances drawn
+    /// with a chosen mesh. `indices` selects which instances to include (and in
+    /// what order); `None` uses every instance in order. `mesh_id` overrides the
+    /// item's own mesh, which is how LOD draws the same item at several detail
+    /// levels: one call per level with that level's mesh and its instances.
+    pub(crate) fn upload_mesh_instance_from(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        item: &crate::renderer::MeshInstanceItem,
+        mesh_id: crate::resources::mesh_store::MeshId,
+        indices: Option<&[u32]>,
+    ) -> Option<crate::resources::types::MeshInstanceGpuData> {
+        let instance_count = match indices {
+            Some(idx) => idx.len() as u32,
+            None => item.transforms.len() as u32,
+        };
         if instance_count == 0 {
             return None;
         }
@@ -949,8 +969,8 @@ impl ViewportGpuResources {
             0u32
         };
 
-        let instances: Vec<GpuInstanceData> = (0..item.transforms.len())
-            .map(|i| GpuInstanceData {
+        let build = |i: usize| -> GpuInstanceData {
+            GpuInstanceData {
                 model: item.transforms[i],
                 colour: item.colours.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
                 selected: 0,
@@ -972,8 +992,12 @@ impl ViewportGpuResources {
                 uv_transform: [0.0, 0.0, 1.0, 1.0],
                 ao_range: [0.0, 1.0],
                 _pad_ao_range: [0.0, 0.0],
-            })
-            .collect();
+            }
+        };
+        let instances: Vec<GpuInstanceData> = match indices {
+            Some(idx) => idx.iter().map(|&i| build(i as usize)).collect(),
+            None => (0..item.transforms.len()).map(build).collect(),
+        };
 
         let instance_bytes = bytemuck::cast_slice(&instances);
         let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1017,8 +1041,6 @@ impl ViewportGpuResources {
                 },
             ],
         });
-
-        let mesh_id = crate::resources::mesh_store::MeshId(item.mesh_id as usize);
 
         Some(crate::resources::types::MeshInstanceGpuData {
             mesh_id,

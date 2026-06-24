@@ -50,6 +50,71 @@ pub(super) struct LightingFrame {
 }
 
 impl ViewportRenderer {
+    /// Pick a level for every item with a LOD group and overwrite its `mesh_id`
+    /// with the chosen mesh. Items without a group are left alone.
+    ///
+    /// Returns `(items_resolved, switches)`: the number of LOD items handled and,
+    /// among those tracked across frames (items with a pick id), how many landed
+    /// on a different level than last frame.
+    ///
+    /// Screen size is measured from the group's full-detail mesh AABB, so the
+    /// metric does not depend on which level happens to be drawn. Items with a
+    /// pick id use hysteresis through `lod_levels`; items without one resolve
+    /// fresh each frame.
+    fn resolve_lod(
+        resources: &crate::resources::ViewportGpuResources,
+        lod_levels: &mut std::collections::HashMap<u64, usize>,
+        camera: &RenderCamera,
+        items: &mut [SceneRenderItem],
+    ) -> (u32, u32) {
+        let mut resolved = 0u32;
+        let mut switches = 0u32;
+        let mut seen: Vec<u64> = Vec::new();
+
+        for item in items.iter_mut() {
+            let Some(group_id) = item.lod_group else {
+                continue;
+            };
+            let Some(group) = resources.lod_group(group_id) else {
+                continue;
+            };
+            let Some(mesh) = resources.mesh(group.mesh_at(0)) else {
+                continue;
+            };
+
+            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            let size = crate::resources::projected_screen_size(&mesh.aabb, &model, camera);
+
+            let pick = item.settings.pick_id.0;
+            let level = if pick == 0 {
+                group.level_for_size(size)
+            } else {
+                let current = lod_levels.get(&pick).copied().unwrap_or(0);
+                let next = group.select(size, current);
+                if next != current {
+                    switches += 1;
+                }
+                lod_levels.insert(pick, next);
+                seen.push(pick);
+                next
+            };
+
+            item.mesh_id = group.mesh_at(level);
+            resolved += 1;
+        }
+
+        // Drop tracking state for items that are no longer present so the map
+        // does not grow without bound as pick ids come and go.
+        if seen.is_empty() {
+            lod_levels.clear();
+        } else if lod_levels.len() > seen.len() {
+            let keep: std::collections::HashSet<u64> = seen.into_iter().collect();
+            lod_levels.retain(|k, _| keep.contains(k));
+        }
+
+        (resolved, switches)
+    }
+
     /// Scene-global prepare stage: compute filters, lighting, shadow pass, batching, scivis.
     ///
     /// Call once per frame before any `prepare_viewport_internal` calls.
@@ -105,7 +170,7 @@ impl ViewportRenderer {
         // boundary draws contributed by opaque volume meshes (items in
         // `volume_meshes` whose `transparency` is `None`). The owned vector
         // keeps these extra items alive for the whole prepare pass.
-        let scene_items_owned: Vec<SceneRenderItem> = {
+        let mut scene_items_owned: Vec<SceneRenderItem> = {
             let surfaces = match &frame.scene.surfaces {
                 SurfaceSubmission::Flat(items) => items.as_ref(),
             };
@@ -117,6 +182,19 @@ impl ViewportRenderer {
                 .map(|item| item.to_render_item());
             surfaces.iter().cloned().chain(extra).collect()
         };
+
+        // Resolve LOD groups to concrete meshes before anything reads the draw
+        // list. Items with a `lod_group` get their `mesh_id` overwritten with the
+        // level for their on-screen size; items without one are untouched. Both
+        // the instanced and per-object paths see the resolved meshes, and so do
+        // the shadow and viewport passes, since this runs once on the shared list.
+        let (mut lod_items_resolved, mut lod_switches) = Self::resolve_lod(
+            resources,
+            &mut self.lod_levels,
+            &frame.camera.render_camera,
+            &mut scene_items_owned,
+        );
+
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         let lighting_start = std::time::Instant::now();
@@ -203,13 +281,22 @@ impl ViewportRenderer {
             &mut self.point_cloud_gpu_data,
             &mut self.glyph_gpu_data,
             &mut self.sprite_gpu_data,
-            &mut self.mesh_instance_gpu_data,
             &mut self.particle_gpu_data,
             &mut self.tensor_glyph_gpu_data,
             device,
             queue,
             frame,
         );
+        let (inst_resolved, inst_switches) = Self::upload_mesh_instances(
+            resources,
+            &mut self.mesh_instance_gpu_data,
+            &mut self.mesh_instance_lod_levels,
+            device,
+            queue,
+            frame,
+        );
+        lod_items_resolved += inst_resolved;
+        lod_switches += inst_switches;
         Self::upload_polylines(
             resources,
             &mut self.polyline_gpu_data,
@@ -557,6 +644,8 @@ impl ViewportRenderer {
                 batches_skipped,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0, // Updated below in shadow pass.
+                lod_items_resolved,
+                lod_switches,
                 gpu_culling_active: self.instancing.gpu_culling_enabled,
                 // Clear stale readback if GPU culling is off this frame.
                 gpu_visible_instances: if self.instancing.gpu_culling_enabled {
@@ -1012,5 +1101,161 @@ impl ViewportRenderer {
         };
         self.last_stats = stats;
         stats
+    }
+}
+
+#[cfg(test)]
+mod lod_resolve_tests {
+    use super::ViewportRenderer;
+    use crate::geometry::primitives;
+    use crate::renderer::{RenderCamera, SceneRenderItem};
+    use crate::resources::ViewportGpuResources;
+    use std::collections::HashMap;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn looking_down_z() -> RenderCamera {
+        let mut camera = RenderCamera::default();
+        camera.eye_position = [0.0, 0.0, 0.0];
+        camera.forward = [0.0, 0.0, -1.0];
+        camera
+    }
+
+    fn item_at(z: f32, group: crate::resources::LodGroupId, pick: u64) -> SceneRenderItem {
+        let mut item = SceneRenderItem::default();
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z)).to_cols_array_2d();
+        item.lod_group = Some(group);
+        item.settings.pick_id = crate::renderer::PickId(pick);
+        item
+    }
+
+    #[test]
+    fn resolve_swaps_mesh_by_distance() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let group = res
+            .upload_lod_group(
+                &device,
+                &[
+                    (primitives::icosphere(1.0, 3), 0.5),
+                    (primitives::icosphere(1.0, 1), 0.2),
+                    (primitives::icosphere(1.0, 0), 0.0),
+                ],
+            )
+            .unwrap();
+        let full = res.lod_group(group).unwrap().mesh_at(0);
+        let crude = res.lod_group(group).unwrap().mesh_at(2);
+
+        let camera = looking_down_z();
+        let mut levels = HashMap::new();
+        let mut items = vec![item_at(-3.0, group, 1), item_at(-300.0, group, 2)];
+
+        let (resolved, _switches) =
+            ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
+
+        assert_eq!(resolved, 2);
+        assert_eq!(items[0].mesh_id, full, "near object uses full detail");
+        assert_eq!(items[1].mesh_id, crude, "far object uses crudest level");
+    }
+
+    #[test]
+    fn items_without_a_group_are_untouched() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let group = res
+            .upload_lod_group(
+                &device,
+                &[(primitives::cube(1.0), 0.5), (primitives::cube(1.0), 0.0)],
+            )
+            .unwrap();
+
+        let plain_mesh = res.upload_mesh_data(&device, &primitives::cube(2.0)).unwrap();
+        let mut plain = SceneRenderItem::default();
+        plain.mesh_id = plain_mesh;
+
+        let camera = looking_down_z();
+        let mut levels = HashMap::new();
+        let mut items = vec![plain, item_at(-3.0, group, 1)];
+
+        let (resolved, _) = ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
+
+        assert_eq!(resolved, 1, "only the LOD item is counted");
+        assert_eq!(items[0].mesh_id, plain_mesh, "plain item is untouched");
+    }
+
+    #[test]
+    fn switches_count_only_level_changes() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let group = res
+            .upload_lod_group(
+                &device,
+                &[
+                    (primitives::icosphere(1.0, 3), 0.5),
+                    (primitives::icosphere(1.0, 1), 0.2),
+                    (primitives::icosphere(1.0, 0), 0.0),
+                ],
+            )
+            .unwrap();
+
+        let camera = looking_down_z();
+        let mut levels = HashMap::new();
+        let mut items = vec![item_at(-3.0, group, 1)];
+
+        // First frame: the object appears, landing on its level. That is a change
+        // from the assumed starting level 0, but here it is already level 0.
+        let (_, switches_first) =
+            ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
+        assert_eq!(switches_first, 0, "near object starts and stays at level 0");
+
+        // Second frame at the same distance: no change.
+        let (_, switches_second) =
+            ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
+        assert_eq!(switches_second, 0);
+    }
+
+    #[test]
+    fn stale_pick_ids_are_pruned() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let group = res
+            .upload_lod_group(
+                &device,
+                &[(primitives::cube(1.0), 0.5), (primitives::cube(1.0), 0.0)],
+            )
+            .unwrap();
+
+        let camera = looking_down_z();
+        let mut levels = HashMap::new();
+
+        let mut frame_one = vec![item_at(-3.0, group, 1), item_at(-3.0, group, 2)];
+        ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut frame_one);
+        assert_eq!(levels.len(), 2);
+
+        let mut frame_two = vec![item_at(-3.0, group, 1)];
+        ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut frame_two);
+        assert_eq!(levels.len(), 1, "pick id 2 dropped out and was pruned");
+        assert!(levels.contains_key(&1));
     }
 }

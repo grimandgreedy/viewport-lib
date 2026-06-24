@@ -114,6 +114,14 @@ pub struct SceneRenderItem {
     /// The mesh must have a `VertexVector` attribute matching
     /// `LicOverlay::vector_attribute`.
     pub lic: Option<LicOverlay>,
+    /// LOD group to draw this object from. `None` means draw `mesh_id` directly.
+    ///
+    /// When set, the renderer measures how large the object appears each frame
+    /// and overwrites `mesh_id` with the matching level before drawing. Set
+    /// `pick_id` for the switch to use hysteresis across frames; without one the
+    /// level is picked fresh each frame. Build a group with
+    /// [`ViewportGpuResources::upload_lod_group`](crate::ViewportGpuResources::upload_lod_group).
+    pub lod_group: Option<crate::resources::LodGroupId>,
 }
 
 impl Default for SceneRenderItem {
@@ -133,6 +141,7 @@ impl Default for SceneRenderItem {
             deform_instance: None,
             receives_decals: true,
             lic: None,
+            lod_group: None,
         }
     }
 }
@@ -1754,6 +1763,15 @@ pub struct MeshInstanceItem {
     pub blend: SpriteBlend,
     /// Per-item render settings (visibility, pick identity, selection state).
     pub settings: ItemSettings,
+    /// LOD group to draw these instances from. `None` means draw `mesh_id`
+    /// directly for every instance.
+    ///
+    /// When set, the renderer measures each instance's on-screen size and groups
+    /// the instances by level, drawing each level's subset with its own mesh. So
+    /// near instances in the batch draw the full mesh while far ones drop to a
+    /// cheaper one, all from a single submitted item. `mesh_id` is ignored.
+    /// Set `pick_id` for the per-instance level to use hysteresis across frames.
+    pub lod_group: Option<crate::resources::LodGroupId>,
 }
 
 impl Default for MeshInstanceItem {
@@ -1765,6 +1783,7 @@ impl Default for MeshInstanceItem {
             colours: Vec::new(),
             blend: SpriteBlend::AlphaBlend,
             settings: ItemSettings::default(),
+            lod_group: None,
         }
     }
 }

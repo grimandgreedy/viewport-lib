@@ -28,6 +28,8 @@ pub use shadow_debug_stats::ShadowDebugStats;
 
 #[cfg(test)]
 mod hidden_tests;
+#[cfg(test)]
+mod lod_instance_tests;
 
 pub use self::types::{
     AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape,
@@ -391,6 +393,15 @@ pub struct ViewportRenderer {
     last_prepare_instant: Option<std::time::Instant>,
     /// Frame counter incremented each `prepare()` call. Used for picking throttle in Playback mode.
     frame_counter: u64,
+    /// Current LOD level per item, keyed by pick id, carried across frames so
+    /// level switches use hysteresis. Items without a pick id are not tracked
+    /// here and resolve fresh each frame. Pruned to the items seen each frame.
+    lod_levels: std::collections::HashMap<u64, usize>,
+    /// Current LOD level per mesh instance, keyed by `(item pick id, instance
+    /// index)`. Same role as `lod_levels` but for `MeshInstanceItem`, where each
+    /// instance picks its own level. Instances in items without a pick id are
+    /// not tracked. Pruned to the instances seen each frame.
+    mesh_instance_lod_levels: std::collections::HashMap<(u64, u32), usize>,
     /// Surface items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_scene_items: Vec<SceneRenderItem>,
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -617,6 +628,8 @@ impl ViewportRenderer {
             start_instant: std::time::Instant::now(),
             last_prepare_instant: None,
             frame_counter: 0,
+            lod_levels: std::collections::HashMap::new(),
+            mesh_instance_lod_levels: std::collections::HashMap::new(),
             pick_scene_items: Vec::new(),
             pick_point_cloud_items: Vec::new(),
             pick_splat_items: Vec::new(),

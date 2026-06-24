@@ -999,6 +999,7 @@ impl Scene {
                 deform_instance: node.deform_instance,
                 receives_decals: node.receives_decals,
                 lic: None,
+                lod_group: None,
             });
         }
         items
@@ -1079,6 +1080,7 @@ impl Scene {
                     deform_instance: node.deform_instance,
                     receives_decals: node.receives_decals,
                     lic: None,
+                    lod_group: None,
                 });
             }
 
@@ -1136,6 +1138,7 @@ impl Scene {
                     deform_instance: node.deform_instance,
                     receives_decals: node.receives_decals,
                     lic: None,
+                    lod_group: None,
                 });
             }
 

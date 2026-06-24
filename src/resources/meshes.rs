@@ -1473,15 +1473,6 @@ impl ViewportGpuResources {
         // concurrent tangent tasks, stack depth grows unboundedly and
         // overflows.
         //
-        // The pathology was observed on the Leartes Roman Street pack
-        // loaded by `drake-demo-aaa --example romanstreet_district`:
-        // hero statues 16-27 MB FBX, ~500 k tri each, ~3 000
-        // simultaneous mesh-prep jobs. The stack-overflow backtrace
-        // showed `compute_tangents +432` (the Gram-Schmidt collect) and
-        // `compute_tangents +184` (the par_chunks fold) interleaved at
-        // many stack levels : the signature of work-stealing while
-        // suspended inside a parallel iter.
-        //
         // The function is cache-friendly and runs at ~30 ns / triangle
         // sequentially (~ 15 ms for a 500 k-tri mesh). Per-mesh
         // parallelism comes from the upload job pool, not from inside
