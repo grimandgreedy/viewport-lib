@@ -188,6 +188,19 @@ pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
             .map(|ms| format!("{ms:.2} ms"))
             .unwrap_or_else(|| "n/a".into()),
     );
+    // GPU cull dispatch cost. With one mesh + flat materials the whole grid is a
+    // single instanced batch, so every visible instance contends on one atomic
+    // counter; this row shows whether the cull pass is paying for itself.
+    let cull_ms = s.gpu_breakdown.cull_ms;
+    perf_stat_row(
+        ui,
+        "GPU cull",
+        &if s.gpu_culling_active && cull_ms > 0.0 {
+            format!("{cull_ms:.2} ms")
+        } else {
+            "n/a".into()
+        },
+    );
     perf_stat_row(ui, "Frame total", &format!("{:.2} ms", s.total_frame_ms));
     let fps = if s.total_frame_ms > 0.0 {
         format!("{:.0}", 1000.0 / s.total_frame_ms)

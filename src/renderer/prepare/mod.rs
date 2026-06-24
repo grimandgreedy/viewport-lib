@@ -188,6 +188,8 @@ impl ViewportRenderer {
                 &mut self.instancing,
                 &instanceable,
                 scene_items,
+                self.ts_query_set.as_ref(),
+                &self.ts_written_mask,
                 device,
                 queue,
                 frame,
@@ -692,6 +694,7 @@ impl ViewportRenderer {
                             shadow_ms: slot_ms(crate::renderer::GPU_TS_SHADOW),
                             oit_ms: slot_ms(crate::renderer::GPU_TS_OIT),
                             post_ms: slot_ms(crate::renderer::GPU_TS_POST),
+                            cull_ms: slot_ms(crate::renderer::GPU_TS_CULL),
                         };
                         drop(data);
                         // Metal can report equal begin/end timestamps at pass

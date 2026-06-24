@@ -129,6 +129,10 @@ impl CullResources {
     /// `None` is the main-camera dispatch; `Some(idx)` uploads to the
     /// matching cascade slot and forces the cull shader's shadow flag on
     /// (so `InstanceAabb::cast_shadows = 0` entries are skipped).
+    /// `ts` is `Some((query_set, written_mask))` only for the main-camera cull,
+    /// which writes a begin/end timestamp pair into the `GPU_TS_CULL` slot
+    /// (spanning both compute passes) and sets the slot bit in the mask. Shadow
+    /// and single-mesh culls pass `None` and are not timed.
     pub(super) fn dispatch(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -137,6 +141,7 @@ impl CullResources {
         frustum: &Frustum,
         cascade: Option<usize>,
         sub: &CullSubmission<'_>,
+        ts: Option<(&wgpu::QuerySet, &std::sync::atomic::AtomicU32)>,
     ) {
         let frustum_buf = match cascade {
             None => &self.frustum_buf,
@@ -209,10 +214,32 @@ impl CullResources {
             ),
         };
 
+        // Time the whole cull (begin of pass 1 -> end of pass 2) into the
+        // GPU_TS_CULL slot when this is the timed main-camera dispatch.
+        let cull_slot = crate::renderer::GPU_TS_CULL;
+        let (ts_begin, ts_end) = match ts {
+            Some((qs, mask)) => {
+                mask.fetch_or(1 << cull_slot, std::sync::atomic::Ordering::Relaxed);
+                (
+                    Some(wgpu::ComputePassTimestampWrites {
+                        query_set: qs,
+                        beginning_of_pass_write_index: Some(cull_slot * 2),
+                        end_of_pass_write_index: None,
+                    }),
+                    Some(wgpu::ComputePassTimestampWrites {
+                        query_set: qs,
+                        beginning_of_pass_write_index: None,
+                        end_of_pass_write_index: Some(cull_slot * 2 + 1),
+                    }),
+                )
+            }
+            None => (None, None),
+        };
+
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(&pass1_label),
-                timestamp_writes: None,
+                timestamp_writes: ts_begin,
             });
             pass.set_pipeline(&self.cull_instances_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
@@ -221,7 +248,7 @@ impl CullResources {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(&pass2_label),
-                timestamp_writes: None,
+                timestamp_writes: ts_end,
             });
             pass.set_pipeline(&self.write_indirect_args_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);

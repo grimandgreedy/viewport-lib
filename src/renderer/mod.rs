@@ -259,9 +259,13 @@ pub(crate) const GPU_TS_SHADOW: u32 = 1;
 pub(crate) const GPU_TS_OIT: u32 = 2;
 /// GPU timestamp slot for the tone-map / resolve pass.
 pub(crate) const GPU_TS_POST: u32 = 3;
+/// GPU timestamp slot for the main-camera GPU cull dispatch (the
+/// `cull_instances` + `write_indirect_args` compute passes). Only the main
+/// camera cull is timed; shadow-cascade and single-mesh culls are not.
+pub(crate) const GPU_TS_CULL: u32 = 4;
 /// Number of measured GPU passes; the query set holds `2 * GPU_TS_SLOTS` entries
 /// (a begin/end pair per slot).
-pub(crate) const GPU_TS_SLOTS: u32 = 4;
+pub(crate) const GPU_TS_SLOTS: u32 = 5;
 
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
@@ -859,7 +863,7 @@ impl ViewportRenderer {
                 Some(crate::renderer::indirect::CullResources::new(device));
         }
         let cull = self.instancing.cull_resources.as_ref().unwrap();
-        cull.dispatch(encoder, device, queue, frustum, None, sub);
+        cull.dispatch(encoder, device, queue, frustum, None, sub, None);
     }
 
     /// Same as [`submit_cull`](Self::submit_cull) for one shadow cascade.
@@ -897,6 +901,7 @@ impl ViewportRenderer {
             cascade_frustum,
             Some(cascade_idx),
             sub,
+            None,
         );
     }
 
@@ -1025,7 +1030,7 @@ impl ViewportRenderer {
             indirect_out,
             shadow_pass,
         };
-        cull.dispatch(encoder, device, queue, frustum, cascade, &sub);
+        cull.dispatch(encoder, device, queue, frustum, cascade, &sub, None);
     }
 
     /// Register an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).

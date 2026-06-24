@@ -12,6 +12,8 @@ impl ViewportRenderer {
         instancing: &mut InstancingState,
         instanceable: &[bool],
         scene_items: &[SceneRenderItem],
+        ts_query_set: Option<&wgpu::QuerySet>,
+        ts_written_mask: &std::sync::atomic::AtomicU32,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
@@ -364,7 +366,16 @@ impl ViewportRenderer {
                     indirect_out: indirect_buf,
                     shadow_pass: false,
                 };
-                cull.dispatch(&mut encoder, device, queue, &cpu_frustum, None, &sub);
+                let cull_ts = ts_query_set.map(|qs| (qs, ts_written_mask));
+                cull.dispatch(
+                    &mut encoder,
+                    device,
+                    queue,
+                    &cpu_frustum,
+                    None,
+                    &sub,
+                    cull_ts,
+                );
 
                 // Copy indirect_args_buf to the CPU-readable staging buffer so the
                 // visible instance count can be read back on a later frame. Only

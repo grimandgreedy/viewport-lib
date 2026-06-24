@@ -202,6 +202,12 @@ pub struct GpuBreakdown {
     pub oit_ms: f32,
     /// Tone-map and resolve pass that writes the final LDR image.
     pub post_ms: f32,
+    /// Main-camera GPU cull dispatch: the `cull_instances` + `write_indirect_args`
+    /// compute passes that produce the indirect draw args. `0.0` when GPU culling
+    /// is off or the scene has no instanced batches. Shadow-cascade culls are not
+    /// included here. Useful for checking whether the cull pass costs more than it
+    /// saves on a given scene.
+    pub cull_ms: f32,
 }
 
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].

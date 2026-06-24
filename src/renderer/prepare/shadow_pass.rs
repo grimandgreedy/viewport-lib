@@ -130,6 +130,7 @@ impl ViewportRenderer {
                                 &cpu_frustum,
                                 Some(c),
                                 &sub,
+                                None,
                             );
                         }
                     }
