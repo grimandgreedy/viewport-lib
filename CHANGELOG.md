@@ -24,6 +24,10 @@ A new counter for visible items that miss the instanced fast path and are drawn 
 
 `FrameStats::gpu_breakdown` (a `GpuBreakdown`) splits GPU frame time across the main passes measured with timestamp queries: the opaque scene pass, the directional shadow pass, the OIT accumulation pass, and the tone-map / resolve pass. It is populated under the same conditions as `gpu_frame_ms` (requires `TIMESTAMP_QUERY`), and `scene_ms` matches `gpu_frame_ms`. Passes that do not run report `0.0`, and the measured passes do not cover every GPU pass, so the fields do not sum to the full frame time.
 
+#### `GpuBreakdown::cull_ms`
+
+`GpuBreakdown` gained `cull_ms`, the GPU duration of the main-camera cull dispatch (the `cull_instances` and `write_indirect_args` compute passes that produce the indirect draw args). It is `0.0` when GPU culling is off or the scene has no instanced batches, and shadow-cascade culls are not included. This makes it possible to check whether the cull pass costs more than it saves on a given scene, rather than inferring it from the frame total.
+
 ### Breaking changes
 
 #### `NavigationMode::FirstPerson` renamed to `NavigationMode::Fly`
