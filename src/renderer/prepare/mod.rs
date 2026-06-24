@@ -1120,8 +1120,23 @@ mod lod_resolve_tests {
     use super::ViewportRenderer;
     use crate::geometry::primitives;
     use crate::renderer::{RenderCamera, SceneRenderItem};
-    use crate::resources::ViewportGpuResources;
+    use crate::resources::{LodGroupId, MeshData, ViewportGpuResources};
     use std::collections::HashMap;
+
+    /// Upload each level mesh, then register the group.
+    fn register(
+        res: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        levels: &[(MeshData, f32)],
+    ) -> crate::error::ViewportResult<LodGroupId> {
+        let mut ids = Vec::with_capacity(levels.len());
+        let mut sizes = Vec::with_capacity(levels.len());
+        for (data, size) in levels {
+            ids.push(res.upload_mesh_data(device, data)?);
+            sizes.push(*size);
+        }
+        res.register_lod_group(&ids, &sizes)
+    }
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
@@ -1156,16 +1171,16 @@ mod lod_resolve_tests {
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let group = res
-            .upload_lod_group(
-                &device,
-                &[
-                    (primitives::icosphere(1.0, 3), 0.5),
-                    (primitives::icosphere(1.0, 1), 0.2),
-                    (primitives::icosphere(1.0, 0), 0.0),
-                ],
-            )
-            .unwrap();
+        let group = register(
+            &mut res,
+            &device,
+            &[
+                (primitives::icosphere(1.0, 3), 0.5),
+                (primitives::icosphere(1.0, 1), 0.2),
+                (primitives::icosphere(1.0, 0), 0.0),
+            ],
+        )
+        .unwrap();
         let full = res.lod_group(group).unwrap().mesh_at(0);
         let crude = res.lod_group(group).unwrap().mesh_at(2);
 
@@ -1188,14 +1203,16 @@ mod lod_resolve_tests {
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let group = res
-            .upload_lod_group(
-                &device,
-                &[(primitives::cube(1.0), 0.5), (primitives::cube(1.0), 0.0)],
-            )
-            .unwrap();
+        let group = register(
+            &mut res,
+            &device,
+            &[(primitives::cube(1.0), 0.5), (primitives::cube(1.0), 0.0)],
+        )
+        .unwrap();
 
-        let plain_mesh = res.upload_mesh_data(&device, &primitives::cube(2.0)).unwrap();
+        let plain_mesh = res
+            .upload_mesh_data(&device, &primitives::cube(2.0))
+            .unwrap();
         let mut plain = SceneRenderItem::default();
         plain.mesh_id = plain_mesh;
 
@@ -1203,7 +1220,8 @@ mod lod_resolve_tests {
         let mut levels = HashMap::new();
         let mut items = vec![plain, item_at(-3.0, group, 1)];
 
-        let (resolved, _, _) = ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
+        let (resolved, _, _) =
+            ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
 
         assert_eq!(resolved, 1, "only the LOD item is counted");
         assert_eq!(items[0].mesh_id, plain_mesh, "plain item is untouched");
@@ -1216,16 +1234,16 @@ mod lod_resolve_tests {
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let group = res
-            .upload_lod_group(
-                &device,
-                &[
-                    (primitives::icosphere(1.0, 3), 0.5),
-                    (primitives::icosphere(1.0, 1), 0.2),
-                    (primitives::icosphere(1.0, 0), 0.0),
-                ],
-            )
-            .unwrap();
+        let group = register(
+            &mut res,
+            &device,
+            &[
+                (primitives::icosphere(1.0, 3), 0.5),
+                (primitives::icosphere(1.0, 1), 0.2),
+                (primitives::icosphere(1.0, 0), 0.0),
+            ],
+        )
+        .unwrap();
 
         let camera = looking_down_z();
         let mut levels = HashMap::new();
@@ -1250,12 +1268,12 @@ mod lod_resolve_tests {
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let group = res
-            .upload_lod_group(
-                &device,
-                &[(primitives::cube(1.0), 0.5), (primitives::cube(1.0), 0.0)],
-            )
-            .unwrap();
+        let group = register(
+            &mut res,
+            &device,
+            &[(primitives::cube(1.0), 0.5), (primitives::cube(1.0), 0.0)],
+        )
+        .unwrap();
 
         let camera = looking_down_z();
         let mut levels = HashMap::new();
@@ -1277,15 +1295,15 @@ mod lod_resolve_tests {
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let group = res
-            .upload_lod_group(
-                &device,
-                &[
-                    (primitives::icosphere(1.0, 3), 0.5),
-                    (primitives::icosphere(1.0, 0), 0.0),
-                ],
-            )
-            .unwrap();
+        let group = register(
+            &mut res,
+            &device,
+            &[
+                (primitives::icosphere(1.0, 3), 0.5),
+                (primitives::icosphere(1.0, 0), 0.0),
+            ],
+        )
+        .unwrap();
         res.set_lod_cull_below(group, Some(0.05)).unwrap();
 
         let camera = looking_down_z();

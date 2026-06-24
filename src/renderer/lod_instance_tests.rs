@@ -7,9 +7,27 @@
 //! is available.
 
 use super::types::FrameData;
-use super::{CameraFrame, MeshInstanceItem, RenderCamera, SceneFrame, SurfaceSubmission, ViewportRenderer};
+use super::{
+    CameraFrame, MeshInstanceItem, RenderCamera, SceneFrame, SurfaceSubmission, ViewportRenderer,
+};
 use crate::geometry::primitives;
 use crate::renderer::PickId;
+use crate::resources::{LodGroupId, MeshData, ViewportGpuResources};
+
+/// Upload each level mesh, then register the group.
+fn register(
+    res: &mut ViewportGpuResources,
+    device: &wgpu::Device,
+    levels: &[(MeshData, f32)],
+) -> LodGroupId {
+    let mut ids = Vec::with_capacity(levels.len());
+    let mut sizes = Vec::with_capacity(levels.len());
+    for (data, size) in levels {
+        ids.push(res.upload_mesh_data(device, data).unwrap());
+        sizes.push(*size);
+    }
+    res.register_lod_group(&ids, &sizes).unwrap()
+}
 
 fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
@@ -48,17 +66,15 @@ fn instances_split_into_one_batch_per_level() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
-    let group = renderer
-        .resources_mut()
-        .upload_lod_group(
-            &device,
-            &[
-                (primitives::icosphere(1.0, 3), 0.5),
-                (primitives::icosphere(1.0, 1), 0.2),
-                (primitives::icosphere(1.0, 0), 0.0),
-            ],
-        )
-        .unwrap();
+    let group = register(
+        renderer.resources_mut(),
+        &device,
+        &[
+            (primitives::icosphere(1.0, 3), 0.5),
+            (primitives::icosphere(1.0, 1), 0.2),
+            (primitives::icosphere(1.0, 0), 0.0),
+        ],
+    );
 
     // Two near instances (full detail) and one far (crudest). Level 1 stays
     // empty, so we expect two sub-batches, not three.
@@ -80,9 +96,19 @@ fn instances_split_into_one_batch_per_level() {
         .iter()
         .map(|b| b.instance_count)
         .collect();
-    assert_eq!(counts.iter().sum::<u32>(), 3, "every instance is drawn once");
-    assert!(counts.contains(&2), "two near instances share the full-detail batch");
-    assert!(counts.contains(&1), "one far instance is its own crude batch");
+    assert_eq!(
+        counts.iter().sum::<u32>(),
+        3,
+        "every instance is drawn once"
+    );
+    assert!(
+        counts.contains(&2),
+        "two near instances share the full-detail batch"
+    );
+    assert!(
+        counts.contains(&1),
+        "one far instance is its own crude batch"
+    );
 
     let stats = renderer.last_frame_stats();
     assert_eq!(stats.lod_items_resolved, 3, "three instances resolved");
@@ -96,16 +122,14 @@ fn instances_below_cull_size_are_dropped() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
-    let group = renderer
-        .resources_mut()
-        .upload_lod_group(
-            &device,
-            &[
-                (primitives::icosphere(1.0, 3), 0.5),
-                (primitives::icosphere(1.0, 0), 0.0),
-            ],
-        )
-        .unwrap();
+    let group = register(
+        renderer.resources_mut(),
+        &device,
+        &[
+            (primitives::icosphere(1.0, 3), 0.5),
+            (primitives::icosphere(1.0, 0), 0.0),
+        ],
+    );
     renderer
         .resources_mut()
         .set_lod_cull_below(group, Some(0.05))

@@ -120,7 +120,7 @@ pub struct SceneRenderItem {
     /// and overwrites `mesh_id` with the matching level before drawing. Set
     /// `pick_id` for the switch to use hysteresis across frames; without one the
     /// level is picked fresh each frame. Build a group with
-    /// [`ViewportGpuResources::upload_lod_group`](crate::ViewportGpuResources::upload_lod_group).
+    /// [`ViewportGpuResources::register_lod_group`](crate::ViewportGpuResources::register_lod_group).
     pub lod_group: Option<crate::resources::LodGroupId>,
 }
 

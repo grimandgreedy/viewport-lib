@@ -66,10 +66,10 @@ pub enum LodTransition {
 /// A set of meshes that are detail variants of one object, plus the thresholds
 /// that decide which one to draw.
 ///
-/// Build one with [`ViewportGpuResources::upload_lod_group`] or
+/// Upload the level meshes however you like (sync `upload_mesh_data` or the
+/// async job path), then bundle them with
 /// [`ViewportGpuResources::register_lod_group`].
 ///
-/// [`ViewportGpuResources::upload_lod_group`]: crate::ViewportGpuResources::upload_lod_group
 /// [`ViewportGpuResources::register_lod_group`]: crate::ViewportGpuResources::register_lod_group
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -252,7 +252,9 @@ impl crate::resources::ViewportGpuResources {
 
         for (i, &mesh) in levels.iter().enumerate() {
             if !self.mesh_store.contains(mesh) {
-                return Err(ViewportError::MeshSlotEmpty { index: mesh.index() });
+                return Err(ViewportError::MeshSlotEmpty {
+                    index: mesh.index(),
+                });
             }
             if i > 0 && min_screen_sizes[i] >= min_screen_sizes[i - 1] {
                 return Err(ViewportError::LodThresholdsNotDescending { level: i });
@@ -272,34 +274,6 @@ impl crate::resources::ViewportGpuResources {
             transition: LodTransition::Discrete,
             cull_below: None,
         }))
-    }
-
-    /// Upload several meshes and group them into a LOD chain in one call.
-    ///
-    /// Each entry pairs mesh data with its lower screen-size bound, full detail
-    /// first. This uploads each mesh through the normal path and then calls
-    /// [`register_lod_group`](Self::register_lod_group), so the same validation
-    /// applies.
-    ///
-    /// # Errors
-    ///
-    /// Returns any error from mesh upload or from
-    /// [`register_lod_group`](Self::register_lod_group).
-    pub fn upload_lod_group(
-        &mut self,
-        device: &wgpu::Device,
-        levels: &[(crate::resources::MeshData, f32)],
-    ) -> ViewportResult<LodGroupId> {
-        if levels.is_empty() {
-            return Err(ViewportError::LodGroupEmpty);
-        }
-        let mut mesh_ids = Vec::with_capacity(levels.len());
-        let mut sizes = Vec::with_capacity(levels.len());
-        for (data, size) in levels {
-            mesh_ids.push(self.upload_mesh_data(device, data)?);
-            sizes.push(*size);
-        }
-        self.register_lod_group(&mesh_ids, &sizes)
     }
 
     /// Look up a registered LOD group. The per-frame resolve pass uses this to
@@ -433,7 +407,10 @@ mod tests {
         let mut wide = narrow.clone();
         wide.fov = std::f32::consts::FRAC_PI_2;
 
-        assert!(projected_screen_size(&aabb, &model, &narrow) > projected_screen_size(&aabb, &model, &wide));
+        assert!(
+            projected_screen_size(&aabb, &model, &narrow)
+                > projected_screen_size(&aabb, &model, &wide)
+        );
     }
 
     #[test]
@@ -501,23 +478,39 @@ mod registration_tests {
         data
     }
 
+    /// Upload each level mesh, then register the group: the path a consumer
+    /// takes, made one call for the tests.
+    fn register(
+        res: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        levels: &[(MeshData, f32)],
+    ) -> ViewportResult<LodGroupId> {
+        let mut ids = Vec::with_capacity(levels.len());
+        let mut sizes = Vec::with_capacity(levels.len());
+        for (data, size) in levels {
+            ids.push(res.upload_mesh_data(device, data)?);
+            sizes.push(*size);
+        }
+        res.register_lod_group(&ids, &sizes)
+    }
+
     #[test]
-    fn upload_lod_group_round_trips() {
+    fn register_lod_group_round_trips() {
         let Some((device, _queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let id = res
-            .upload_lod_group(
-                &device,
-                &[
-                    (primitives::icosphere(1.0, 3), 0.5),
-                    (primitives::icosphere(1.0, 1), 0.2),
-                    (primitives::icosphere(1.0, 0), 0.0),
-                ],
-            )
-            .expect("group should register");
+        let id = register(
+            &mut res,
+            &device,
+            &[
+                (primitives::icosphere(1.0, 3), 0.5),
+                (primitives::icosphere(1.0, 1), 0.2),
+                (primitives::icosphere(1.0, 0), 0.0),
+            ],
+        )
+        .expect("group should register");
         let group = res.lod_group(id).expect("group present");
         assert_eq!(group.level_count(), 3);
     }
@@ -529,12 +522,10 @@ mod registration_tests {
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let err = res.upload_lod_group(
+        let err = register(
+            &mut res,
             &device,
-            &[
-                (primitives::cube(1.0), 0.2),
-                (primitives::cube(1.0), 0.5),
-            ],
+            &[(primitives::cube(1.0), 0.2), (primitives::cube(1.0), 0.5)],
         );
         assert!(matches!(
             err,
@@ -549,7 +540,8 @@ mod registration_tests {
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let err = res.upload_lod_group(
+        let err = register(
+            &mut res,
             &device,
             &[
                 (with_attr(primitives::cube(1.0), "temperature"), 0.5),
@@ -569,7 +561,7 @@ mod registration_tests {
             return;
         };
         let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let err = res.upload_lod_group(&device, &[]);
+        let err = res.register_lod_group(&[], &[]);
         assert!(matches!(err, Err(ViewportError::LodGroupEmpty)));
     }
 }
