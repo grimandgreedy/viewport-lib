@@ -18,7 +18,7 @@ use super::*;
 /// position/normal override buffer bound. `Cull` and `Identical` back-face
 /// policies both render through the instanced path: `Identical` batches use the
 /// two-sided (`cull_mode: None`) instanced pipeline.
-pub(super) fn is_instanceable(
+pub(crate) fn is_instanceable(
     item: &SceneRenderItem,
     resources: &ViewportGpuResources,
     compute_filter_results: &[crate::resources::ComputeFilterResult],

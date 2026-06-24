@@ -18,8 +18,8 @@ mod viewport_overlays;
 mod wireframe;
 
 use math::*;
-pub(crate) use mesh_material::backface_needs_per_object;
 use mesh_material::*;
+pub(crate) use mesh_material::{backface_needs_per_object, is_instanceable};
 use overlay_geometry::*;
 use projection::*;
 use wireframe::*;

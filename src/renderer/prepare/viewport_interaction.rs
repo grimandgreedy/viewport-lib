@@ -1697,8 +1697,19 @@ impl ViewportRenderer {
                         &[],
                     );
                     pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    // Use the compacted index buffer when a compute filter clipped this
+                    // mesh, so the outline follows the filtered geometry (matching the
+                    // scene pass) rather than the full mesh.
+                    let filter = self
+                        .compute_filter_results
+                        .iter()
+                        .find(|r| r.mesh_id == outlined.mesh_id);
+                    let (index_buf, index_count) = match filter {
+                        Some(f) => (&f.index_buffer, f.index_count),
+                        None => (&mesh.index_buffer, mesh.index_count),
+                    };
+                    pass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..index_count, 0, 0..1);
                 }
 
                 // Draw Gaussian splat outline discs.  Each splat position expands to

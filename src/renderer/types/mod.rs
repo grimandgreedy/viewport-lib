@@ -203,18 +203,15 @@ macro_rules! emit_draw_calls {
                         .iter()
                         .enumerate()
                         .filter(|(_, item)| {
+                            // Per-object set = visible items not admitted to an instanced
+                            // batch. Reuse `is_instanceable` so this cannot drift from it.
                             !item.settings.hidden
-                                && (item.active_attribute.is_some()
-                                    || crate::renderer::prepare::backface_needs_per_object(item)
-                                    || item.material.matcap_id().is_some()
-                                    || item.material.param_vis.is_some()
-                                    || resources
-                                        .deform
-                                        .has_per_instance_deform_data(item.mesh_id, item.deform_instance))
-                                && resources
-                                    .mesh_store
-                                    .get(item.mesh_id)
-                                    .is_some()
+                                && resources.mesh_store.get(item.mesh_id).is_some()
+                                && !crate::renderer::prepare::is_instanceable(
+                                    item,
+                                    resources,
+                                    compute_filter_results,
+                                )
                         })
                         .collect();
 

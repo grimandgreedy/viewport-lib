@@ -18,7 +18,11 @@
 
 #### `FrameStats::per_object_items`
 
-A new counter for visible items that miss the instanced fast path and are drawn one at a time: two-sided, matcap, scalar-attribute, parameter-visualization, position/normal override, skinned, or compute-filtered items. Each costs a uniform write and a bind-group build in `prepare`, so a large count means much of the scene is paying per-object cost rather than batching.
+A new counter for visible items that miss the instanced fast path and are drawn one at a time: matcap, scalar-attribute, parameter-visualization, position/normal override, skinned, compute-filtered, or two-sided transparent items. Each costs a uniform write and a bind-group build in `prepare`, so a large count means much of the scene is paying per-object cost rather than batching.
+
+#### Per-pass GPU frame breakdown in `FrameStats`
+
+`FrameStats::gpu_breakdown` (a `GpuBreakdown`) splits GPU frame time across the main passes measured with timestamp queries: the opaque scene pass, the directional shadow pass, the OIT accumulation pass, and the tone-map / resolve pass. It is populated under the same conditions as `gpu_frame_ms` (requires `TIMESTAMP_QUERY`), and `scene_ms` matches `gpu_frame_ms`. Passes that do not run report `0.0`, and the measured passes do not cover every GPU pass, so the fields do not sum to the full frame time.
 
 ### Breaking changes
 
@@ -67,6 +71,20 @@ When a shape is moved around on the graphics card each frame, the shadow now fol
 #### Marching-cubes surfaces darker than matching regular meshes
 
 A surface built with marching cubes no longer looks noticeably darker on its shaded side than the same shape drawn as an ordinary mesh. The marching-cubes path was leaving out the small base brightness that ordinary meshes add, so it now uses the same amount.
+
+#### Two-sided opaque meshes batch through the instanced path
+
+Opaque meshes with a two-sided backface policy (`BackfacePolicy::Identical`) are now admitted to the instanced draw path instead of being drawn one at a time, in the scene pass and the shadow pass alike. The shadow pass gained a `cull_mode: None` instanced shadow pipeline so two-sided casters (foliage cards, cloth, single-quad planes) keep both faces and cast correctly from any angle. Scenes with large two-sided sets collapse those per-object draws into the existing instanced batches, cutting CPU paint cost. Two-sided *transparent* meshes still take the per-object path, because the order-independent-transparency pipeline is back-face culled.
+
+### Bug Fixes
+
+#### Position-override and compute-filter meshes invisible once instancing kicked in
+
+A mesh with a bound position/normal override buffer (the mechanism GPU plugins like the wave and buoy examples use), or one clipped by a compute filter, could vanish from the scene while still casting a shadow once a scene had enough objects to switch on the instanced path. The per-object draw filter re-listed the exclusion conditions by hand and had drifted from the test used to build the instanced batches, so these items were left out of the batch but never picked up for a per-object draw. The scene-pass filters (HDR, OIT, and LDR) now derive directly from the same instanceability test, so they cannot drift again.
+
+#### Selection outline of compute-filtered meshes followed the full mesh
+
+The selection outline of a mesh clipped by a compute filter now traces the clipped geometry instead of the original full mesh, because the outline mask pass uses the compacted index buffer when a filter result is present. (A position/normal override buffer is still not reflected in the outline; see the issue tracker.)
 
 
 ## [0.18.2]

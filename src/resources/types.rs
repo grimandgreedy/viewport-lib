@@ -2975,6 +2975,9 @@ pub struct ViewportGpuResources {
     pub(crate) transparent_instanced_pipeline: Option<wgpu::RenderPipeline>,
     /// Instanced shadow render pipeline (depth-only).
     pub(crate) shadow_instanced_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
+    /// `shadow_instanced_pipeline` for `Identical` backface-policy batches.
+    pub(crate) shadow_instanced_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// Per-cascade uniform buffers for shadow_instanced_pipeline (64 bytes each, one mat4x4).
     pub(crate) shadow_instanced_cascade_bufs: [Option<wgpu::Buffer>; 4],
     /// Per-cascade bind groups for shadow_instanced_pipeline group 0.
@@ -3017,6 +3020,9 @@ pub struct ViewportGpuResources {
     // --- GPU culling : shadow cascade extension ---
     /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
     pub(crate) shadow_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
+    /// `shadow_instanced_cull_pipeline` for `Identical` backface-policy batches.
+    pub(crate) shadow_instanced_cull_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
     pub(crate) shadow_cull_instance_bgl: Option<wgpu::BindGroupLayout>,
     /// Per-cascade visibility index buffers for shadow GPU culling (same capacity as `visibility_index_buf`).

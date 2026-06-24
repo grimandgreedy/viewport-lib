@@ -133,32 +133,49 @@ impl ViewportGpuResources {
                 push_constant_ranges: &[],
             });
 
-        let shadow_instanced = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow_instanced_pipeline"),
-            layout: Some(&shadow_instanced_layout),
-            vertex: wgpu::VertexState {
-                module: &shadow_instanced_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: None,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Front),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: crate::resources::mesh_pipelines::CSM_SHADOW_BIAS,
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        // Front-cull for closed solids; `cull_mode: None` + the two-sided bias for
+        // two-sided (`Identical`) batches, so a single-winding foliage card still
+        // casts when its front face points away from the light. Mirrors the
+        // per-object `shadow_pipeline` / `shadow_pipeline_two_sided` split.
+        let make_shadow_instanced =
+            |label: &str, cull_mode: Option<wgpu::Face>, bias: wgpu::DepthBiasState| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&shadow_instanced_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shadow_instanced_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[Vertex::buffer_layout()],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: None,
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth32Float,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias,
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            };
+        let shadow_instanced = make_shadow_instanced(
+            "shadow_instanced_pipeline",
+            Some(wgpu::Face::Front),
+            crate::resources::mesh_pipelines::CSM_SHADOW_BIAS,
+        );
+        let shadow_instanced_two_sided = make_shadow_instanced(
+            "shadow_instanced_two_sided_pipeline",
+            None,
+            crate::resources::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+        );
 
         // Allocate 4 per-cascade uniform buffers (64 bytes each = one mat4x4) and
         // create bind groups for shadow_instanced_pipeline group 0.
@@ -190,6 +207,7 @@ impl ViewportGpuResources {
         self.solid_two_sided_instanced_pipeline = Some(solid_two_sided_instanced);
         self.transparent_instanced_pipeline = Some(transparent_instanced);
         self.shadow_instanced_pipeline = Some(shadow_instanced);
+        self.shadow_instanced_two_sided_pipeline = Some(shadow_instanced_two_sided);
     }
 
     /// Ensure the HDR instanced pipelines exist. Called after
@@ -653,34 +671,49 @@ impl ViewportGpuResources {
                 include_str!(concat!(env!("OUT_DIR"), "/shadow_instanced.wgsl")).into(),
             ),
         });
-        let shadow_instanced_cull =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("shadow_instanced_cull_pipeline"),
-                layout: Some(&shadow_cull_layout),
-                vertex: wgpu::VertexState {
-                    module: &shadow_cull_shader,
-                    entry_point: Some("vs_shadow_cull"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: None,
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Front),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: crate::resources::mesh_pipelines::CSM_SHADOW_BIAS,
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        // Front-cull for closed solids; `cull_mode: None` + the two-sided bias for
+        // two-sided (`Identical`) batches (see the direct-path shadow pipelines above).
+        let make_shadow_cull =
+            |label: &str, cull_mode: Option<wgpu::Face>, bias: wgpu::DepthBiasState| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&shadow_cull_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shadow_cull_shader,
+                        entry_point: Some("vs_shadow_cull"),
+                        buffers: &[Vertex::buffer_layout()],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: None,
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth32Float,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias,
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            };
+        let shadow_instanced_cull = make_shadow_cull(
+            "shadow_instanced_cull_pipeline",
+            Some(wgpu::Face::Front),
+            crate::resources::mesh_pipelines::CSM_SHADOW_BIAS,
+        );
+        let shadow_instanced_cull_two_sided = make_shadow_cull(
+            "shadow_instanced_cull_two_sided_pipeline",
+            None,
+            crate::resources::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+        );
         self.shadow_instanced_cull_pipeline = Some(shadow_instanced_cull);
+        self.shadow_instanced_cull_two_sided_pipeline = Some(shadow_instanced_cull_two_sided);
         self.shadow_cull_instance_bgl = Some(shadow_cull_bgl);
     }
 

@@ -2455,6 +2455,7 @@ impl ViewportGpuResources {
             solid_two_sided_instanced_pipeline: None,
             transparent_instanced_pipeline: None,
             shadow_instanced_pipeline: None,
+            shadow_instanced_two_sided_pipeline: None,
             shadow_instanced_cascade_bufs: [None, None, None, None],
             shadow_instanced_cascade_bgs: [None, None, None, None],
             // GPU culling buffers (populated on first batch cache miss).
@@ -2475,6 +2476,7 @@ impl ViewportGpuResources {
             oit_instanced_cull_pipeline: None,
             // GPU culling shadow cascade extension.
             shadow_instanced_cull_pipeline: None,
+            shadow_instanced_cull_two_sided_pipeline: None,
             shadow_cull_instance_bgl: None,
             shadow_vis_bufs: [None, None, None, None],
             shadow_cull_instance_bgs: [None, None, None, None],

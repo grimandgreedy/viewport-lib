@@ -210,6 +210,11 @@ impl ViewportRenderer {
                             else {
                                 continue;
                             };
+                            let Some(pipeline_two_sided) =
+                                resources.shadow_instanced_cull_two_sided_pipeline.as_ref()
+                            else {
+                                continue;
+                            };
                             let Some(cascade_bg) =
                                 resources.shadow_instanced_cascade_bgs[cascade].as_ref()
                             else {
@@ -226,10 +231,14 @@ impl ViewportRenderer {
                                 continue;
                             };
 
-                            shadow_pass.set_pipeline(pipeline);
                             shadow_pass.set_bind_group(0, cascade_bg, &[]);
                             shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
 
+                            // Batches are sorted with two_sided in the key, so one- and
+                            // two-sided runs are contiguous; switch the pipeline only when
+                            // the flag changes. Two-sided batches use the `cull_mode: None`
+                            // pipeline so foliage casters are not Front-culled away.
+                            let mut cur_two_sided: Option<bool> = None;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
                                 if batch.is_transparent {
                                     continue;
@@ -237,6 +246,14 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
+                                if cur_two_sided != Some(batch.two_sided) {
+                                    shadow_pass.set_pipeline(if batch.two_sided {
+                                        pipeline_two_sided
+                                    } else {
+                                        pipeline
+                                    });
+                                    cur_two_sided = Some(batch.two_sided);
+                                }
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
@@ -247,8 +264,9 @@ impl ViewportRenderer {
                                 shadow_draws += 1;
                             }
                         }
-                    } else if let (Some(pipeline), Some(instance_bg)) = (
+                    } else if let (Some(pipeline), Some(pipeline_two_sided), Some(instance_bg)) = (
                         &resources.shadow_instanced_pipeline,
+                        &resources.shadow_instanced_two_sided_pipeline,
                         instancing.batches.first().and_then(|b| {
                             resources.instance_bind_groups.get(&(
                                 b.texture_id.unwrap_or(u64::MAX),
@@ -276,8 +294,6 @@ impl ViewportRenderer {
                                 light.tile_size,
                             );
 
-                            shadow_pass.set_pipeline(pipeline);
-
                             queue.write_buffer(
                                 resources.shadow_instanced_cascade_bufs[cascade]
                                     .as_ref()
@@ -294,6 +310,9 @@ impl ViewportRenderer {
                             shadow_pass.set_bind_group(0, cascade_bg, &[]);
                             shadow_pass.set_bind_group(1, instance_bg, &[]);
 
+                            // See the indirect path above: switch the pipeline only when
+                            // the contiguous-sorted two_sided flag changes.
+                            let mut cur_two_sided: Option<bool> = None;
                             for batch in &instancing.batches {
                                 if batch.is_transparent {
                                     continue;
@@ -301,6 +320,14 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
+                                if cur_two_sided != Some(batch.two_sided) {
+                                    shadow_pass.set_pipeline(if batch.two_sided {
+                                        pipeline_two_sided
+                                    } else {
+                                        pipeline
+                                    });
+                                    cur_two_sided = Some(batch.two_sided);
+                                }
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),

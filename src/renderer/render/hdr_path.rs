@@ -374,16 +374,19 @@ impl ViewportRenderer {
                         .iter()
                         .enumerate()
                         .filter(|(_, item)| {
+                            // The per-object set is exactly the visible items that were
+                            // not admitted to an instanced batch. Reuse `is_instanceable`
+                            // (the single source of truth used in prepare) instead of
+                            // re-listing its conditions, so this filter cannot drift from
+                            // it -- a past drift dropped position-override and
+                            // compute-filter items from the scene pass entirely.
                             !item.settings.hidden
-                                && (item.active_attribute.is_some()
-                                    || crate::renderer::prepare::backface_needs_per_object(item)
-                                    || item.material.matcap_id().is_some()
-                                    || item.material.param_vis.is_some()
-                                    || resources.deform.has_per_instance_deform_data(
-                                        item.mesh_id,
-                                        item.deform_instance,
-                                    ))
                                 && resources.mesh_store.get(item.mesh_id).is_some()
+                                && !crate::renderer::prepare::is_instanceable(
+                                    item,
+                                    resources,
+                                    compute_filter_results,
+                                )
                         })
                         .collect();
 
@@ -1677,16 +1680,15 @@ impl ViewportRenderer {
                 // those items are invisible.
                 self.instancing.batches.iter().any(|b| b.is_transparent)
                     || scene_items.iter().any(|i| {
+                        // A transparent item that is not instanceable is drawn per-object
+                        // in the OIT pass below; if any exists the pass must run.
                         !i.settings.hidden
                             && (i.settings.opacity < 1.0 || i.material.is_blend())
-                            && (i.active_attribute.is_some()
-                                || i.material.is_two_sided()
-                                || i.material.matcap_id().is_some()
-                                || i.material.param_vis.is_some()
-                                || self
-                                    .resources
-                                    .deform
-                                    .has_per_instance_deform_data(i.mesh_id, i.deform_instance))
+                            && !crate::renderer::prepare::is_instanceable(
+                                i,
+                                &self.resources,
+                                &self.compute_filter_results,
+                            )
                     })
             } else {
                 scene_items.iter().any(|i| {
@@ -1856,15 +1858,13 @@ impl ViewportRenderer {
                             {
                                 continue;
                             }
-                            let is_skinned = self
-                                .resources
-                                .deform
-                                .has_per_instance_deform_data(item.mesh_id, item.deform_instance);
-                            if !is_skinned
-                                && item.active_attribute.is_none()
-                                && !item.material.is_two_sided()
-                                && item.material.matcap_id().is_none()
-                            {
+                            // Instanceable transparent items go through the instanced OIT
+                            // path; only the per-object (non-instanceable) ones draw here.
+                            if crate::renderer::prepare::is_instanceable(
+                                item,
+                                &self.resources,
+                                &self.compute_filter_results,
+                            ) {
                                 continue;
                             }
                             let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
