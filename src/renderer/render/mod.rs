@@ -661,20 +661,23 @@ impl ViewportRenderer {
         if self.ts_query_set.is_none()
             && device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         {
+            // One begin/end timestamp pair per measured pass.
+            let ts_count = 2 * super::GPU_TS_SLOTS;
+            let ts_bytes = ts_count as u64 * 8;
             self.ts_query_set = Some(device.create_query_set(&wgpu::QuerySetDescriptor {
                 label: Some("ts_query_set"),
                 ty: wgpu::QueryType::Timestamp,
-                count: 2,
+                count: ts_count,
             }));
             self.ts_resolve_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("ts_resolve_buf"),
-                size: 16,
+                size: ts_bytes,
                 usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }));
             self.ts_staging_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("ts_staging_buf"),
-                size: 16,
+                size: ts_bytes,
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             }));

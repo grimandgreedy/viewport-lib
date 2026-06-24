@@ -251,6 +251,18 @@ struct SpriteRefractionResolve {
     size: [u32; 2],
 }
 
+/// GPU timestamp slot for the main opaque HDR scene pass.
+pub(crate) const GPU_TS_SCENE: u32 = 0;
+/// GPU timestamp slot for the directional shadow depth pass.
+pub(crate) const GPU_TS_SHADOW: u32 = 1;
+/// GPU timestamp slot for the OIT accumulation pass.
+pub(crate) const GPU_TS_OIT: u32 = 2;
+/// GPU timestamp slot for the tone-map / resolve pass.
+pub(crate) const GPU_TS_POST: u32 = 3;
+/// Number of measured GPU passes; the query set holds `2 * GPU_TS_SLOTS` entries
+/// (a begin/end pair per slot).
+pub(crate) const GPU_TS_SLOTS: u32 = 4;
+
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
 /// issue draw calls.
@@ -435,13 +447,26 @@ pub struct ViewportRenderer {
     cpu_pick_cache_enabled: bool,
 
     // --- GPU timestamp queries ---
-    /// Timestamp query set with 2 entries (scene-pass begin + end).
-    /// `None` when `TIMESTAMP_QUERY` is unavailable or not yet initialized.
+    /// Timestamp query set with `2 * GPU_TS_SLOTS` entries: a begin/end pair per
+    /// measured pass (see the `GPU_TS_*` slot constants). `None` when
+    /// `TIMESTAMP_QUERY` is unavailable or not yet initialized.
     ts_query_set: Option<wgpu::QuerySet>,
-    /// Resolve buffer: 2 x u64, GPU-only (`QUERY_RESOLVE | COPY_SRC`).
+    /// Resolve buffer: `2 * GPU_TS_SLOTS` x u64, GPU-only (`QUERY_RESOLVE | COPY_SRC`).
     ts_resolve_buf: Option<wgpu::Buffer>,
-    /// Staging buffer: 2 x u64, CPU-readable (`COPY_DST | MAP_READ`).
+    /// Staging buffer: `2 * GPU_TS_SLOTS` x u64, CPU-readable (`COPY_DST | MAP_READ`).
     ts_staging_buf: Option<wgpu::Buffer>,
+    /// Bitmask of `GPU_TS_*` slots whose timestamps were written this frame.
+    /// Passes are conditional, so unwritten slots hold stale/undefined query
+    /// data; only slots set here are read back. Reset at the start of each frame.
+    ///
+    /// Atomic so a pass method can set its bit through `&self` without colliding
+    /// with the immutable viewport-slot borrows live during pass encoding (and
+    /// to keep `ViewportRenderer: Sync`).
+    ts_written_mask: std::sync::atomic::AtomicU32,
+    /// Snapshot of `ts_written_mask` taken when the queries are resolved, carried
+    /// alongside the one-frame-delayed readback so the reader knows which slots
+    /// are valid.
+    ts_pending_mask: u32,
     /// Nanoseconds per GPU timestamp tick, from `queue.get_timestamp_period()`.
     ts_period: f32,
     /// True when the staging buffer holds resolved timestamps that have not yet
@@ -621,6 +646,8 @@ impl ViewportRenderer {
             ts_data_ready: false,
             ts_map_inflight: false,
             ts_map_status: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            ts_written_mask: std::sync::atomic::AtomicU32::new(0),
+            ts_pending_mask: 0,
             degradation_tier: 0,
             degradation_shadows_skipped: false,
             degradation_volume_quality_reduced: false,

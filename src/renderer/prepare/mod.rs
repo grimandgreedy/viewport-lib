@@ -63,6 +63,13 @@ impl ViewportRenderer {
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
     ) {
+        // Start of frame: clear the GPU-timestamp written mask. Passes set their
+        // slot bit as they encode (shadow here in prepare, scene/oit/post later in
+        // render); the mask is snapshotted when the queries are resolved so the
+        // reader knows which slots ran this frame.
+        self.ts_written_mask
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
         // any registered completion callbacks fire on this thread.
@@ -574,6 +581,8 @@ impl ViewportRenderer {
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,
+            self.ts_query_set.as_ref(),
+            &self.ts_written_mask,
             device,
             queue,
             frame,
@@ -662,16 +671,34 @@ impl ViewportRenderer {
                 1 => {
                     if let Some(ref stg_buf) = self.ts_staging_buf {
                         let data = stg_buf.slice(..).get_mapped_range();
-                        let t0 = u64::from_le_bytes(data[0..8].try_into().unwrap());
-                        let t1 = u64::from_le_bytes(data[8..16].try_into().unwrap());
+                        // Read one begin/end pair per slot. Only slots whose bit is
+                        // set in the resolved mask hold valid data this frame; the
+                        // rest are passes that did not run, left at 0 ms.
+                        let mask = self.ts_pending_mask;
+                        let slot_ms = |slot: u32| -> f32 {
+                            if mask & (1 << slot) == 0 {
+                                return 0.0;
+                            }
+                            let base = slot as usize * 16;
+                            let t0 = u64::from_le_bytes(data[base..base + 8].try_into().unwrap());
+                            let t1 =
+                                u64::from_le_bytes(data[base + 8..base + 16].try_into().unwrap());
+                            // ts_period is nanoseconds/tick; convert delta to ms.
+                            t1.saturating_sub(t0) as f32 * self.ts_period / 1_000_000.0
+                        };
+                        let scene_ms = slot_ms(crate::renderer::GPU_TS_SCENE);
+                        self.last_stats.gpu_breakdown = crate::renderer::stats::GpuBreakdown {
+                            scene_ms,
+                            shadow_ms: slot_ms(crate::renderer::GPU_TS_SHADOW),
+                            oit_ms: slot_ms(crate::renderer::GPU_TS_OIT),
+                            post_ms: slot_ms(crate::renderer::GPU_TS_POST),
+                        };
                         drop(data);
-                        // ts_period is nanoseconds/tick; convert delta to milliseconds.
-                        let gpu_ms = t1.saturating_sub(t0) as f32 * self.ts_period / 1_000_000.0;
                         // Metal can report equal begin/end timestamps at pass
                         // boundaries; treat a zero delta as no sample rather than
                         // a real 0 ms frame.
-                        if gpu_ms > 0.0 {
-                            self.last_stats.gpu_frame_ms = Some(gpu_ms);
+                        if scene_ms > 0.0 {
+                            self.last_stats.gpu_frame_ms = Some(scene_ms);
                         }
                         stg_buf.unmap();
                     }

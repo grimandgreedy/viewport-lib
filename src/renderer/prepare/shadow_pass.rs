@@ -20,6 +20,8 @@ impl ViewportRenderer {
         light: &LightingFrame,
         shadows_skipped: bool,
         last_stats: &mut crate::renderer::stats::FrameStats,
+        ts_query_set: Option<&wgpu::QuerySet>,
+        ts_written_mask: &std::sync::atomic::AtomicU32,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
@@ -139,6 +141,17 @@ impl ViewportRenderer {
                 label: Some("shadow_pass_encoder"),
             });
             {
+                let shadow_ts_writes = ts_query_set.map(|qs| {
+                    ts_written_mask.fetch_or(
+                        1 << crate::renderer::GPU_TS_SHADOW,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    wgpu::RenderPassTimestampWrites {
+                        query_set: qs,
+                        beginning_of_pass_write_index: Some(crate::renderer::GPU_TS_SHADOW * 2),
+                        end_of_pass_write_index: Some(crate::renderer::GPU_TS_SHADOW * 2 + 1),
+                    }
+                });
                 let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("shadow_pass"),
                     color_attachments: &[],
@@ -150,7 +163,7 @@ impl ViewportRenderer {
                         }),
                         stencil_ops: None,
                     }),
-                    timestamp_writes: None,
+                    timestamp_writes: shadow_ts_writes,
                     occlusion_query_set: None,
                 });
 

@@ -176,6 +176,34 @@ pub struct PrepareBreakdown {
     pub other_ms: f32,
 }
 
+/// Per-pass split of GPU frame time, measured with `TIMESTAMP_QUERY`.
+///
+/// Each field is the GPU duration of one render pass in milliseconds, captured
+/// with timestamp queries around the pass. A field is `0.0` when that pass did
+/// not run this frame (for example `shadow_ms` when shadows are off or
+/// `oit_ms` when nothing transparent is drawn) or when the backend does not
+/// support `TIMESTAMP_QUERY` (the same condition that leaves
+/// [`FrameStats::gpu_frame_ms`] at `None`).
+///
+/// These passes are submitted in separate command buffers but resolved
+/// together, so the values are comparable. Like `gpu_frame_ms`, they lag one
+/// frame behind due to async readback. The passes measured here do not cover
+/// every GPU pass (decals, scatter, bloom, depth of field, and the final
+/// overlays are not split out), so the fields do not sum to the full frame GPU
+/// time; treat the remainder as those un-instrumented passes plus present.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GpuBreakdown {
+    /// Main opaque HDR scene pass. This is the same span as
+    /// [`FrameStats::gpu_frame_ms`].
+    pub scene_ms: f32,
+    /// Directional shadow depth pass (all cascades rendered into the atlas).
+    pub shadow_ms: f32,
+    /// Order-independent transparency accumulation pass.
+    pub oit_ms: f32,
+    /// Tone-map and resolve pass that writes the final LDR image.
+    pub post_ms: f32,
+}
+
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameStats {
@@ -192,10 +220,11 @@ pub struct FrameStats {
     /// Visible items that miss the instanced fast path and are drawn one at a
     /// time through the per-object path.
     ///
-    /// An item is non-instanceable when it is two-sided, uses a matcap, has a
-    /// scalar attribute or parameter visualization, carries a position/normal
-    /// override, has per-instance deform data (skinning), or is hit by a
-    /// compute filter. Each such item costs a uniform write and a bind-group
+    /// An item is non-instanceable when it uses a styled back-face policy
+    /// (different-colour/tint/pattern) or is two-sided and transparent, uses a
+    /// matcap, has a scalar attribute or parameter visualization, carries a
+    /// position/normal override, has per-instance deform data (skinning), or is
+    /// hit by a compute filter. Each such item costs a uniform write and a bind-group
     /// build in `prepare`, so a large count here means `prepare` is paying
     /// per-object cost across much of the scene rather than batching it.
     pub per_object_items: u32,
@@ -248,6 +277,12 @@ pub struct FrameStats {
     /// readback. The value lags by one frame and should not be used by the
     /// adaptation controller across mode transitions.
     pub gpu_frame_ms: Option<f32>,
+    /// Per-pass split of GPU frame time. See [`GpuBreakdown`].
+    ///
+    /// Populated under the same conditions as `gpu_frame_ms` (requires
+    /// `TIMESTAMP_QUERY`); all fields are `0.0` otherwise. `scene_ms` matches
+    /// `gpu_frame_ms`.
+    pub gpu_breakdown: GpuBreakdown,
     /// Wall-clock duration since the previous `prepare()` call, in milliseconds.
     ///
     /// Approximates the full frame interval. Zero on the first frame.

@@ -58,14 +58,17 @@ impl ViewportRenderer {
                 } else {
                     (output_view, &slot_hdr.outline_depth_view)
                 };
-            let ts_writes = self
-                .ts_query_set
-                .as_ref()
-                .map(|qs| wgpu::RenderPassTimestampWrites {
+            let ts_writes = self.ts_query_set.as_ref().map(|qs| {
+                self.ts_written_mask.fetch_or(
+                    1 << crate::renderer::GPU_TS_SCENE,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                wgpu::RenderPassTimestampWrites {
                     query_set: qs,
-                    beginning_of_pass_write_index: Some(0),
-                    end_of_pass_write_index: Some(1),
-                });
+                    beginning_of_pass_write_index: Some(crate::renderer::GPU_TS_SCENE * 2),
+                    end_of_pass_write_index: Some(crate::renderer::GPU_TS_SCENE * 2 + 1),
+                }
+            });
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ldr_render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -276,8 +279,12 @@ impl ViewportRenderer {
                 self.ts_resolve_buf.as_ref(),
                 self.ts_staging_buf.as_ref(),
             ) {
-                encoder.resolve_query_set(qs, 0..2, res_buf, 0);
-                encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, 16);
+                let ts_count = 2 * crate::renderer::GPU_TS_SLOTS;
+                encoder.resolve_query_set(qs, 0..ts_count, res_buf, 0);
+                encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, ts_count as u64 * 8);
+                self.ts_pending_mask = self
+                    .ts_written_mask
+                    .load(std::sync::atomic::Ordering::Relaxed);
                 self.ts_data_ready = true;
             }
         }
