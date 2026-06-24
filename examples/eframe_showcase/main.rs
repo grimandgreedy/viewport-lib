@@ -3601,8 +3601,9 @@ impl App {
         if self.mode == ShowcaseMode::Lod {
             showcase_52_lod::submit_lod_items(self, &mut fd);
             if let Some(rs) = frame.wgpu_render_state() {
-                let guard = rs.renderer.read();
-                if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
+                let mut guard = rs.renderer.write();
+                if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                    showcase_52_lod::apply_lod_cull(&self.lod_state, renderer);
                     self.lod_state.last_stats = renderer.last_frame_stats();
                 }
             }

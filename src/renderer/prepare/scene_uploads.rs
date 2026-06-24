@@ -12,7 +12,8 @@ impl ViewportRenderer {
     /// Items without a `lod_group` upload exactly as before: one batch, one
     /// draw. Items with one have their instances grouped by level, and each
     /// occupied level uploads as its own batch drawn with that level's mesh.
-    /// Returns `(instances_resolved, switches)` for the LOD stats.
+    /// Instances below the group's cull size are dropped from every batch.
+    /// Returns `(instances_resolved, switches, culled)` for the LOD stats.
     pub(super) fn upload_mesh_instances(
         resources: &mut ViewportGpuResources,
         mesh_instance_gpu_data: &mut Vec<crate::resources::MeshInstanceGpuData>,
@@ -20,19 +21,20 @@ impl ViewportRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
-    ) -> (u32, u32) {
+    ) -> (u32, u32, u32) {
         mesh_instance_gpu_data.clear();
         if frame.scene.mesh_instances.is_empty() {
             if !lod_levels.is_empty() {
                 lod_levels.clear();
             }
-            return (0, 0);
+            return (0, 0, 0);
         }
         resources.ensure_instanced_pipelines(device);
         resources.ensure_hdr_instanced_pipelines(device);
 
         let mut resolved = 0u32;
         let mut switches = 0u32;
+        let mut culled = 0u32;
         let mut seen: Vec<(u64, u32)> = Vec::new();
 
         for item in &frame.scene.mesh_instances {
@@ -73,6 +75,10 @@ impl ViewportRenderer {
                         &model,
                         &frame.camera.render_camera,
                     );
+                    if group.should_cull(size) {
+                        culled += 1;
+                        continue;
+                    }
                     let level = if pick == 0 {
                         group.level_for_size(size)
                     } else {
@@ -121,7 +127,7 @@ impl ViewportRenderer {
             lod_levels.retain(|k, _| keep.contains(k));
         }
 
-        (resolved, switches)
+        (resolved, switches, culled)
     }
 
     pub(super) fn upload_geometry_glyphs(

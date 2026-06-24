@@ -35,6 +35,8 @@ pub(crate) struct LodState {
     pub lod_enabled: bool,
     pub colourise: bool,
     pub auto_dolly: bool,
+    pub cull_enabled: bool,
+    pub cull_below: f32,
     pub dolly_time: f32,
     pub generation: u64,
     pub last_stats: FrameStats,
@@ -51,6 +53,8 @@ impl Default for LodState {
             lod_enabled: true,
             colourise: true,
             auto_dolly: true,
+            cull_enabled: false,
+            cull_below: 0.04,
             dolly_time: 0.0,
             generation: 0,
             last_stats: FrameStats::default(),
@@ -176,6 +180,20 @@ pub(crate) fn submit_lod_items(app: &mut App, fd: &mut FrameData) {
     fd.scene.mesh_instances.push(item);
 }
 
+/// Push the current cull setting onto the group. Cheap to call each frame: it
+/// just sets a field on the registered group.
+pub(crate) fn apply_lod_cull(st: &LodState, renderer: &mut ViewportRenderer) {
+    let Some(group) = st.group else {
+        return;
+    };
+    let cull = if st.cull_enabled {
+        Some(st.cull_below)
+    } else {
+        None
+    };
+    let _ = renderer.resources_mut().set_lod_cull_below(group, cull);
+}
+
 pub(crate) fn controls_lod(app: &mut App, ui: &mut egui::Ui) {
     ui.label("A field of spheres receding into the distance. Each picks a mesh");
     ui.label("from how large it appears on screen.");
@@ -188,6 +206,13 @@ pub(crate) fn controls_lod(app: &mut App, ui: &mut egui::Ui) {
         egui::Checkbox::new(&mut app.lod_state.colourise, "Colourise by level"),
     );
     ui.checkbox(&mut app.lod_state.auto_dolly, "Animate camera (dolly in/out)");
+    ui.add_enabled_ui(app.lod_state.lod_enabled, |ui| {
+        ui.checkbox(&mut app.lod_state.cull_enabled, "Cull below a size");
+        ui.add_enabled(
+            app.lod_state.cull_enabled,
+            egui::Slider::new(&mut app.lod_state.cull_below, 0.0..=0.1).text("Cull size"),
+        );
+    });
     ui.separator();
 
     if app.lod_state.colourise && app.lod_state.lod_enabled {
@@ -199,6 +224,7 @@ pub(crate) fn controls_lod(app: &mut App, ui: &mut egui::Ui) {
     stat_row(ui, "Camera distance", &format!("{:.1}", app.camera.distance));
     stat_row(ui, "LOD resolved", &s.lod_items_resolved.to_string());
     stat_row(ui, "LOD switches", &s.lod_switches.to_string());
+    stat_row(ui, "LOD culled", &s.lod_culled.to_string());
     stat_row(ui, "Draw calls", &s.draw_calls.to_string());
     stat_row(ui, "Triangles", &format_count(s.triangles_submitted));
 }

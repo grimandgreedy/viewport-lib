@@ -348,6 +348,10 @@ pub struct FrameStats {
     /// `lod_items_resolved` suggests thresholds are being crossed often (camera
     /// motion, or thresholds spaced too tightly for the hysteresis margin).
     pub lod_switches: u32,
+    /// Objects dropped this frame because they fell below their LOD group's cull
+    /// size. Counts hidden `SceneRenderItem`s plus individual mesh instances that
+    /// were left out of every batch. Zero unless a group sets `cull_below`.
+    pub lod_culled: u32,
 }
 
 #[cfg(test)]

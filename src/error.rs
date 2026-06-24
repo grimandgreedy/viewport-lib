@@ -187,6 +187,13 @@ pub enum ViewportError {
         /// What differs (a missing attribute name, or a deform mismatch).
         reason: String,
     },
+
+    /// A LOD group id does not refer to a registered group.
+    #[error("LOD group {index} is not registered")]
+    LodGroupNotFound {
+        /// The group index that was looked up.
+        index: usize,
+    },
 }
 
 /// Convenience alias for `Result<T, ViewportError>`.

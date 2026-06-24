@@ -206,6 +206,10 @@ impl LodGroupStore {
     pub fn get(&self, id: LodGroupId) -> Option<&LodGroup> {
         self.groups.get(id.0)
     }
+
+    pub fn get_mut(&mut self, id: LodGroupId) -> Option<&mut LodGroup> {
+        self.groups.get_mut(id.0)
+    }
 }
 
 impl crate::resources::ViewportGpuResources {
@@ -303,6 +307,29 @@ impl crate::resources::ViewportGpuResources {
     #[allow(dead_code)]
     pub(crate) fn lod_group(&self, id: LodGroupId) -> Option<&LodGroup> {
         self.lod_groups.get(id)
+    }
+
+    /// Set the screen size, as a fraction of viewport height, below which
+    /// objects in this group stop drawing. `None` disables size culling.
+    ///
+    /// Applies to both `SceneRenderItem`s and individual `MeshInstanceItem`
+    /// instances that use the group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::LodGroupNotFound`] if `id` is not registered.
+    pub fn set_lod_cull_below(
+        &mut self,
+        id: LodGroupId,
+        cull_below: Option<f32>,
+    ) -> ViewportResult<()> {
+        match self.lod_groups.get_mut(id) {
+            Some(group) => {
+                group.cull_below = cull_below;
+                Ok(())
+            }
+            None => Err(ViewportError::LodGroupNotFound { index: id.index() }),
+        }
     }
 
     /// Check that every level draws the same way as level 0: same named

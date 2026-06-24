@@ -89,6 +89,51 @@ fn instances_split_into_one_batch_per_level() {
 }
 
 #[test]
+fn instances_below_cull_size_are_dropped() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping instances_below_cull_size_are_dropped: no GPU adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+
+    let group = renderer
+        .resources_mut()
+        .upload_lod_group(
+            &device,
+            &[
+                (primitives::icosphere(1.0, 3), 0.5),
+                (primitives::icosphere(1.0, 0), 0.0),
+            ],
+        )
+        .unwrap();
+    renderer
+        .resources_mut()
+        .set_lod_cull_below(group, Some(0.05))
+        .unwrap();
+
+    // Two near instances draw; two very far instances fall below the cull size.
+    let mut item = MeshInstanceItem::default();
+    item.lod_group = Some(group);
+    item.transforms = vec![
+        translate(-3.0),
+        translate(-3.0),
+        translate(-600.0),
+        translate(-600.0),
+    ];
+
+    let fd = frame_looking_down_z(item);
+    let _ = renderer.prepare_callback(&device, &queue, &fd);
+
+    let drawn: u32 = renderer
+        .mesh_instance_gpu_data
+        .iter()
+        .map(|b| b.instance_count)
+        .sum();
+    assert_eq!(drawn, 2, "only the two near instances are drawn");
+    assert_eq!(renderer.last_frame_stats().lod_culled, 2);
+}
+
+#[test]
 fn instanced_item_without_group_makes_one_batch() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping instanced_item_without_group_makes_one_batch: no GPU adapter");
