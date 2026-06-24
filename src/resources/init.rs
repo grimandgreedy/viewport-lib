@@ -2320,6 +2320,7 @@ impl ViewportGpuResources {
                 store.insert(cube_mesh);
                 store
             },
+            lod_groups: crate::resources::lod::LodGroupStore::new(),
             shadow_map_texture,
             shadow_map_view,
             shadow_sampler,
