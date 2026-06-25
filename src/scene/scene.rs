@@ -89,6 +89,11 @@ pub struct SceneNode {
     deform_instance: Option<u32>,
     /// Whether projected decals land on this surface. Default: `true`.
     receives_decals: bool,
+    /// LOD group this node draws through, if any. When set, the renderer
+    /// picks a level each frame from the node's on-screen size and overwrites
+    /// the drawn mesh; `mesh_id` should hold the full-detail (level 0) mesh so
+    /// the node is collected and frustum-culled against the shared AABB.
+    lod_group: Option<crate::resources::LodGroupId>,
     /// Light source carried by this node. Position and direction are resolved
     /// from `world_transform` at collect time; the values stored here serve
     /// as the local-space template.
@@ -109,6 +114,11 @@ impl SceneNode {
     /// GPU mesh associated with this node, or `None` if no mesh has been uploaded.
     pub fn mesh_id(&self) -> Option<MeshId> {
         self.mesh_id
+    }
+
+    /// LOD group this node draws through, or `None` for a plain mesh.
+    pub fn lod_group(&self) -> Option<crate::resources::LodGroupId> {
+        self.lod_group
     }
 
     /// Material parameters (colour, shading, texture) for this node.
@@ -385,6 +395,7 @@ impl Scene {
             dirty: true,
             deform_instance: None,
             receives_decals: true,
+            lod_group: None,
             light: None,
         };
         self.nodes.insert(id, node);
@@ -627,6 +638,19 @@ impl Scene {
         if self.spatial_built {
             self.spatial.mark_dirty(id);
         }
+    }
+
+    /// Attach (or clear) a LOD group on a node.
+    ///
+    /// The renderer chooses a level from the node's on-screen size each frame
+    /// and overwrites the drawn mesh. Set the node's `mesh_id` to the group's
+    /// full-detail (level 0) mesh so the node is collected and frustum-culled
+    /// against the shared AABB. `None` reverts the node to its plain mesh.
+    pub fn set_lod_group(&mut self, id: NodeId, lod_group: Option<crate::resources::LodGroupId>) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.lod_group = lod_group;
+        }
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Set node name.
@@ -999,7 +1023,7 @@ impl Scene {
                 deform_instance: node.deform_instance,
                 receives_decals: node.receives_decals,
                 lic: None,
-                lod_group: None,
+                lod_group: node.lod_group,
             });
         }
         items
@@ -1080,7 +1104,7 @@ impl Scene {
                     deform_instance: node.deform_instance,
                     receives_decals: node.receives_decals,
                     lic: None,
-                    lod_group: None,
+                    lod_group: node.lod_group,
                 });
             }
 
@@ -1138,7 +1162,7 @@ impl Scene {
                     deform_instance: node.deform_instance,
                     receives_decals: node.receives_decals,
                     lic: None,
-                    lod_group: None,
+                    lod_group: node.lod_group,
                 });
             }
 
@@ -1180,6 +1204,7 @@ impl Scene {
             dirty: true,
             deform_instance: None,
             receives_decals: false,
+            lod_group: None,
             light: Some(light),
         };
         self.nodes.insert(id, node);
@@ -1418,6 +1443,31 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lod_group_round_trips_onto_render_items() {
+        let mut scene = Scene::new();
+        // A node needs a mesh to be collected; the LOD group rides alongside.
+        let id = scene.add(
+            Some(MeshId::from_index(0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
+        assert_eq!(scene.node(id).unwrap().lod_group(), None);
+
+        let group = crate::resources::LodGroupId(7);
+        scene.set_lod_group(id, Some(group));
+        assert_eq!(scene.node(id).unwrap().lod_group(), Some(group));
+
+        let items = scene.collect_render_items(&Selection::new());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].lod_group, Some(group));
+
+        // Clearing reverts the node to a plain mesh.
+        scene.set_lod_group(id, None);
+        let items = scene.collect_render_items(&Selection::new());
+        assert_eq!(items[0].lod_group, None);
+    }
 
     #[test]
     fn test_add_and_remove() {
