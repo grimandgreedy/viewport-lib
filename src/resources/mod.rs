@@ -22,6 +22,7 @@ mod ibl_compute;
 pub mod implicit;
 mod init;
 mod instancing;
+pub mod lod;
 /// Built-in matcap texture data (procedurally generated).
 pub mod matcap_data;
 /// Factory functions for the mesh-family pipelines that share a single
@@ -57,6 +58,7 @@ use self::extra_impls::{
 pub use self::font::{FontError, FontHandle};
 pub use self::gpu_marching_cubes::{GpuMarchingCubesJob, VolumeGpuId};
 pub use self::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
+pub use self::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };

@@ -154,6 +154,46 @@ pub enum ViewportError {
         /// Validator message prefixed by the shader name that failed.
         reason: String,
     },
+
+    /// A LOD group was registered with no levels.
+    #[error("LOD group has no levels")]
+    LodGroupEmpty,
+
+    /// The mesh list and threshold list passed to `register_lod_group` differ
+    /// in length. Each level needs exactly one threshold.
+    #[error("LOD level count mismatch: {meshes} meshes vs {thresholds} thresholds")]
+    LodLevelCountMismatch {
+        /// Number of meshes provided.
+        meshes: usize,
+        /// Number of thresholds provided.
+        thresholds: usize,
+    },
+
+    /// LOD thresholds must strictly decrease from the full level to the crudest,
+    /// since each level applies to a smaller on-screen size than the one before.
+    #[error("LOD thresholds must strictly decrease (level {level} is not smaller than the previous)")]
+    LodThresholdsNotDescending {
+        /// The level whose threshold is not smaller than its predecessor's.
+        level: usize,
+    },
+
+    /// A level's mesh is not compatible with the other levels in the group: a
+    /// switch to it would change rendering. Today this means its named
+    /// attribute set or its deformer attachment differs from level 0.
+    #[error("LOD level {level} is incompatible with level 0: {reason}")]
+    LodLevelIncompatible {
+        /// The level that does not match level 0.
+        level: usize,
+        /// What differs (a missing attribute name, or a deform mismatch).
+        reason: String,
+    },
+
+    /// A LOD group id does not refer to a registered group.
+    #[error("LOD group {index} is not registered")]
+    LodGroupNotFound {
+        /// The group index that was looked up.
+        index: usize,
+    },
 }
 
 /// Convenience alias for `Result<T, ViewportError>`.

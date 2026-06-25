@@ -69,6 +69,7 @@ mod showcase_48_scatter_volumes;
 mod showcase_49_scene_lights;
 mod showcase_50_gpu_wave;
 mod showcase_51_async_uploads;
+mod showcase_52_lod;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -224,6 +225,7 @@ fn main() -> eframe::Result {
                 sl_state: showcase_49_scene_lights::SlState::default(),
                 wave_state: showcase_50_gpu_wave::WaveState::default(),
                 async_uploads_state: showcase_51_async_uploads::AsyncUploadsState::default(),
+                lod_state: showcase_52_lod::LodState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -289,6 +291,7 @@ enum ShowcaseMode {
     SceneLights,
     GpuWave,
     AsyncUploads,
+    Lod,
 }
 
 impl ShowcaseMode {
@@ -345,6 +348,7 @@ impl ShowcaseMode {
             Self::SceneLights => "49: Scene Lights",
             Self::GpuWave => "50: GPU Wave (compute plugin)",
             Self::AsyncUploads => "51: Async Asset Streaming",
+            Self::Lod => "52: Level of Detail",
         }
     }
 }
@@ -522,6 +526,9 @@ pub(crate) struct App {
 
     // --- Showcase 51 ---
     pub(crate) async_uploads_state: showcase_51_async_uploads::AsyncUploadsState,
+
+    // --- Showcase 52 ---
+    pub(crate) lod_state: showcase_52_lod::LodState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -722,6 +729,7 @@ impl eframe::App for App {
                     ShowcaseMode::SceneLights,
                     ShowcaseMode::GpuWave,
                     ShowcaseMode::AsyncUploads,
+                    ShowcaseMode::Lod,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1463,6 +1471,10 @@ impl eframe::App for App {
                 if self.mode == ShowcaseMode::SceneLights && self.sl_state.animate {
                     ctx.request_repaint();
                 }
+                // ----- LOD (52): keep repainting while the camera dolly animates.
+                if self.mode == ShowcaseMode::Lod && self.lod_state.auto_dolly {
+                    ctx.request_repaint();
+                }
                 // ----- GPU wave (50): always animate while built and not paused.
                 if self.mode == ShowcaseMode::GpuWave
                     && self.wave_state.built
@@ -1495,7 +1507,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 51] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 52] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1547,6 +1559,7 @@ impl App {
             ShowcaseMode::SceneLights,
             ShowcaseMode::GpuWave,
             ShowcaseMode::AsyncUploads,
+            ShowcaseMode::Lod,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1682,6 +1695,7 @@ impl App {
             ShowcaseMode::SceneLights => !self.sl_state.built,
             ShowcaseMode::GpuWave => !self.wave_state.built,
             ShowcaseMode::AsyncUploads => !self.async_uploads_state.built,
+            ShowcaseMode::Lod => !self.lod_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2164,6 +2178,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Lod => {
+                self.build_lod_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 48.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.0),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2269,6 +2293,7 @@ impl App {
             ShowcaseMode::AsyncUploads => {
                 showcase_51_async_uploads::controls_async_uploads(self, ui, frame)
             }
+            ShowcaseMode::Lod => showcase_52_lod::controls_lod(self, ui),
         }
     }
 }
@@ -2286,6 +2311,10 @@ impl App {
         frame: &eframe::Frame,
         dt: f32,
     ) -> FrameData {
+        if self.mode == ShowcaseMode::Lod {
+            showcase_52_lod::update_lod(self, dt);
+        }
+
         let mut adv_clip_objects: Vec<ClipObject> = vec![];
         let mut adv_outline = false;
         let mut adv_xray = false;
@@ -3106,6 +3135,19 @@ impl App {
                 let lighting = self.async_uploads_lighting();
                 (items, Some(BG_COLOUR), lighting, 0, 0)
             }
+
+            ShowcaseMode::Lod => {
+                let items = showcase_52_lod::lod_scene_items(self);
+                let lighting = {
+                    let mut t = LightingSettings::default();
+                    t.hemisphere_intensity = 0.4;
+                    t.sky_colour = [1.0, 1.0, 1.0];
+                    t.ground_colour = [0.5, 0.5, 0.55];
+                    t
+                };
+                let generation = self.lod_state.generation;
+                (items, Some(BG_COLOUR), lighting, generation, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3552,6 +3594,19 @@ impl App {
         // Sprite items and ring polylines (Showcase 41) : submitted every frame when built.
         if self.mode == ShowcaseMode::Sprites {
             showcase_41_sprites::submit_sprite_items(self, &mut fd, dt);
+        }
+
+        // LOD instanced field (Showcase 52) : submitted every frame, plus the
+        // previous frame's LOD stats for the sidebar.
+        if self.mode == ShowcaseMode::Lod {
+            showcase_52_lod::submit_lod_items(self, &mut fd);
+            if let Some(rs) = frame.wgpu_render_state() {
+                let mut guard = rs.renderer.write();
+                if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                    showcase_52_lod::apply_lod_cull(&self.lod_state, renderer);
+                    self.lod_state.last_stats = renderer.last_frame_stats();
+                }
+            }
         }
 
         // Gaussian splat items (Showcase 42) : submitted every frame when built.

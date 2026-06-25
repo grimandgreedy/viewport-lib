@@ -339,6 +339,25 @@ pub struct FrameStats {
     /// Set when `allow_effect_throttling` is true and the previous frame missed
     /// the target budget. Always false in [`RuntimeMode::Capture`].
     pub effects_throttled: bool,
+
+    /// Objects that resolved through a LOD group this frame.
+    ///
+    /// Counts `SceneRenderItem`s with a `lod_group` set, plus each individual
+    /// `MeshInstanceItem` instance whose level was selected. Zero when nothing
+    /// uses LOD.
+    pub lod_items_resolved: u32,
+    /// LOD objects whose chosen level changed from the previous frame.
+    ///
+    /// Counts both scene items and individual mesh instances that moved to a
+    /// different level. Only objects with a `pick_id` are tracked across frames,
+    /// so this counts switches among those. A high value relative to
+    /// `lod_items_resolved` suggests thresholds are being crossed often (camera
+    /// motion, or thresholds spaced too tightly for the hysteresis margin).
+    pub lod_switches: u32,
+    /// Objects dropped this frame because they fell below their LOD group's cull
+    /// size. Counts hidden `SceneRenderItem`s plus individual mesh instances that
+    /// were left out of every batch. Zero unless a group sets `cull_below`.
+    pub lod_culled: u32,
 }
 
 #[cfg(test)]

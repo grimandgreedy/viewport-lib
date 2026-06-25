@@ -4,6 +4,12 @@
 
 ### Features
 
+#### Level of detail for meshes
+
+Triangle meshes can now switch between several detail levels based on how large they appear on screen. Upload the level meshes however you like (sync `upload_mesh_data` or the async job path), then bundle them with `ViewportGpuResources::register_lod_group`, which takes the level `MeshId`s plus a screen-size threshold each and returns a `LodGroupId`. Set `SceneRenderItem::lod_group` or `MeshInstanceItem::lod_group` to that id. Each frame the renderer measures each object's projected size and draws the matching level, so distant objects fall back to cheaper geometry. The level is chosen with hysteresis (keyed by `pick_id`) so objects on a threshold do not flicker. Group registration checks that every level shares the same named attributes and the same deformer attachment, so a level swap never silently drops scalar colouring, warp, or skinning.
+
+For instanced batches the selection is per instance: one `MeshInstanceItem` of many trees draws near instances at full detail and far ones at lower detail, splitting into one draw per level. `LodGroup::cull_below` (set with `set_lod_cull_below`) stops drawing an object once it falls below a size, per instance for instanced batches. `projected_screen_size` is public for hosts that want to drive selection themselves. `FrameStats` gains `lod_items_resolved`, `lod_switches`, and `lod_culled`. Items and instances without a group are untouched and pay no per-frame cost.
+
 #### First-person and third-person camera controllers
 
 `FirstPersonCameraController` and `ThirdPersonCameraController` are body-attached camera controllers that follow a world-space position supplied each frame.

@@ -2547,6 +2547,9 @@ pub struct ViewportGpuResources {
     pub object_bind_group_layout: wgpu::BindGroupLayout,
     /// Scene meshes (slotted storage with free-list removal).
     pub(crate) mesh_store: crate::resources::mesh_store::MeshStore,
+    /// Registered LOD groups. Each groups several meshes that are detail
+    /// variants of one object; the renderer picks a level per frame.
+    pub(crate) lod_groups: crate::resources::lod::LodGroupStore,
     /// Per-vertex deformation sidecar storage: header uniform, dummy fallback
     /// buffers, and per-mesh slot bind groups. Every mesh-family pipeline
     /// binds `@group(2)` from this state; meshes without attached deformer
