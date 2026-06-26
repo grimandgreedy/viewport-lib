@@ -2,89 +2,45 @@
 
 ## [0.18.3]
 
+v0.18.3 is mostly a collection of small improvements that have been sitting in several different branches. There is also some large code reorganisation: namely prepare and paint have been broken up into more maintainable modules. I've also added support for threshold-selected LOD groups.
+
 ### Features
 
 #### Level of detail for meshes
 
 Triangle meshes can now switch between several detail levels based on how large they appear on screen. Upload the level meshes however you like (sync `upload_mesh_data` or the async job path), then bundle them with `ViewportGpuResources::register_lod_group`, which takes the level `MeshId`s plus a screen-size threshold each and returns a `LodGroupId`. Set `SceneRenderItem::lod_group` or `MeshInstanceItem::lod_group` to that id. Each frame the renderer measures each object's projected size and draws the matching level, so distant objects fall back to cheaper geometry. The level is chosen with hysteresis (keyed by `pick_id`) so objects on a threshold do not flicker. Group registration checks that every level shares the same named attributes and the same deformer attachment, so a level swap never silently drops scalar colouring, warp, or skinning.
 
-For instanced batches the selection is per instance: one `MeshInstanceItem` of many trees draws near instances at full detail and far ones at lower detail, splitting into one draw per level. `LodGroup::cull_below` (set with `set_lod_cull_below`) stops drawing an object once it falls below a size, per instance for instanced batches. `projected_screen_size` is public for hosts that want to drive selection themselves. `FrameStats` gains `lod_items_resolved`, `lod_switches`, and `lod_culled`. Items and instances without a group are untouched and pay no per-frame cost.
-
 #### First-person and third-person camera controllers
 
 `FirstPersonCameraController` and `ThirdPersonCameraController` are body-attached camera controllers that follow a world-space position supplied each frame.
 
-#### Per-phase prepare timing in `FrameStats`
-
-`FrameStats::prepare_breakdown` (a `PrepareBreakdown`) splits `cpu_prepare_ms` across the main phases of `prepare`: plugins, lighting, per-object uniforms, instanced batch build, geometry upload, the shadow pass, per-viewport work, and a remainder. The fields sum to roughly `cpu_prepare_ms`, so a slow prepare can be attributed to a specific phase instead of guessed at.
-
-#### `Scene::remove_many` for bulk node removal
-
-`Scene::remove_many(&[NodeId])` removes several nodes and all their descendants in one pass, scanning the roots list and group membership once for the whole batch rather than once per node. Evicting many nodes at a time (a streaming cell, a layer toggle, tearing down part of a scene) is now linear in the number removed instead of rescanning the roots list for each one.
-
-#### `FrameStats::per_object_items`
-
-A new counter for visible items that miss the instanced fast path and are drawn one at a time: matcap, scalar-attribute, parameter-visualization, position/normal override, skinned, compute-filtered, or two-sided transparent items. Each costs a uniform write and a bind-group build in `prepare`, so a large count means much of the scene is paying per-object cost rather than batching.
-
-#### Per-pass GPU frame breakdown in `FrameStats`
-
-`FrameStats::gpu_breakdown` (a `GpuBreakdown`) splits GPU frame time across the main passes measured with timestamp queries: the opaque scene pass, the directional shadow pass, the OIT accumulation pass, and the tone-map / resolve pass. It is populated under the same conditions as `gpu_frame_ms` (requires `TIMESTAMP_QUERY`), and `scene_ms` matches `gpu_frame_ms`. Passes that do not run report `0.0`, and the measured passes do not cover every GPU pass, so the fields do not sum to the full frame time.
-
-#### `GpuBreakdown::cull_ms`
-
-`GpuBreakdown` gained `cull_ms`, the GPU duration of the main-camera cull dispatch (the `cull_instances` and `write_indirect_args` compute passes that produce the indirect draw args). It is `0.0` when GPU culling is off or the scene has no instanced batches, and shadow-cascade culls are not included. This makes it possible to check whether the cull pass costs more than it saves on a given scene, rather than inferring it from the frame total.
-
-### Breaking changes
-
-#### `NavigationMode::FirstPerson` renamed to `NavigationMode::Fly`
-
-The free-fly orbit navigation mode is now `NavigationMode::Fly`, freeing the
-"first person" name for a dedicated body-attached first-person camera
-controller. Update any `NavigationMode::FirstPerson` reference to
-`NavigationMode::Fly`; behaviour is unchanged.
-
 ### Improvements
 
-#### `OrbitCameraController::apply` for a shared action frame
+- **Per-phase prepare timing**: `FrameStats::prepare_breakdown` (a `PrepareBreakdown`) splits `cpu_prepare_ms` across the phases of `prepare` (plugins, lighting, per-object uniforms, batch build, geometry upload, shadow pass, per-viewport work, remainder), so a slow prepare points to a specific phase.
 
-`OrbitCameraController` gained `apply(&mut Camera, &ActionFrame)`, which applies
-an already-resolved frame without draining the event queue, so a host can own
-one input resolver and feed the same frame to several controllers.
-`apply_to_camera` is unchanged and now delegates to it. A new `set_viewport_size`
-setter records the viewport size used for pan when calling `apply` directly.
-- Refactored and modularised the prepare and paint passes.
+- **`Scene::remove_many` for bulk removal**: removes several nodes and all their descendants in one pass, scanning the roots list and group membership once per batch rather than once per node. Linear in the number removed.
 
-#### Non-blocking GPU stats readback
+- **`FrameStats::per_object_items` counter**: counts visible items that miss the instanced fast path and draw one at a time (matcap, scalar-attribute, parameter-visualization, position/normal override, skinned, compute-filtered, two-sided transparent). Each costs a uniform write and a bind-group build, so a high count means much of the scene is not batching.
 
-The GPU timestamp and visible-instance-count readbacks no longer block the CPU waiting on the previous frame's GPU work. They map the staging buffer on one frame and read it on a later one, which removes a per-frame CPU stall that could be most of the frame on a GPU-bound scene. `FrameStats::gpu_frame_ms` is now reported on nearly every frame on backends that support timestamp queries, where it was previously sampled only sparsely. Zero-delta timestamps, which some Metal drivers report at render-pass boundaries, are treated as no sample rather than reported as a 0 ms frame.
+- **Per-pass GPU frame breakdown**: `FrameStats::gpu_breakdown` (a `GpuBreakdown`) splits GPU time across the opaque scene, directional shadow, OIT accumulation, and tone-map / resolve passes via timestamp queries. Populated under the same conditions as `gpu_frame_ms` (requires `TIMESTAMP_QUERY`); passes that do not run report `0.0`, and the fields do not cover every pass so they do not sum to the full frame.
 
-#### Instanceability computed once per frame in prepare
+- **`GpuBreakdown::cull_ms`**: the GPU duration of the main-camera cull dispatch (`cull_instances` and `write_indirect_args`). `0.0` when GPU culling is off or there are no instanced batches; shadow-cascade culls are excluded. Shows whether the cull pass costs more than it saves.
 
-The per-object and instanced batch paths now share a single per-frame instanceability pass instead of recomputing it separately in the per-object skip test and the batch filter. This removes several redundant per-item passes (each doing mesh-store and deform lookups) over the resident set on large scenes.
+- **Non-blocking GPU stats readback**: the timestamp and visible-instance-count readbacks no longer stall the CPU on the previous frame's GPU work. They map the staging buffer on one frame and read it on a later one, removing a per-frame stall that could be most of the frame on a GPU-bound scene, so `gpu_frame_ms` is now reported nearly every frame. Zero-delta timestamps (reported by some Metal drivers at pass boundaries) count as no sample.
 
-#### Per-object bind groups cached by object identity
+- **Instanceability computed once per frame**: the per-object and instanced batch paths now share a single per-frame instanceability pass instead of recomputing it in both the per-object skip test and the batch filter, removing redundant mesh-store and deform lookups over the resident set.
 
-The per-object draw path now caches each item's bind group keyed on its stable pick id rather than its position in the frame's item list. Previously the bind group was rebuilt every frame for every item that misses the instanced fast path: the cache was keyed on the item's slot index, so any frame where the host reordered its item list missed the cache and called `create_bind_group` again. For a scene with thousands of such items (for example two-sided foliage) this was the dominant prepare cost. Bind groups for unchanged objects are now reused across frames regardless of list order, and entries for objects no longer drawn are dropped after a short grace period. A new `FrameStats::per_object_items` counts how many items take the per-object path, and `FrameStats::per_object_bind_groups_built` counts how many bind groups were actually built this frame, so a missing cache is visible.
+- **Per-object bind groups cached by object identity**: the per-object draw path caches each bind group on its stable pick id rather than its slot in the item list, so reordering the item list no longer misses the cache and rebuilds every bind group. Entries for objects no longer drawn are dropped after a short grace period. `FrameStats::per_object_bind_groups_built` counts how many were actually built this frame.
 
-#### Per-object uniform writes skipped when unchanged
+- **Per-object uniform writes skipped when unchanged**: the per-object path skips re-uploading an item's `ObjectUniform` when it has not changed since last frame, keyed on the same pick id as the bind-group cache. Static geometry no longer pays a uniform write per item per frame, and the normal-visualization uniform is written only for items actually showing normals.
 
-The per-object path now skips re-uploading an item's `ObjectUniform` when it has not changed since the last frame, keyed on the same stable pick id as the bind-group cache. Static geometry the camera only moves past no longer pays a uniform write per item per frame. The normal-visualization uniform is also written only for items actually showing normals, rather than for every per-object item. For a scene with thousands of static per-object items (for example two-sided foliage) this removes the bulk of the remaining per-object prepare cost.
+- **Flat and two-sided surfaces shadowing themselves**: a surface visible from both sides (water plane, sheet, cloth) no longer darkens by casting a shadow onto itself. It now casts from both faces with a gentler shadow setting so it does not fall into its own shadow.
 
-#### Flat and two-sided surfaces shadowing themselves
+- **Shadows in the wrong place for animated and repeated shapes**: when a shape is moved on the GPU each frame, its shadow now follows where the shape actually is instead of its resting position. Fixes an animated wave casting dark stripes across itself and a grid of repeated markers all casting one shadow at the origin.
 
-A surface that is visible from both sides, like a water plane, a sheet, or cloth, no longer goes dark by casting a shadow onto itself. These surfaces now cast their shadow from both faces and use a gentler shadow setting so the surface does not fall into its own shadow. The showcase wave and the playback grid both looked muddy and too dark before this; they now light up properly.
+- **Marching-cubes surfaces darker than matching meshes**: a marching-cubes surface no longer looks darker on its shaded side than the same shape drawn as an ordinary mesh; the path was omitting the small base brightness ordinary meshes add.
 
-#### Shadows in the wrong place for animated and repeated shapes
-
-When a shape is moved around on the graphics card each frame, the shadow now follows where the shape actually is. Before, the shadow was drawn from the shape's original resting position instead of where it had moved to. This showed up two ways: an animated wave cast dark stripes across itself because the shadow came from the flat starting shape, and a grid of identical floating markers all cast a single shadow at the centre because every copy still sat stacked at the origin when the shadow was drawn. Both now cast their shadows from their real positions.
-
-#### Marching-cubes surfaces darker than matching regular meshes
-
-A surface built with marching cubes no longer looks noticeably darker on its shaded side than the same shape drawn as an ordinary mesh. The marching-cubes path was leaving out the small base brightness that ordinary meshes add, so it now uses the same amount.
-
-#### Two-sided opaque meshes batch through the instanced path
-
-Opaque meshes with a two-sided backface policy (`BackfacePolicy::Identical`) are now admitted to the instanced draw path instead of being drawn one at a time, in the scene pass and the shadow pass alike. The shadow pass gained a `cull_mode: None` instanced shadow pipeline so two-sided casters (foliage cards, cloth, single-quad planes) keep both faces and cast correctly from any angle. Scenes with large two-sided sets collapse those per-object draws into the existing instanced batches, cutting CPU paint cost. Two-sided *transparent* meshes still take the per-object path, because the order-independent-transparency pipeline is back-face culled.
+- **Two-sided opaque meshes batch through the instanced path**: opaque meshes with `BackfacePolicy::Identical` now join the instanced draw path in both the scene and shadow passes instead of drawing one at a time. The shadow pass gained a `cull_mode: None` instanced shadow pipeline so two-sided casters (foliage cards, cloth, single-quad planes) cast from any angle. Two-sided *transparent* meshes still take the per-object path, since the OIT pipeline is back-face culled.
 
 ### Bug Fixes
 
