@@ -1713,15 +1713,43 @@ impl App {
             ShowcaseMode::Basic => self.build_basic_scene(renderer),
             ShowcaseMode::SceneGraph => self.build_scene_graph(renderer),
             ShowcaseMode::Performance => {
-                // Upload the box mesh on the main thread (requires GPU access).
-                let mesh = self.upload_box(renderer);
-                self.perf_state.mesh = Some(mesh);
+                // Upload the cycled shapes (box, sphere, cylinder, spring) on the
+                // main thread (requires GPU access). Each box in the grid picks
+                // one shape, so the grid still shares a handful of meshes.
+                let shapes = showcase_23_performance::shape_meshes();
+                let mut meshes: Vec<(MeshId, Option<viewport_lib::Aabb>)> =
+                    Vec::with_capacity(shapes.len());
+                let mut pick_geometry = Vec::with_capacity(shapes.len());
+                for data in &shapes {
+                    let id = renderer
+                        .resources_mut()
+                        .upload_mesh_data(&self.device, data)
+                        .expect("shape mesh upload");
+                    let aabb = renderer.resources().mesh(id).map(|m| m.aabb);
+                    meshes.push((id, aabb));
+                    pick_geometry.push((
+                        id.index() as u64,
+                        data.positions.clone(),
+                        data.indices.clone(),
+                    ));
+                }
+                self.perf_state.pick_geometry = pick_geometry;
                 self.perf_state.scene = Scene::new();
                 self.perf_state.selection.clear();
                 self.camera.distance = 80.0;
 
-                // Capture the mesh AABB before releasing the renderer borrow.
-                let mesh_aabb = renderer.resources().mesh(mesh).map(|m| m.aabb);
+                // Upload the random texture pool on the main thread (GPU access),
+                // then hand the ids to the background build so each box can pick
+                // one. Each distinct texture is one instanced batch.
+                let texture_pool: Vec<u64> = (0..showcase_23_performance::TEXTURE_POOL_SIZE)
+                    .map(|i| {
+                        let (size, rgba) = showcase_23_performance::make_box_texture(i);
+                        renderer
+                            .resources_mut()
+                            .upload_texture(&self.device, &self.queue, size, size, &rgba)
+                            .expect("perf texture upload")
+                    })
+                    .collect();
 
                 let progress = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
                 let progress_clone = std::sync::Arc::clone(&progress);
@@ -1729,8 +1757,8 @@ impl App {
 
                 std::thread::spawn(move || {
                     let result = showcase_23_performance::build_perf_scene_threaded(
-                        mesh,
-                        mesh_aabb,
+                        meshes,
+                        texture_pool,
                         &progress_clone,
                     );
                     let _ = tx.send(result);
@@ -3484,6 +3512,13 @@ impl App {
             ShowcaseMode::Decals => {
                 fd.effects.post_process.enabled = true;
             }
+            // HiZ occlusion culling builds its depth pyramid in the HDR scene
+            // pass, so the HDR pipeline must be active when occlusion is on.
+            ShowcaseMode::Performance => {
+                if self.perf_state.occlusion_culling {
+                    fd.effects.post_process.enabled = true;
+                }
+            }
             _ => {}
         }
 
@@ -3560,6 +3595,7 @@ impl App {
                 } else {
                     renderer.disable_gpu_driven_culling();
                 }
+                renderer.set_occlusion_culling(self.perf_state.occlusion_culling);
                 self.perf_state.last_stats = renderer.last_frame_stats();
             }
         }
@@ -3658,14 +3694,8 @@ impl App {
 
             ShowcaseMode::Performance => {
                 let mut mesh_lookup = std::collections::HashMap::new();
-                if let Some(mesh) = self.perf_state.mesh {
-                    mesh_lookup.insert(
-                        mesh.index() as u64,
-                        (
-                            self.box_mesh_data.positions.clone(),
-                            self.box_mesh_data.indices.clone(),
-                        ),
-                    );
+                for (mid, positions, indices) in &self.perf_state.pick_geometry {
+                    mesh_lookup.insert(*mid, (positions.clone(), indices.clone()));
                 }
                 let hit = if let Some(ref mut accel) = self.perf_state.pick_accelerator {
                     viewport_lib::bvh::pick_scene_accelerated_cpu(

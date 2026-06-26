@@ -274,7 +274,12 @@ struct Meshes {
     extent: f32,
 }
 
-fn build_meshes(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue, count: u32) -> Meshes {
+fn build_meshes(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    count: u32,
+) -> Meshes {
     let box_id = renderer
         .resources_mut()
         .upload_mesh_data(device, &primitives::cube(1.0))
@@ -354,7 +359,13 @@ fn build_items(m: &Meshes, count: u32, run: &Run) -> Vec<SceneRenderItem> {
                     (y as f32 - half) * spacing,
                     (z as f32 - half) * spacing,
                 );
-                items.push(make_item(m.box_id, glam::Mat4::from_translation(pos), m, run, idx));
+                items.push(make_item(
+                    m.box_id,
+                    glam::Mat4::from_translation(pos),
+                    m,
+                    run,
+                    idx,
+                ));
                 idx += 1;
             }
         }
@@ -396,10 +407,22 @@ struct Samples {
     scene_ms: Vec<f32>,
     shadow_ms: Vec<f32>,
     cull_ms: Vec<f32>,
+    post_ms: Vec<f32>,
+    // CPU prepare phase split.
+    prep_plugin_ms: Vec<f32>,
+    prep_lighting_ms: Vec<f32>,
+    prep_uniforms_ms: Vec<f32>,
+    prep_instancing_ms: Vec<f32>,
+    prep_geometry_ms: Vec<f32>,
+    prep_shadow_ms: Vec<f32>,
+    prep_viewport_ms: Vec<f32>,
+    prep_other_ms: Vec<f32>,
     visible: Vec<f32>,
     frustum_vis: Vec<f32>,
     total_considered: Vec<f32>,
     occlusion_culled: Vec<f32>,
+    batches_reuploaded: Vec<f32>,
+    batches_skipped: Vec<f32>,
     draw_calls: Vec<f32>,
     batches: Vec<f32>,
     triangles: Vec<f32>,
@@ -443,10 +466,7 @@ fn main() {
     let w = ((base_w as f32 * params.render_scale) as u32).max(16);
     let h = ((base_h as f32 * params.render_scale) as u32).max(16);
 
-    let out_path = params
-        .out
-        .clone()
-        .unwrap_or_else(|| timestamped_filename());
+    let out_path = params.out.clone().unwrap_or_else(|| timestamped_filename());
     let mut csv = std::fs::File::create(&out_path).expect("create CSV");
     write_header(&mut csv);
 
@@ -474,7 +494,16 @@ fn main() {
             run.shadows
         );
         run_one(
-            &device, &queue, &mut renderer, &meshes, run, &params, w, h, warmup, &mut csv,
+            &device,
+            &queue,
+            &mut renderer,
+            &meshes,
+            run,
+            &params,
+            w,
+            h,
+            warmup,
+            &mut csv,
         );
     }
 
@@ -530,21 +559,31 @@ fn run_one(
     // run (so the cull comparison is not contaminated by HDR-vs-LDR).
     frame.effects.post_process.enabled = true;
     frame.scene.surfaces = SurfaceSubmission::Flat(items);
-    // One directional light; shadows toggled per run.
-    frame.lighting = {
+    // One directional light. `shadows_enabled` is the global toggle that gates
+    // the directional shadow pass; the per-light `cast_shadows` does not gate
+    // the CSM caster, so set both to match the run.
+    frame.effects.lighting = {
         let mut light = LightSource::default();
         light.cast_shadows = run.shadows;
         let mut l = LightingSettings::default();
         l.lights = vec![light];
+        l.shadows_enabled = run.shadows;
         l
     };
+
+    // Each run reuses the renderer but changes the material set (textured/lit),
+    // and the scene generation never bumps, so the instanced batch cache would
+    // otherwise serve the first run's batches to every later run. Force a
+    // rebuild so this run's textures and unlit flag actually take effect; the
+    // rebuild happens on the first (warmup) frame, steady-state frames still hit
+    // the cache.
+    renderer.force_dirty();
 
     for f in 0..params.frames {
         let (eye, target) = camera_for(f, params.frames, meshes.extent);
         let view = glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z);
         let forward = (target - eye).normalize_or_zero();
-        let orientation =
-            glam::Quat::from_mat3(&glam::Mat3::from_mat4(view.inverse())).normalize();
+        let orientation = glam::Quat::from_mat3(&glam::Mat3::from_mat4(view.inverse())).normalize();
         frame.camera.render_camera = RenderCamera {
             view,
             projection: proj,
@@ -575,13 +614,25 @@ fn run_one(
         b.scene_ms.push(st.gpu_breakdown.scene_ms);
         b.shadow_ms.push(st.gpu_breakdown.shadow_ms);
         b.cull_ms.push(st.gpu_breakdown.cull_ms);
+        b.post_ms.push(st.gpu_breakdown.post_ms);
+        let pb = &st.prepare_breakdown;
+        b.prep_plugin_ms.push(pb.plugin_ms);
+        b.prep_lighting_ms.push(pb.lighting_ms);
+        b.prep_uniforms_ms.push(pb.uniforms_ms);
+        b.prep_instancing_ms.push(pb.instancing_ms);
+        b.prep_geometry_ms.push(pb.geometry_ms);
+        b.prep_shadow_ms.push(pb.shadow_ms);
+        b.prep_viewport_ms.push(pb.viewport_ms);
+        b.prep_other_ms.push(pb.other_ms);
+        b.batches_reuploaded.push(st.batches_reuploaded as f32);
+        b.batches_skipped.push(st.batches_skipped as f32);
         if let Some(v) = st.gpu_visible_instances {
             b.visible.push(v as f32);
         }
         if let Some(v) = st.gpu_frustum_visible {
             b.frustum_vis.push(v as f32);
         }
-        if let (Some(total), Some(drawn)) = (st.gpu_culled_total, st.gpu_visible_instances) {
+        if let Some(total) = st.gpu_culled_total {
             b.total_considered.push(total as f32);
         }
         if let (Some(fr), Some(drawn)) = (st.gpu_frustum_visible, st.gpu_visible_instances) {
@@ -651,7 +702,16 @@ fn write_header(f: &mut std::fs::File) {
         "scene_ms_p95",
         "cull_ms_p50",
         "shadow_ms_p50",
+        "post_ms_p50",
         "prepare_ms_p50",
+        "prep_plugin_ms_p50",
+        "prep_lighting_ms_p50",
+        "prep_uniforms_ms_p50",
+        "prep_instancing_ms_p50",
+        "prep_geometry_ms_p50",
+        "prep_shadow_ms_p50",
+        "prep_viewport_ms_p50",
+        "prep_other_ms_p50",
         "paint_ms_p50",
         "total_ms_p50",
         "total_ms_p95",
@@ -659,6 +719,8 @@ fn write_header(f: &mut std::fs::File) {
         "frustum_visible_p50",
         "total_considered_p50",
         "occlusion_culled_p50",
+        "batches_reuploaded_p50",
+        "batches_skipped_p50",
         "draw_calls_p50",
         "batches_p50",
         "triangles_p50",
@@ -669,7 +731,7 @@ fn write_header(f: &mut std::fs::File) {
 fn write_row(f: &mut std::fs::File, run: &Run, segment: &str, s: &mut Samples) {
     let n = s.total_ms.len();
     let row = format!(
-        "{},{},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}",
+        "{},{},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.0}",
         scene_name(run.scene),
         cull_name(run.cull),
         run.textured,
@@ -684,7 +746,16 @@ fn write_row(f: &mut std::fs::File, run: &Run, segment: &str, s: &mut Samples) {
         pct(&mut s.scene_ms, 0.95),
         pct(&mut s.cull_ms, 0.50),
         pct(&mut s.shadow_ms, 0.50),
+        pct(&mut s.post_ms, 0.50),
         pct(&mut s.prepare_ms, 0.50),
+        pct(&mut s.prep_plugin_ms, 0.50),
+        pct(&mut s.prep_lighting_ms, 0.50),
+        pct(&mut s.prep_uniforms_ms, 0.50),
+        pct(&mut s.prep_instancing_ms, 0.50),
+        pct(&mut s.prep_geometry_ms, 0.50),
+        pct(&mut s.prep_shadow_ms, 0.50),
+        pct(&mut s.prep_viewport_ms, 0.50),
+        pct(&mut s.prep_other_ms, 0.50),
         pct(&mut s.paint_ms, 0.50),
         pct(&mut s.total_ms, 0.50),
         pct(&mut s.total_ms, 0.95),
@@ -692,6 +763,8 @@ fn write_row(f: &mut std::fs::File, run: &Run, segment: &str, s: &mut Samples) {
         pct(&mut s.frustum_vis, 0.50),
         pct(&mut s.total_considered, 0.50),
         pct(&mut s.occlusion_culled, 0.50),
+        pct(&mut s.batches_reuploaded, 0.50),
+        pct(&mut s.batches_skipped, 0.50),
         pct(&mut s.draw_calls, 0.50),
         pct(&mut s.batches, 0.50),
         pct(&mut s.triangles, 0.50),
