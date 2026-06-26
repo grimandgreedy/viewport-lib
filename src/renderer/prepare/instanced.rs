@@ -367,19 +367,25 @@ impl ViewportRenderer {
                     shadow_pass: false,
                 };
                 let cull_ts = ts_query_set.map(|qs| (qs, ts_written_mask));
-                // HiZ occlusion inputs: the pyramid built from last frame's
-                // depth, plus the camera view-proj to project AABBs to screen.
-                // `hiz_view` is None until the first pyramid exists, which
-                // disables the reject for that frame.
-                let (hiz_view, hiz_dims) = match resources.hiz_cull_view() {
-                    Some((view, dims)) => (Some(view), dims),
-                    None => (None, [1.0, 1.0]),
+                // HiZ occlusion: reproject last frame's depth into this camera
+                // and build the pyramid into the cull encoder, before the cull
+                // dispatch that samples it. `build` is false on the first frame
+                // (nothing to reproject yet) and after a resize, which leaves
+                // the cull frustum-only for that frame.
+                let vp_cols = vp_mat.to_cols_array_2d();
+                let built = resources.occlusion_culling_enabled()
+                    && resources.build_hiz_reprojected(queue, &mut encoder, vp_cols);
+                let (hiz_view, hiz_dims) = if built {
+                    let (view, dims) = resources.hiz_cull_view().unwrap();
+                    (Some(view), dims)
+                } else {
+                    (None, [1.0, 1.0])
                 };
                 let extras = crate::renderer::indirect::MainCullExtras {
-                    view_proj: vp_mat.to_cols_array_2d(),
+                    view_proj: vp_cols,
                     viewport: hiz_dims,
                     hiz_view,
-                    do_occlusion: resources.occlusion_culling_enabled(),
+                    do_occlusion: built,
                 };
                 cull.dispatch(
                     &mut encoder,

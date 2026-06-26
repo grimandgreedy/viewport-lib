@@ -482,11 +482,16 @@ fn occlusion_culling_render_path_runs() {
     }
     frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
 
-    // Render several frames: frame 1 builds the first pyramid (occlusion off
-    // that frame, no pyramid yet), later frames consume it, and the stats
-    // readback lags a couple of frames before it lands.
+    // Render several frames, nudging the camera each frame so the reprojection
+    // uses a non-identity previous-to-current transform (exercises the inverse
+    // view-projection path, not just a static-camera no-op). Frame 0 stores the
+    // first depth, later frames reproject it and cull; the stats readback lags a
+    // couple of frames before it lands.
+    let base_view = frame.camera.render_camera.view;
     let mut last_pixels = Vec::new();
-    for _ in 0..4 {
+    for i in 0..4 {
+        let nudge = glam::Mat4::from_translation(glam::Vec3::new(0.05 * i as f32, 0.0, 0.0));
+        frame.camera.render_camera.view = base_view * nudge;
         last_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     }
     assert_eq!(last_pixels.len(), 64 * 64 * 4);

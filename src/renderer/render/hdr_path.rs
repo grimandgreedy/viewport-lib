@@ -910,10 +910,11 @@ impl ViewportRenderer {
             }
         }
 
-        // Build the HiZ pyramid from the depth just written, for next frame's
-        // occlusion cull. Only when occlusion culling is enabled, since the
-        // pyramid is otherwise unused. `slot_hdr` (a borrow of viewport_slots)
-        // and `self.resources` are disjoint fields, so both borrows coexist.
+        // Keep the depth just written for next frame's occlusion cull, which
+        // reprojects it into the new camera before building the HiZ pyramid.
+        // Only when occlusion culling is enabled, since the copy is otherwise
+        // unused. `slot_hdr` (a borrow of viewport_slots) and `self.resources`
+        // are disjoint fields, so both borrows coexist.
         if self.resources.occlusion_culling_enabled() {
             let use_ssaa = ssaa_factor > 1
                 && slot_hdr.ssaa_depth_texture.is_some()
@@ -928,8 +929,9 @@ impl ViewportRenderer {
             };
             let w = depth_tex.width();
             let h = depth_tex.height();
+            let view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
             self.resources
-                .build_hiz(ctx.device, encoder, depth_view, w, h);
+                .store_hiz_prev_depth(ctx.device, encoder, depth_view, w, h, view_proj);
         }
     }
 
