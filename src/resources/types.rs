@@ -665,7 +665,7 @@ pub(crate) struct FrustumPlane {
 
 /// Six-plane frustum uniform uploaded to the GPU cull pass.
 ///
-/// Matches `FrustumUniform` in `cull.wgsl` (112 bytes = 6 x 16 + 4 + 4 + 8).
+/// Matches `FrustumUniform` in `cull.wgsl` (192 bytes).
 /// Planes are in Gribb-Hartmann order: left, right, bottom, top, near, far.
 /// Each plane normal points inward; `distance` is the signed offset from origin
 /// along the normal (`d` in the CPU `Plane` struct).
@@ -685,10 +685,18 @@ pub(crate) struct FrustumUniform {
     /// 1 = shadow cull dispatch (instances with `cast_shadows=0` are skipped),
     /// 0 = main cull dispatch (every visible instance participates).
     pub(crate) shadow_pass: u32,
-    pub(crate) _pad: u32,
+    /// 1 = run the HiZ occlusion test after the frustum test, 0 = skip it.
+    pub(crate) do_occlusion: u32,
+    /// Camera view-projection for projecting AABBs to screen. Identity when
+    /// occlusion is off.
+    pub(crate) view_proj: [[f32; 4]; 4],
+    /// HiZ mip-0 dimensions in pixels (the depth target the pyramid was built
+    /// from).
+    pub(crate) viewport: [f32; 2],
+    pub(crate) _pad0: [f32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 112);
+const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 192);
 
 /// Clip planes uniform for section-view clipping (binding 4 of camera bind group).
 ///
@@ -3740,4 +3748,14 @@ pub struct ViewportGpuResources {
     pub(crate) decal_exclude_pipeline: Option<wgpu::RenderPipeline>,
     /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
     pub(crate) decal_exclude_obj_bgl: Option<wgpu::BindGroupLayout>,
+
+    // --- HiZ occlusion culling ---
+    /// Hierarchical-Z max-depth pyramid and its build pipelines. Lazily created
+    /// the first frame occlusion culling is active; rebuilt when the depth
+    /// target it samples changes size.
+    pub(crate) hiz: Option<crate::resources::hiz::HizState>,
+    /// When true, the main-camera GPU cull runs the HiZ occlusion test on top
+    /// of the frustum test. Off by default (the test is scene-dependent and a
+    /// safety valve against the one-frame-stale depth source).
+    pub(crate) occlusion_culling_enabled: bool,
 }

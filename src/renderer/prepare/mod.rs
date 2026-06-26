@@ -666,6 +666,16 @@ impl ViewportRenderer {
                 } else {
                     None
                 },
+                gpu_culled_total: if self.instancing.gpu_culling_enabled {
+                    self.last_stats.gpu_culled_total
+                } else {
+                    None
+                },
+                gpu_frustum_visible: if self.instancing.gpu_culling_enabled {
+                    self.last_stats.gpu_frustum_visible
+                } else {
+                    None
+                },
                 ..self.last_stats
             };
         }
@@ -831,7 +841,10 @@ impl ViewportRenderer {
 
         // Read back the GPU-visible instance count without blocking, using the
         // same map-on-one-frame, read-on-a-later-frame scheme as the timestamps.
-        let bytes = self.instancing.indirect_readback_batch_count as u64 * 20;
+        // The staging buffer holds the per-batch indirect args followed by the
+        // 8-byte cull breakdown counters ([total, frustum_visible]).
+        let indirect_bytes = self.instancing.indirect_readback_batch_count as u64 * 20;
+        let bytes = indirect_bytes + 8;
         if self.instancing.indirect_map_inflight {
             let _ = device.poll(wgpu::PollType::Poll);
             match self.instancing.indirect_map_status.load(Ordering::Acquire) {
@@ -846,8 +859,17 @@ impl ViewportRenderer {
                             let n = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
                             visible = visible.saturating_add(n);
                         }
+                        // Cull breakdown counters appended after the indirect args.
+                        let stats_off = indirect_bytes as usize;
+                        let total =
+                            u32::from_le_bytes(data[stats_off..stats_off + 4].try_into().unwrap());
+                        let frustum_visible = u32::from_le_bytes(
+                            data[stats_off + 4..stats_off + 8].try_into().unwrap(),
+                        );
                         drop(data);
                         self.last_stats.gpu_visible_instances = Some(visible);
+                        self.last_stats.gpu_culled_total = Some(total);
+                        self.last_stats.gpu_frustum_visible = Some(frustum_visible);
                         stg_buf.unmap();
                     }
                     self.instancing.indirect_map_inflight = false;

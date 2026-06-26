@@ -367,6 +367,20 @@ impl ViewportRenderer {
                     shadow_pass: false,
                 };
                 let cull_ts = ts_query_set.map(|qs| (qs, ts_written_mask));
+                // HiZ occlusion inputs: the pyramid built from last frame's
+                // depth, plus the camera view-proj to project AABBs to screen.
+                // `hiz_view` is None until the first pyramid exists, which
+                // disables the reject for that frame.
+                let (hiz_view, hiz_dims) = match resources.hiz_cull_view() {
+                    Some((view, dims)) => (Some(view), dims),
+                    None => (None, [1.0, 1.0]),
+                };
+                let extras = crate::renderer::indirect::MainCullExtras {
+                    view_proj: vp_mat.to_cols_array_2d(),
+                    viewport: hiz_dims,
+                    hiz_view,
+                    do_occlusion: resources.occlusion_culling_enabled(),
+                };
                 cull.dispatch(
                     &mut encoder,
                     device,
@@ -375,6 +389,7 @@ impl ViewportRenderer {
                     None,
                     &sub,
                     cull_ts,
+                    Some(&extras),
                 );
 
                 // Copy indirect_args_buf to the CPU-readable staging buffer so the
@@ -385,23 +400,42 @@ impl ViewportRenderer {
                 let do_readback =
                     !instancing.indirect_readback_pending && !instancing.indirect_map_inflight;
                 if do_readback {
+                    // Stage the per-batch indirect args followed by the 8-byte
+                    // cull breakdown counters ([total, frustum_visible]) in one
+                    // buffer, read back together on a later frame.
                     let indirect_bytes = batch_count as u64 * 20;
+                    let total_bytes = indirect_bytes + 8;
                     if instancing
                         .indirect_readback_buf
                         .as_ref()
                         .map_or(0, |b| b.size())
-                        < indirect_bytes
+                        < total_bytes
                     {
                         instancing.indirect_readback_buf =
                             Some(device.create_buffer(&wgpu::BufferDescriptor {
                                 label: Some("indirect_readback_buf"),
-                                size: indirect_bytes,
+                                size: total_bytes,
                                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                                 mapped_at_creation: false,
                             }));
                     }
                     if let Some(ref rb_buf) = instancing.indirect_readback_buf {
-                        encoder.copy_buffer_to_buffer(indirect_buf, 0, rb_buf, 0, indirect_bytes);
+                        if indirect_bytes > 0 {
+                            encoder.copy_buffer_to_buffer(
+                                indirect_buf,
+                                0,
+                                rb_buf,
+                                0,
+                                indirect_bytes,
+                            );
+                        }
+                        encoder.copy_buffer_to_buffer(
+                            cull.main_stats_buf(),
+                            0,
+                            rb_buf,
+                            indirect_bytes,
+                            8,
+                        );
                     }
                 }
                 queue.submit(std::iter::once(encoder.finish()));

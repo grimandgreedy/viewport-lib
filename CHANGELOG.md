@@ -254,7 +254,7 @@ ShadingModel enum
 
 #### Toon shading
 
-A new `ShadingModel::Toon` variant that quantises the lighting into hard bands, with optional banded specular highlights and parameter knobs for band count, ramp smoothness, and specular sharpness. Runs through the standard opaque and OIT mesh pipelines, so skinned meshes and transparent surfaces both pick it up without extra wiring. The variant carries silhouette outline parameters (thickness and colour) but the silhouette pass that consumes them is a separate follow-up — at the moment a toon material renders the cel-shaded interior without the dark outline around the silhouette.
+A new `ShadingModel::Toon` variant that quantises the lighting into hard bands, with optional banded specular highlights and parameter knobs for band count, ramp smoothness, and specular sharpness. Runs through the standard opaque and OIT mesh pipelines, so skinned meshes and transparent surfaces both pick it up without extra wiring. The variant carries silhouette outline parameters (thickness and colour) but the silhouette pass that consumes them is a separate follow-up: at the moment a toon material renders the cel-shaded interior without the dark outline around the silhouette.
 
 #### Flat shading
 
@@ -596,7 +596,7 @@ Fixed: GPU position and normal overrides were silently ignored on most scenes `s
   - `clip_geometry: bool` - when `false`, the object renders its visual indicator but does not contribute to the GPU clip-plane uniform. Default: `true`. Allows a decorative plane edge with no effect on rendered geometry.
 
 ### Fixes
-- Phantom shadows from stale GPU cull data: `cull_instances` and `write_indirect_args` compute shaders previously bounded their loops with `arrayLength()`, which returns the allocated buffer capacity (2× headroom). When switching to a scene with fewer objects, stale AABB entries from the previous, larger scene were still processed, injecting ghost shadow casters from old geometry. Fixed by adding `instance_count` and `batch_count` to `FrustumUniform`; the shaders now guard against the valid element count rather than the buffer size.
+- Phantom shadows from stale GPU cull data: `cull_instances` and `write_indirect_args` compute shaders previously bounded their loops with `arrayLength()`, which returns the allocated buffer capacity (2x headroom). When switching to a scene with fewer objects, stale AABB entries from the previous, larger scene were still processed, injecting ghost shadow casters from old geometry. Fixed by adding `instance_count` and `batch_count` to `FrustumUniform`; the shaders now guard against the valid element count rather than the buffer size.
 - Scroll unit handling: all eframe examples now pass `ScrollUnits::Lines` for mouse wheel events and `ScrollUnits::Pixels` for trackpad events by reading `egui::MouseWheelUnit` from the `MouseWheel` event. Previously all eframe examples hardcoded `ScrollUnits::Pixels`, causing mouse wheel zoom to bypass the `PIXELS_PER_LINE` scaling and feel incorrect.
 - iced example: removed manual `* 28.0` line-to-pixel conversion; the library now applies the scaling internally via `ScrollUnits::Lines`.
 - Added `ScrollUnits::Pages` variant (one unit = viewport height in pixels) to cover `egui::MouseWheelUnit::Page` and equivalent page-scroll events from other frameworks.
@@ -678,7 +678,7 @@ Fixed: GPU position and normal overrides were silently ignored on most scenes `s
 
 ### Features
 - `SceneRenderItem::render_as_wireframe`: per-item wireframe override independent of the global `wireframe_mode` setting
-- `PointCloudItem::gaussian`: Gaussian splat falloff (`exp(-3d²)`) per point cloud; replaces hard circular clip with a soft alpha fade
+- `PointCloudItem::gaussian`: Gaussian splat falloff (`exp(-3d^2)`) per point cloud; replaces hard circular clip with a soft alpha fade
 - Add colourmaps: magma, inferno, turbo, jet, rdbu
 - GPU implicit surface rendering
   - `GpuImplicitItem`, `ImplicitPrimitive`, `ImplicitBlendMode`, `GpuImplicitOptions`

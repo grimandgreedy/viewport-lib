@@ -16,6 +16,8 @@ pub mod gpu_marching_cubes;
 /// GPU particle systems: compute-driven emit + sim with sprite draw.
 pub mod gpu_particles;
 mod highlight;
+/// Hierarchical-Z max-depth pyramid for GPU occlusion culling.
+pub(crate) mod hiz;
 /// GPU compute path for IBL precomputation (selected at runtime when supported).
 mod ibl_compute;
 /// GPU implicit surface types and pipeline.
@@ -58,10 +60,10 @@ use self::extra_impls::{
 pub use self::font::{FontError, FontHandle};
 pub use self::gpu_marching_cubes::{GpuMarchingCubesJob, VolumeGpuId};
 pub use self::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
-pub use self::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::implicit::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };
+pub use self::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::mesh_sidecar::deform::{
     DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, deform_slot_params_byte_offset,
 };

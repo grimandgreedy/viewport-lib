@@ -909,6 +909,28 @@ impl ViewportRenderer {
                 render_pass.draw(0..3, 0..1);
             }
         }
+
+        // Build the HiZ pyramid from the depth just written, for next frame's
+        // occlusion cull. Only when occlusion culling is enabled, since the
+        // pyramid is otherwise unused. `slot_hdr` (a borrow of viewport_slots)
+        // and `self.resources` are disjoint fields, so both borrows coexist.
+        if self.resources.occlusion_culling_enabled() {
+            let use_ssaa = ssaa_factor > 1
+                && slot_hdr.ssaa_depth_texture.is_some()
+                && slot_hdr.ssaa_depth_only_view.is_some();
+            let (depth_view, depth_tex) = if use_ssaa {
+                (
+                    slot_hdr.ssaa_depth_only_view.as_ref().unwrap(),
+                    slot_hdr.ssaa_depth_texture.as_ref().unwrap(),
+                )
+            } else {
+                (&slot_hdr.hdr_depth_only_view, &slot_hdr.hdr_depth_texture)
+            };
+            let w = depth_tex.width();
+            let h = depth_tex.height();
+            self.resources
+                .build_hiz(ctx.device, encoder, depth_view, w, h);
+        }
     }
 
     fn hdr_sprite_passes(&mut self, ctx: &HdrFrameCtx, encoder: &mut wgpu::CommandEncoder) {

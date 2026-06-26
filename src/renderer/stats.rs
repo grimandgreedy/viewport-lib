@@ -319,9 +319,20 @@ pub struct FrameStats {
     pub gpu_culling_active: bool,
     /// Number of instances that passed GPU culling and were submitted for drawing.
     ///
-    /// Populated only when `gpu_culling_active` is true. `None` on the first frame
-    /// or when GPU culling is off. Lags by one frame due to async readback.
+    /// This is the count after both the frustum and occlusion tests. Populated
+    /// only when `gpu_culling_active` is true. `None` on the first frame or when
+    /// GPU culling is off. Lags by one frame due to async readback.
     pub gpu_visible_instances: Option<u32>,
+    /// Total instances considered by the main-camera cull this frame, before
+    /// any test. Same readback and `None` conditions as `gpu_visible_instances`.
+    pub gpu_culled_total: Option<u32>,
+    /// Instances that survived the frustum test, before the HiZ occlusion test.
+    ///
+    /// `gpu_culled_total - gpu_frustum_visible` is the frustum-culled count, and
+    /// `gpu_frustum_visible - gpu_visible_instances` is the occlusion-culled
+    /// count. When occlusion culling is off, this equals `gpu_visible_instances`.
+    /// Same readback and `None` conditions as `gpu_visible_instances`.
+    pub gpu_frustum_visible: Option<u32>,
 
     // --- Per-pass degradation flags ---
     /// True when the shadow depth pass was skipped this frame.

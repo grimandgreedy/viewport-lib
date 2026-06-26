@@ -17,7 +17,23 @@ use crate::plugin_api::{BatchMeta, CullSubmission};
 use crate::resources::{FrustumPlane, FrustumUniform};
 
 /// Bind group layout entry count for the cull compute pass.
-const CULL_BGL_ENTRY_COUNT: usize = 6;
+const CULL_BGL_ENTRY_COUNT: usize = 8;
+
+/// Per-frame inputs for the HiZ occlusion test, supplied only by the
+/// main-camera cull. Shadow and single-mesh dispatches pass `None`, which
+/// binds the fallback HiZ texture and disables the occlusion reject.
+pub(super) struct MainCullExtras<'a> {
+    /// Camera view-projection, column-major as the shader's `mat4x4` expects.
+    pub(super) view_proj: [[f32; 4]; 4],
+    /// HiZ mip-0 dimensions in pixels.
+    pub(super) viewport: [f32; 2],
+    /// Full-mip HiZ view to sample. `None` when no pyramid is available yet
+    /// (first frame, or occlusion disabled); the reject is skipped.
+    pub(super) hiz_view: Option<&'a wgpu::TextureView>,
+    /// Caller's request to run the occlusion test. Ignored when `hiz_view`
+    /// is `None`.
+    pub(super) do_occlusion: bool,
+}
 
 /// Cull compute pipelines and the lib's shared scratch buffers.
 pub(super) struct CullResources {
@@ -40,6 +56,16 @@ pub(super) struct CullResources {
     /// Scratch counter slot paired with `scratch_meta_buf`. One u32,
     /// zeroed per call.
     scratch_counter_buf: wgpu::Buffer,
+    /// 1x1 R32Float texture bound at binding 6 when a dispatch has no HiZ
+    /// pyramid (shadow, single-mesh, or occlusion disabled). Keeps the bind
+    /// group layout satisfied; never sampled because `do_occlusion` is 0.
+    fallback_hiz_view: wgpu::TextureView,
+    /// Cull breakdown counters for the main dispatch: [total, frustum_visible].
+    /// Cleared each main dispatch, copied to the readback staging buffer.
+    main_stats_buf: wgpu::Buffer,
+    /// Stats slot for non-main dispatches (shadow, single-mesh). Written but
+    /// never read back.
+    scratch_stats_buf: wgpu::Buffer,
 }
 
 impl CullResources {
@@ -112,6 +138,39 @@ impl CullResources {
             mapped_at_creation: false,
         });
 
+        let fallback_hiz = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cull_fallback_hiz"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let fallback_hiz_view = fallback_hiz.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Two u32 counters: [total, frustum_visible]. COPY_SRC for the readback
+        // copy, COPY_DST for the per-frame clear.
+        let main_stats_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull_main_stats_buf"),
+            size: 8,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let scratch_stats_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull_scratch_stats_buf"),
+            size: 8,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             cull_instances_pipeline,
             write_indirect_args_pipeline,
@@ -120,7 +179,16 @@ impl CullResources {
             cascade_frustum_bufs,
             scratch_meta_buf,
             scratch_counter_buf,
+            fallback_hiz_view,
+            main_stats_buf,
+            scratch_stats_buf,
         }
+    }
+
+    /// Borrow the main-cull stats buffer ([total, frustum_visible]) so the
+    /// instanced prepare path can copy it into its readback staging buffer.
+    pub(super) fn main_stats_buf(&self) -> &wgpu::Buffer {
+        &self.main_stats_buf
     }
 
     /// Run the two compute passes for one cull submission.
@@ -142,6 +210,7 @@ impl CullResources {
         cascade: Option<usize>,
         sub: &CullSubmission<'_>,
         ts: Option<(&wgpu::QuerySet, &std::sync::atomic::AtomicU32)>,
+        extras: Option<&MainCullExtras<'_>>,
     ) {
         let frustum_buf = match cascade {
             None => &self.frustum_buf,
@@ -152,6 +221,33 @@ impl CullResources {
         } else {
             0
         };
+        // Occlusion runs only when the main cull supplies a HiZ view and asks
+        // for it. Without a view, bind the fallback and leave the reject off.
+        let do_occlusion: u32 = match extras {
+            Some(e) if e.do_occlusion && e.hiz_view.is_some() => 1,
+            _ => 0,
+        };
+        let view_proj = extras.map_or(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            |e| e.view_proj,
+        );
+        let viewport = extras.map_or([1.0, 1.0], |e| e.viewport);
+        let hiz_view = extras
+            .and_then(|e| e.hiz_view)
+            .unwrap_or(&self.fallback_hiz_view);
+        // The main cull records its breakdown; other dispatches scribble into
+        // the scratch slot so they do not clobber the readback counters.
+        let stats_buf = if extras.is_some() {
+            &self.main_stats_buf
+        } else {
+            &self.scratch_stats_buf
+        };
+
         let frustum_uniform = FrustumUniform {
             planes: std::array::from_fn(|i| FrustumPlane {
                 normal: frustum.planes[i].normal.to_array(),
@@ -160,13 +256,19 @@ impl CullResources {
             instance_count: sub.instance_count,
             batch_count: sub.batch_count,
             shadow_pass: shadow_flag,
-            _pad: 0,
+            do_occlusion,
+            view_proj,
+            viewport,
+            _pad0: [0.0, 0.0],
         };
         queue.write_buffer(
             frustum_buf,
             0,
             bytemuck::cast_slice(std::slice::from_ref(&frustum_uniform)),
         );
+
+        // Reset the breakdown counters before cull_instances accumulates.
+        encoder.clear_buffer(stats_buf, 0, None);
 
         let label = match cascade {
             None => "cull_bg".to_string(),
@@ -199,6 +301,14 @@ impl CullResources {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: sub.indirect_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(hiz_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: stats_buf.as_entire_binding(),
                 },
             ],
         });
@@ -325,6 +435,29 @@ impl CullResources {
             // binding 5: indirect args (read-write storage)
             wgpu::BindGroupLayoutEntry {
                 binding: 5,
+                visibility: compute,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 6: HiZ max-depth pyramid (R32Float, non-filterable, sampled
+            // via textureLoad).
+            wgpu::BindGroupLayoutEntry {
+                binding: 6,
+                visibility: compute,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 7: cull breakdown counters (read-write storage)
+            wgpu::BindGroupLayoutEntry {
+                binding: 7,
                 visibility: compute,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },

@@ -723,6 +723,27 @@ impl ViewportRenderer {
         }
     }
 
+    /// Enable or disable HiZ occlusion culling on the main-camera cull.
+    ///
+    /// When on, the GPU cull builds a hierarchical-Z depth pyramid from the
+    /// previous frame's scene depth and drops instances whose screen-space box
+    /// is entirely behind nearer geometry, on top of the frustum test. Off by
+    /// default. The pyramid is one frame stale, so a fast camera cut can briefly
+    /// keep a few instances that just became hidden; nothing visible is culled.
+    /// Has no effect unless GPU-driven culling is also active.
+    ///
+    /// The breakdown is reported in [`FrameStats`]: `gpu_culled_total`,
+    /// `gpu_frustum_visible`, and `gpu_visible_instances` give the per-stage
+    /// survivor counts.
+    pub fn set_occlusion_culling(&mut self, enabled: bool) {
+        self.resources.set_occlusion_culling(enabled);
+    }
+
+    /// Whether HiZ occlusion culling is currently enabled.
+    pub fn occlusion_culling_enabled(&self) -> bool {
+        self.resources.occlusion_culling_enabled()
+    }
+
     /// Cap the per-frame cost of running upload-job apply closures.
     ///
     /// `None` is the default and matches the historical behaviour:
@@ -876,7 +897,7 @@ impl ViewportRenderer {
                 Some(crate::renderer::indirect::CullResources::new(device));
         }
         let cull = self.instancing.cull_resources.as_ref().unwrap();
-        cull.dispatch(encoder, device, queue, frustum, None, sub, None);
+        cull.dispatch(encoder, device, queue, frustum, None, sub, None, None);
     }
 
     /// Same as [`submit_cull`](Self::submit_cull) for one shadow cascade.
@@ -914,6 +935,7 @@ impl ViewportRenderer {
             cascade_frustum,
             Some(cascade_idx),
             sub,
+            None,
             None,
         );
     }
@@ -1043,7 +1065,7 @@ impl ViewportRenderer {
             indirect_out,
             shadow_pass,
         };
-        cull.dispatch(encoder, device, queue, frustum, cascade, &sub, None);
+        cull.dispatch(encoder, device, queue, frustum, cascade, &sub, None, None);
     }
 
     /// Register an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).

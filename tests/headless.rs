@@ -420,3 +420,94 @@ fn position_override_takes_effect_through_render_path() {
          skipped so the shader flag stayed at 0.",
     );
 }
+
+/// Exercise the HiZ occlusion-cull path end to end: enabling occlusion culling
+/// builds the HiZ pyramid from the depth written by the HDR scene pass (which
+/// validates `hiz_copy.wgsl` / `hiz_reduce.wgsl` compile and run), and the next
+/// frame's cull samples it (validating the extended `cull.wgsl`). Several boxes
+/// are submitted so the instanced cull path engages, and a near box sits
+/// directly in front of farther ones along the view direction so there is real
+/// front-to-back occlusion to find.
+///
+/// The test asserts the render does not panic and produces pixels. When the
+/// device supports GPU-driven culling, it also checks the cull breakdown is
+/// monotonic: total >= frustum-survivors >= drawn.
+#[test]
+fn occlusion_culling_render_path_runs() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    renderer.set_occlusion_culling(true);
+    assert!(renderer.occlusion_culling_enabled());
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    // HiZ is built in the HDR scene pass, so post-processing must be on.
+    frame.effects.post_process.enabled = true;
+
+    // A column of boxes along the view direction (Z-up world, camera looks down
+    // -Z by default here): a big near box and several smaller ones behind it.
+    let mut items = Vec::new();
+    for i in 0..8 {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_idx;
+        let z = -(i as f32) * 1.5;
+        let s = if i == 0 { 4.0 } else { 1.0 };
+        item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z))
+            * glam::Mat4::from_scale(glam::Vec3::splat(s)))
+        .to_cols_array_2d();
+        items.push(item);
+    }
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+
+    // Render several frames: frame 1 builds the first pyramid (occlusion off
+    // that frame, no pyramid yet), later frames consume it, and the stats
+    // readback lags a couple of frames before it lands.
+    let mut last_pixels = Vec::new();
+    for _ in 0..4 {
+        last_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    }
+    assert_eq!(last_pixels.len(), 64 * 64 * 4);
+    assert!(
+        last_pixels.iter().any(|&b| b != 0),
+        "occlusion render produced an all-zero image",
+    );
+
+    let stats = renderer.last_frame_stats();
+    if stats.gpu_culling_active {
+        let total = stats.gpu_culled_total.expect("total should be read back");
+        let frustum = stats
+            .gpu_frustum_visible
+            .expect("frustum-survivors should be read back");
+        let drawn = stats
+            .gpu_visible_instances
+            .expect("drawn count should be read back");
+        assert!(
+            total >= frustum && frustum >= drawn,
+            "cull breakdown must be monotonic: total={total} frustum={frustum} drawn={drawn}",
+        );
+        assert_eq!(total, 8, "all 8 instances should enter the cull");
+    }
+}
