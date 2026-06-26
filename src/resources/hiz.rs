@@ -431,7 +431,7 @@ impl HizState {
             });
             pass.set_pipeline(&self.init_pipeline);
             pass.set_bind_group(0, &self.reproj_bg, &[]);
-            pass.dispatch_workgroups((w * h).div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

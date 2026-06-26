@@ -27,13 +27,15 @@ struct ReprojUniform {
 // so atomicMin over the bits is atomicMin over the depth.
 const FAR_BITS: u32 = 0x3f800000u;
 
-@compute @workgroup_size(64)
+// 2D dispatch (not 1D over w*h) so neither workgroup dimension exceeds the
+// 65535 limit at large or supersampled resolutions.
+@compute @workgroup_size(8, 8)
 fn init(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let n = u.dims.x * u.dims.y;
-    if gid.x >= n {
+    let dim = u.dims;
+    if gid.x >= dim.x || gid.y >= dim.y {
         return;
     }
-    atomicStore(&dst[gid.x], FAR_BITS);
+    atomicStore(&dst[gid.y * dim.x + gid.x], FAR_BITS);
 }
 
 @compute @workgroup_size(8, 8)

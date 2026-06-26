@@ -516,3 +516,59 @@ fn occlusion_culling_render_path_runs() {
         assert_eq!(total, 8, "all 8 instances should enter the cull");
     }
 }
+
+/// Regression test: the HiZ reprojection passes must use 2D dispatches. At a
+/// large depth resolution a 1D dispatch over `w * h / 64` exceeds the 65535
+/// per-dimension workgroup limit and wgpu raises a validation error. 2048x2048
+/// gives 65536 workgroups, one over the limit, so this would panic before the
+/// fix. Renders two frames so the reprojection (which needs a stored prior
+/// depth) actually runs.
+#[test]
+fn occlusion_large_viewport_no_dispatch_overflow() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    renderer.set_occlusion_culling(true);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    let dim = 2048u32;
+    frame.camera.viewport_size = [dim as f32, dim as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.post_process.enabled = true;
+
+    let mut items = Vec::new();
+    for i in 0..4 {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_idx;
+        item.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -(i as f32) * 1.5))
+            .to_cols_array_2d();
+        items.push(item);
+    }
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+
+    // Frame 0 stores depth; frame 1 reprojects it (runs the init/scatter passes
+    // that would overflow with a 1D dispatch). No panic == pass.
+    for _ in 0..2 {
+        let _ = renderer.render_offscreen(&device, &queue, &frame, dim, dim);
+    }
+}
