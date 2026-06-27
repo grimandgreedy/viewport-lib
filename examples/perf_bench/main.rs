@@ -74,59 +74,62 @@ const fn run(
 use CullMode::{Frustum, FrustumHiz, None as NoCull};
 use SceneKind::{Grid, Occluder};
 
-// The full sweep: scene x cull x textured x lit x shadows = 48 runs. Flip the
-// `enabled` flag (first column) to pick a subset.
+// Full sweep is scene x cull x textured x lit x shadows = 48 runs. Right now
+// only the 6 core runs are enabled: the cull comparison (none / frustum /
+// frustum+hiz) on each scene, with textured/shadows off and lit on (lit so the
+// overdraw-heavy camera path actually pays fragment shading cost). Flip the
+// `enabled` flag (first column) on any row to add it back to the run.
 #[rustfmt::skip]
 const RUNS: &[Run] = &[
     //   enabled  scene     cull        tex    lit    shadow
-    run( true,    Grid,     NoCull,     false, false, false),
-    run( true,    Grid,     NoCull,     false, false, true ),
+    run( false,   Grid,     NoCull,     false, false, false),
+    run( false,   Grid,     NoCull,     false, false, true ),
     run( true,    Grid,     NoCull,     false, true,  false),
-    run( true,    Grid,     NoCull,     false, true,  true ),
-    run( true,    Grid,     NoCull,     true,  false, false),
-    run( true,    Grid,     NoCull,     true,  false, true ),
-    run( true,    Grid,     NoCull,     true,  true,  false),
-    run( true,    Grid,     NoCull,     true,  true,  true ),
-    run( true,    Grid,     Frustum,    false, false, false),
-    run( true,    Grid,     Frustum,    false, false, true ),
+    run( false,   Grid,     NoCull,     false, true,  true ),
+    run( false,   Grid,     NoCull,     true,  false, false),
+    run( false,   Grid,     NoCull,     true,  false, true ),
+    run( false,   Grid,     NoCull,     true,  true,  false),
+    run( false,   Grid,     NoCull,     true,  true,  true ),
+    run( false,   Grid,     Frustum,    false, false, false),
+    run( false,   Grid,     Frustum,    false, false, true ),
     run( true,    Grid,     Frustum,    false, true,  false),
-    run( true,    Grid,     Frustum,    false, true,  true ),
-    run( true,    Grid,     Frustum,    true,  false, false),
-    run( true,    Grid,     Frustum,    true,  false, true ),
-    run( true,    Grid,     Frustum,    true,  true,  false),
-    run( true,    Grid,     Frustum,    true,  true,  true ),
-    run( true,    Grid,     FrustumHiz, false, false, false),
-    run( true,    Grid,     FrustumHiz, false, false, true ),
+    run( false,   Grid,     Frustum,    false, true,  true ),
+    run( false,   Grid,     Frustum,    true,  false, false),
+    run( false,   Grid,     Frustum,    true,  false, true ),
+    run( false,   Grid,     Frustum,    true,  true,  false),
+    run( false,   Grid,     Frustum,    true,  true,  true ),
+    run( false,   Grid,     FrustumHiz, false, false, false),
+    run( false,   Grid,     FrustumHiz, false, false, true ),
     run( true,    Grid,     FrustumHiz, false, true,  false),
-    run( true,    Grid,     FrustumHiz, false, true,  true ),
-    run( true,    Grid,     FrustumHiz, true,  false, false),
-    run( true,    Grid,     FrustumHiz, true,  false, true ),
-    run( true,    Grid,     FrustumHiz, true,  true,  false),
-    run( true,    Grid,     FrustumHiz, true,  true,  true ),
-    run( true,    Occluder, NoCull,     false, false, false),
-    run( true,    Occluder, NoCull,     false, false, true ),
+    run( false,   Grid,     FrustumHiz, false, true,  true ),
+    run( false,   Grid,     FrustumHiz, true,  false, false),
+    run( false,   Grid,     FrustumHiz, true,  false, true ),
+    run( false,   Grid,     FrustumHiz, true,  true,  false),
+    run( false,   Grid,     FrustumHiz, true,  true,  true ),
+    run( false,   Occluder, NoCull,     false, false, false),
+    run( false,   Occluder, NoCull,     false, false, true ),
     run( true,    Occluder, NoCull,     false, true,  false),
-    run( true,    Occluder, NoCull,     false, true,  true ),
-    run( true,    Occluder, NoCull,     true,  false, false),
-    run( true,    Occluder, NoCull,     true,  false, true ),
-    run( true,    Occluder, NoCull,     true,  true,  false),
-    run( true,    Occluder, NoCull,     true,  true,  true ),
-    run( true,    Occluder, Frustum,    false, false, false),
-    run( true,    Occluder, Frustum,    false, false, true ),
+    run( false,   Occluder, NoCull,     false, true,  true ),
+    run( false,   Occluder, NoCull,     true,  false, false),
+    run( false,   Occluder, NoCull,     true,  false, true ),
+    run( false,   Occluder, NoCull,     true,  true,  false),
+    run( false,   Occluder, NoCull,     true,  true,  true ),
+    run( false,   Occluder, Frustum,    false, false, false),
+    run( false,   Occluder, Frustum,    false, false, true ),
     run( true,    Occluder, Frustum,    false, true,  false),
-    run( true,    Occluder, Frustum,    false, true,  true ),
-    run( true,    Occluder, Frustum,    true,  false, false),
-    run( true,    Occluder, Frustum,    true,  false, true ),
-    run( true,    Occluder, Frustum,    true,  true,  false),
-    run( true,    Occluder, Frustum,    true,  true,  true ),
-    run( true,    Occluder, FrustumHiz, false, false, false),
-    run( true,    Occluder, FrustumHiz, false, false, true ),
+    run( false,   Occluder, Frustum,    false, true,  true ),
+    run( false,   Occluder, Frustum,    true,  false, false),
+    run( false,   Occluder, Frustum,    true,  false, true ),
+    run( false,   Occluder, Frustum,    true,  true,  false),
+    run( false,   Occluder, Frustum,    true,  true,  true ),
+    run( false,   Occluder, FrustumHiz, false, false, false),
+    run( false,   Occluder, FrustumHiz, false, false, true ),
     run( true,    Occluder, FrustumHiz, false, true,  false),
-    run( true,    Occluder, FrustumHiz, false, true,  true ),
-    run( true,    Occluder, FrustumHiz, true,  false, false),
-    run( true,    Occluder, FrustumHiz, true,  false, true ),
-    run( true,    Occluder, FrustumHiz, true,  true,  false),
-    run( true,    Occluder, FrustumHiz, true,  true,  true ),
+    run( false,   Occluder, FrustumHiz, false, true,  true ),
+    run( false,   Occluder, FrustumHiz, true,  false, false),
+    run( false,   Occluder, FrustumHiz, true,  false, true ),
+    run( false,   Occluder, FrustumHiz, true,  true,  false),
+    run( false,   Occluder, FrustumHiz, true,  true,  true ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -184,13 +187,15 @@ fn parse_params() -> Params {
 // Camera path
 // ---------------------------------------------------------------------------
 
-/// Path segments, each an equal slice of the frame budget.
+/// Path segments, each an equal slice of the frame budget. The path stays low
+/// and deep inside the field, looking down a full axis, to maximise overdraw
+/// (the camera is buried in geometry with ~all layers stacked ahead of it).
 const SEGMENTS: &[&str] = &[
-    "orbit_far",
-    "approach",
-    "punch_through",
-    "inside_pan",
-    "face_away",
+    "approach",  // outside -> just inside, looking down +X (crosses the occluder wall)
+    "dive",      // push deeper toward the centre
+    "deep_creep", // slow crawl through the dense centre (the worst case)
+    "pan_inside", // yaw the view across the field from the centre
+    "exit",      // push out the far side, field receding behind
 ];
 
 /// Segment label for a frame.
@@ -200,55 +205,45 @@ fn segment_for(frame: u32, total: u32) -> &'static str {
 }
 
 /// Eye and target for a frame along the deterministic flight. `e` is the grid
-/// half-extent. The path orbits, approaches from -X, flies through, looks
-/// around inside, then faces outward.
+/// half-extent. The eye stays on the field's central YZ line (inside the
+/// volume) and mostly looks down +X, so the whole depth of the field stacks up
+/// in front of the camera: heavy front-to-back overdraw, the case where the
+/// scene pass gets expensive and occlusion has something to remove.
 fn camera_for(frame: u32, total: u32, e: f32) -> (glam::Vec3, glam::Vec3) {
     let g = frame as f32 / total as f32; // 0..1 over the whole path
     let seg = (g * SEGMENTS.len() as f32) as usize;
     let local = (g * SEGMENTS.len() as f32) - seg as f32; // 0..1 within segment
     let s = smoothstep(local);
-    let z_mid = 0.25 * e;
+    // Look straight down +X from the centre line so every X-layer overlaps.
+    let look_x = |eye: glam::Vec3| glam::Vec3::new(eye.x + e, eye.y, eye.z);
     match seg {
         0 => {
-            // Orbit far, whole field in view.
-            let az = std::f32::consts::PI * (0.25 + 0.6 * s);
-            let r = 2.3 * e;
-            (
-                glam::Vec3::new(r * az.cos(), r * az.sin(), 0.7 * e),
-                glam::Vec3::new(0.0, 0.0, z_mid),
-            )
+            // Approach from outside -X to just inside, looking down the axis.
+            let eye = glam::Vec3::new(lerp(-2.2 * e, -0.9 * e, s), 0.0, 0.0);
+            (eye, look_x(eye))
         }
         1 => {
-            // Approach from -X toward the field (through the wall, occluder scene).
-            let x = lerp(-2.3 * e, -1.05 * e, s);
-            (
-                glam::Vec3::new(x, 0.0, 0.5 * e),
-                glam::Vec3::new(0.0, 0.0, z_mid),
-            )
+            // Dive deeper toward the centre.
+            let eye = glam::Vec3::new(lerp(-0.9 * e, -0.35 * e, s), 0.0, 0.0);
+            (eye, look_x(eye))
         }
         2 => {
-            // Punch straight through along +X.
-            let x = lerp(-1.05 * e, 1.05 * e, s);
-            (
-                glam::Vec3::new(x, 0.0, z_mid),
-                glam::Vec3::new(x + e, 0.0, z_mid),
-            )
+            // Slow crawl across the dense centre: buried in geometry, ~all
+            // layers ahead. This is the segment that should hurt.
+            let eye = glam::Vec3::new(lerp(-0.35 * e, 0.35 * e, s), 0.0, 0.0);
+            (eye, look_x(eye))
         }
         3 => {
-            // Pan around from inside the field.
-            let a = std::f32::consts::TAU * s;
-            (
-                glam::Vec3::new(0.0, 0.0, z_mid),
-                glam::Vec3::new(e * a.cos(), e * a.sin(), z_mid),
-            )
+            // Yaw the view across the field from the centre (sweeps the densest
+            // sightlines through different axes).
+            let eye = glam::Vec3::new(0.0, 0.0, 0.0);
+            let a = lerp(-0.7, 0.7, s);
+            (eye, eye + glam::Vec3::new(a.cos(), a.sin(), 0.0) * e)
         }
         _ => {
-            // Move out +X and face outward (most of the field behind the camera).
-            let x = lerp(1.05 * e, 2.3 * e, s);
-            (
-                glam::Vec3::new(x, 0.0, 0.5 * e),
-                glam::Vec3::new(x + e, 0.0, 0.5 * e),
-            )
+            // Push out the far side; the field recedes behind the camera.
+            let eye = glam::Vec3::new(lerp(0.35 * e, 2.2 * e, s), 0.0, 0.0);
+            (eye, look_x(eye))
         }
     }
 }
@@ -481,6 +476,25 @@ fn main() {
         out_path
     );
 
+    // One reusable render target. We render into this and never read pixels
+    // back, so the GPU pipelines frame to frame instead of stalling on a
+    // per-frame readback (which would otherwise dominate the CPU timings).
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("perf_bench_target"),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
     let warmup = 30.min(params.frames / 4);
     for (ri, run) in enabled.iter().enumerate() {
         println!(
@@ -502,6 +516,7 @@ fn main() {
             &params,
             w,
             h,
+            &target_view,
             warmup,
             &mut csv,
         );
@@ -520,6 +535,7 @@ fn run_one(
     params: &Params,
     w: u32,
     h: u32,
+    target_view: &wgpu::TextureView,
     warmup: u32,
     csv: &mut std::fs::File,
 ) {
@@ -597,8 +613,18 @@ fn run_one(
             aspect,
         };
 
-        let _ = renderer.render_offscreen(device, queue, &frame, w, h);
-        let _ = device.poll(wgpu::PollType::Poll);
+        renderer.render_to_texture(device, queue, target_view, &frame);
+        // Non-blocking poll lets the renderer's async timestamp/stats readback
+        // complete without serialising the GPU each frame. Bound the in-flight
+        // queue depth occasionally so submissions do not pile up unboundedly.
+        if f % 16 == 0 {
+            let _ = device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(5)),
+            });
+        } else {
+            let _ = device.poll(wgpu::PollType::Poll);
+        }
 
         if f < warmup {
             continue;

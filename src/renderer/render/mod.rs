@@ -706,6 +706,26 @@ impl ViewportRenderer {
         cmd_buf
     }
 
+    /// Render a frame into `output_view` and submit it, without reading anything
+    /// back. `output_view` must be a `RENDER_ATTACHMENT` view in the format the
+    /// renderer was created with, sized to `frame.camera.viewport_size`.
+    ///
+    /// Unlike [`render_offscreen`](Self::render_offscreen), this neither copies
+    /// the result to the CPU nor blocks on the GPU, so the caller can reuse one
+    /// target and drive many frames back to back. Intended for headless loops
+    /// (perf measurement, capture pipelines) that read results back through GPU
+    /// timestamps or their own copy on a cadence rather than every frame.
+    pub fn render_to_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        output_view: &wgpu::TextureView,
+        frame: &FrameData,
+    ) {
+        let cmd_buf = self.render(device, queue, output_view, frame);
+        queue.submit(std::iter::once(cmd_buf));
+    }
+
     /// Render a frame to an offscreen texture and return raw RGBA bytes.
     ///
     /// Creates a temporary [`wgpu::Texture`] render target of the given dimensions,
