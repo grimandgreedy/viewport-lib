@@ -120,6 +120,14 @@ pub trait RuntimePlugin: Send + 'static {
     /// in [`phase`] as base values and offset within a band if needed.
     fn priority(&self) -> i32;
 
+    /// A stable name for this plugin, used to key per-plugin timing in
+    /// [`RuntimeStats`](crate::RuntimeStats). Defaults to the concrete type
+    /// name; override to disambiguate when several plugins share a type or to
+    /// give a friendlier label.
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     /// Called once per frame before the step loop, in priority order.
     ///
     /// Use this to kick off background work (e.g. async physics) that will

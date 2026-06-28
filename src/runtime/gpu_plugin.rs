@@ -195,6 +195,13 @@ pub trait GpuPlugin: Send + 'static {
         gpu_phase::PRE_PREPARE
     }
 
+    /// A stable name for this plugin, used to key per-plugin timing in
+    /// [`RuntimeStats`](crate::RuntimeStats). Defaults to the concrete type
+    /// name; override to give a friendlier label.
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     /// Build pipelines, persistent buffers, and bind group layouts.
     ///
     /// Called once before the plugin's first `pre_prepare`. If a new GPU

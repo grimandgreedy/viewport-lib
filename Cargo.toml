@@ -42,12 +42,17 @@ winit = "0.30"
 pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 viewport-lib-io = { version = "0.2.0", path = "../viewport-lib-io" }
+viewport-lib-testkit = { path = "../viewport-lib-testkit" }
 
 
 
 [[example]]
 name = "perf-bench"
 path = "examples/perf_bench/main.rs"
+
+[[example]]
+name = "catalogue-viewer"
+path = "examples/catalogue_viewer/main.rs"
 
 [[example]]
 name = "eframe-minimal"

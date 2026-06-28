@@ -84,6 +84,7 @@ use crate::scene::scene::Scene;
 
 /// Run all plugins whose priority is in `[min, max)`, in the order they appear
 /// in the slice.
+#[allow(clippy::too_many_arguments)]
 fn run_range(
     plugins: &mut Vec<Box<dyn RuntimePlugin>>,
     min: i32,
@@ -94,6 +95,7 @@ fn run_range(
     writeback: &mut TransformWriteback,
     output: &mut RuntimeOutput,
     resources: &mut RuntimeResources,
+    timings: &mut std::collections::HashMap<&'static str, f32>,
 ) {
     for plugin in plugins.iter_mut() {
         let p = plugin.priority();
@@ -107,8 +109,49 @@ fn run_range(
                 pick_hit: frame.pick_hit,
                 resources,
             };
+            let t = std::time::Instant::now();
             plugin.step(&mut ctx);
+            *timings.entry(plugin.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
+    }
+}
+
+/// Per-plugin timing for one runtime cycle, in milliseconds.
+///
+/// Each map is keyed by [`RuntimePlugin::type_name`] /
+/// [`GpuPlugin::type_name`] and holds the wall-clock CPU time that plugin spent
+/// in the corresponding seam this cycle. `step_ms` sums a plugin's `submit`,
+/// `step` (across every fixed sub-step), and `collect` calls; `pre_prepare_ms`
+/// and `post_paint_ms` time the GPU-plugin seams. These are the only places the
+/// renderer cannot see plugin cost, so reading them is how a host or benchmark
+/// attributes frame time to a named plugin without the renderer's `FrameStats`.
+#[derive(Debug, Default, Clone)]
+pub struct RuntimeStats {
+    /// CPU ms spent in each plugin's `submit` + `step` + `collect` during the
+    /// last [`ViewportRuntime::step`].
+    pub step_ms: std::collections::HashMap<&'static str, f32>,
+    /// CPU ms spent in each GPU plugin's `pre_prepare` during the last
+    /// [`ViewportRuntime::pre_prepare`].
+    pub pre_prepare_ms: std::collections::HashMap<&'static str, f32>,
+    /// CPU ms spent in each GPU plugin's `post_paint` during the last
+    /// [`ViewportRuntime::post_paint`].
+    pub post_paint_ms: std::collections::HashMap<&'static str, f32>,
+}
+
+impl RuntimeStats {
+    /// Total CPU ms across all plugins' `step` work last cycle.
+    pub fn total_step_ms(&self) -> f32 {
+        self.step_ms.values().sum()
+    }
+
+    /// Total CPU ms across all plugins' `pre_prepare` work last cycle.
+    pub fn total_pre_prepare_ms(&self) -> f32 {
+        self.pre_prepare_ms.values().sum()
+    }
+
+    /// Total CPU ms across all plugins' `post_paint` work last cycle.
+    pub fn total_post_paint_ms(&self) -> f32 {
+        self.post_paint_ms.values().sum()
     }
 }
 
@@ -1499,6 +1542,8 @@ pub struct ViewportRuntime {
     prev_node_ids: std::collections::HashSet<crate::interaction::selection::NodeId>,
     /// False on the very first step call; after that, lifecycle events are emitted.
     scene_initialized: bool,
+    /// Per-plugin timing from the most recent step / pre_prepare / post_paint.
+    stats: RuntimeStats,
 }
 
 impl Default for ViewportRuntime {
@@ -1524,7 +1569,16 @@ impl ViewportRuntime {
             resources: RuntimeResources::new(),
             prev_node_ids: std::collections::HashSet::new(),
             scene_initialized: false,
+            stats: RuntimeStats::default(),
         }
+    }
+
+    /// Per-plugin timing from the most recent `step` / `pre_prepare` /
+    /// `post_paint`. Lets a host or benchmark attribute frame time to a named
+    /// plugin without linking it: any registered plugin is keyed by its
+    /// [`RuntimePlugin::type_name`] / [`GpuPlugin::type_name`].
+    pub fn last_stats(&self) -> &RuntimeStats {
+        &self.stats
     }
 
     /// Enable the built-in click-to-select system.
@@ -1680,10 +1734,15 @@ impl ViewportRuntime {
         // contract as the CPU plugin list.
         self.gpu_plugins.sort_by_key(|p| p.priority());
 
+        let mut timings: std::collections::HashMap<&'static str, f32> =
+            std::collections::HashMap::new();
         let mut out = Vec::new();
         for p in self.gpu_plugins.iter_mut() {
+            let t = std::time::Instant::now();
             out.extend(p.pre_prepare(device, queue, ctx));
+            *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
+        self.stats.pre_prepare_ms = timings;
         out
     }
 
@@ -1711,10 +1770,15 @@ impl ViewportRuntime {
         // again is cheap and keeps `post_paint` safe to call standalone.
         self.gpu_plugins.sort_by_key(|p| p.priority());
 
+        let mut timings: std::collections::HashMap<&'static str, f32> =
+            std::collections::HashMap::new();
         let mut out = Vec::new();
         for p in self.gpu_plugins.iter_mut() {
+            let t = std::time::Instant::now();
             out.extend(p.post_paint(device, queue, targets, ctx));
+            *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
+        self.stats.post_paint_ms = timings;
         out
     }
 
@@ -1876,6 +1940,11 @@ impl ViewportRuntime {
         // Take plugins out so we can access self freely during the step loop.
         let mut plugins = std::mem::take(&mut self.plugins);
 
+        // Per-plugin CPU timing for this step (submit + step + collect), keyed
+        // by plugin type name. Stored into `self.stats` at the end.
+        let mut step_timings: std::collections::HashMap<&'static str, f32> =
+            std::collections::HashMap::new();
+
         // --- Submit pass: all plugins in priority order ----------------------
         for plugin in plugins.iter_mut() {
             let ctx = RuntimeStepContext {
@@ -1887,7 +1956,10 @@ impl ViewportRuntime {
                 pick_hit: frame.pick_hit,
                 resources: &mut self.resources,
             };
+            let t = std::time::Instant::now();
             plugin.submit(&ctx);
+            *step_timings.entry(plugin.type_name()).or_insert(0.0) +=
+                t.elapsed().as_secs_f32() * 1000.0;
         }
 
         // --- Step loop -------------------------------------------------------
@@ -1903,6 +1975,7 @@ impl ViewportRuntime {
             &mut writeback,
             &mut output,
             &mut self.resources,
+            &mut step_timings,
         );
 
         // Built-in selection system runs before the Select range.
@@ -1920,6 +1993,7 @@ impl ViewportRuntime {
             &mut writeback,
             &mut output,
             &mut self.resources,
+            &mut step_timings,
         );
 
         // Built-in manipulation system runs before the Manipulate range.
@@ -1939,6 +2013,7 @@ impl ViewportRuntime {
             &mut writeback,
             &mut output,
             &mut self.resources,
+            &mut step_timings,
         );
 
         // Simulate: [SIMULATE, POST_SIM) -- once per fixed step or once at wall dt.
@@ -1955,6 +2030,7 @@ impl ViewportRuntime {
                     &mut writeback,
                     &mut output,
                     &mut self.resources,
+                    &mut step_timings,
                 );
                 self.step_index = self.step_index.wrapping_add(1);
             }
@@ -1970,6 +2046,7 @@ impl ViewportRuntime {
                 &mut writeback,
                 &mut output,
                 &mut self.resources,
+                &mut step_timings,
             );
             self.step_index = self.step_index.wrapping_add(1);
         }
@@ -1985,6 +2062,7 @@ impl ViewportRuntime {
             &mut writeback,
             &mut output,
             &mut self.resources,
+            &mut step_timings,
         );
 
         // --- Collect pass: all plugins in priority order ---------------------
@@ -1998,11 +2076,15 @@ impl ViewportRuntime {
                 pick_hit: frame.pick_hit,
                 resources: &mut self.resources,
             };
+            let t = std::time::Instant::now();
             plugin.collect(&mut ctx);
+            *step_timings.entry(plugin.type_name()).or_insert(0.0) +=
+                t.elapsed().as_secs_f32() * 1000.0;
         }
 
-        // Restore plugins.
+        // Restore plugins and publish this step's per-plugin timing.
         self.plugins = plugins;
+        self.stats.step_ms = step_timings;
 
         // --- Flush writeback -------------------------------------------------
         let ops = writeback.into_ops();
@@ -2057,5 +2139,40 @@ impl ViewportRuntime {
         }
 
         output
+    }
+}
+
+#[cfg(test)]
+mod plugin_stats_tests {
+    use super::*;
+
+    struct Probe;
+    impl RuntimePlugin for Probe {
+        fn priority(&self) -> i32 {
+            phase::SIMULATE
+        }
+        fn type_name(&self) -> &'static str {
+            "probe"
+        }
+        fn step(&mut self, _ctx: &mut RuntimeStepContext<'_>) {
+            // A touch of work so the timer records something.
+            let _ = (0..2000u64).fold(0u64, |a, b| a.wrapping_add(b));
+        }
+    }
+
+    #[test]
+    fn last_stats_attributes_step_time_by_type_name() {
+        let mut rt = ViewportRuntime::new().with_plugin(Probe);
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        let frame = RuntimeFrameContext::default();
+        rt.step(&mut scene, &mut sel, &frame);
+
+        let stats = rt.last_stats();
+        assert!(
+            stats.step_ms.contains_key("probe"),
+            "expected per-plugin step timing keyed by type_name"
+        );
+        assert!(stats.total_step_ms() >= 0.0);
     }
 }

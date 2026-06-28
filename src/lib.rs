@@ -266,7 +266,7 @@ pub use resources::{
 pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,
     ManipulationSystem, NodeTransformOp, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
-    RuntimePlugin, RuntimeStepContext, SceneRuntimeMode, SelectionOp, SelectionSystem,
+    RuntimePlugin, RuntimeStats, RuntimeStepContext, SceneRuntimeMode, SelectionOp, SelectionSystem,
     SimulationStepContext, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
     ViewportRuntime,
 };
