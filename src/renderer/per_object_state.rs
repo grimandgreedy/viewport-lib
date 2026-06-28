@@ -5,12 +5,27 @@
 use crate::resources::mesh_store::MeshId;
 use std::collections::HashMap;
 
-/// One cached per-object draw resource, keyed by the item's stable `pick_id`.
+/// Stable key for a cached per-object draw resource.
 ///
-/// Keying on `pick_id` rather than the item's index in the frame's item list
-/// means the cache survives the host reordering or rebuilding that list each
-/// frame: a static object keeps its uniform buffer and bind group, so the bind
-/// group is not rebuilt every frame.
+/// A pickable object (`pick_id != PickId::NONE`) is keyed on its `pick_id`, so
+/// the cache survives the host reordering or rebuilding the item list each
+/// frame: a static object keeps its uniform buffer and bind group instead of
+/// rebuilding every frame.
+///
+/// `PickId::NONE` is the default and is shared by every non-pickable item, so it
+/// cannot identify an object. Those items fall back to their index in the
+/// frame's item list. The two forms live in disjoint key spaces because a
+/// pickable key always has a non-zero `pick_id` while a fallback key always has
+/// a zero `pick_id`, so they never collide.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum PerObjectKey {
+    /// Pickable object keyed on its non-zero `pick_id`.
+    Pickable(u64),
+    /// Non-pickable object keyed on its slot in the frame's item list.
+    Index(usize),
+}
+
+/// One cached per-object draw resource.
 pub(crate) struct PerObjectCacheEntry {
     /// This object's own uniform buffer (rewritten each frame; its transform changes).
     pub(crate) uniform_buf: wgpu::Buffer,
@@ -27,8 +42,8 @@ pub(crate) struct PerObjectCacheEntry {
 }
 
 pub(crate) struct PerObjectState {
-    /// Per-object draw resources keyed by stable `pick_id`.
-    pub(crate) cache: HashMap<u64, PerObjectCacheEntry>,
+    /// Per-object draw resources keyed by [`PerObjectKey`].
+    pub(crate) cache: HashMap<PerObjectKey, PerObjectCacheEntry>,
     /// Per-item bind groups for the current frame, indexed by the item's position
     /// in the frame's item list. Populated from `cache` each frame (cheap
     /// reference-counted clones) so the render path can index by item slot.

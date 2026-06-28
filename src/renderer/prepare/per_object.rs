@@ -297,17 +297,28 @@ impl ViewportRenderer {
                     item.material.emissive_texture_id,
                 );
 
-                // Per-object draw resources are cached by the item's stable
-                // pick_id, not by its index in this frame's item list. Multiple
-                // scene items can share the same MeshId; the mesh's shared
-                // object_uniform_buf is stomped by whichever item wrote last, so
-                // each object keeps its own uniform buffer and bind group. Keying
-                // on pick_id means a static object reuses its bind group across
-                // frames even when the host reorders the item list.
+                // Per-object draw resources are cached so each item keeps its own
+                // uniform buffer and bind group. Multiple scene items can share
+                // the same MeshId; the mesh's shared object_uniform_buf is stomped
+                // by whichever item wrote last, so the per-object cache guarantees
+                // each item draws with its own transform/material.
+                //
+                // Pickable items key on their pick_id so the cache survives the
+                // host reordering the item list. Non-pickable items all share
+                // PickId::NONE, which cannot identify an object, so they key on
+                // their item index instead (rebuilt on reorder, but correct).
+                // Keying every item on pick_id would collide all NONE items onto
+                // one entry, making them share a uniform buffer and draw with the
+                // last item's material.
                 {
-                    let pick = item.settings.pick_id.0;
+                    use crate::renderer::per_object_state::PerObjectKey;
+                    let key = if item.settings.pick_id == crate::renderer::PickId::NONE {
+                        PerObjectKey::Index(item_idx)
+                    } else {
+                        PerObjectKey::Pickable(item.settings.pick_id.0)
+                    };
                     let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
-                    let entry = mesh_uniforms.cache.entry(pick).or_insert_with(|| {
+                    let entry = mesh_uniforms.cache.entry(key).or_insert_with(|| {
                         let buf = device.create_buffer(&wgpu::BufferDescriptor {
                             label: Some("per_item_object_uniform"),
                             size: uniform_size,
