@@ -70,7 +70,11 @@ impl App {
         let aabb = full.compute_aabb();
         let thresholds = [0.22_f32, 0.10, 0.0];
 
-        let level_data = [full, primitives::icosphere(1.0, 1), primitives::icosphere(1.0, 0)];
+        let level_data = [
+            full,
+            primitives::icosphere(1.0, 1),
+            primitives::icosphere(1.0, 0),
+        ];
         let mut level_meshes = Vec::with_capacity(level_data.len());
         for data in &level_data {
             let id = renderer
@@ -205,7 +209,10 @@ pub(crate) fn controls_lod(app: &mut App, ui: &mut egui::Ui) {
         app.lod_state.lod_enabled,
         egui::Checkbox::new(&mut app.lod_state.colourise, "Colourise by level"),
     );
-    ui.checkbox(&mut app.lod_state.auto_dolly, "Animate camera (dolly in/out)");
+    ui.checkbox(
+        &mut app.lod_state.auto_dolly,
+        "Animate camera (dolly in/out)",
+    );
     ui.add_enabled_ui(app.lod_state.lod_enabled, |ui| {
         ui.checkbox(&mut app.lod_state.cull_enabled, "Cull below a size");
         ui.add_enabled(
@@ -221,8 +228,13 @@ pub(crate) fn controls_lod(app: &mut App, ui: &mut egui::Ui) {
     }
 
     let s = app.lod_state.last_stats;
-    stat_row(ui, "Camera distance", &format!("{:.1}", app.camera.distance));
+    stat_row(
+        ui,
+        "Camera distance",
+        &format!("{:.1}", app.camera.distance),
+    );
     stat_row(ui, "LOD resolved", &s.lod_items_resolved.to_string());
+    stat_row(ui, "LOD reduced", &s.lod_items_reduced.to_string());
     stat_row(ui, "LOD switches", &s.lod_switches.to_string());
     stat_row(ui, "LOD culled", &s.lod_culled.to_string());
     stat_row(ui, "Draw calls", &s.draw_calls.to_string());

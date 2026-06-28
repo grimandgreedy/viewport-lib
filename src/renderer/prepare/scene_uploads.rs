@@ -13,7 +13,8 @@ impl ViewportRenderer {
     /// draw. Items with one have their instances grouped by level, and each
     /// occupied level uploads as its own batch drawn with that level's mesh.
     /// Instances below the group's cull size are dropped from every batch.
-    /// Returns `(instances_resolved, switches, culled)` for the LOD stats.
+    /// Returns `(instances_resolved, switches, culled, reduced)` for the LOD
+    /// stats, where `reduced` counts instances drawn below full detail.
     pub(super) fn upload_mesh_instances(
         resources: &mut ViewportGpuResources,
         mesh_instance_gpu_data: &mut Vec<crate::resources::MeshInstanceGpuData>,
@@ -21,13 +22,13 @@ impl ViewportRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
-    ) -> (u32, u32, u32) {
+    ) -> (u32, u32, u32, u32) {
         mesh_instance_gpu_data.clear();
         if frame.scene.mesh_instances.is_empty() {
             if !lod_levels.is_empty() {
                 lod_levels.clear();
             }
-            return (0, 0, 0);
+            return (0, 0, 0, 0);
         }
         resources.ensure_instanced_pipelines(device);
         resources.ensure_hdr_instanced_pipelines(device);
@@ -35,6 +36,7 @@ impl ViewportRenderer {
         let mut resolved = 0u32;
         let mut switches = 0u32;
         let mut culled = 0u32;
+        let mut reduced = 0u32;
         let mut seen: Vec<(u64, u32)> = Vec::new();
 
         for item in &frame.scene.mesh_instances {
@@ -94,6 +96,9 @@ impl ViewportRenderer {
                     };
                     buckets[level].push(idx as u32);
                     resolved += 1;
+                    if level > 0 {
+                        reduced += 1;
+                    }
                 }
                 let level_meshes: Vec<crate::resources::mesh_store::MeshId> =
                     group.levels().iter().map(|l| l.mesh).collect();
@@ -127,7 +132,7 @@ impl ViewportRenderer {
             lod_levels.retain(|k, _| keep.contains(k));
         }
 
-        (resolved, switches, culled)
+        (resolved, switches, culled, reduced)
     }
 
     pub(super) fn upload_geometry_glyphs(

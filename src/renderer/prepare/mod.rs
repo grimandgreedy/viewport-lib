@@ -53,9 +53,10 @@ impl ViewportRenderer {
     /// Pick a level for every item with a LOD group and overwrite its `mesh_id`
     /// with the chosen mesh. Items without a group are left alone.
     ///
-    /// Returns `(items_resolved, switches, culled)`: how many LOD items drew,
-    /// how many tracked items (those with a pick id) changed level since last
-    /// frame, and how many fell below their group's cull size and were hidden.
+    /// Returns `(items_resolved, switches, culled, reduced)`: how many LOD items
+    /// drew, how many tracked items (those with a pick id) changed level since
+    /// last frame, how many fell below their group's cull size and were hidden,
+    /// and how many drew at a reduced level (below full detail).
     ///
     /// Screen size is measured from the group's full-detail mesh AABB, so the
     /// metric does not depend on which level happens to be drawn. Items with a
@@ -66,10 +67,11 @@ impl ViewportRenderer {
         lod_levels: &mut std::collections::HashMap<u64, usize>,
         camera: &RenderCamera,
         items: &mut [SceneRenderItem],
-    ) -> (u32, u32, u32) {
+    ) -> (u32, u32, u32, u32) {
         let mut resolved = 0u32;
         let mut switches = 0u32;
         let mut culled = 0u32;
+        let mut reduced = 0u32;
         let mut seen: Vec<u64> = Vec::new();
 
         for item in items.iter_mut() {
@@ -110,6 +112,9 @@ impl ViewportRenderer {
 
             item.mesh_id = group.mesh_at(level);
             resolved += 1;
+            if level > 0 {
+                reduced += 1;
+            }
         }
 
         // Drop tracking state for items that are no longer present so the map
@@ -121,7 +126,7 @@ impl ViewportRenderer {
             lod_levels.retain(|k, _| keep.contains(k));
         }
 
-        (resolved, switches, culled)
+        (resolved, switches, culled, reduced)
     }
 
     /// Scene-global prepare stage: compute filters, lighting, shadow pass, batching, scivis.
@@ -197,12 +202,13 @@ impl ViewportRenderer {
         // level for their on-screen size; items without one are untouched. Both
         // the instanced and per-object paths see the resolved meshes, and so do
         // the shadow and viewport passes, since this runs once on the shared list.
-        let (mut lod_items_resolved, mut lod_switches, mut lod_culled) = Self::resolve_lod(
-            resources,
-            &mut self.lod_levels,
-            &frame.camera.render_camera,
-            &mut scene_items_owned,
-        );
+        let (mut lod_items_resolved, mut lod_switches, mut lod_culled, mut lod_items_reduced) =
+            Self::resolve_lod(
+                resources,
+                &mut self.lod_levels,
+                &frame.camera.render_camera,
+                &mut scene_items_owned,
+            );
 
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
@@ -298,7 +304,7 @@ impl ViewportRenderer {
             queue,
             frame,
         );
-        let (inst_resolved, inst_switches, inst_culled) = Self::upload_mesh_instances(
+        let (inst_resolved, inst_switches, inst_culled, inst_reduced) = Self::upload_mesh_instances(
             resources,
             &mut self.mesh_instance_gpu_data,
             &mut self.mesh_instance_lod_levels,
@@ -309,6 +315,7 @@ impl ViewportRenderer {
         lod_items_resolved += inst_resolved;
         lod_switches += inst_switches;
         lod_culled += inst_culled;
+        lod_items_reduced += inst_reduced;
         Self::upload_polylines(
             resources,
             &mut self.polyline_gpu_data,
@@ -659,6 +666,7 @@ impl ViewportRenderer {
                 lod_items_resolved,
                 lod_switches,
                 lod_culled,
+                lod_items_reduced,
                 gpu_culling_active: self.instancing.gpu_culling_enabled,
                 // Clear stale readback if GPU culling is off this frame.
                 gpu_visible_instances: if self.instancing.gpu_culling_enabled {
@@ -700,6 +708,20 @@ impl ViewportRenderer {
             frame,
         );
         let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0;
+
+        // Hand the LOD-resolved items to the paint pass. `scene_items_owned`
+        // carries the surface submission with each item's level mesh selected
+        // and culled items hidden, plus the opaque volume boundary draws
+        // appended. The draw path reads `self.prepared_surfaces`, so dropping
+        // the volume tail keeps it a drop-in match for `frame.scene.surfaces`
+        // in both order and length (the per-object bind groups index the same
+        // way). Without this the paint pass re-derived from the raw surfaces
+        // and every non-instanced LOD swap and cull was silently lost.
+        let surface_count = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items.len(),
+        };
+        scene_items_owned.truncate(surface_count);
+        self.prepared_surfaces = scene_items_owned;
 
         // The `resources` borrow ends with the shadow pass above, so record the
         // scene-phase timings into the breakdown now.
@@ -1213,10 +1235,11 @@ mod lod_resolve_tests {
         let mut levels = HashMap::new();
         let mut items = vec![item_at(-3.0, group, 1), item_at(-300.0, group, 2)];
 
-        let (resolved, _switches, _culled) =
+        let (resolved, _switches, _culled, reduced) =
             ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
 
         assert_eq!(resolved, 2);
+        assert_eq!(reduced, 1, "the far object draws at a reduced level");
         assert_eq!(items[0].mesh_id, full, "near object uses full detail");
         assert_eq!(items[1].mesh_id, crude, "far object uses crudest level");
     }
@@ -1245,7 +1268,7 @@ mod lod_resolve_tests {
         let mut levels = HashMap::new();
         let mut items = vec![plain, item_at(-3.0, group, 1)];
 
-        let (resolved, _, _) =
+        let (resolved, _, _, _) =
             ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
 
         assert_eq!(resolved, 1, "only the LOD item is counted");
@@ -1276,12 +1299,12 @@ mod lod_resolve_tests {
 
         // First frame: the object appears, landing on its level. That is a change
         // from the assumed starting level 0, but here it is already level 0.
-        let (_, switches_first, _) =
+        let (_, switches_first, _, _) =
             ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
         assert_eq!(switches_first, 0, "near object starts and stays at level 0");
 
         // Second frame at the same distance: no change.
-        let (_, switches_second, _) =
+        let (_, switches_second, _, _) =
             ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
         assert_eq!(switches_second, 0);
     }
@@ -1336,7 +1359,7 @@ mod lod_resolve_tests {
         // Near item stays; far item drops below the cull size.
         let mut items = vec![item_at(-3.0, group, 1), item_at(-400.0, group, 2)];
 
-        let (resolved, _, culled) =
+        let (resolved, _, culled, _) =
             ViewportRenderer::resolve_lod(&res, &mut levels, &camera, &mut items);
 
         assert_eq!(resolved, 1, "only the near item draws");

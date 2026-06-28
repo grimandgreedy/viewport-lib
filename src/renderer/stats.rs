@@ -369,6 +369,16 @@ pub struct FrameStats {
     /// size. Counts hidden `SceneRenderItem`s plus individual mesh instances that
     /// were left out of every batch. Zero unless a group sets `cull_below`.
     pub lod_culled: u32,
+    /// LOD objects drawn this frame at a reduced level (level index > 0, i.e.
+    /// below full detail). Counts scene items plus individual mesh instances.
+    ///
+    /// Unlike [`lod_switches`](Self::lod_switches), this does not need per-object
+    /// tracking, so it is accurate for objects with no `pick_id`. It is the
+    /// reliable signal for "is LOD actually reducing geometry": if it stays near
+    /// zero while distant objects fill the view, either the heavy meshes are not
+    /// in LOD groups or the `min_screen_size` thresholds never trigger, and the
+    /// triangle count is not coming down.
+    pub lod_items_reduced: u32,
 }
 
 #[cfg(test)]
