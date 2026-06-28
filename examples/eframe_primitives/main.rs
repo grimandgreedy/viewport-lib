@@ -57,6 +57,10 @@ fn main() -> eframe::Result {
             let m_disk = mesh!(primitives::disk(0.65, 40));
             let m_ring = mesh!(primitives::ring(0.3, 0.65, 48));
 
+            // Torus variants : oval ring and chain-link / stadium ring
+            let m_torus_ellipse = mesh!(primitives::torus_ellipse(0.75, 0.4, 0.16, 40, 28));
+            let m_torus_stadium = mesh!(primitives::torus_stadium(0.7, 0.3, 0.14, 28, 64));
+
             // Row 3 : flat / composite
             let m_plane = mesh!(primitives::plane(1.8, 1.8));
             let m_grid_plane = mesh!(primitives::grid_plane(1.8, 1.8, 8, 8));
@@ -113,6 +117,8 @@ fn main() -> eframe::Result {
                 item(m_arrow, cx[3], rz[3], [0.90, 0.25, 0.30]),
                 item(m_spring_a, cx[0], rz[4], [0.85, 0.30, 0.75]),
                 item(m_spring_b, cx[1], rz[4], [0.55, 0.35, 0.90]),
+                item(m_torus_ellipse, cx[2], rz[4], [0.95, 0.65, 0.25]),
+                item(m_torus_stadium, cx[3], rz[4], [0.30, 0.80, 0.70]),
             ];
 
             Ok(Box::new(App::new(scene_items)))

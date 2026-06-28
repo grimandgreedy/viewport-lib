@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased changes]
+
+### Improvements
+
+Added torus_ellipse and torus_stadium primitives.
+
 ## [0.18.3]
 
 v0.18.3 is mostly a collection of small improvements that have been sitting in several different branches. There is also some large code reorganisation: namely prepare and paint have been broken up into more maintainable modules. I've also added support for threshold-selected LOD groups.

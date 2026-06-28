@@ -11,5 +11,5 @@ pub mod isoline;
 pub mod marching_cubes;
 /// Polyline construction helpers shared by interaction widget wireframes.
 pub mod polyline;
-/// Geometry primitives: cube, sphere, plane, cylinder, cone, capsule, torus, icosphere, arrow, disk, frustum, hemisphere, ring, ellipsoid, spring, grid_plane.
+/// Geometry primitives: cube, sphere, plane, cylinder, cone, capsule, torus, torus_ellipse, torus_stadium, icosphere, arrow, disk, frustum, hemisphere, ring, ellipsoid, spring, grid_plane.
 pub mod primitives;
