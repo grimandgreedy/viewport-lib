@@ -5,9 +5,24 @@
 //! breakdown. Frame timing comes from GPU timestamp queries (uncapped, no
 //! vsync), so the numbers reflect real render cost rather than a vsync ceiling.
 //!
+//! By default the instanced field is a mix of game-like meshes from
+//! `viewport-lib-testkit` (a high-poly "boulder", a concave knot, a bowl shell,
+//! a gear, a capsule, and a low-detail sphere) cycled across the grid, rather
+//! than identical unit cubes, so the scene pass is vertex/raster-bound like a
+//! real scene instead of only draw-call-bound. `--detail` scales their triangle
+//! counts; `--simple` restores the original unit-cube field for comparison.
+//!
+//! The instance count is, by default, derived from a triangle budget
+//! (`--target-tris`, default ~15M, a realistic game scene total) and the mesh
+//! complexity, so the field stays ~15M triangles regardless of `--detail`. Pass
+//! an explicit `--count` to override.
+//!
 //! Run:
 //!   cargo run --release --example perf-bench
+//!   cargo run --release --example perf-bench -- --target-tris 30000000  # heavier scene
 //!   cargo run --release --example perf-bench -- --count 64000 --frames 600
+//!   cargo run --release --example perf-bench -- --detail 3        # heavier meshes
+//!   cargo run --release --example perf-bench -- --simple          # unit cubes
 //!
 //! Selecting runs: edit the `RUNS` array below. Each entry's first field is an
 //! `enabled` flag. Set one to `true` and the rest to `false` to run just that
@@ -20,6 +35,8 @@ use viewport_lib::{
     FrameData, ItemSettings, LightSource, LightingSettings, Material, MeshId, RenderCamera,
     SceneRenderItem, SurfaceSubmission, ViewportRenderer, primitives,
 };
+// The game-like mesh corpus from the test/bench kit (concave, higher-poly).
+use viewport_lib_testkit::meshes as tk;
 
 // ---------------------------------------------------------------------------
 // Run matrix
@@ -137,18 +154,28 @@ const RUNS: &[Run] = &[
 // ---------------------------------------------------------------------------
 
 struct Params {
+    /// Instance count. `0` means derive it from `target_tris` and the mesh size.
     count: u32,
+    /// Target total triangle budget for the field when `count` is auto.
+    target_tris: u64,
     frames: u32,
     render_scale: f32,
     out: Option<String>,
+    /// Use identical unit cubes instead of the game-like mesh mix.
+    simple: bool,
+    /// Mesh complexity level for the game-like props (higher = more triangles).
+    detail: u32,
 }
 
 fn parse_params() -> Params {
     let mut p = Params {
-        count: 125_000,
+        count: 0,
+        target_tris: 15_000_000,
         frames: 900,
         render_scale: 1.0,
         out: None,
+        simple: false,
+        detail: 2,
     };
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -175,6 +202,22 @@ fn parse_params() -> Params {
             }
             "--out" => {
                 p.out = next(i);
+                i += 2;
+            }
+            "--simple" => {
+                p.simple = true;
+                i += 1;
+            }
+            "--detail" => {
+                if let Some(v) = next(i).and_then(|s| s.parse().ok()) {
+                    p.detail = v;
+                }
+                i += 2;
+            }
+            "--target-tris" => {
+                if let Some(v) = next(i).and_then(|s| s.parse().ok()) {
+                    p.target_tris = v;
+                }
                 i += 2;
             }
             _ => i += 1,
@@ -262,11 +305,33 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 struct Meshes {
-    box_id: MeshId,
+    /// Meshes cycled across the instanced field (one game-like mesh per slot, or
+    /// a single unit cube in `--simple` mode).
+    prop_ids: Vec<MeshId>,
     slab_id: MeshId,
     textures: Vec<u64>,
     /// Grid half-extent in world units.
     extent: f32,
+    /// Average triangle count across the prop set (for the startup banner).
+    avg_tris: u64,
+    /// Resolved instance count (derived from the triangle budget unless an
+    /// explicit `--count` was given).
+    count: u32,
+}
+
+/// The game-like prop set: a mix of higher-poly and concave meshes from the
+/// test/bench kit, normalised to roughly unit size so they fit the grid spacing.
+/// `detail` scales the triangle counts (0 = light, 3+ = heavy).
+fn game_props(detail: u32) -> Vec<viewport_lib::MeshData> {
+    let d = detail.min(4);
+    vec![
+        tk::stress_sphere(1.0, 2 + d), // boulder / rock (high-poly)
+        tk::torus_knot(2, 3, 48 + 24 * d, 8 + 2 * d, 0.30), // ornament / pipe (concave)
+        tk::bowl(1.1, 20 + 8 * d, 6 + 2 * d), // bowl / shell (concave cavity)
+        tk::gear(20, 0.8, 1.15, 0.45), // mechanical part
+        primitives::capsule(0.45, 1.3, 16, 8 + d), // character / barrel
+        primitives::icosphere(1.0, 1 + d), // low-detail sphere (LOD variety)
+    ]
 }
 
 fn build_meshes(
@@ -274,11 +339,41 @@ fn build_meshes(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     count: u32,
+    target_tris: u64,
+    simple: bool,
+    detail: u32,
 ) -> Meshes {
-    let box_id = renderer
-        .resources_mut()
-        .upload_mesh_data(device, &primitives::cube(1.0))
-        .expect("box upload");
+    // The instanced field: a single unit cube (`--simple`) or the game-like mix.
+    let prop_meshes = if simple {
+        vec![primitives::cube(1.0)]
+    } else {
+        game_props(detail)
+    };
+    let total_tris: u64 = prop_meshes
+        .iter()
+        .map(|m| (m.indices.len() / 3) as u64)
+        .sum();
+    let avg_tris = total_tris / prop_meshes.len().max(1) as u64;
+
+    // Resolve the instance count: an explicit `--count` wins; otherwise size the
+    // field to hit the triangle budget (`--target-tris`, default ~15M, a
+    // realistic game scene total) given the mesh complexity. The old fixed 125k
+    // default assumed 12-tri cubes; with ~2k-tri meshes that would be ~250M.
+    let count = if count > 0 {
+        count
+    } else {
+        (target_tris / avg_tris.max(1)).max(1) as u32
+    };
+
+    let prop_ids: Vec<MeshId> = prop_meshes
+        .iter()
+        .map(|m| {
+            renderer
+                .resources_mut()
+                .upload_mesh_data(device, m)
+                .expect("prop upload")
+        })
+        .collect();
 
     let n = (count as f32).cbrt().round().max(1.0) as u32;
     let spacing = 2.5_f32;
@@ -304,10 +399,12 @@ fn build_meshes(
     }
 
     Meshes {
-        box_id,
+        prop_ids,
         slab_id,
         textures,
         extent,
+        avg_tris,
+        count,
     }
 }
 
@@ -354,8 +451,12 @@ fn build_items(m: &Meshes, count: u32, run: &Run) -> Vec<SceneRenderItem> {
                     (y as f32 - half) * spacing,
                     (z as f32 - half) * spacing,
                 );
+                // Cycle the prop set across the field: a few prefab meshes with
+                // many instances each, like a real scene (and a handful of
+                // instanced batches rather than one).
+                let mesh = m.prop_ids[idx as usize % m.prop_ids.len()];
                 items.push(make_item(
-                    m.box_id,
+                    mesh,
                     glam::Mat4::from_translation(pos),
                     m,
                     run,
@@ -437,7 +538,7 @@ fn pct(v: &mut [f32], p: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 fn main() {
-    let params = parse_params();
+    let mut params = parse_params();
 
     let (device, queue, has_ts, has_indirect) = match init_device() {
         Some(t) => t,
@@ -454,7 +555,18 @@ fn main() {
     }
 
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let meshes = build_meshes(&mut renderer, &device, &queue, params.count);
+    let meshes = build_meshes(
+        &mut renderer,
+        &device,
+        &queue,
+        params.count,
+        params.target_tris,
+        params.simple,
+        params.detail,
+    );
+    // Adopt the resolved instance count so the rest of the run (items, banner)
+    // uses the same value build_meshes sized the field to.
+    params.count = meshes.count;
 
     let base_w = 1920u32;
     let base_h = 1080u32;
@@ -466,12 +578,25 @@ fn main() {
     write_header(&mut csv);
 
     let enabled: Vec<&Run> = RUNS.iter().filter(|r| r.enabled).collect();
+    let mesh_mode = if params.simple {
+        "unit cubes".to_string()
+    } else {
+        format!(
+            "{} game meshes, detail {} (~{} tris/mesh avg)",
+            meshes.prop_ids.len(),
+            params.detail,
+            meshes.avg_tris
+        )
+    };
+    let total_tris = params.count as u64 * meshes.avg_tris;
     println!(
-        "perf-bench: {} runs, {}x{} ({} boxes), {} frames each -> {}",
+        "perf-bench: {} runs, {}x{} ({} instances, {}, ~{:.1}M tris total), {} frames each -> {}",
         enabled.len(),
         w,
         h,
         params.count,
+        mesh_mode,
+        total_tris as f64 / 1.0e6,
         params.frames,
         out_path
     );
