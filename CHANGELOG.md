@@ -16,6 +16,12 @@ An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that 
 
 - **`ViewportRenderer::render_to_texture`**: renders a frame into a texture without blocking to read the result back, for repeated off-screen rendering such as benchmarks or recordings.
 
+- **Per-plugin timing**: the runtime now records how long each registered plugin spends in `step`, `pre_prepare`, and `post_paint`, keyed by `RuntimePlugin::type_name` / `GpuPlugin::type_name` (both new, defaulting to the concrete type name). Read it via `ViewportRuntime::last_stats() -> &RuntimeStats`. This is how a host attributes frame time to a named plugin (wind, terrain, physics) without the renderer's `FrameStats`, which does not see plugin work.
+
+### Breaking changes
+
+- **`ScatterVolumeItem` is now `#[non_exhaustive]`**, matching the other scene item types, so future fields can be added without breaking callers. Construct it with `ScatterVolumeItem::new(volume)` and set fields afterwards rather than with a struct literal.
+
 ### Bug Fixes
 
 #### Per-object meshes ignored their level of detail
