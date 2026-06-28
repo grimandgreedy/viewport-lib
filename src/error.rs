@@ -22,6 +22,22 @@ pub enum ViewportError {
         normals: usize,
     },
 
+    /// A position/normal override buffer was bound to a mesh whose vertex
+    /// count differs from the buffer's. The shader indexes the override per
+    /// mesh vertex, so a smaller buffer reads out of bounds and a different
+    /// count silently scrambles the geometry.
+    #[error(
+        "override buffer has {override_vertices} vertices but mesh {mesh_id} has {mesh_vertices}"
+    )]
+    OverrideBufferVertexCountMismatch {
+        /// Index of the mesh the override was bound to.
+        mesh_id: usize,
+        /// Vertex count of the mesh.
+        mesh_vertices: usize,
+        /// Vertex count the override buffer holds.
+        override_vertices: usize,
+    },
+
     /// Mesh index is out of bounds for the mesh storage.
     #[error("mesh index {index} out of bounds (mesh count: {count})")]
     MeshIndexOutOfBounds {

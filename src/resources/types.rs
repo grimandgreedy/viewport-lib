@@ -1827,6 +1827,16 @@ pub struct GpuMesh {
     pub(crate) cpu_indices: Option<Vec<u32>>,
 }
 
+impl GpuMesh {
+    /// Number of vertices in the mesh, derived from the vertex buffer size.
+    ///
+    /// Useful for sizing or validating a position/normal override buffer
+    /// against the mesh it will be bound to.
+    pub fn vertex_count(&self) -> usize {
+        (self.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GPU data types for point cloud and glyph renderers
 // ---------------------------------------------------------------------------
