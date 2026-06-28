@@ -754,7 +754,7 @@ impl ViewportRenderer {
         self.prepare_scalar_bars(device, queue, frame);
         self.prepare_rulers(device, queue, frame);
         self.prepare_loading_bars(device, queue, frame);
-        self.prepare_overlay_shapes(device, frame);
+        self.prepare_overlay_shapes(device, queue, frame);
         self.prepare_splat_sort(device, queue, frame);
         self.prepare_splat_wireframe(device, queue, frame);
         self.prepare_sprite_wireframe(device, queue, frame);

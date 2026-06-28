@@ -3,6 +3,29 @@
 
 use super::*;
 
+/// Upload `verts` into a fresh vertex buffer without mapping at creation.
+///
+/// `create_buffer_init` maps the buffer at creation and copies through
+/// `get_mapped_range`, which panics outright ("Buffer is invalid") when the GPU
+/// has rejected the allocation, e.g. after a device loss. Creating an unmapped
+/// buffer and uploading via the queue turns such a failure into a logged error
+/// and a degraded frame rather than a hard crash that takes the process down.
+fn upload_overlay_vbuf<T: bytemuck::Pod>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    verts: &[T],
+) -> wgpu::Buffer {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: std::mem::size_of_val(verts) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buffer, 0, bytemuck::cast_slice(verts));
+    buffer
+}
+
 impl ViewportRenderer {
     pub(super) fn prepare_overlay_labels(
         &mut self,
@@ -244,11 +267,8 @@ impl ViewportRenderer {
                     batches.into_iter().flat_map(|(_, v)| v).collect();
 
                 if !verts.is_empty() {
-                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("overlay_label_vbuf"),
-                        contents: bytemuck::cast_slice(&verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let vertex_buf =
+                        upload_overlay_vbuf(device, queue, "overlay_label_vbuf", &verts);
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -560,11 +580,8 @@ impl ViewportRenderer {
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
-                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("overlay_scalar_bar_vbuf"),
-                        contents: bytemuck::cast_slice(&verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let vertex_buf =
+                        upload_overlay_vbuf(device, queue, "overlay_scalar_bar_vbuf", &verts);
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -748,11 +765,8 @@ impl ViewportRenderer {
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
-                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("overlay_ruler_vbuf"),
-                        contents: bytemuck::cast_slice(&verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let vertex_buf =
+                        upload_overlay_vbuf(device, queue, "overlay_ruler_vbuf", &verts);
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -883,11 +897,8 @@ impl ViewportRenderer {
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
-                    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("loading_bar_vbuf"),
-                        contents: bytemuck::cast_slice(&verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let vertex_buf =
+                        upload_overlay_vbuf(device, queue, "loading_bar_vbuf", &verts);
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -916,7 +927,12 @@ impl ViewportRenderer {
         }
     }
 
-    pub(super) fn prepare_overlay_shapes(&mut self, device: &wgpu::Device, frame: &FrameData) {
+    pub(super) fn prepare_overlay_shapes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+    ) {
         // ------------------------------------------------------------------
         // SDF overlay shapes
         // ------------------------------------------------------------------
@@ -1487,13 +1503,12 @@ impl ViewportRenderer {
                 }
 
                 let solid_vbuf = if !solid_verts.is_empty() {
-                    Some(
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("overlay_shape_vbuf"),
-                            contents: bytemuck::cast_slice(&solid_verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        }),
-                    )
+                    Some(upload_overlay_vbuf(
+                        device,
+                        queue,
+                        "overlay_shape_vbuf",
+                        &solid_verts,
+                    ))
                 } else {
                     None
                 };
@@ -1528,11 +1543,7 @@ impl ViewportRenderer {
                                 ],
                             });
                             let vertex_buf =
-                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                    label: Some("overlay_shape_tex_vbuf"),
-                                    contents: bytemuck::cast_slice(verts),
-                                    usage: wgpu::BufferUsages::VERTEX,
-                                });
+                                upload_overlay_vbuf(device, queue, "overlay_shape_tex_vbuf", verts);
                             tex_batches.push(crate::resources::OverlayShapeTexBatch {
                                 vertex_buf,
                                 vertex_count: verts.len() as u32,
@@ -1543,13 +1554,12 @@ impl ViewportRenderer {
                 }
 
                 let blur_vbuf = if !blur_verts.is_empty() {
-                    Some(
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("overlay_shape_blur_vbuf"),
-                            contents: bytemuck::cast_slice(&blur_verts),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        }),
-                    )
+                    Some(upload_overlay_vbuf(
+                        device,
+                        queue,
+                        "overlay_shape_blur_vbuf",
+                        &blur_verts,
+                    ))
                 } else {
                     None
                 };
