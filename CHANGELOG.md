@@ -2,9 +2,25 @@
 
 ## [Unreleased changes]
 
+### Features
+
+#### HiZ occlusion culling
+
+An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that skips objects fully hidden behind closer ones, on top of the existing frustum cull, so no time is spent drawing things you cannot see. It reuses the previous frame's depth, so it assumes mostly static occluders (a fast-moving blocker can briefly hide something visible, correcting next frame) and applies to one view at a time. It helps most in dense, front-to-back scenes like a busy street and does little in open views. Per-object cull counts are added to `FrameStats`: `gpu_culled_total`, `gpu_frustum_visible`, and `gpu_visible_instances`.
+
 ### Improvements
 
-Added torus_ellipse and torus_stadium primitives.
+- **New primitives**: `torus_ellipse` and `torus_stadium`.
+
+- **`FrameStats::lod_items_reduced`**: how many objects are drawn at reduced detail this frame because they are far away, so you can confirm distant geometry is actually being simplified rather than everything drawing at full detail.
+
+- **`ViewportRenderer::render_to_texture`**: renders a frame into a texture without blocking to read the result back, for repeated off-screen rendering such as benchmarks or recordings.
+
+### Bug Fixes
+
+#### Per-object meshes ignored their level of detail
+
+Objects drawn outside the instanced batch path always drew at full detail and never dropped out when they shrank into the distance, even though the stats said they should. They now switch to simpler geometry with distance and cull once too small, the same as the rest of the scene.
 
 ## [0.18.3]
 
