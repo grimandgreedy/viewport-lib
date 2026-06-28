@@ -317,11 +317,24 @@ impl ViewportRenderer {
                 self.ts_staging_buf.as_ref(),
             ) {
                 let ts_count = 2 * crate::renderer::GPU_TS_SLOTS;
-                encoder.resolve_query_set(qs, 0..ts_count, res_buf, 0);
-                encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, ts_count as u64 * 8);
-                self.ts_pending_mask = self
+                let written = self
                     .ts_written_mask
                     .load(std::sync::atomic::Ordering::Relaxed);
+                // Resolving a timestamp query no pass wrote this frame is
+                // undefined in Vulkan and corrupts the command stream on some
+                // drivers (NVIDIA Linux). Fill skipped slots so the whole range
+                // is valid; the reader masks by ts_pending_mask.
+                if self.ts_can_fill_gaps {
+                    for slot in 0..crate::renderer::GPU_TS_SLOTS {
+                        if written & (1 << slot) == 0 {
+                            encoder.write_timestamp(qs, slot * 2);
+                            encoder.write_timestamp(qs, slot * 2 + 1);
+                        }
+                    }
+                }
+                encoder.resolve_query_set(qs, 0..ts_count, res_buf, 0);
+                encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, ts_count as u64 * 8);
+                self.ts_pending_mask = written;
                 self.ts_data_ready = true;
             }
         }
