@@ -101,21 +101,7 @@ struct DeferredGpuJob {
 /// a large batch (e.g. a scene's worth of streamed textures) across frames so
 /// a single `process` does not stall the main thread uploading everything at
 /// once.
-///
-/// Override with the `VIEWPORT_UPLOAD_BATCH` environment variable (parsed once)
-/// to A/B the per-frame upload submit rate when diagnosing driver issues; e.g.
-/// `VIEWPORT_UPLOAD_BATCH=1` serialises uploads to one submit per frame.
-fn max_gpu_jobs_per_process() -> usize {
-    use std::sync::OnceLock;
-    static CACHED: OnceLock<usize> = OnceLock::new();
-    *CACHED.get_or_init(|| {
-        std::env::var("VIEWPORT_UPLOAD_BATCH")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|n| *n > 0)
-            .unwrap_or(16)
-    })
-}
+const MAX_GPU_JOBS_PER_PROCESS: usize = 16;
 
 /// Per-job result holder shared between a worker's apply closure and the
 /// matching `upload_result_*` accessor.
@@ -591,7 +577,7 @@ impl JobRunner {
         // Run deferred GPU jobs on this (the device-owning) thread, bounded so
         // a large batch spreads across frames. Each result is sent into the
         // job's channel, picked up by the slot loop below in this same call.
-        let n = self.deferred_gpu.len().min(max_gpu_jobs_per_process());
+        let n = self.deferred_gpu.len().min(MAX_GPU_JOBS_PER_PROCESS);
         for _ in 0..n {
             let Some(job) = self.deferred_gpu.pop_front() else {
                 break;
