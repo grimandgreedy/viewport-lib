@@ -180,7 +180,8 @@ impl ViewportRenderer {
                 &self.compute_filter_results,
                 Some(slot),
                 &self.mesh_uniforms.wireframe_bind_groups,
-                &self.mesh_uniforms.bind_groups
+                &self.mesh_uniforms.bind_groups,
+                &self.prepared_surfaces
             );
             emit_scivis_draw_calls!(
                 &self.resources,
@@ -618,20 +619,23 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) -> wgpu::CommandBuffer {
         let paint_start = std::time::Instant::now();
-        // Read scene items from the surface submission, then extend with the
-        // boundary draws contributed by opaque volume meshes (see the matching
-        // construction in `prepare.rs`).
+        // Take the LOD-resolved surfaces from prepare (level mesh chosen, culled
+        // items hidden), then extend with the boundary draws contributed by
+        // opaque volume meshes (see the matching construction in `prepare.rs`).
+        // Reading the resolved list rather than the raw `frame.scene.surfaces`
+        // is what carries the LOD swap and cull into the HDR scene pass.
         let scene_items_owned: Vec<SceneRenderItem> = {
-            let surfaces = match &frame.scene.surfaces {
-                SurfaceSubmission::Flat(items) => items.as_ref(),
-            };
             let extra = frame
                 .scene
                 .volume_meshes
                 .iter()
                 .filter(|item| item.transparency.is_none())
                 .map(|item| item.to_render_item());
-            surfaces.iter().cloned().chain(extra).collect()
+            self.prepared_surfaces
+                .iter()
+                .cloned()
+                .chain(extra)
+                .collect()
         };
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 

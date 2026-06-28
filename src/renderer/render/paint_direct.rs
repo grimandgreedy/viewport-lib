@@ -21,7 +21,8 @@ impl ViewportRenderer {
             &self.compute_filter_results,
             vp_slot,
             &self.mesh_uniforms.wireframe_bind_groups,
-            &self.mesh_uniforms.bind_groups
+            &self.mesh_uniforms.bind_groups,
+            &self.prepared_surfaces
         );
         emit_scivis_draw_calls!(
             &self.resources,

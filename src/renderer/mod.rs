@@ -370,6 +370,12 @@ pub struct ViewportRenderer {
     compute_filter_results: Vec<crate::resources::ComputeFilterResult>,
     /// State for the non-instanced (per-object) mesh draw path.
     mesh_uniforms: PerObjectState,
+    /// Scene surface items after the per-frame LOD resolve, in submission order
+    /// and length. Filled at the end of `prepare_scene_internal` so the paint
+    /// pass draws the resolved level meshes and skips culled items: without
+    /// this the draw path re-read the raw `frame.scene.surfaces`, discarding
+    /// the LOD level swap and cull for every non-instanced item.
+    prepared_surfaces: Vec<SceneRenderItem>,
     /// Cached shadow state carried across frames.
     shadow: ShadowState,
     /// Current runtime mode controlling internal default behavior.
@@ -624,6 +630,7 @@ impl ViewportRenderer {
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
             mesh_uniforms: PerObjectState::new(),
+            prepared_surfaces: Vec::new(),
             shadow: ShadowState::new(),
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
@@ -2057,7 +2064,8 @@ impl ViewportRenderer {
             &self.compute_filter_results,
             vp_slot,
             &self.mesh_uniforms.wireframe_bind_groups,
-            &self.mesh_uniforms.bind_groups
+            &self.mesh_uniforms.bind_groups,
+            &self.prepared_surfaces
         );
         emit_scivis_draw_calls!(
             &self.resources,

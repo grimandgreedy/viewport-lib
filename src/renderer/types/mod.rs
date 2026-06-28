@@ -151,7 +151,7 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $scene_items:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
@@ -168,10 +168,11 @@ macro_rules! emit_draw_calls {
         // Items routed through the instanced path have None here and use mesh.object_bind_group.
         let per_item_object_bind_groups: &[Option<wgpu::BindGroup>] = $per_item_bgs;
 
-        // Read scene items from the surface submission.
-        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
-            SurfaceSubmission::Flat(items) => items.as_ref(),
-        };
+        // The LOD-resolved surface items from prepare: each item's mesh is the
+        // level chosen for its on-screen size, and culled items are hidden.
+        // Matches `frame.scene.surfaces` in order and length, so the per-object
+        // bind groups (indexed by position) line up unchanged.
+        let scene_items: &[SceneRenderItem] = $scene_items;
 
         render_pass.set_bind_group(0, camera_bg, &[]);
 
