@@ -91,6 +91,7 @@ impl PointShadowPool {
     }
 
     /// Iterate active slots: (slot_index, light_key) pairs touched this frame.
+    #[cfg(test)]
     pub fn active_slots(&self) -> impl Iterator<Item = (u32, LightKey)> + '_ {
         self.slots.iter().enumerate().filter_map(|(i, s)| {
             s.and_then(|slot| {

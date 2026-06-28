@@ -112,6 +112,7 @@ pub use self::types::{
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
+#[allow(deprecated)] // TET_SENTINEL is a deprecated alias kept for downstream compatibility.
 pub use self::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
 };
