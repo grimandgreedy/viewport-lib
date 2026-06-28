@@ -191,11 +191,11 @@ fn parse_params() -> Params {
 /// and deep inside the field, looking down a full axis, to maximise overdraw
 /// (the camera is buried in geometry with ~all layers stacked ahead of it).
 const SEGMENTS: &[&str] = &[
-    "approach",  // outside -> just inside, looking down +X (crosses the occluder wall)
-    "dive",      // push deeper toward the centre
+    "approach",   // outside -> just inside, looking down +X (crosses the occluder wall)
+    "dive",       // push deeper toward the centre
     "deep_creep", // slow crawl through the dense centre (the worst case)
     "pan_inside", // yaw the view across the field from the centre
-    "exit",      // push out the far side, field receding behind
+    "exit",       // push out the far side, field receding behind
 ];
 
 /// Segment label for a frame.
@@ -427,7 +427,7 @@ fn pct(v: &mut [f32], p: f32) -> f32 {
     if v.is_empty() {
         return 0.0;
     }
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v.sort_by(|a, b| a.total_cmp(b));
     let idx = ((p * (v.len() - 1) as f32).round() as usize).min(v.len() - 1);
     v[idx]
 }

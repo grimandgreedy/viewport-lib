@@ -735,9 +735,25 @@ impl ViewportRenderer {
     /// When on, the GPU cull builds a hierarchical-Z depth pyramid from the
     /// previous frame's scene depth and drops instances whose screen-space box
     /// is entirely behind nearer geometry, on top of the frustum test. Off by
-    /// default. The pyramid is one frame stale, so a fast camera cut can briefly
-    /// keep a few instances that just became hidden; nothing visible is culled.
-    /// Has no effect unless GPU-driven culling is also active.
+    /// default. Has no effect unless GPU-driven culling is also active.
+    ///
+    /// The depth source is the previous frame's scene depth reprojected into the
+    /// current camera, so the test is one frame stale and assumes a mostly
+    /// static world. For a static scene (or static occluders) nothing visible is
+    /// culled. With moving or animated occluders, reprojection places last
+    /// frame's occluder depth at its old position and can briefly cull an
+    /// instance that is actually visible this frame; it self-corrects the next
+    /// frame. Treat the "never cull a visible instance" guarantee as holding for
+    /// static occluders only, and leave this off for highly dynamic scenes where
+    /// that pop is unacceptable.
+    ///
+    /// Runs on the HDR path and the owned LDR render path (`render` /
+    /// `render_viewport`), both of which capture scene depth for the
+    /// reprojection. The immediate-mode `paint_to` / `paint_viewport` path does
+    /// not capture depth, so occlusion is a no-op there. Single-viewport only:
+    /// the cull result and HiZ state are shared, not per-view, so with multiple
+    /// viewports on different cameras occlusion can drop geometry that is visible
+    /// in another viewport.
     ///
     /// The breakdown is reported in [`FrameStats`]: `gpu_culled_total`,
     /// `gpu_frustum_visible`, and `gpu_visible_instances` give the per-stage

@@ -4,7 +4,7 @@
 //! resource APIs. Requires a GPU adapter (software or hardware).
 
 use viewport_lib::{
-    Camera, Material, MeshId, Scene, Selection,
+    BackfacePolicy, Camera, Material, MeshId, Scene, Selection,
     error::ViewportError,
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
@@ -637,5 +637,84 @@ fn occlusion_culling_ldr_path_runs() {
     assert!(
         last_pixels.iter().any(|&b| b != 0),
         "LDR occlusion render produced an all-zero image",
+    );
+}
+
+/// Regression test for the per-object LOD draw path: a LOD item that is culled
+/// (below its group's `cull_below` size) must actually be skipped by the paint
+/// pass, not just by the stats. The bug was that LOD resolve mutated a throwaway
+/// copy while the per-object draw re-read the raw `frame.scene.surfaces`, so a
+/// culled non-instanced item still drew at full detail. A `DifferentColour`
+/// back-face policy forces the item onto the per-object path (the path the fix
+/// targets). A culled item must render identically to an empty scene.
+#[test]
+fn lod_culled_per_object_item_is_not_drawn() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let full = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let crude = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let group = renderer
+        .resources_mut()
+        .register_lod_group(&[full, crude], &[0.5, 0.0])
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.post_process.enabled = true;
+
+    // A single non-instanced (per-object) LOD item filling the view centre. The
+    // DifferentColour back-face policy is what forces it onto the per-object path.
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = full;
+    item.lod_group = Some(group);
+    item.material.backface_policy = BackfacePolicy::DifferentColour([1.0, 0.2, 0.2]);
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+
+    // Empty scene baseline.
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    let empty = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // cull_below defaults to None, so the item draws.
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let drawn = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        drawn, empty,
+        "control: the per-object LOD item should be drawn when not culled",
+    );
+
+    // Force the item below the cull size: it must now contribute nothing.
+    renderer
+        .resources_mut()
+        .set_lod_cull_below(group, Some(100.0))
+        .unwrap();
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let culled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(
+        culled, empty,
+        "a culled per-object LOD item must be skipped in the paint pass",
     );
 }

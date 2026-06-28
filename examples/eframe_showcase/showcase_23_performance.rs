@@ -250,6 +250,12 @@ pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
         ui.label(culling_label);
     });
     ui.checkbox(&mut app.perf_state.gpu_culling, "Enable GPU-driven culling");
+    // Occlusion is meaningless without GPU culling; clear it when culling is off
+    // so the HDR-on gate downstream does not keep the post pipeline alive and
+    // contaminate the culling-off comparison.
+    if !app.perf_state.gpu_culling {
+        app.perf_state.occlusion_culling = false;
+    }
     ui.add_enabled(
         app.perf_state.gpu_culling,
         egui::Checkbox::new(
