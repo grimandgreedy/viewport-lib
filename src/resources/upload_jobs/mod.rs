@@ -77,6 +77,32 @@ impl ProgressHandle {
 /// built textures, buffers, and bind groups into `ViewportGpuResources`.
 pub type ApplyFn = Box<dyn FnOnce(&mut super::ViewportGpuResources) + Send>;
 
+/// Boxed GPU-submitting work for a `submit_with_gpu` job.
+///
+/// Unlike CPU jobs, this runs on the main thread inside `process`, not on a
+/// rayon worker: some drivers (notably the NVIDIA Linux Vulkan driver)
+/// corrupt the command pushbuffer (NVRM Xid 32, surfacing as a lost device)
+/// when GPU commands are submitted from a thread other than the one driving
+/// the device. CPU-side preparation still belongs on worker threads via
+/// `submit_cpu`; only the GPU calls are funnelled here.
+type GpuWorkFn = Box<
+    dyn FnOnce(&wgpu::Device, &wgpu::Queue, &ProgressHandle) -> Result<JobProduct, ViewportError>
+        + Send,
+>;
+
+/// A `submit_with_gpu` job awaiting execution on the main thread.
+struct DeferredGpuJob {
+    work: GpuWorkFn,
+    progress: ProgressHandle,
+    tx: mpsc::Sender<WorkerOutcome>,
+}
+
+/// Maximum number of deferred GPU jobs run per `process` call. The cap spreads
+/// a large batch (e.g. a scene's worth of streamed textures) across frames so
+/// a single `process` does not stall the main thread uploading everything at
+/// once.
+const MAX_GPU_JOBS_PER_PROCESS: usize = 16;
+
 /// Per-job result holder shared between a worker's apply closure and the
 /// matching `upload_result_*` accessor.
 ///
@@ -291,6 +317,9 @@ pub struct JobRunner {
     /// until `drop_duration` is called so consumers have at least one frame
     /// to read the result.
     durations: HashMap<u64, Duration>,
+    /// GPU-submitting jobs deferred to run on the main thread during
+    /// `process`. See [`GpuWorkFn`] for why these must not run on a worker.
+    deferred_gpu: VecDeque<DeferredGpuJob>,
 }
 
 /// Entry on the `pending_apply` queue.
@@ -331,6 +360,7 @@ impl JobRunner {
             pending_apply: VecDeque::new(),
             finished: HashMap::new(),
             durations: HashMap::new(),
+            deferred_gpu: VecDeque::new(),
         }
     }
 
@@ -428,25 +458,17 @@ impl JobRunner {
     {
         let id = self.issue_id();
         let progress = ProgressHandle::new();
-        let worker_progress = progress.clone();
         let (tx, rx) = mpsc::channel();
-        let device = device.clone();
-        let queue = queue.clone();
-
-        rayon::spawn(move || {
-            let t0 = Instant::now();
-            let outcome =
-                match catch_unwind(AssertUnwindSafe(|| work(&device, &queue, &worker_progress))) {
-                    Ok(Ok(product)) => WorkerOutcome::Done(product, t0.elapsed()),
-                    Ok(Err(e)) => WorkerOutcome::Failed(e, t0.elapsed()),
-                    Err(_) => WorkerOutcome::Failed(
-                        ViewportError::JobWorkerLost {
-                            reason: "worker panicked",
-                        },
-                        t0.elapsed(),
-                    ),
-                };
-            let _ = tx.send(outcome);
+        // GPU submission is deferred to the main thread (run in `process`)
+        // rather than spawned on a rayon worker: submitting from a non-device
+        // thread corrupts the pushbuffer on some drivers. The `device` and
+        // `queue` arguments are unused here for the same reason; `process`
+        // supplies them when the work runs.
+        let _ = (device, queue);
+        self.deferred_gpu.push_back(DeferredGpuJob {
+            work: Box::new(work),
+            progress: progress.clone(),
+            tx,
         });
 
         self.slots.insert(
@@ -547,10 +569,34 @@ impl JobRunner {
     /// (only when `status` is `Ready`), then invoke the registered
     /// `callback` if present. Splitting these out lets the caller drop any
     /// external lock around the runner before mutating renderer state.
-    pub fn process(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) -> Vec<Completion> {
+    pub fn process(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<Completion> {
         // Drop the previous frame's retention window. Callers that needed
         // those results have already taken them.
         self.finished.clear();
+
+        // Run deferred GPU jobs on this (the device-owning) thread, bounded so
+        // a large batch spreads across frames. Each result is sent into the
+        // job's channel, picked up by the slot loop below in this same call.
+        let n = self.deferred_gpu.len().min(MAX_GPU_JOBS_PER_PROCESS);
+        for _ in 0..n {
+            let Some(job) = self.deferred_gpu.pop_front() else {
+                break;
+            };
+            let t0 = Instant::now();
+            let outcome = match catch_unwind(AssertUnwindSafe(|| {
+                (job.work)(device, queue, &job.progress)
+            })) {
+                Ok(Ok(product)) => WorkerOutcome::Done(product, t0.elapsed()),
+                Ok(Err(e)) => WorkerOutcome::Failed(e, t0.elapsed()),
+                Err(_) => WorkerOutcome::Failed(
+                    ViewportError::JobWorkerLost {
+                        reason: "gpu job panicked",
+                    },
+                    t0.elapsed(),
+                ),
+            };
+            let _ = job.tx.send(outcome);
+        }
 
         // Advance internal wgpu state so completed submissions are visible
         // to the per-submission wait below.
