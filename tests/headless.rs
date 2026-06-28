@@ -572,3 +572,70 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
         let _ = renderer.render_offscreen(&device, &queue, &frame, dim, dim);
     }
 }
+
+/// Occlusion culling must run on the LDR path too, not just HDR. With
+/// post-processing off, the scene renders through `render_frame_ldr`, which now
+/// keeps the scene depth and copies it into the HiZ prev-depth target. This
+/// exercises that store path (sampling the LDR depth target, which required
+/// adding TEXTURE_BINDING + a depth-only view) across several moving-camera
+/// frames; a no-panic run with non-zero output is the pass.
+#[test]
+fn occlusion_culling_ldr_path_runs() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    renderer.set_occlusion_culling(true);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    // LDR path: post-processing OFF (this is the path the fix targets).
+    frame.effects.post_process.enabled = false;
+
+    let mut items = Vec::new();
+    for i in 0..8 {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_idx;
+        let z = -(i as f32) * 1.5;
+        let s = if i == 0 { 4.0 } else { 1.0 };
+        item.model = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, z))
+            * glam::Mat4::from_scale(glam::Vec3::splat(s)))
+        .to_cols_array_2d();
+        items.push(item);
+    }
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+
+    let base_view = frame.camera.render_camera.view;
+    let mut last_pixels = Vec::new();
+    for i in 0..4 {
+        let nudge = glam::Mat4::from_translation(glam::Vec3::new(0.05 * i as f32, 0.0, 0.0));
+        frame.camera.render_camera.view = base_view * nudge;
+        last_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    }
+    assert_eq!(last_pixels.len(), 64 * 64 * 4);
+    assert!(
+        last_pixels.iter().any(|&b| b != 0),
+        "LDR occlusion render produced an all-zero image",
+    );
+}

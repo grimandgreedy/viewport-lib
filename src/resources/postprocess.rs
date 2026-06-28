@@ -2046,11 +2046,17 @@ impl ViewportGpuResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth24PlusStencil8,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // TEXTURE_BINDING so the HiZ occlusion prev-depth copy can sample the
+            // LDR scene depth (the LDR path renders into this target).
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let outline_depth_view =
             outline_depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let outline_depth_only_view = outline_depth_tex.create_view(&wgpu::TextureViewDescriptor {
+            aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        });
 
         // Uniform buffers
         let tone_map_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2827,6 +2833,7 @@ impl ViewportGpuResources {
             outline_colour_view,
             outline_depth_texture: outline_depth_tex,
             outline_depth_view,
+            outline_depth_only_view,
             outline_edge_bind_group,
             outline_edge_uniform_buf,
             outline_composite_bind_group,

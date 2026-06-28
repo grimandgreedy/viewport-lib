@@ -18,6 +18,8 @@ pub(crate) struct DynResTarget {
     pub _depth_texture: wgpu::Texture,
     /// View of `depth_texture`.
     pub depth_view: wgpu::TextureView,
+    /// Depth-aspect view for sampling (HiZ occlusion prev-depth copy).
+    pub depth_only_view: wgpu::TextureView,
     /// Bind group for the upscale pass: colour_texture + linear sampler.
     pub upscale_bind_group: wgpu::BindGroup,
     /// Dimensions of the intermediate target `[w, h]`.
@@ -216,10 +218,15 @@ impl ViewportGpuResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth24PlusStencil8,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // TEXTURE_BINDING so the HiZ occlusion prev-depth copy can sample it.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_only_view = depth_texture.create_view(&wgpu::TextureViewDescriptor {
+            aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        });
 
         let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
         let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
@@ -243,6 +250,7 @@ impl ViewportGpuResources {
             colour_view,
             _depth_texture: depth_texture,
             depth_view,
+            depth_only_view,
             upscale_bind_group,
             scaled_size,
             surface_size,

@@ -39,6 +39,11 @@ impl ViewportRenderer {
             self.ensure_backdrop_blur_state(device, w.max(1), h.max(1));
         }
 
+        // When occlusion culling is on, keep the scene depth (instead of
+        // discarding it) so it can be copied into the HiZ prev-depth target for
+        // next frame's reprojection. The copy happens after the scene pass below.
+        let store_scene_depth = self.resources.occlusion_culling_enabled();
+
         {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot
@@ -89,7 +94,11 @@ impl ViewportRenderer {
                     view: scene_depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                        store: if store_scene_depth {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
                     }),
                     stencil_ops: None,
                 }),
@@ -205,6 +214,33 @@ impl ViewportRenderer {
             }
         }
         // -- End of scene render pass (dropped above). ---
+
+        // Copy the scene depth just written into the HiZ prev-depth target so
+        // next frame's occlusion cull can reproject it. Mirrors the HDR path's
+        // store at the end of `hdr_scene_pass`; without it, occlusion culling is
+        // a silent no-op on the LDR path. Only when occlusion is enabled (the
+        // depth was kept via `store_scene_depth`). `self.viewport_slots` and
+        // `self.resources` are disjoint fields, so both borrows coexist.
+        if store_scene_depth {
+            let view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
+            let slot = &self.viewport_slots[vp_idx];
+            let (depth_only_view, dw, dh) = if use_dyn_res {
+                let dr = slot.dyn_res.as_ref().unwrap();
+                (&dr.depth_only_view, dr.scaled_size[0], dr.scaled_size[1])
+            } else {
+                let slot_hdr = slot.hdr.as_ref().unwrap();
+                let tex = &slot_hdr.outline_depth_texture;
+                (&slot_hdr.outline_depth_only_view, tex.width(), tex.height())
+            };
+            self.resources.store_hiz_prev_depth(
+                device,
+                &mut encoder,
+                depth_only_view,
+                dw,
+                dh,
+                view_proj,
+            );
+        }
 
         // Backdrop blur: capture scene, run blur, then draw overlays in a
         // second render pass so blur shapes can sample the blurred result.

@@ -2358,6 +2358,9 @@ pub(crate) struct ViewportHdrState {
     pub outline_colour_view: wgpu::TextureView,
     pub outline_depth_texture: wgpu::Texture,
     pub outline_depth_view: wgpu::TextureView,
+    /// Depth-aspect view of `outline_depth_texture` for sampling (the HiZ
+    /// occlusion prev-depth copy on the LDR path).
+    pub outline_depth_only_view: wgpu::TextureView,
     /// Bind group for the edge-detection pass (reads mask, writes to colour).
     pub outline_edge_bind_group: wgpu::BindGroup,
     /// Uniform buffer for the edge-detection pass parameters.
