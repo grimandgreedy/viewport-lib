@@ -7,22 +7,24 @@ use std::collections::HashMap;
 
 /// Stable key for a cached per-object draw resource.
 ///
-/// A pickable object (`pick_id != PickId::NONE`) is keyed on its `pick_id`, so
-/// the cache survives the host reordering or rebuilding the item list each
-/// frame: a static object keeps its uniform buffer and bind group instead of
-/// rebuilding every frame.
+/// The key is the item's `pick_id` plus an `occurrence` counter that
+/// distinguishes items sharing the same `pick_id` within one frame. A single
+/// pickable object keys on `(pick_id, 0)`, so the cache survives the host
+/// reordering or rebuilding the item list each frame: a static object keeps its
+/// uniform buffer and bind group instead of rebuilding every frame.
 ///
-/// `PickId::NONE` is the default and is shared by every non-pickable item, so it
-/// cannot identify an object. Those items fall back to their index in the
-/// frame's item list. The two forms live in disjoint key spaces because a
-/// pickable key always has a non-zero `pick_id` while a fallback key always has
-/// a zero `pick_id`, so they never collide.
+/// `occurrence` is what makes the key correct when several render items share a
+/// `pick_id`: every non-pickable item defaults to `PickId::NONE`, and one
+/// logical object can be drawn by more than one item (for example a volume mesh
+/// submitted both as a coloured boundary surface and as a pickable cell mesh).
+/// Without `occurrence` those items would collide on one cache entry, share a
+/// uniform buffer, and all draw with the last item's transform and material.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum PerObjectKey {
-    /// Pickable object keyed on its non-zero `pick_id`.
-    Pickable(u64),
-    /// Non-pickable object keyed on its slot in the frame's item list.
-    Index(usize),
+pub(crate) struct PerObjectKey {
+    /// The item's `pick_id` (0 == `PickId::NONE`).
+    pub(crate) pick_id: u64,
+    /// How many earlier items this frame shared the same `pick_id`.
+    pub(crate) occurrence: u32,
 }
 
 /// One cached per-object draw resource.

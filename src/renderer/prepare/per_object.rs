@@ -54,6 +54,12 @@ impl ViewportRenderer {
             for slot in mesh_uniforms.bind_groups.iter_mut() {
                 *slot = None;
             }
+            // Counts how many per-object items this frame have shared each
+            // pick_id, so items with a duplicate pick_id (or the shared
+            // PickId::NONE default) get distinct cache entries instead of
+            // stomping one another's uniform buffer.
+            let mut pick_occurrences: std::collections::HashMap<u64, u32> =
+                std::collections::HashMap::new();
             for (item_idx, item) in scene_items.iter().enumerate() {
                 // When instancing is active, skip items that will be rendered
                 // via the instanced path. They don't need per-object uniform
@@ -303,19 +309,26 @@ impl ViewportRenderer {
                 // by whichever item wrote last, so the per-object cache guarantees
                 // each item draws with its own transform/material.
                 //
-                // Pickable items key on their pick_id so the cache survives the
-                // host reordering the item list. Non-pickable items all share
-                // PickId::NONE, which cannot identify an object, so they key on
-                // their item index instead (rebuilt on reorder, but correct).
-                // Keying every item on pick_id would collide all NONE items onto
-                // one entry, making them share a uniform buffer and draw with the
-                // last item's material.
+                // The cache key is pick_id plus an occurrence counter. A single
+                // pickable object keys on (pick_id, 0) so the entry survives the
+                // host reordering the item list. The occurrence disambiguates
+                // items that share a pick_id: every non-pickable item defaults to
+                // PickId::NONE, and one object can be drawn by several items (such
+                // as a volume mesh submitted as both a coloured surface and a
+                // pickable cell mesh). Without it they would collide on one entry
+                // and all draw with the last item's transform and material.
                 {
                     use crate::renderer::per_object_state::PerObjectKey;
-                    let key = if item.settings.pick_id == crate::renderer::PickId::NONE {
-                        PerObjectKey::Index(item_idx)
-                    } else {
-                        PerObjectKey::Pickable(item.settings.pick_id.0)
+                    let pick = item.settings.pick_id.0;
+                    let occurrence = {
+                        let counter = pick_occurrences.entry(pick).or_insert(0);
+                        let n = *counter;
+                        *counter += 1;
+                        n
+                    };
+                    let key = PerObjectKey {
+                        pick_id: pick,
+                        occurrence,
                     };
                     let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
                     let entry = mesh_uniforms.cache.entry(key).or_insert_with(|| {
