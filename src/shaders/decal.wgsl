@@ -21,6 +21,12 @@ struct Camera {
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 
+// Scene lights, shared with the opaque pass (same group 0 layout). Used so the
+// decal is lit by the real scene light direction rather than the camera view
+// direction, which made decals brighten and darken as the camera moved.
+// #include "scene_lighting.wgsl"
+@group(0) @binding(3) var<uniform> lights_uniform: Lights;
+
 // Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).
 @group(1) @binding(0) var scene_depth:   texture_depth_2d;
 // Scene stencil written by the opaque pass (stencil-only aspect, Depth24PlusStencil8).
@@ -84,6 +90,21 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     out.clip_pos = vec4<f32>(x, y, 0.0, 1.0);
     out.ndc_xy   = vec2<f32>(x, y);
     return out;
+}
+
+// Direction from `world` toward the primary scene light (index 0). Directional
+// lights use their fixed direction; point / spot lights point at the fragment.
+// Falls back to world up when no lights are present so the relief shading stays
+// stable and view-independent.
+fn primary_light_dir(world: vec3<f32>) -> vec3<f32> {
+    if lights_uniform.count == 0u {
+        return vec3<f32>(0.0, 0.0, 1.0);
+    }
+    let l = lights_storage[0];
+    if l.light_type == 0u {
+        return normalize(l.pos_or_dir);
+    }
+    return normalize(l.pos_or_dir - world);
 }
 
 @fragment
@@ -239,10 +260,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var out_rgb = tex_col.rgb;
 
-    // D2: Normal map shading perturbation.
-    // Approximates the receiver normal from world-position screen derivatives,
-    // applies the decal's tangent-space normal map, and scales the output colour
-    // by the ratio of new-to-old N.V to mimic the change in surface lighting.
+    // Perturbed shading normal: the receiver normal bent by the decal normal
+    // map when one is bound, else the receiver normal itself.
+    var N_final = N_recv;
     if u.has_normal != 0u {
         // Derive the decal's world-space tangent frame from inv_transform.
         // Row i of inv_transform is proportional to world-space decal axis i
@@ -259,20 +279,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let N_decal = normalize(decal_T * nmap.x + decal_B * nmap.y + N_recv * nmap.z);
 
         // Blend between receiver normal and decal normal.
-        let N_final = normalize(mix(N_recv, N_decal, u.normal_blend_strength));
-
-        // Modulate output colour by the ratio of N.V terms so the decal reads
-        // as a lit surface indent/emboss rather than a flat sticker.
-        // View direction serves as a proxy for the dominant scene light.
-        let old_nv = max(dot(N_recv,  view_dir), 0.05);
-        let new_nv = max(dot(N_final, view_dir), 0.05);
-        out_rgb = out_rgb * clamp(new_nv / old_nv, 0.0, 4.0);
+        N_final = normalize(mix(N_recv, N_decal, u.normal_blend_strength));
     }
 
-    // D3: Roughness and metallic specular approximation.
-    // Accurate PBR requires scene light data that is unavailable post-opaque.
-    // This uses N.V as a retroreflection proxy: at low roughness a tight highlight
-    // appears at near-normal incidence; metallic tints the highlight by albedo.
+    // D2: Normal map shading perturbation.
+    // Modulate the decal colour by the change in diffuse response the normal map
+    // produces under the primary scene light: the ratio of new-to-old N.L. This
+    // reads as a lit indent/emboss instead of a flat sticker. Driven by the real
+    // light direction (not the camera), so it does not change as the camera
+    // moves. Clamped to a modest range so strong normal maps cannot drive the
+    // decal to black or blow it out.
+    if u.has_normal != 0u {
+        let L = primary_light_dir(world);
+        let old_nl = max(dot(N_recv,  L), 0.1);
+        let new_nl = max(dot(N_final, L), 0.1);
+        out_rgb = out_rgb * clamp(new_nl / old_nl, 0.5, 1.6);
+    }
+
+    // D3: Roughness and metallic specular highlight.
+    // Blinn-Phong against the primary scene light: the highlight sits where the
+    // half-vector aligns with the surface, gated by N.L so it never appears on
+    // the unlit side. Skipped for matte decals (gloss ~ 0).
     let roughness_val = select(u.roughness,
                                textureSample(roughness_tex, decal_samp, uv).r,
                                u.has_roughness_tex != 0u);
@@ -282,10 +309,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let gloss = 1.0 - roughness_val;
     if gloss > 0.01 {
-        let NoV = max(dot(N_recv, view_dir), 0.0);
+        let L   = primary_light_dir(world);
+        let H   = normalize(L + view_dir);
+        let NoH = max(dot(N_final, H), 0.0);
+        let NoL = max(dot(N_final, L), 0.0);
         // Phong exponent: increases quadratically with gloss for tight highlights.
         let spec_exp       = max(gloss * gloss * 128.0, 1.0);
-        let spec_intensity = pow(NoV, spec_exp) * gloss;
+        let spec_intensity = pow(NoH, spec_exp) * gloss * NoL;
         // Dielectric: white highlight. Metal: highlight tinted by albedo colour.
         let spec_color = mix(vec3<f32>(0.95), out_rgb, metallic_val);
         out_rgb = out_rgb + spec_color * spec_intensity;
