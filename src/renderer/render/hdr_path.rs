@@ -20,6 +20,54 @@ struct HdrFrameCtx<'a> {
     hdr_clear_rgb: [f32; 3],
 }
 
+/// Screen-space scissor for one decal's fullscreen quad.
+enum DecalScissor {
+    /// The decal projects entirely off screen: skip the draw.
+    Skip,
+    /// A box corner is at or behind the near plane (camera inside/straddling
+    /// the decal), so the screen bound is unreliable: use the full framebuffer.
+    Full,
+    /// Tight scissor rect (x, y, w, h) in framebuffer pixels.
+    Rect(u32, u32, u32, u32),
+}
+
+/// Project the decal's unit-cube corners and return a scissor rect bounding
+/// their screen extent. The decal fragment shader still runs a fullscreen quad,
+/// but the scissor confines rasterization to the decal's actual footprint,
+/// removing the per-decal fullscreen overdraw. `vp_w`/`vp_h` are the decal-pass
+/// target dimensions.
+fn decal_scissor(model: &glam::Mat4, view_proj: &glam::Mat4, vp_w: u32, vp_h: u32) -> DecalScissor {
+    let mvp = *view_proj * *model;
+    let mut min = glam::Vec2::splat(f32::MAX);
+    let mut max = glam::Vec2::splat(f32::MIN);
+    for cz in [-0.5f32, 0.5] {
+        for cy in [-0.5f32, 0.5] {
+            for cx in [-0.5f32, 0.5] {
+                let clip = mvp * glam::Vec4::new(cx, cy, cz, 1.0);
+                if clip.w <= 1e-4 {
+                    return DecalScissor::Full;
+                }
+                let ndc = glam::Vec2::new(clip.x / clip.w, clip.y / clip.w);
+                min = min.min(ndc);
+                max = max.max(ndc);
+            }
+        }
+    }
+    // NDC (y up) -> framebuffer pixels (y down), clamped to the target.
+    let (fw, fh) = (vp_w as f32, vp_h as f32);
+    let x0 = ((min.x * 0.5 + 0.5) * fw).floor().clamp(0.0, fw);
+    let x1 = ((max.x * 0.5 + 0.5) * fw).ceil().clamp(0.0, fw);
+    let y0 = ((0.5 - max.y * 0.5) * fh).floor().clamp(0.0, fh);
+    let y1 = ((0.5 - min.y * 0.5) * fh).ceil().clamp(0.0, fh);
+    let w = (x1 - x0) as u32;
+    let h = (y1 - y0) as u32;
+    if w == 0 || h == 0 {
+        DecalScissor::Skip
+    } else {
+        DecalScissor::Rect(x0 as u32, y0 as u32, w, h)
+    }
+}
+
 impl ViewportRenderer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_frame_hdr(
@@ -1613,6 +1661,7 @@ impl ViewportRenderer {
                 });
                 pass.set_bind_group(0, camera_bg, &[]);
                 pass.set_bind_group(1, depth_bg, &[]);
+                let view_proj = ctx.frame.camera.render_camera.view_proj();
                 for gpu in &self.decal_gpu_data {
                     let pipeline = match gpu.blend_mode {
                         crate::renderer::DecalBlendMode::Replace => replace_pipeline,
@@ -1620,6 +1669,13 @@ impl ViewportRenderer {
                         crate::renderer::DecalBlendMode::Additive => additive_pipeline,
                     };
                     if let Some(pl) = pipeline {
+                        // Confine each decal's fullscreen quad to its screen
+                        // footprint to avoid 173x fullscreen overdraw.
+                        match decal_scissor(&gpu.model, &view_proj, ctx.w, ctx.h) {
+                            DecalScissor::Skip => continue,
+                            DecalScissor::Full => pass.set_scissor_rect(0, 0, ctx.w, ctx.h),
+                            DecalScissor::Rect(x, y, w, h) => pass.set_scissor_rect(x, y, w, h),
+                        }
                         pass.set_pipeline(&pl.hdr);
                         pass.set_bind_group(2, &gpu.bind_group, &[]);
                         pass.draw(0..6, 0..1);
@@ -3307,5 +3363,58 @@ impl ViewportRenderer {
             }
             emit_overlay_2d!(self, overlay_pass);
         }
+    }
+}
+
+#[cfg(test)]
+mod decal_scissor_tests {
+    use super::{DecalScissor, decal_scissor};
+    use glam::{Mat4, Vec3};
+
+    fn view_proj() -> Mat4 {
+        let proj = Mat4::perspective_rh(60f32.to_radians(), 16.0 / 9.0, 0.1, 1000.0);
+        // Z-up camera 10 units back on -Y, looking at the origin.
+        let view = Mat4::look_at_rh(Vec3::new(0.0, -10.0, 2.0), Vec3::ZERO, Vec3::Z);
+        proj * view
+    }
+
+    #[test]
+    fn centered_box_yields_subrect() {
+        let model = Mat4::from_scale(Vec3::splat(1.0));
+        match decal_scissor(&model, &view_proj(), 1920, 1080) {
+            DecalScissor::Rect(x, y, w, h) => {
+                assert!(w > 0 && h > 0);
+                assert!(
+                    w < 1920 && h < 1080,
+                    "small distant box should not fill the screen"
+                );
+                assert!(
+                    x + w <= 1920 && y + h <= 1080,
+                    "rect must stay within the target"
+                );
+            }
+            _ => panic!("expected a sub-rect for a centered box"),
+        }
+    }
+
+    #[test]
+    fn far_offscreen_box_skips() {
+        // Far off to the +X side but still in front of the camera.
+        let model = Mat4::from_translation(Vec3::new(500.0, 100.0, 0.0));
+        assert!(matches!(
+            decal_scissor(&model, &view_proj(), 1920, 1080),
+            DecalScissor::Skip
+        ));
+    }
+
+    #[test]
+    fn box_enclosing_camera_falls_back_to_full() {
+        // A large box centred on the camera puts a corner behind the near plane.
+        let model =
+            Mat4::from_translation(Vec3::new(0.0, -10.0, 2.0)) * Mat4::from_scale(Vec3::splat(4.0));
+        assert!(matches!(
+            decal_scissor(&model, &view_proj(), 1920, 1080),
+            DecalScissor::Full
+        ));
     }
 }

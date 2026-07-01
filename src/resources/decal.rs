@@ -44,6 +44,10 @@ pub(crate) struct DecalGpuItem {
     pub blend_mode: crate::renderer::DecalBlendMode,
     pub _uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
+    /// Decal model matrix (local-space unit cube -> world). Used at draw time
+    /// to compute a per-decal scissor rect so the fullscreen decal quad only
+    /// shades the decal's screen footprint instead of the whole framebuffer.
+    pub model: glam::Mat4,
 }
 
 /// Per-draw GPU data for one non-receiver surface in the decal exclude pass (D5).
@@ -373,6 +377,7 @@ impl ViewportGpuResources {
             blend_mode: item.blend_mode,
             _uniform_buf: uniform_buf,
             bind_group,
+            model,
         }
     }
 
