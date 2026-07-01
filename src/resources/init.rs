@@ -1730,7 +1730,9 @@ impl ViewportGpuResources {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            // Trilinear: material textures are uploaded with a full mip chain,
+            // so blend between mip levels instead of snapping to the nearest.
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 

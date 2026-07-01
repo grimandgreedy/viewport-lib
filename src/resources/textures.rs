@@ -182,6 +182,10 @@ impl ViewportGpuResources {
                     TextureAsyncLabel::Albedo => "async_user_texture",
                     TextureAsyncLabel::NormalMap => "async_normal_map_texture",
                 };
+                // Full mip chain, box-filtered on this worker thread. sRGB
+                // albedo is averaged in linear space; normal maps are linear.
+                let is_srgb = matches!(label, TextureAsyncLabel::Albedo);
+                let mips = build_mip_chain(rgba, width, height, is_srgb);
                 let texture = dev.create_texture(&wgpu::TextureDescriptor {
                     label: Some(tex_label),
                     size: wgpu::Extent3d {
@@ -189,32 +193,34 @@ impl ViewportGpuResources {
                         height,
                         depth_or_array_layers: 1,
                     },
-                    mip_level_count: 1,
+                    mip_level_count: mips.len() as u32,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 });
-                q.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &rgba,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(width * 4),
-                        rows_per_image: Some(height),
-                    },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                );
+                for (level, (mw, mh, data)) in mips.iter().enumerate() {
+                    q.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &texture,
+                            mip_level: level as u32,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        data,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(mw * 4),
+                            rows_per_image: Some(*mh),
+                        },
+                        wgpu::Extent3d {
+                            width: *mw,
+                            height: *mh,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
                 progress.set(0.7);
 
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -228,7 +234,7 @@ impl ViewportGpuResources {
                     address_mode_v: wgpu::AddressMode::Repeat,
                     mag_filter: wgpu::FilterMode::Linear,
                     min_filter: wgpu::FilterMode::Linear,
-                    mipmap_filter: wgpu::FilterMode::Nearest,
+                    mipmap_filter: wgpu::FilterMode::Linear,
                     ..Default::default()
                 });
                 // Bind-group entries differ between albedo and normal map:
@@ -325,6 +331,82 @@ impl ViewportGpuResources {
 enum TextureAsyncLabel {
     Albedo,
     NormalMap,
+}
+
+/// Number of mip levels for a 2D texture, down to 1x1.
+fn mip_level_count(width: u32, height: u32) -> u32 {
+    32 - width.max(height).max(1).leading_zeros()
+}
+
+#[inline]
+fn srgb_to_linear(c: u8) -> f32 {
+    let s = c as f32 / 255.0;
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+#[inline]
+fn linear_to_srgb(l: f32) -> u8 {
+    let s = if l <= 0.0031308 {
+        l * 12.92
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    };
+    (s.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+/// Box-filter the full mip chain (level 0 included) for an RGBA8 texture.
+/// `srgb` selects gamma-correct averaging for the colour channels; alpha is
+/// always averaged linearly. Odd dimensions clamp the 2x2 source block to the
+/// edge. Runs on the upload worker thread, so its cost is one-time at load.
+fn build_mip_chain(
+    level0: Vec<u8>,
+    width: u32,
+    height: u32,
+    srgb: bool,
+) -> Vec<(u32, u32, Vec<u8>)> {
+    let levels = mip_level_count(width, height);
+    let mut chain: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(levels as usize);
+    chain.push((width, height, level0));
+    for _ in 1..levels {
+        let (nw, nh, dst) = {
+            let (pw, ph, prev) = {
+                let last = chain.last().expect("chain seeded with level 0");
+                (last.0, last.1, &last.2)
+            };
+            let nw = (pw / 2).max(1);
+            let nh = (ph / 2).max(1);
+            let mut dst = vec![0u8; (nw * nh * 4) as usize];
+            for y in 0..nh {
+                for x in 0..nw {
+                    let sx0 = (2 * x).min(pw - 1);
+                    let sx1 = (2 * x + 1).min(pw - 1);
+                    let sy0 = (2 * y).min(ph - 1);
+                    let sy1 = (2 * y + 1).min(ph - 1);
+                    let at = |sx: u32, sy: u32| ((sy * pw + sx) * 4) as usize;
+                    let taps = [at(sx0, sy0), at(sx1, sy0), at(sx0, sy1), at(sx1, sy1)];
+                    let d = (y * nw + x) as usize * 4;
+                    for ch in 0..3 {
+                        if srgb {
+                            let sum: f32 = taps.iter().map(|&t| srgb_to_linear(prev[t + ch])).sum();
+                            dst[d + ch] = linear_to_srgb(sum / 4.0);
+                        } else {
+                            let sum: u32 = taps.iter().map(|&t| prev[t + ch] as u32).sum();
+                            dst[d + ch] = ((sum + 2) / 4) as u8;
+                        }
+                    }
+                    let asum: u32 = taps.iter().map(|&t| prev[t + 3] as u32).sum();
+                    dst[d + 3] = ((asum + 2) / 4) as u8;
+                }
+            }
+            (nw, nh, dst)
+        };
+        chain.push((nw, nh, dst));
+    }
+    chain
 }
 
 impl ViewportGpuResources {
@@ -1213,5 +1295,39 @@ mod async_texture_tests {
             .upload_texture(&device, &queue, 4, 4, &rgba)
             .unwrap();
         assert_eq!(tex_id, 0);
+    }
+
+    #[test]
+    fn mip_level_count_matches_log2() {
+        assert_eq!(super::mip_level_count(1, 1), 1);
+        assert_eq!(super::mip_level_count(4, 4), 3); // 4,2,1
+        assert_eq!(super::mip_level_count(8, 2), 4); // max dim 8 -> 8,4,2,1
+        assert_eq!(super::mip_level_count(1024, 1024), 11);
+    }
+
+    #[test]
+    fn mip_chain_dims_shrink_to_1x1() {
+        let level0 = vec![128u8; 8 * 2 * 4];
+        let chain = super::build_mip_chain(level0, 8, 2, false);
+        let dims: Vec<(u32, u32)> = chain.iter().map(|(w, h, _)| (*w, *h)).collect();
+        assert_eq!(dims, vec![(8, 2), (4, 1), (2, 1), (1, 1)]);
+        for (w, h, data) in &chain {
+            assert_eq!(data.len(), (w * h * 4) as usize);
+        }
+    }
+
+    #[test]
+    fn mip_chain_preserves_solid_colour() {
+        // A solid colour must survive box-filtering to the 1x1 level. sRGB
+        // averaging round-trips within rounding tolerance.
+        for srgb in [false, true] {
+            let level0 = vec![180u8; 16 * 16 * 4];
+            let chain = super::build_mip_chain(level0, 16, 16, srgb);
+            let (w, h, last) = chain.last().unwrap();
+            assert_eq!((*w, *h), (1, 1));
+            for &c in last.iter() {
+                assert!((c as i32 - 180).abs() <= 1, "channel drifted: {c}");
+            }
+        }
     }
 }
