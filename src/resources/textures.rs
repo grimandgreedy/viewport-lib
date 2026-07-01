@@ -206,7 +206,28 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        if !desc.format.is_compressed() || !supports_texture_format(device, desc.format) {
+        if !desc.format.is_compressed() {
+            return Err(crate::error::ViewportError::UnsupportedTextureFormat {
+                format: desc.format,
+            });
+        }
+        // wgpu requires block-compressed textures to be created with
+        // block-aligned base dimensions. Reject early with a clear error rather
+        // than letting `create_texture` fail on the worker (which would leave an
+        // invalid texture bound into a bind group). Checked before device
+        // support so the caller gets the specific reason either way.
+        let (block_w, block_h) = desc.format.block_dimensions();
+        if desc.width % block_w != 0 || desc.height % block_h != 0 {
+            return Err(
+                crate::error::ViewportError::CompressedTextureNotBlockAligned {
+                    width: desc.width,
+                    height: desc.height,
+                    block_width: block_w,
+                    block_height: block_h,
+                },
+            );
+        }
+        if !supports_texture_format(device, desc.format) {
             return Err(crate::error::ViewportError::UnsupportedTextureFormat {
                 format: desc.format,
             });
@@ -1619,5 +1640,43 @@ mod async_texture_tests {
         let stats = resources.texture_memory_stats();
         assert_eq!(stats.used_bytes - before, 16);
         assert_eq!(stats.texture_count, 1);
+    }
+
+    #[test]
+    fn compressed_upload_rejects_non_block_aligned_dimensions() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // wgpu cannot create a BC texture whose dimensions are not multiples of
+        // the 4x4 block. The upload must reject this up front (before any GPU
+        // work) so a consumer can fall back to an uncompressed upload rather
+        // than binding an invalid texture. 1419 mirrors a real asset dimension.
+        for (w, h) in [(6u32, 6u32), (1419, 1024), (1024, 1419)] {
+            let blocks_x = w.div_ceil(4);
+            let blocks_y = h.div_ceil(4);
+            let block = vec![0u8; (blocks_x * blocks_y * 16) as usize];
+            let err = resources
+                .begin_upload_compressed_texture(
+                    &device,
+                    &queue,
+                    crate::resources::CompressedTextureDesc {
+                        width: w,
+                        height: h,
+                        format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                        is_normal_map: false,
+                        mip_levels: &[&block],
+                    },
+                )
+                .expect_err("non-block-aligned dimensions must be rejected");
+            assert!(matches!(
+                err,
+                crate::error::ViewportError::CompressedTextureNotBlockAligned { .. }
+            ));
+        }
+        assert_eq!(resources.uploads_pending(), 0);
     }
 }

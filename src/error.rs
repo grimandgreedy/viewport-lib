@@ -91,6 +91,24 @@ pub enum ViewportError {
         format: wgpu::TextureFormat,
     },
 
+    /// A compressed-texture upload had base dimensions that are not a multiple
+    /// of the format's block size. Block-compressed textures must be created
+    /// with block-aligned dimensions; pad the image (and adjust UVs) or upload
+    /// it uncompressed.
+    #[error(
+        "compressed texture {width}x{height} is not block-aligned (block {block_width}x{block_height})"
+    )]
+    CompressedTextureNotBlockAligned {
+        /// Base (mip 0) width in texels.
+        width: u32,
+        /// Base (mip 0) height in texels.
+        height: u32,
+        /// Format block width.
+        block_width: u32,
+        /// Format block height.
+        block_height: u32,
+    },
+
     /// A mip level of a compressed-texture upload had the wrong byte length for
     /// its block-packed dimensions.
     #[error(
