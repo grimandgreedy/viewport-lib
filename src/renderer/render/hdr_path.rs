@@ -1640,6 +1640,12 @@ impl ViewportRenderer {
             let replace_pipeline = self.resources.decal_replace_pipeline.as_ref();
             let multiply_pipeline = self.resources.decal_multiply_pipeline.as_ref();
             let additive_pipeline = self.resources.decal_additive_pipeline.as_ref();
+            // Scissor rects are in the decal render-target's pixel space. Read
+            // the resolved HDR target size directly (ctx.w/ctx.h are the
+            // supersampled/physical dimensions, which differ under SSAA or DPI
+            // scaling).
+            let target_w = slot_hdr.hdr_texture.width();
+            let target_h = slot_hdr.hdr_texture.height();
             if replace_pipeline.is_some()
                 || multiply_pipeline.is_some()
                 || additive_pipeline.is_some()
@@ -1671,9 +1677,9 @@ impl ViewportRenderer {
                     if let Some(pl) = pipeline {
                         // Confine each decal's fullscreen quad to its screen
                         // footprint to avoid 173x fullscreen overdraw.
-                        match decal_scissor(&gpu.model, &view_proj, ctx.w, ctx.h) {
+                        match decal_scissor(&gpu.model, &view_proj, target_w, target_h) {
                             DecalScissor::Skip => continue,
-                            DecalScissor::Full => pass.set_scissor_rect(0, 0, ctx.w, ctx.h),
+                            DecalScissor::Full => pass.set_scissor_rect(0, 0, target_w, target_h),
                             DecalScissor::Rect(x, y, w, h) => pass.set_scissor_rect(x, y, w, h),
                         }
                         pass.set_pipeline(&pl.hdr);
