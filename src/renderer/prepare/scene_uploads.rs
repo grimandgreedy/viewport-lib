@@ -6,6 +6,14 @@
 
 use super::*;
 
+/// Decal resource cache tallies for one frame: `uploads` counts cache misses
+/// (a buffer + bind group were built), `reused` counts cache hits.
+#[derive(Default, Clone, Copy)]
+pub(super) struct DecalCacheStats {
+    pub uploads: u32,
+    pub reused: u32,
+}
+
 impl ViewportRenderer {
     /// Upload mesh-instance batches, resolving any LOD group per instance.
     ///
@@ -475,7 +483,7 @@ impl ViewportRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
-    ) {
+    ) -> DecalCacheStats {
         // ------------------------------------------------------------------
         // GPU implicit surface items.
         // ------------------------------------------------------------------
@@ -507,6 +515,7 @@ impl ViewportRenderer {
         // D1 + D3: Screen-space decals, sorted by sort_key (D3).
         // ------------------------------------------------------------------
         decal_gpu_data.clear();
+        let mut decal_stats = DecalCacheStats::default();
         if frame.scene.decals.is_empty() {
             // No decals this frame: drop any cached GPU resources.
             decal_cache.clear();
@@ -531,10 +540,18 @@ impl ViewportRenderer {
                 let mut effective = item.clone();
                 effective.alpha *= item.settings.opacity;
                 let key = crate::resources::decal::hash_decal_item(&effective);
-                let gpu = decal_cache
-                    .entry(key)
-                    .or_insert_with(|| resources.upload_decal_item(device, &effective));
-                decal_gpu_data.push(gpu.clone());
+                match decal_cache.entry(key) {
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        decal_gpu_data.push(e.get().clone());
+                        decal_stats.reused += 1;
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        let gpu = resources.upload_decal_item(device, &effective);
+                        decal_gpu_data.push(gpu.clone());
+                        e.insert(gpu);
+                        decal_stats.uploads += 1;
+                    }
+                }
                 seen.insert(key);
             }
             // Evict decals that were not part of this frame's submission.
@@ -582,6 +599,8 @@ impl ViewportRenderer {
                 }
             }
         }
+
+        decal_stats
     }
 
     pub(super) fn upload_images(

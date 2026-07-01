@@ -325,7 +325,7 @@ impl ViewportRenderer {
             queue,
             frame,
         );
-        Self::upload_implicit_decals_mc(
+        let decal_cache_stats = Self::upload_implicit_decals_mc(
             resources,
             &mut self.implicit_gpu_data,
             &mut self.pick_implicit_items,
@@ -662,6 +662,8 @@ impl ViewportRenderer {
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
+                decal_uploads: decal_cache_stats.uploads,
+                decal_reused: decal_cache_stats.reused,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0, // Updated below in shadow pass.
                 lod_items_resolved,

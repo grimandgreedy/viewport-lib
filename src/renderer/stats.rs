@@ -256,6 +256,18 @@ pub struct FrameStats {
     /// frames (no upload attempted at all) and when the per-object path is
     /// active.
     pub batches_skipped: u32,
+    /// Decals whose GPU buffer + bind group were built this frame (cache miss).
+    ///
+    /// Non-zero only when a decal is new or its content changed. In steady state
+    /// with static decals this is zero after the first frame: a persistent value
+    /// near the decal count means the cache is missing every frame.
+    pub decal_uploads: u32,
+    /// Decals served from the cross-frame cache this frame (cache hit).
+    ///
+    /// Together with `decal_uploads` this shows how effective the decal resource
+    /// cache is: `decal_reused` should equal the visible decal count and
+    /// `decal_uploads` should be zero once decals are settled.
+    pub decal_reused: u32,
     /// Total triangles submitted to the GPU.
     pub triangles_submitted: u64,
     /// Number of draw calls in the shadow pass.
