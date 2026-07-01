@@ -468,6 +468,7 @@ impl ViewportRenderer {
         implicit_gpu_data: &mut Vec<crate::resources::implicit::ImplicitGpuItem>,
         pick_implicit_items: &mut Vec<GpuImplicitPickItem>,
         decal_gpu_data: &mut Vec<crate::resources::decal::DecalGpuItem>,
+        decal_cache: &mut std::collections::HashMap<u64, crate::resources::decal::DecalGpuItem>,
         decal_exclude_items: &mut Vec<crate::resources::decal::DecalExcludeGpuItem>,
         mc_gpu_data: &mut Vec<crate::resources::gpu_marching_cubes::McFrameData>,
         pick_mc_items: &mut Vec<GpuMcPickItem>,
@@ -506,11 +507,19 @@ impl ViewportRenderer {
         // D1 + D3: Screen-space decals, sorted by sort_key (D3).
         // ------------------------------------------------------------------
         decal_gpu_data.clear();
-        if !frame.scene.decals.is_empty() {
+        if frame.scene.decals.is_empty() {
+            // No decals this frame: drop any cached GPU resources.
+            decal_cache.clear();
+        } else {
             resources.ensure_decal_pipeline(device);
             // Stable sort so equal-key decals stay in submission order.
             let mut sorted: Vec<&crate::renderer::DecalItem> = frame.scene.decals.iter().collect();
             sorted.sort_by_key(|d| d.sort_key);
+            // Reuse cached GPU resources for unchanged decals; only new or
+            // changed decals rebuild a uniform buffer and bind group. Decals are
+            // static per submission, so this is a hit in steady state.
+            let mut seen: std::collections::HashSet<u64> =
+                std::collections::HashSet::with_capacity(sorted.len());
             for item in sorted {
                 if item.settings.hidden {
                     continue;
@@ -521,9 +530,15 @@ impl ViewportRenderer {
                 // Apply appearance.opacity on top of the item's own alpha.
                 let mut effective = item.clone();
                 effective.alpha *= item.settings.opacity;
-                let gpu = resources.upload_decal_item(device, &effective);
-                decal_gpu_data.push(gpu);
+                let key = crate::resources::decal::hash_decal_item(&effective);
+                let gpu = decal_cache
+                    .entry(key)
+                    .or_insert_with(|| resources.upload_decal_item(device, &effective));
+                decal_gpu_data.push(gpu.clone());
+                seen.insert(key);
             }
+            // Evict decals that were not part of this frame's submission.
+            decal_cache.retain(|k, _| seen.contains(k));
         }
 
         // ------------------------------------------------------------------

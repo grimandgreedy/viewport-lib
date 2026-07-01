@@ -40,6 +40,12 @@ pub(crate) struct DecalUniformRaw {
 }
 
 /// Per-draw GPU data for one [`DecalItem`](crate::renderer::DecalItem).
+///
+/// `Clone` is cheap: the buffer and bind group are reference-counted GPU
+/// handles, so cloning bumps a refcount rather than reallocating. This lets the
+/// per-frame decal cache hand the same GPU resources to the draw list without
+/// rebuilding them.
+#[derive(Clone)]
 pub(crate) struct DecalGpuItem {
     pub blend_mode: crate::renderer::DecalBlendMode,
     pub _uniform_buf: wgpu::Buffer,
@@ -55,6 +61,91 @@ pub(crate) struct DecalExcludeGpuItem {
     pub mesh_id: MeshId,
     pub _uniform_buf: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
+}
+
+/// Build the flat uniform for a decal. Pure: no GPU access, so it can also feed
+/// the content hash used to cache GPU resources across frames.
+pub(crate) fn decal_uniform_raw(item: &crate::renderer::DecalItem) -> DecalUniformRaw {
+    let model = glam::Mat4::from_cols_array_2d(&item.transform);
+    let inv_transform = model.inverse().to_cols_array_2d();
+
+    let blend_mode_u32 = match item.blend_mode {
+        crate::renderer::DecalBlendMode::Replace => 0u32,
+        crate::renderer::DecalBlendMode::Multiply => 1u32,
+        // Additive uses a separate pipeline; shader logic is identical to Replace.
+        crate::renderer::DecalBlendMode::Additive => 0u32,
+    };
+
+    let (projection_u32, tri_blend_sharpness) = match item.projection {
+        crate::renderer::DecalProjection::Planar => (0u32, 1.0f32),
+        crate::renderer::DecalProjection::TriPlanar { blend_sharpness } => {
+            (1u32, blend_sharpness.max(0.1))
+        }
+        crate::renderer::DecalProjection::Cylindrical { facing } => {
+            let code = match facing {
+                crate::renderer::CylindricalFacing::Outward => 2u32,
+                crate::renderer::CylindricalFacing::Inward => 3u32,
+            };
+            (code, 0.0f32)
+        }
+    };
+
+    let has_normal = item.normal_texture_id.is_some() as u32;
+    let has_roughness_tex = item.roughness_texture_id.is_some() as u32;
+    let has_metallic_tex = item.metallic_texture_id.is_some() as u32;
+    let has_emissive_tex = item.emissive_texture_id.is_some() as u32;
+
+    DecalUniformRaw {
+        inv_transform,
+        blend_mode: blend_mode_u32,
+        alpha: item.alpha,
+        normal_blend_strength: if has_normal != 0 {
+            item.normal_blend_strength
+        } else {
+            0.0
+        },
+        has_normal,
+        roughness: item.roughness,
+        metallic: item.metallic,
+        has_roughness_tex,
+        has_metallic_tex,
+        uv_offset: item.uv_offset,
+        uv_scale: item.uv_scale,
+        emissive: item.emissive,
+        has_emissive_tex,
+        edge_fade: item.edge_fade.clamp(0.0, 0.5),
+        _pad: 0,
+        projection: projection_u32,
+        tri_blend_sharpness,
+        _pad2: 0,
+        _pad3: 0,
+    }
+}
+
+/// Content hash for a decal, covering everything that affects its GPU
+/// resources: the uniform bytes, the bound texture ids, and the blend mode
+/// (which the uniform does not distinguish between Replace and Additive but
+/// which selects a different pipeline at draw time).
+///
+/// Two decals with the same hash produce identical GPU resources, so the cache
+/// can reuse one across frames instead of rebuilding a buffer and bind group.
+pub(crate) fn hash_decal_item(item: &crate::renderer::DecalItem) -> u64 {
+    use std::hash::Hasher as _;
+    let raw = decal_uniform_raw(item);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    h.write(bytemuck::bytes_of(&raw));
+    h.write_u8(item.blend_mode as u8);
+    h.write_u64(item.texture_id);
+    for id in [
+        item.normal_texture_id,
+        item.roughness_texture_id,
+        item.metallic_texture_id,
+        item.emissive_texture_id,
+    ] {
+        h.write_u8(id.is_some() as u8);
+        h.write_u64(id.unwrap_or(0));
+    }
+    h.finish()
 }
 
 // ---------------------------------------------------------------------------
@@ -252,59 +343,7 @@ impl ViewportGpuResources {
         item: &crate::renderer::DecalItem,
     ) -> DecalGpuItem {
         let model = glam::Mat4::from_cols_array_2d(&item.transform);
-        let inv_transform = model.inverse().to_cols_array_2d();
-
-        let blend_mode_u32 = match item.blend_mode {
-            crate::renderer::DecalBlendMode::Replace => 0u32,
-            crate::renderer::DecalBlendMode::Multiply => 1u32,
-            // Additive uses a separate pipeline; shader logic is identical to Replace.
-            crate::renderer::DecalBlendMode::Additive => 0u32,
-        };
-
-        let (projection_u32, tri_blend_sharpness) = match item.projection {
-            crate::renderer::DecalProjection::Planar => (0u32, 1.0f32),
-            crate::renderer::DecalProjection::TriPlanar { blend_sharpness } => {
-                (1u32, blend_sharpness.max(0.1))
-            }
-            crate::renderer::DecalProjection::Cylindrical { facing } => {
-                let code = match facing {
-                    crate::renderer::CylindricalFacing::Outward => 2u32,
-                    crate::renderer::CylindricalFacing::Inward => 3u32,
-                };
-                (code, 0.0f32)
-            }
-        };
-
-        let has_normal = item.normal_texture_id.is_some() as u32;
-        let has_roughness_tex = item.roughness_texture_id.is_some() as u32;
-        let has_metallic_tex = item.metallic_texture_id.is_some() as u32;
-        let has_emissive_tex = item.emissive_texture_id.is_some() as u32;
-
-        let raw = DecalUniformRaw {
-            inv_transform,
-            blend_mode: blend_mode_u32,
-            alpha: item.alpha,
-            normal_blend_strength: if has_normal != 0 {
-                item.normal_blend_strength
-            } else {
-                0.0
-            },
-            has_normal,
-            roughness: item.roughness,
-            metallic: item.metallic,
-            has_roughness_tex,
-            has_metallic_tex,
-            uv_offset: item.uv_offset,
-            uv_scale: item.uv_scale,
-            emissive: item.emissive,
-            has_emissive_tex,
-            edge_fade: item.edge_fade.clamp(0.0, 0.5),
-            _pad: 0,
-            projection: projection_u32,
-            tri_blend_sharpness,
-            _pad2: 0,
-            _pad3: 0,
-        };
+        let raw = decal_uniform_raw(item);
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("decal_uniform_buf"),
@@ -522,5 +561,50 @@ impl ViewportGpuResources {
             _uniform_buf: uniform_buf,
             bind_group,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hash_decal_item;
+    use crate::renderer::{DecalBlendMode, DecalItem};
+
+    #[test]
+    fn identical_decals_hash_equal() {
+        let a = DecalItem {
+            texture_id: 3,
+            ..DecalItem::default()
+        };
+        let b = a.clone();
+        assert_eq!(hash_decal_item(&a), hash_decal_item(&b));
+    }
+
+    #[test]
+    fn blend_mode_changes_hash() {
+        // Replace and Additive encode the same uniform bytes but select
+        // different pipelines, so they must not share a cache entry.
+        let replace = DecalItem {
+            blend_mode: DecalBlendMode::Replace,
+            ..DecalItem::default()
+        };
+        let additive = DecalItem {
+            blend_mode: DecalBlendMode::Additive,
+            ..DecalItem::default()
+        };
+        assert_ne!(hash_decal_item(&replace), hash_decal_item(&additive));
+    }
+
+    #[test]
+    fn texture_and_transform_change_hash() {
+        let base = DecalItem::default();
+        let tex = DecalItem {
+            texture_id: 7,
+            ..DecalItem::default()
+        };
+        assert_ne!(hash_decal_item(&base), hash_decal_item(&tex));
+
+        let mut moved = DecalItem::default();
+        moved.transform[3][0] = 5.0;
+        assert_ne!(hash_decal_item(&base), hash_decal_item(&moved));
     }
 }

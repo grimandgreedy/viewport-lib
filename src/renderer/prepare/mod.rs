@@ -330,6 +330,7 @@ impl ViewportRenderer {
             &mut self.implicit_gpu_data,
             &mut self.pick_implicit_items,
             &mut self.decal_gpu_data,
+            &mut self.decal_cache,
             &mut self.decal_exclude_items,
             &mut self.mc_gpu_data,
             &mut self.pick_mc_items,
