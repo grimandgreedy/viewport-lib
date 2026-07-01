@@ -482,6 +482,56 @@ fn viewport_sample_csm(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
     }
 }
 
+// Rotate a direction into the environment map's frame and project it to
+// equirectangular UV. Matches the mapping used by the built-in mesh
+// pipelines so plugins reflect the same environment.
+fn viewport_dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
+    let s = sin(rotation);
+    let c = cos(rotation);
+    let d = vec3<f32>(c * dir.x - s * dir.y, s * dir.x + c * dir.y, dir.z);
+    return vec2<f32>(
+        0.5 + atan2(d.y, d.x) / (2.0 * 3.14159265),
+        0.5 - asin(clamp(d.z, -1.0, 1.0)) / 3.14159265,
+    );
+}
+
+fn viewport_fresnel_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let fr = max(vec3<f32>(1.0 - roughness), f0);
+    return f0 + (fr - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// Image-based ambient: diffuse irradiance plus prefiltered specular
+// reflection from the environment, combined through the split-sum BRDF
+// LUT. This is what lets metallic and smooth surfaces reflect the sky
+// instead of going dark under hemisphere ambient alone.
+fn viewport_ibl_ambient(
+    n: vec3<f32>,
+    v: vec3<f32>,
+    albedo: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    f0: vec3<f32>,
+    ao: f32,
+) -> vec3<f32> {
+    let n_dot_v = max(dot(n, v), 0.001);
+    let f = viewport_fresnel_roughness(n_dot_v, f0, roughness);
+    let kd = (vec3<f32>(1.0) - f) * (1.0 - metallic);
+    let rotation = lights.ibl_rotation;
+    let irradiance =
+        textureSampleLevel(ibl_irradiance_tex, ibl_sampler, viewport_dir_to_equirect_uv(n, rotation), 0.0).rgb;
+    let r = reflect(-v, n);
+    let prefiltered = textureSampleLevel(
+        ibl_specular_tex,
+        ibl_sampler,
+        viewport_dir_to_equirect_uv(r, rotation),
+        roughness * 4.0,
+    ).rgb;
+    let brdf = textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, roughness), 0.0).rg;
+    let diffuse = kd * irradiance * albedo * ao;
+    let specular = prefiltered * (f * brdf.x + brdf.y) * ao;
+    return (diffuse + specular) * lights.ibl_intensity;
+}
+
 // PBR shading. Cook-Torrance specular with GGX NDF + Smith G + Schlick
 // Fresnel, Lambert diffuse weighted by (1 - metallic). Integrates against
 // every active scene light; IBL contribution is added when
@@ -494,11 +544,17 @@ fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
     let alpha2 = alpha * alpha;
     let f0 = mix(vec3<f32>(0.04), inp.albedo, inp.metallic);
 
-    // Hemisphere ambient (kept for parity with non-PBR pipelines when IBL
-    // is disabled).
-    let up_weight = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
-    let ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
+    // Environment reflection when an IBL probe is active, otherwise a
+    // cheap hemisphere ambient. The IBL path gives metallic and smooth
+    // surfaces something bright to reflect instead of reading as black.
+    var ambient: vec3<f32>;
+    if lights.ibl_enabled != 0u {
+        ambient = viewport_ibl_ambient(N, V, inp.albedo, inp.metallic, roughness, f0, inp.ao);
+    } else {
+        let up_weight = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
+        ambient = mix(lights.ground_colour, lights.sky_colour, up_weight)
                   * lights.hemisphere_intensity * inp.albedo * inp.ao;
+    }
 
     var lo = vec3<f32>(0.0);
     let n_lights = lights.count;
