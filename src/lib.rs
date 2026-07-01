@@ -247,11 +247,11 @@ pub use resources::volume_mesh::{
 };
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, ComputeFilterResult,
-    FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob,
-    ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform, MatcapId, MeshData,
-    ProgressHandle, SingleLightUniform, TextureMemoryStats, UploadStatus, ViewportGpuResources,
-    VolumeGpuId, VolumeId, lerp_attributes,
+    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc,
+    ComputeFilterResult, FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions,
+    GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform,
+    MatcapId, MeshData, ProgressHandle, SingleLightUniform, TextureMemoryStats, UploadStatus,
+    ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes, supports_texture_format,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,
@@ -266,7 +266,7 @@ pub use resources::{
 pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,
     ManipulationSystem, NodeTransformOp, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
-    RuntimePlugin, RuntimeStats, RuntimeStepContext, SceneRuntimeMode, SelectionOp, SelectionSystem,
-    SimulationStepContext, TransformSnapshot, TransformSnapshotTable, TransformWriteback,
-    ViewportRuntime,
+    RuntimePlugin, RuntimeStats, RuntimeStepContext, SceneRuntimeMode, SelectionOp,
+    SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
+    TransformWriteback, ViewportRuntime,
 };

@@ -83,8 +83,17 @@ impl ViewportGpuResources {
                 actual: rgba.len(),
             });
         }
-        let label = TextureAsyncLabel::Albedo;
-        Ok(self.spawn_texture_upload(device, queue, width, height, rgba, label))
+        Ok(self.spawn_texture_upload(
+            device,
+            queue,
+            TextureUploadSpec {
+                width,
+                height,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                is_normal_map: false,
+                mip_levels: vec![rgba],
+            },
+        ))
     }
 
     /// Start an asynchronous normal-map upload.
@@ -111,8 +120,17 @@ impl ViewportGpuResources {
                 actual: rgba.len(),
             });
         }
-        let label = TextureAsyncLabel::NormalMap;
-        Ok(self.spawn_texture_upload(device, queue, width, height, rgba, label))
+        Ok(self.spawn_texture_upload(
+            device,
+            queue,
+            TextureUploadSpec {
+                width,
+                height,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                is_normal_map: true,
+                mip_levels: vec![rgba],
+            },
+        ))
     }
 
     /// Take the texture id produced by a completed `begin_upload_texture`
@@ -146,17 +164,98 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Shared spawn path for `begin_upload_texture` and
-    /// `begin_upload_normal_map`. The label decides texture format and
-    /// which bind-group slot the texture occupies.
+    /// Upload a pre-compressed, pre-mipped texture and return its texture ID.
+    ///
+    /// Sync wrapper around [`begin_upload_compressed_texture`](Self::begin_upload_compressed_texture):
+    /// see that method for the format and layout requirements. Blocks the
+    /// calling thread until the upload completes.
+    ///
+    /// # Errors
+    ///
+    /// See [`begin_upload_compressed_texture`](Self::begin_upload_compressed_texture).
+    pub fn upload_compressed_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        desc: CompressedTextureDesc<'_>,
+    ) -> crate::error::ViewportResult<u64> {
+        let id = self.begin_upload_compressed_texture(device, queue, desc)?;
+        self.drain_until(device, queue, id)?;
+        self.upload_result_texture(id)
+    }
+
+    /// Start an asynchronous upload of pre-compressed, pre-mipped texture data.
+    ///
+    /// Returns a `JobId` immediately; take the resulting texture id with
+    /// [`upload_result_texture`](Self::upload_result_texture) once the status is
+    /// `Ready`, then store it in a `Material` slot. The data is validated and
+    /// copied into the worker before the job is submitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns
+    /// [`ViewportError::UnsupportedTextureFormat`](crate::error::ViewportError::UnsupportedTextureFormat)
+    /// when `desc.format` is not block-compressed or the device lacks its
+    /// required feature (check first with [`supports_texture_format`]), and
+    /// [`ViewportError::InvalidCompressedTextureData`](crate::error::ViewportError::InvalidCompressedTextureData)
+    /// when `mip_levels` is empty or a level's byte length does not match its
+    /// block-packed size.
+    pub fn begin_upload_compressed_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        desc: CompressedTextureDesc<'_>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        if !desc.format.is_compressed() || !supports_texture_format(device, desc.format) {
+            return Err(crate::error::ViewportError::UnsupportedTextureFormat {
+                format: desc.format,
+            });
+        }
+        if desc.mip_levels.is_empty() {
+            let (_, _, expected) = mip_block_layout(desc.format, desc.width, desc.height);
+            return Err(crate::error::ViewportError::InvalidCompressedTextureData {
+                level: 0,
+                expected,
+                actual: 0,
+            });
+        }
+        // Validate each level against its block-packed size and copy into owned
+        // buffers for the worker thread.
+        let mut mip_levels = Vec::with_capacity(desc.mip_levels.len());
+        for (level, data) in desc.mip_levels.iter().enumerate() {
+            let lw = (desc.width >> level).max(1);
+            let lh = (desc.height >> level).max(1);
+            let (_, _, expected) = mip_block_layout(desc.format, lw, lh);
+            if data.len() != expected {
+                return Err(crate::error::ViewportError::InvalidCompressedTextureData {
+                    level: level as u32,
+                    expected,
+                    actual: data.len(),
+                });
+            }
+            mip_levels.push(data.to_vec());
+        }
+        Ok(self.spawn_texture_upload(
+            device,
+            queue,
+            TextureUploadSpec {
+                width: desc.width,
+                height: desc.height,
+                format: desc.format,
+                is_normal_map: desc.is_normal_map,
+                mip_levels,
+            },
+        ))
+    }
+
+    /// Shared spawn path for the RGBA8 and compressed upload entry points.
+    /// The spec carries the texture format, dimensions, mip chain, and the
+    /// slot (albedo vs normal map) the texture occupies.
     fn spawn_texture_upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-        label: TextureAsyncLabel,
+        spec: TextureUploadSpec,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<u64>::new();
         let slot_for_apply = slot.clone();
@@ -168,20 +267,26 @@ impl ViewportGpuResources {
         let fallback_albedo_view = self.fallback_texture.view.clone();
         let fallback_normal_view = self.fallback_normal_map_view.clone();
         let fallback_ao_view = self.fallback_ao_map_view.clone();
-        let data_bytes = rgba.len() as u64;
+        let data_bytes: u64 = spec.mip_levels.iter().map(|l| l.len() as u64).sum();
+
+        let TextureUploadSpec {
+            width,
+            height,
+            format,
+            is_normal_map,
+            mip_levels,
+        } = spec;
 
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_with_gpu(device, queue, move |dev, q, progress| {
                 progress.set(0.2);
-                let format = match label {
-                    TextureAsyncLabel::Albedo => wgpu::TextureFormat::Rgba8UnormSrgb,
-                    TextureAsyncLabel::NormalMap => wgpu::TextureFormat::Rgba8Unorm,
+                let tex_label = if is_normal_map {
+                    "async_normal_map_texture"
+                } else {
+                    "async_user_texture"
                 };
-                let tex_label = match label {
-                    TextureAsyncLabel::Albedo => "async_user_texture",
-                    TextureAsyncLabel::NormalMap => "async_normal_map_texture",
-                };
+                let mip_level_count = mip_levels.len() as u32;
                 let texture = dev.create_texture(&wgpu::TextureDescriptor {
                     label: Some(tex_label),
                     size: wgpu::Extent3d {
@@ -189,38 +294,54 @@ impl ViewportGpuResources {
                         height,
                         depth_or_array_layers: 1,
                     },
-                    mip_level_count: 1,
+                    mip_level_count,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 });
-                q.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &rgba,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(width * 4),
-                        rows_per_image: Some(height),
-                    },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                );
+                // Upload each mip level. Row/size math is block-based so it is
+                // correct for both uncompressed (1x1 blocks) and block
+                // compressed formats.
+                for (level, data) in mip_levels.iter().enumerate() {
+                    let lw = (width >> level).max(1);
+                    let lh = (height >> level).max(1);
+                    let (bytes_per_row, blocks_high, _) = mip_block_layout(format, lw, lh);
+                    q.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &texture,
+                            mip_level: level as u32,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        data,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(bytes_per_row),
+                            rows_per_image: Some(blocks_high),
+                        },
+                        wgpu::Extent3d {
+                            width: lw,
+                            height: lh,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
                 progress.set(0.7);
 
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let sampler_label = match label {
-                    TextureAsyncLabel::Albedo => "async_user_texture_sampler",
-                    TextureAsyncLabel::NormalMap => "async_normal_map_sampler",
+                let sampler_label = if is_normal_map {
+                    "async_normal_map_sampler"
+                } else {
+                    "async_user_texture_sampler"
+                };
+                // A mip chain is only useful with trilinear sampling; a single
+                // level keeps the nearest-mip behavior of the RGBA8 path.
+                let mipmap_filter = if mip_level_count > 1 {
+                    wgpu::FilterMode::Linear
+                } else {
+                    wgpu::FilterMode::Nearest
                 };
                 let sampler = dev.create_sampler(&wgpu::SamplerDescriptor {
                     label: Some(sampler_label),
@@ -228,20 +349,22 @@ impl ViewportGpuResources {
                     address_mode_v: wgpu::AddressMode::Repeat,
                     mag_filter: wgpu::FilterMode::Linear,
                     min_filter: wgpu::FilterMode::Linear,
-                    mipmap_filter: wgpu::FilterMode::Nearest,
+                    mipmap_filter,
                     ..Default::default()
                 });
                 // Bind-group entries differ between albedo and normal map:
                 // albedo binds the new view to slot 0 and the fallback
                 // normal to slot 2; normal map binds the fallback albedo
                 // to slot 0 and the new view to slot 2.
-                let bg_label = match label {
-                    TextureAsyncLabel::Albedo => "async_user_texture_bg",
-                    TextureAsyncLabel::NormalMap => "async_normal_map_bg",
+                let bg_label = if is_normal_map {
+                    "async_normal_map_bg"
+                } else {
+                    "async_user_texture_bg"
                 };
-                let (slot0_view, slot2_view) = match label {
-                    TextureAsyncLabel::Albedo => (&view, &fallback_normal_view),
-                    TextureAsyncLabel::NormalMap => (&fallback_albedo_view, &view),
+                let (slot0_view, slot2_view) = if is_normal_map {
+                    (&fallback_albedo_view, &view)
+                } else {
+                    (&view, &fallback_normal_view)
                 };
                 let bind_group = dev.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some(bg_label),
@@ -319,12 +442,71 @@ impl ViewportGpuResources {
     }
 }
 
-/// Discriminator used by `spawn_texture_upload` to switch between the
-/// albedo and normal-map paths without duplicating the worker body.
-#[derive(Clone, Copy)]
-enum TextureAsyncLabel {
-    Albedo,
-    NormalMap,
+/// Everything `spawn_texture_upload` needs to create and fill a texture.
+/// The RGBA8 entry points build a single-level spec; the compressed entry
+/// point builds one with the caller's format and full mip chain.
+struct TextureUploadSpec {
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    /// Bind into the normal-map slot and label as such.
+    is_normal_map: bool,
+    /// One entry per mip level, level 0 first.
+    mip_levels: Vec<Vec<u8>>,
+}
+
+/// Block-packed layout for a single mip level: `(bytes_per_row, rows_of_blocks,
+/// total_bytes)`. Uses the format's block dimensions and size, so it is correct
+/// for uncompressed formats (1x1 blocks) and block-compressed formats alike.
+fn mip_block_layout(
+    format: wgpu::TextureFormat,
+    level_width: u32,
+    level_height: u32,
+) -> (u32, u32, usize) {
+    let (block_w, block_h) = format.block_dimensions();
+    let block_bytes = format
+        .block_copy_size(None)
+        .expect("texture format has no single block-copy size");
+    let blocks_x = level_width.div_ceil(block_w);
+    let blocks_y = level_height.div_ceil(block_h);
+    let bytes_per_row = blocks_x * block_bytes;
+    let total = (blocks_x * blocks_y * block_bytes) as usize;
+    (bytes_per_row, blocks_y, total)
+}
+
+/// True when `device` can sample `format`.
+///
+/// Checks the format's required wgpu feature (for example
+/// `TEXTURE_COMPRESSION_BC`, `_ASTC`, or `_ETC2` for block-compressed
+/// formats). Call this before `upload_compressed_texture` to decide whether to
+/// hand the renderer compressed data or fall back to an uncompressed upload.
+pub fn supports_texture_format(device: &wgpu::Device, format: wgpu::TextureFormat) -> bool {
+    device.features().contains(format.required_features())
+}
+
+/// Pre-compressed, pre-mipped texture data, uploaded to the GPU as-is.
+///
+/// The library does no encoding or decoding: compress and build the mip chain
+/// offline in your asset pipeline, then hand the block bytes here. `format`
+/// must be a block-compressed format (BC, ASTC, or ETC2) that the device
+/// supports (check with [`supports_texture_format`]). `mip_levels` holds one
+/// tightly block-packed byte slice per level, level 0 (full size) first;
+/// `mip_levels.len()` becomes the texture's mip count.
+///
+/// Color space is carried by `format` (for example `Bc7RgbaUnormSrgb` for
+/// albedo versus `Bc5RgUnorm` for normals); `is_normal_map` only selects which
+/// internal bind-group slot the texture occupies.
+pub struct CompressedTextureDesc<'a> {
+    /// Width of mip level 0, in texels.
+    pub width: u32,
+    /// Height of mip level 0, in texels.
+    pub height: u32,
+    /// Block-compressed texture format.
+    pub format: wgpu::TextureFormat,
+    /// Bind into the normal-map slot rather than the albedo slot.
+    pub is_normal_map: bool,
+    /// Block bytes per mip level, level 0 first.
+    pub mip_levels: &'a [&'a [u8]],
 }
 
 impl ViewportGpuResources {
@@ -1103,6 +1285,30 @@ mod async_texture_tests {
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
     }
 
+    /// Device with `TEXTURE_COMPRESSION_BC` enabled, or `None` when the adapter
+    /// does not support BC (e.g. a software / mobile adapter) so the caller can
+    /// skip the test.
+    fn try_make_bc_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        if !adapter
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        {
+            return None;
+        }
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+            ..Default::default()
+        }))
+        .ok()
+    }
+
     fn drive_until_ready(
         resources: &mut ViewportGpuResources,
         device: &wgpu::Device,
@@ -1213,5 +1419,205 @@ mod async_texture_tests {
             .upload_texture(&device, &queue, 4, 4, &rgba)
             .unwrap();
         assert_eq!(tex_id, 0);
+    }
+
+    #[test]
+    fn block_layout_matches_format() {
+        use super::mip_block_layout;
+        use wgpu::TextureFormat as F;
+
+        // Uncompressed RGBA8: 1x1 blocks, 4 bytes/texel.
+        assert_eq!(mip_block_layout(F::Rgba8Unorm, 4, 4), (16, 4, 64));
+
+        // BC7: 4x4 blocks, 16 bytes/block.
+        assert_eq!(mip_block_layout(F::Bc7RgbaUnormSrgb, 4, 4), (16, 1, 16));
+        assert_eq!(mip_block_layout(F::Bc7RgbaUnormSrgb, 8, 8), (32, 2, 64));
+        // Non-4-aligned dimensions round up to whole blocks.
+        assert_eq!(mip_block_layout(F::Bc7RgbaUnormSrgb, 6, 6), (32, 2, 64));
+
+        // BC4: 4x4 blocks, 8 bytes/block.
+        assert_eq!(mip_block_layout(F::Bc4RUnorm, 8, 8), (16, 2, 32));
+
+        // ASTC 8x8: 8x8 blocks, 16 bytes/block.
+        let astc = F::Astc {
+            block: wgpu::AstcBlock::B8x8,
+            channel: wgpu::AstcChannel::Unorm,
+        };
+        assert_eq!(mip_block_layout(astc, 16, 16), (32, 2, 64));
+    }
+
+    #[test]
+    fn block_layout_full_mip_pyramid_sum() {
+        use super::mip_block_layout;
+        // 64x64 BC7 pyramid down to 1x1: 4096+1024+256+64+16+16+16.
+        let mut total = 0usize;
+        let (w, h) = (64u32, 64u32);
+        for level in 0..=6 {
+            let lw = (w >> level).max(1);
+            let lh = (h >> level).max(1);
+            let (_, _, bytes) = mip_block_layout(wgpu::TextureFormat::Bc7RgbaUnormSrgb, lw, lh);
+            total += bytes;
+        }
+        assert_eq!(total, 5488);
+    }
+
+    #[test]
+    fn supports_texture_format_false_without_feature() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        // The default device requests no features, so BC is never enabled even
+        // when the adapter could support it.
+        assert!(!crate::resources::supports_texture_format(
+            &device,
+            wgpu::TextureFormat::Bc7RgbaUnormSrgb
+        ));
+        // An uncompressed format needs no feature and is always supported.
+        assert!(crate::resources::supports_texture_format(
+            &device,
+            wgpu::TextureFormat::Rgba8Unorm
+        ));
+    }
+
+    #[test]
+    fn compressed_upload_rejects_unsupported_and_non_block_formats() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // BC7 without the feature: rejected up front, no job submitted.
+        let block = vec![0u8; 16];
+        let err = resources
+            .begin_upload_compressed_texture(
+                &device,
+                &queue,
+                crate::resources::CompressedTextureDesc {
+                    width: 4,
+                    height: 4,
+                    format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    is_normal_map: false,
+                    mip_levels: &[&block],
+                },
+            )
+            .expect_err("BC7 upload without the feature should error");
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::UnsupportedTextureFormat { .. }
+        ));
+
+        // A non-compressed format is also rejected by this path.
+        let rgba = vec![0u8; 4 * 4 * 4];
+        let err = resources
+            .begin_upload_compressed_texture(
+                &device,
+                &queue,
+                crate::resources::CompressedTextureDesc {
+                    width: 4,
+                    height: 4,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    is_normal_map: false,
+                    mip_levels: &[&rgba],
+                },
+            )
+            .expect_err("non-compressed format should error");
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::UnsupportedTextureFormat { .. }
+        ));
+        assert_eq!(resources.uploads_pending(), 0);
+    }
+
+    #[test]
+    fn compressed_upload_validates_level_lengths() {
+        let Some((device, queue)) = try_make_bc_device() else {
+            eprintln!("skipping: no adapter with TEXTURE_COMPRESSION_BC");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // 4x4 BC7 needs one 16-byte block; pass 15 and confirm the level check
+        // fires before any job is submitted.
+        let bad = vec![0u8; 15];
+        let err = resources
+            .begin_upload_compressed_texture(
+                &device,
+                &queue,
+                crate::resources::CompressedTextureDesc {
+                    width: 4,
+                    height: 4,
+                    format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    is_normal_map: false,
+                    mip_levels: &[&bad],
+                },
+            )
+            .expect_err("wrong block length should error");
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::InvalidCompressedTextureData {
+                level: 0,
+                expected: 16,
+                actual: 15,
+            }
+        ));
+
+        // Empty mip chain is rejected too.
+        let err = resources
+            .begin_upload_compressed_texture(
+                &device,
+                &queue,
+                crate::resources::CompressedTextureDesc {
+                    width: 4,
+                    height: 4,
+                    format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    is_normal_map: false,
+                    mip_levels: &[],
+                },
+            )
+            .expect_err("empty mip chain should error");
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::InvalidCompressedTextureData { actual: 0, .. }
+        ));
+        assert_eq!(resources.uploads_pending(), 0);
+    }
+
+    #[test]
+    fn compressed_upload_completes_and_counts_bytes() {
+        let Some((device, queue)) = try_make_bc_device() else {
+            eprintln!("skipping: no adapter with TEXTURE_COMPRESSION_BC");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let before = resources.texture_memory_stats().used_bytes;
+        // 4x4 BC7 = one 16-byte block. Contents need not decode to anything in
+        // particular; we only exercise the upload path and byte accounting.
+        let block = vec![0u8; 16];
+        let id = resources
+            .begin_upload_compressed_texture(
+                &device,
+                &queue,
+                crate::resources::CompressedTextureDesc {
+                    width: 4,
+                    height: 4,
+                    format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    is_normal_map: false,
+                    mip_levels: &[&block],
+                },
+            )
+            .unwrap();
+        drive_until_ready(&mut resources, &device, &queue, id);
+        let tex_id = resources.upload_result_texture(id).expect("ready result");
+        assert_eq!(tex_id, 0);
+
+        let stats = resources.texture_memory_stats();
+        assert_eq!(stats.used_bytes - before, 16);
+        assert_eq!(stats.texture_count, 1);
     }
 }

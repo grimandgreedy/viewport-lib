@@ -76,6 +76,35 @@ pub enum ViewportError {
         actual: usize,
     },
 
+    /// A compressed-texture upload requested a format the device cannot sample,
+    /// or a format that is not block-compressed.
+    ///
+    /// The device check reads the format's required wgpu feature (for example
+    /// `TEXTURE_COMPRESSION_BC`, `_ASTC`, or `_ETC2`). When this is returned for
+    /// a hardware reason, the caller should fall back to `upload_texture` /
+    /// `upload_normal_map` or ship a variant the device supports.
+    #[error(
+        "unsupported texture format {format:?}: device lacks its required feature, or the format is not block-compressed"
+    )]
+    UnsupportedTextureFormat {
+        /// The format that was rejected.
+        format: wgpu::TextureFormat,
+    },
+
+    /// A mip level of a compressed-texture upload had the wrong byte length for
+    /// its block-packed dimensions.
+    #[error(
+        "invalid compressed texture data at mip {level}: expected {expected} bytes, got {actual}"
+    )]
+    InvalidCompressedTextureData {
+        /// The mip level whose data was the wrong size (0 is the base level).
+        level: u32,
+        /// Expected block-packed byte count for this level.
+        expected: usize,
+        /// Actual byte count provided for this level.
+        actual: usize,
+    },
+
     /// Attempted to access or replace a mesh slot that is empty (previously removed).
     #[error("mesh slot {index} is empty")]
     MeshSlotEmpty {
@@ -187,7 +216,9 @@ pub enum ViewportError {
 
     /// LOD thresholds must strictly decrease from the full level to the crudest,
     /// since each level applies to a smaller on-screen size than the one before.
-    #[error("LOD thresholds must strictly decrease (level {level} is not smaller than the previous)")]
+    #[error(
+        "LOD thresholds must strictly decrease (level {level} is not smaller than the previous)"
+    )]
     LodThresholdsNotDescending {
         /// The level whose threshold is not smaller than its predecessor's.
         level: usize,

@@ -85,6 +85,7 @@ pub(crate) use self::scivis::curve_store::{
 pub use self::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::tetmesh::{TetMesh, TetMeshAttributes};
+pub use self::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::types::BatchMeta;
 #[allow(deprecated)]
 pub use self::types::ClipVolumeUniform;
