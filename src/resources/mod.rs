@@ -58,11 +58,9 @@ use self::extra_impls::{
     build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
 };
 pub use self::font::{FontError, FontHandle};
-pub use self::gpu_marching_cubes::{GpuMarchingCubesJob, VolumeGpuId};
+pub use self::gpu_marching_cubes::VolumeGpuId;
 pub use self::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
-pub use self::implicit::{
-    GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
-};
+pub use self::implicit::{GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive};
 pub use self::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::mesh_sidecar::deform::{
     DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, deform_slot_params_byte_offset,
@@ -117,3 +115,5 @@ pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot
 pub use self::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
 };
+pub use crate::renderer::GpuImplicitItem;
+pub use crate::renderer::GpuMarchingCubesJob;

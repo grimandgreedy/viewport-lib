@@ -2176,8 +2176,8 @@ impl ViewportGpuResources {
     /// get scalar 0.0.  The scalar range is auto-detected from the data.
     ///
     /// Returns a [`ProjectedTetId`] that can be placed in a
-    /// [`TransparentVolumeMeshItem`](crate::renderer::types::TransparentVolumeMeshItem)
-    /// each frame.
+    /// [`VolumeMeshItem::projected_tet_id`](crate::renderer::types::VolumeMeshItem::projected_tet_id)
+    /// each frame to enable the volumetric transparent render mode.
     /// Upload a projected-tet mesh and return both the GPU handle and the actual scalar
     /// range stored in the GPU buffer. Callers should use the returned scalar range for
     /// threshold computations so that brimcast and the GPU always agree on the data range
