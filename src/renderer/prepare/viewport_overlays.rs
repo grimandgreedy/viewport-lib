@@ -897,8 +897,7 @@ impl ViewportRenderer {
                 self.resources.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
-                    let vertex_buf =
-                        upload_overlay_vbuf(device, queue, "loading_bar_vbuf", &verts);
+                    let vertex_buf = upload_overlay_vbuf(device, queue, "loading_bar_vbuf", &verts);
                     let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
