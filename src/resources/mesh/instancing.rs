@@ -345,15 +345,15 @@ impl ViewportGpuResources {
         );
     }
 
-    /// Upload per-instance AABB data and per-batch metadata to GPU buffers.
+    /// Upload the shared cull inputs: per-instance AABBs and per-batch metadata.
     ///
-    /// Allocates or grows buffers using the same 2x strategy as `upload_instance_data`.
-    /// Also allocates `visibility_index_buf`, `batch_counter_buf`, `indirect_args_buf`,
-    /// and `shadow_indirect_bufs` at the same time since they share the same capacity.
-    /// Call on every batch cache miss, immediately after `upload_instance_data`.
-    pub(crate) fn upload_aabb_and_batch_meta(
+    /// These are the same for every viewport (they do not depend on the camera),
+    /// so they live on `ViewportGpuResources`. The per-viewport cull outputs are
+    /// allocated separately by `ViewportCullState::ensure_outputs`. Buffers grow
+    /// with the same 2x strategy as `upload_instance_data`. Call on every batch
+    /// cache miss, immediately after `upload_instance_data`.
+    pub(crate) fn upload_cull_inputs(
         &mut self,
-        cull_state: &mut crate::resources::ViewportCullState,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         aabbs: &[crate::resources::types::InstanceAabb],
@@ -383,32 +383,7 @@ impl ViewportGpuResources {
             );
         }
 
-        // --- visibility_index_buf + shadow_vis_bufs: same count as instances ---
-        if aabbs.len() > cull_state.visibility_index_capacity {
-            let new_cap = (aabbs.len() * 2).max(64).min(max_instances);
-            let vis_size = (new_cap * std::mem::size_of::<u32>()) as u64;
-            cull_state.visibility_index_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("visibility_index_buf"),
-                size: vis_size,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            cull_state.visibility_index_capacity = new_cap;
-            // Per-cascade shadow visibility buffers grow with the instance count.
-            for i in 0..4 {
-                cull_state.shadow_vis_bufs[i] =
-                    Some(device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some(&format!("shadow_vis_buf_{i}")),
-                        size: vis_size,
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    }));
-            }
-            // Invalidate bind groups that reference the old shadow vis buffers.
-            cull_state.shadow_cull_instance_bgs = [None, None, None, None];
-        }
-
-        // --- Batch meta + counter + indirect args buffers (per-batch) ---
+        // --- Batch meta buffer (per-batch) ---
         let max_batches = (device.limits().max_storage_buffer_binding_size as usize)
             / std::mem::size_of::<crate::resources::types::BatchMeta>();
         let metas = &metas[..metas.len().min(max_batches)];
@@ -418,48 +393,12 @@ impl ViewportGpuResources {
             let new_cap = (batch_count * 2).max(16).min(max_batches);
             let meta_size =
                 (new_cap * std::mem::size_of::<crate::resources::types::BatchMeta>()) as u64;
-            let counter_size = (new_cap * std::mem::size_of::<u32>()) as u64;
-            // wgpu::util::DrawIndexedIndirect is 5 x u32 = 20 bytes.
-            let indirect_size = (new_cap * 20) as u64;
-
             self.batch_meta_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("batch_meta_buf"),
                 size: meta_size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            cull_state.batch_counter_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("batch_counter_buf"),
-                size: counter_size,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            // iOS Metal and Android (emulator and older devices) do not
-            // reliably support INDIRECT_EXECUTION. Leave these as None so
-            // the renderer falls back to direct draw calls.
-            if cfg!(not(any(target_os = "ios", target_os = "android"))) {
-                cull_state.indirect_args_buf =
-                    Some(device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("indirect_args_buf"),
-                        size: indirect_size,
-                        usage: wgpu::BufferUsages::STORAGE
-                            | wgpu::BufferUsages::INDIRECT
-                            | wgpu::BufferUsages::COPY_DST
-                            | wgpu::BufferUsages::COPY_SRC,
-                        mapped_at_creation: false,
-                    }));
-                for i in 0..4 {
-                    cull_state.shadow_indirect_bufs[i] =
-                        Some(device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some(&format!("shadow_indirect_buf_{i}")),
-                            size: indirect_size,
-                            usage: wgpu::BufferUsages::STORAGE
-                                | wgpu::BufferUsages::INDIRECT
-                                | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        }));
-                }
-            }
             self.batch_meta_capacity = new_cap;
         }
 
@@ -470,12 +409,6 @@ impl ViewportGpuResources {
                 bytemuck::cast_slice(metas),
             );
         }
-
-        // Invalidate cull bind groups when visibility_index_buf was just (re-)allocated.
-        // The new buffer is only detectable by comparing capacity before and after.
-        // Simplest approach: always invalidate on upload (cache miss already guards frequency).
-        cull_state.instance_cull_bind_groups.clear();
-        cull_state.shadow_cull_instance_bgs = [None, None, None, None];
     }
 
     /// Ensure the GPU-driven cull variant pipelines and BGL are created.

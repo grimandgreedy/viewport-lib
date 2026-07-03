@@ -13,8 +13,6 @@ impl ViewportRenderer {
         instancing: &mut InstancingState,
         instanceable: &[bool],
         scene_items: &[SceneRenderItem],
-        ts_query_set: Option<&wgpu::QuerySet>,
-        ts_written_mask: &std::sync::atomic::AtomicU32,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
@@ -265,13 +263,10 @@ impl ViewportRenderer {
                 }
             } else {
                 resources.upload_instance_data(device, queue, &all_instances);
-                resources.upload_aabb_and_batch_meta(
-                    cull_state,
-                    device,
-                    queue,
-                    &all_aabbs,
-                    &batch_metas,
-                );
+                resources.upload_cull_inputs(device, queue, &all_aabbs, &batch_metas);
+                // The instance storage buffer was rebuilt, so every viewport's
+                // cull bind groups now reference a stale binding-0 buffer.
+                instancing.instance_gen = instancing.instance_gen.wrapping_add(1);
                 batches_reuploaded = instanced_batches.len() as u32;
                 // Rebuild the hash cache so the next partial-upload check is seeded.
                 instancing.cached_instance_hashes.clear();
@@ -314,151 +309,185 @@ impl ViewportRenderer {
             }
         }
 
-        // ------------------------------------------------------------------
-        // GPU cull dispatch
-        //
-        // Run `cull_instances` + `write_indirect_args` whenever GPU culling
-        // is active and all required buffers are allocated.
-        // ------------------------------------------------------------------
+        // Ensure the cull pipelines exist and slot 0's cull output buffers are
+        // sized to the current scene. The scene-scope shadow cull reads slot 0's
+        // buffers, so they must exist before the shadow pass. The main cull
+        // dispatch for each viewport runs later in `run_viewport_cull`.
         if instancing.gpu_culling_enabled
             && !instancing.batches.is_empty()
             && instancing.cached_instance_count > 0
         {
-            let instance_count = instancing.cached_instance_count as u32;
-            let batch_count = instancing.batches.len() as u32;
-
-            // Do all mutable borrows before taking immutable borrows from resources.
-            if instancing.cull_resources.is_none() {
-                instancing.cull_resources =
-                    Some(crate::renderer::indirect::CullResources::new(device));
-            }
             resources.ensure_cull_instance_pipelines(device);
-            for batch in &instancing.batches.clone() {
-                resources.get_instance_cull_bind_group(
-                    cull_state,
-                    device,
-                    batch.texture_id,
-                    batch.normal_map_id,
-                    batch.ao_map_id,
-                );
-            }
-
-            // Now take immutable borrows to the GPU buffers for dispatch.
-            if let (
-                Some(aabb_buf),
-                Some(meta_buf),
-                Some(counter_buf),
-                Some(vis_buf),
-                Some(indirect_buf),
-            ) = (
-                resources.instance_aabb_buf.as_ref(),
-                resources.batch_meta_buf.as_ref(),
-                cull_state.batch_counter_buf.as_ref(),
-                cull_state.visibility_index_buf.as_ref(),
-                cull_state.indirect_args_buf.as_ref(),
-            ) {
-                let vp_mat = frame.camera.render_camera.view_proj();
-                let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
-
-                let cull = instancing.cull_resources.as_ref().unwrap();
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("cull_encoder"),
-                });
-                let sub = crate::plugin_api::CullSubmission {
-                    instance_aabbs: aabb_buf,
-                    instance_count,
-                    batch_meta: meta_buf,
-                    batch_count,
-                    counter: counter_buf,
-                    visible_out: vis_buf,
-                    indirect_out: indirect_buf,
-                    shadow_pass: false,
-                };
-                let cull_ts = ts_query_set.map(|qs| (qs, ts_written_mask));
-                // HiZ occlusion: reproject last frame's depth into this camera
-                // and build the pyramid into the cull encoder, before the cull
-                // dispatch that samples it. `build` is false on the first frame
-                // (nothing to reproject yet) and after a resize, which leaves
-                // the cull frustum-only for that frame.
-                let vp_cols = vp_mat.to_cols_array_2d();
-                let built = resources.occlusion_culling_enabled()
-                    && resources.build_hiz_reprojected(queue, &mut encoder, vp_cols);
-                let (hiz_view, hiz_dims) = if built {
-                    let (view, dims) = resources.hiz_cull_view().unwrap();
-                    (Some(view), dims)
-                } else {
-                    (None, [1.0, 1.0])
-                };
-                let extras = crate::renderer::indirect::MainCullExtras {
-                    view_proj: vp_cols,
-                    viewport: hiz_dims,
-                    hiz_view,
-                    do_occlusion: built,
-                };
-                cull.dispatch(
-                    &mut encoder,
-                    device,
-                    queue,
-                    &cpu_frustum,
-                    None,
-                    &sub,
-                    cull_ts,
-                    Some(&extras),
-                );
-
-                // Copy indirect_args_buf to the CPU-readable staging buffer so the
-                // visible instance count can be read back on a later frame. Only
-                // when the previous readback has been consumed: while a map is
-                // in flight or unread, the buffer must not be overwritten. The
-                // cull dispatch itself is always submitted below.
-                let do_readback =
-                    !instancing.indirect_readback_pending && !instancing.indirect_map_inflight;
-                if do_readback {
-                    // Stage the per-batch indirect args followed by the 8-byte
-                    // cull breakdown counters ([total, frustum_visible]) in one
-                    // buffer, read back together on a later frame.
-                    let indirect_bytes = batch_count as u64 * 20;
-                    let total_bytes = indirect_bytes + 8;
-                    if instancing
-                        .indirect_readback_buf
-                        .as_ref()
-                        .map_or(0, |b| b.size())
-                        < total_bytes
-                    {
-                        instancing.indirect_readback_buf =
-                            Some(device.create_buffer(&wgpu::BufferDescriptor {
-                                label: Some("indirect_readback_buf"),
-                                size: total_bytes,
-                                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                                mapped_at_creation: false,
-                            }));
-                    }
-                    if let Some(ref rb_buf) = instancing.indirect_readback_buf {
-                        if indirect_bytes > 0 {
-                            encoder.copy_buffer_to_buffer(
-                                indirect_buf,
-                                0,
-                                rb_buf,
-                                0,
-                                indirect_bytes,
-                            );
-                        }
-                        encoder.copy_buffer_to_buffer(
-                            cull.main_stats_buf(),
-                            0,
-                            rb_buf,
-                            indirect_bytes,
-                            8,
-                        );
-                    }
-                }
-                queue.submit(std::iter::once(encoder.finish()));
-                if do_readback {
-                    instancing.indirect_readback_batch_count = batch_count;
-                    instancing.indirect_readback_pending = true;
-                }
-            }
+            cull_state.ensure_outputs(
+                device,
+                instancing.cached_instance_count as u32,
+                instancing.batches.len() as u32,
+            );
         }
         (batches_reuploaded, batches_skipped)
+    }
+
+    /// Run the main-camera GPU cull for one viewport, writing this viewport's
+    /// visibility list and indirect draw args into `cull_state`.
+    ///
+    /// The cull inputs (per-instance AABBs, per-batch meta) are shared across
+    /// viewports and were uploaded by `prepare_instanced` in scene scope. This
+    /// runs once per viewport against that viewport's camera, so two viewports
+    /// on different cameras get independent visibility results.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn run_viewport_cull(
+        resources: &mut ViewportGpuResources,
+        cull_state: &mut crate::resources::ViewportCullState,
+        instancing: &mut InstancingState,
+        ts_query_set: Option<&wgpu::QuerySet>,
+        ts_written_mask: &std::sync::atomic::AtomicU32,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+    ) {
+        if !instancing.gpu_culling_enabled
+            || !instancing.use_instancing
+            || instancing.batches.is_empty()
+            || instancing.cached_instance_count == 0
+        {
+            return;
+        }
+
+        let instance_count = instancing.cached_instance_count as u32;
+        let batch_count = instancing.batches.len() as u32;
+
+        // Do all mutable borrows before taking immutable borrows from resources.
+        if instancing.cull_resources.is_none() {
+            instancing.cull_resources = Some(crate::renderer::indirect::CullResources::new(device));
+        }
+        resources.ensure_cull_instance_pipelines(device);
+        cull_state.ensure_outputs(device, instance_count, batch_count);
+        // Drop cull bind groups whose binding-0 instance storage buffer was
+        // rebuilt this frame; `ensure_outputs` already handles a resized vis
+        // buffer.
+        if cull_state.built_gen != instancing.instance_gen {
+            cull_state.instance_cull_bind_groups.clear();
+            cull_state.built_gen = instancing.instance_gen;
+        }
+        for batch in &instancing.batches.clone() {
+            resources.get_instance_cull_bind_group(
+                cull_state,
+                device,
+                batch.texture_id,
+                batch.normal_map_id,
+                batch.ao_map_id,
+            );
+        }
+
+        // Now take immutable borrows to the GPU buffers for dispatch.
+        if let (
+            Some(aabb_buf),
+            Some(meta_buf),
+            Some(counter_buf),
+            Some(vis_buf),
+            Some(indirect_buf),
+        ) = (
+            resources.instance_aabb_buf.as_ref(),
+            resources.batch_meta_buf.as_ref(),
+            cull_state.batch_counter_buf.as_ref(),
+            cull_state.visibility_index_buf.as_ref(),
+            cull_state.indirect_args_buf.as_ref(),
+        ) {
+            let vp_mat = frame.camera.render_camera.view_proj();
+            let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
+
+            let cull = instancing.cull_resources.as_ref().unwrap();
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("cull_encoder"),
+            });
+            let sub = crate::plugin_api::CullSubmission {
+                instance_aabbs: aabb_buf,
+                instance_count,
+                batch_meta: meta_buf,
+                batch_count,
+                counter: counter_buf,
+                visible_out: vis_buf,
+                indirect_out: indirect_buf,
+                shadow_pass: false,
+            };
+            let cull_ts = ts_query_set.map(|qs| (qs, ts_written_mask));
+            // HiZ occlusion: reproject last frame's depth into this camera
+            // and build the pyramid into the cull encoder, before the cull
+            // dispatch that samples it. `build` is false on the first frame
+            // (nothing to reproject yet) and after a resize, which leaves
+            // the cull frustum-only for that frame.
+            let vp_cols = vp_mat.to_cols_array_2d();
+            let built = resources.occlusion_culling_enabled()
+                && resources.build_hiz_reprojected(queue, &mut encoder, vp_cols);
+            let (hiz_view, hiz_dims) = if built {
+                let (view, dims) = resources.hiz_cull_view().unwrap();
+                (Some(view), dims)
+            } else {
+                (None, [1.0, 1.0])
+            };
+            let extras = crate::renderer::indirect::MainCullExtras {
+                view_proj: vp_cols,
+                viewport: hiz_dims,
+                hiz_view,
+                do_occlusion: built,
+            };
+            cull.dispatch(
+                &mut encoder,
+                device,
+                queue,
+                &cpu_frustum,
+                None,
+                &sub,
+                cull_ts,
+                Some(&extras),
+            );
+
+            // Copy indirect_args_buf to the CPU-readable staging buffer so the
+            // visible instance count can be read back on a later frame. The
+            // readback holds a single set of counters, so it tracks the primary
+            // viewport (index 0) only. Skip while a map is in flight or unread so
+            // the buffer is not overwritten before `prepare()` has read it.
+            let do_readback = frame.camera.viewport_index == 0
+                && !instancing.indirect_readback_pending
+                && !instancing.indirect_map_inflight;
+            if do_readback {
+                // Stage the per-batch indirect args followed by the 8-byte
+                // cull breakdown counters ([total, frustum_visible]) in one
+                // buffer, read back together on a later frame.
+                let indirect_bytes = batch_count as u64 * 20;
+                let total_bytes = indirect_bytes + 8;
+                if instancing
+                    .indirect_readback_buf
+                    .as_ref()
+                    .map_or(0, |b| b.size())
+                    < total_bytes
+                {
+                    instancing.indirect_readback_buf =
+                        Some(device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("indirect_readback_buf"),
+                            size: total_bytes,
+                            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                            mapped_at_creation: false,
+                        }));
+                }
+                if let Some(ref rb_buf) = instancing.indirect_readback_buf {
+                    if indirect_bytes > 0 {
+                        encoder.copy_buffer_to_buffer(indirect_buf, 0, rb_buf, 0, indirect_bytes);
+                    }
+                    encoder.copy_buffer_to_buffer(
+                        cull.main_stats_buf(),
+                        0,
+                        rb_buf,
+                        indirect_bytes,
+                        8,
+                    );
+                }
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+            if do_readback {
+                instancing.indirect_readback_batch_count = batch_count;
+                instancing.indirect_readback_pending = true;
+            }
+        }
     }
 }

@@ -177,13 +177,9 @@ impl ViewportRenderer {
 
         let plugin_frame_index = self.plugin_frame_index;
 
-        // The GPU cull runs here in scene scope against the primary camera and
-        // writes its outputs into a per-viewport `ViewportCullState`. Slot 0 is
-        // the canonical home for that single result; the draw path reads it from
-        // the same slot. Slots are normally grown later in
-        // `prepare_viewport_internal`, so ensure slot 0 exists before the
-        // dispatch. (When cull moves fully per-viewport, this dispatch moves
-        // into viewport scope and this early-ensure goes away.)
+        // The shadow cull runs here in scene scope and reads slot 0's cull
+        // output buffers. Slots are otherwise grown in prepare_viewport_internal,
+        // which runs after this, so ensure slot 0 exists first.
         self.ensure_viewport_slot(device, 0);
 
         let resources = &mut self.resources;
@@ -291,8 +287,6 @@ impl ViewportRenderer {
                 &mut self.instancing,
                 &instanceable,
                 scene_items,
-                self.ts_query_set.as_ref(),
-                &self.ts_written_mask,
                 device,
                 queue,
                 frame,
@@ -759,6 +753,21 @@ impl ViewportRenderer {
     ) {
         // Ensure a per-viewport camera slot exists for this viewport index.
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
+
+        // Run the main-camera GPU cull for this viewport against its own camera,
+        // writing this slot's visibility list and indirect args.
+        let vp_idx = frame.camera.viewport_index;
+        Self::run_viewport_cull(
+            &mut self.resources,
+            &mut self.viewport_slots[vp_idx].cull,
+            &mut self.instancing,
+            self.ts_query_set.as_ref(),
+            &self.ts_written_mask,
+            device,
+            queue,
+            frame,
+        );
+
         self.prepare_clip_uniforms(queue, frame, viewport_fx);
         self.prepare_interaction_state(device, queue, frame, viewport_fx);
         self.prepare_outline_pass(device, queue, frame);

@@ -3776,6 +3776,8 @@ pub(crate) struct ViewportCullState {
     pub(crate) visibility_index_capacity: usize,
     /// Indirect draw args buffer for the main pass (one DrawIndexedIndirect per batch).
     pub(crate) indirect_args_buf: Option<wgpu::Buffer>,
+    /// Capacity (in batches) of the counter and indirect-args buffers below.
+    pub(crate) batch_output_capacity: usize,
     /// Indirect draw args buffers for shadow cascades (one per cascade).
     pub(crate) shadow_indirect_bufs: [Option<wgpu::Buffer>; 4],
     /// Per-cascade visibility index buffers for shadow GPU culling (same capacity
@@ -3789,6 +3791,11 @@ pub(crate) struct ViewportCullState {
     /// Per-cascade instance+visibility bind groups for shadow cull path.
     /// Invalidated when `shadow_vis_bufs` are reallocated.
     pub(crate) shadow_cull_instance_bgs: [Option<wgpu::BindGroup>; 4],
+    /// Generation of the shared instance buffers the main cull bind groups were
+    /// built against. When it falls behind `InstancingState::instance_gen` the
+    /// shared instance storage buffer was rebuilt, so those bind groups (which
+    /// bind it at binding 0) are stale and get cleared.
+    pub(crate) built_gen: u64,
 }
 
 impl ViewportCullState {
@@ -3798,10 +3805,96 @@ impl ViewportCullState {
             visibility_index_buf: None,
             visibility_index_capacity: 0,
             indirect_args_buf: None,
+            batch_output_capacity: 0,
             shadow_indirect_bufs: [None, None, None, None],
             shadow_vis_bufs: [None, None, None, None],
             instance_cull_bind_groups: std::collections::HashMap::new(),
             shadow_cull_instance_bgs: [None, None, None, None],
+            built_gen: u64::MAX,
+        }
+    }
+
+    /// Allocate or grow this viewport's cull output buffers to fit the current
+    /// instance and batch counts. The per-instance visibility buffers grow with
+    /// `instance_count`; the per-batch counter and indirect-args buffers grow
+    /// with `batch_count`. Uses the same 2x growth as the shared input buffers.
+    /// Bind groups referencing a reallocated buffer are cleared.
+    pub(crate) fn ensure_outputs(
+        &mut self,
+        device: &wgpu::Device,
+        instance_count: u32,
+        batch_count: u32,
+    ) {
+        // Per-instance visibility buffers, sized like the shared AABB buffer.
+        let max_instances = (device.limits().max_storage_buffer_binding_size as usize)
+            / std::mem::size_of::<InstanceAabb>();
+        let instance_count = (instance_count as usize).min(max_instances);
+        if instance_count > self.visibility_index_capacity {
+            let new_cap = (instance_count * 2).max(64).min(max_instances);
+            let vis_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            self.visibility_index_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("visibility_index_buf"),
+                size: vis_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.visibility_index_capacity = new_cap;
+            for i in 0..4 {
+                self.shadow_vis_bufs[i] = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("shadow_vis_buf_{i}")),
+                    size: vis_size,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            }
+            // The main and shadow cull bind groups bind these vis buffers at
+            // binding 5, so both caches are now stale.
+            self.instance_cull_bind_groups.clear();
+            self.shadow_cull_instance_bgs = [None, None, None, None];
+        }
+
+        // Per-batch counter and indirect-args buffers, sized like the shared
+        // batch-meta buffer.
+        let max_batches = (device.limits().max_storage_buffer_binding_size as usize)
+            / std::mem::size_of::<BatchMeta>();
+        let batch_count = (batch_count as usize).min(max_batches);
+        if batch_count > self.batch_output_capacity {
+            let new_cap = (batch_count * 2).max(16).min(max_batches);
+            let counter_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            // wgpu::util::DrawIndexedIndirect is 5 x u32 = 20 bytes.
+            let indirect_size = (new_cap * 20) as u64;
+            self.batch_counter_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("batch_counter_buf"),
+                size: counter_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            // iOS Metal and Android (emulator and older devices) do not
+            // reliably support INDIRECT_EXECUTION. Leave these as None so the
+            // renderer falls back to direct draw calls.
+            if cfg!(not(any(target_os = "ios", target_os = "android"))) {
+                self.indirect_args_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("indirect_args_buf"),
+                    size: indirect_size,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::INDIRECT
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }));
+                for i in 0..4 {
+                    self.shadow_indirect_bufs[i] =
+                        Some(device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some(&format!("shadow_indirect_buf_{i}")),
+                            size: indirect_size,
+                            usage: wgpu::BufferUsages::STORAGE
+                                | wgpu::BufferUsages::INDIRECT
+                                | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        }));
+                }
+            }
+            self.batch_output_capacity = new_cap;
         }
     }
 }

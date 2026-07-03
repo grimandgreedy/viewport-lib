@@ -417,10 +417,9 @@ impl ViewportRenderer {
             });
 
             let resources = &self.resources;
-            // Cull outputs live on slot 0 (the canonical cull slot the scene-scope
-            // dispatch writes to). Read the indirect args and cull bind groups from
-            // there, not from the drawn slot.
-            let cull0 = &self.viewport_slots[0].cull;
+            // This viewport's own cull outputs (indirect args and cull bind
+            // groups), written by run_viewport_cull against this slot's camera.
+            let cull0 = &self.viewport_slots[vp_idx].cull;
             render_pass.set_bind_group(0, camera_bg, &[]);
 
             // Check skybox eligibility early; drawn after all opaques below.
@@ -1873,8 +1872,8 @@ impl ViewportRenderer {
                 oit_pass.set_bind_group(0, camera_bg, &[]);
 
                 if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
-                    // Cull outputs live on slot 0 (the canonical cull slot).
-                    let cull0 = &self.viewport_slots[0].cull;
+                    // This viewport's own cull outputs.
+                    let cull0 = &self.viewport_slots[vp_idx].cull;
                     let use_indirect_oit = self.instancing.gpu_culling_enabled
                         && self.resources.oit_instanced_cull_pipeline.is_some()
                         && cull0.indirect_args_buf.is_some();

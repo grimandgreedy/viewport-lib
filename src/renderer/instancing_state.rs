@@ -55,6 +55,10 @@ pub(crate) struct InstancingState {
     pub(crate) indirect_map_inflight: bool,
     /// In-flight indirect map status: 0 = pending, 1 = mapped, 2 = failed.
     pub(crate) indirect_map_status: std::sync::Arc<std::sync::atomic::AtomicU8>,
+    /// Bumped whenever the shared instance storage buffer is rebuilt (a full
+    /// batch upload). Per-viewport cull bind groups compare against this to
+    /// detect when their binding-0 reference is stale.
+    pub(crate) instance_gen: u64,
 }
 
 impl InstancingState {
@@ -78,6 +82,7 @@ impl InstancingState {
             indirect_readback_pending: false,
             indirect_map_inflight: false,
             indirect_map_status: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            instance_gen: 0,
         }
     }
 }
