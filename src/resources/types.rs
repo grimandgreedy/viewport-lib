@@ -3007,32 +3007,21 @@ pub struct ViewportGpuResources {
     /// Per-cascade bind groups for shadow_instanced_pipeline group 0.
     pub(crate) shadow_instanced_cascade_bgs: [Option<wgpu::BindGroup>; 4],
 
-    // --- GPU culling buffers ---
+    // --- GPU culling inputs (scene-global, camera-independent) ---
+    // The cull OUTPUTS (visibility indices, indirect args, batch counters, and
+    // their bind groups) are per-viewport and live in `ViewportCullState` on
+    // each `ViewportSlot`, not here.
     /// Per-instance world-space AABB buffer. Rebuilt on batch cache miss.
     pub(crate) instance_aabb_buf: Option<wgpu::Buffer>,
     pub(crate) instance_aabb_capacity: usize,
     /// Per-batch metadata buffer. Rebuilt on batch cache miss.
     pub(crate) batch_meta_buf: Option<wgpu::Buffer>,
-    /// Per-batch atomic counter buffer. Zeroed at the start of each cull dispatch.
-    pub(crate) batch_counter_buf: Option<wgpu::Buffer>,
     pub(crate) batch_meta_capacity: usize,
-    /// Compact list of visible instance indices. Written by the compute cull pass.
-    pub(crate) visibility_index_buf: Option<wgpu::Buffer>,
-    pub(crate) visibility_index_capacity: usize,
-    /// Indirect draw args buffer for the main pass (one DrawIndexedIndirect per batch).
-    pub(crate) indirect_args_buf: Option<wgpu::Buffer>,
-    /// Indirect draw args buffers for shadow cascades (one per cascade).
-    pub(crate) shadow_indirect_bufs: [Option<wgpu::Buffer>; 4],
 
     // --- GPU culling pipelines ---
     /// Bind group layout for instanced cull pipelines (group 1).
     /// Extends `instance_bgl` with binding 5: visibility_indices storage buffer.
     pub(crate) instance_cull_bind_group_layout: Option<wgpu::BindGroupLayout>,
-    /// Per-texture-key bind groups for the cull pipelines.
-    /// Keyed by (albedo_id, normal_map_id, ao_map_id); invalidated when
-    /// `visibility_index_buf` is resized.
-    pub(crate) instance_cull_bind_groups:
-        std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
     /// HDR-pass solid instanced pipeline using `vs_main_cull` (indirect draw path).
     pub(crate) hdr_solid_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
     /// Two-sided (`cull_mode: None`) variant of `hdr_solid_instanced_cull_pipeline`
@@ -3049,11 +3038,6 @@ pub struct ViewportGpuResources {
     pub(crate) shadow_instanced_cull_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
     pub(crate) shadow_cull_instance_bgl: Option<wgpu::BindGroupLayout>,
-    /// Per-cascade visibility index buffers for shadow GPU culling (same capacity as `visibility_index_buf`).
-    pub(crate) shadow_vis_bufs: [Option<wgpu::Buffer>; 4],
-    /// Per-cascade instance+visibility bind groups for shadow cull path.
-    /// Invalidated when `shadow_vis_bufs` are reallocated.
-    pub(crate) shadow_cull_instance_bgs: [Option<wgpu::BindGroup>; 4],
 
     // --- Post-processing shared infrastructure (BGLs / pipelines / samplers / static textures) ---
     // Viewport-sized textures, bind groups, and uniform buffers are stored in
@@ -3771,4 +3755,53 @@ pub struct ViewportGpuResources {
     /// of the frustum test. Off by default (the test is scene-dependent and a
     /// safety valve against the one-frame-stale depth source).
     pub(crate) occlusion_culling_enabled: bool,
+}
+
+/// Per-viewport GPU culling outputs.
+///
+/// The frustum/occlusion cull runs against one camera and writes a compact
+/// visibility list plus the indirect draw args for that camera. Those results
+/// are viewport-specific: two viewports on different cameras must not share
+/// them, or the last one to run would clobber the other. The cull INPUTS
+/// (per-instance AABBs, per-batch meta) and all cull PIPELINES are
+/// camera-independent and stay on `ViewportGpuResources`.
+///
+/// Owned by each `ViewportSlot`. The bind-group caches here reference this
+/// state's own buffers, so they are invalidated when those buffers resize.
+pub(crate) struct ViewportCullState {
+    /// Per-batch atomic counter buffer. Zeroed at the start of each cull dispatch.
+    pub(crate) batch_counter_buf: Option<wgpu::Buffer>,
+    /// Compact list of visible instance indices. Written by the compute cull pass.
+    pub(crate) visibility_index_buf: Option<wgpu::Buffer>,
+    pub(crate) visibility_index_capacity: usize,
+    /// Indirect draw args buffer for the main pass (one DrawIndexedIndirect per batch).
+    pub(crate) indirect_args_buf: Option<wgpu::Buffer>,
+    /// Indirect draw args buffers for shadow cascades (one per cascade).
+    pub(crate) shadow_indirect_bufs: [Option<wgpu::Buffer>; 4],
+    /// Per-cascade visibility index buffers for shadow GPU culling (same capacity
+    /// as `visibility_index_buf`).
+    pub(crate) shadow_vis_bufs: [Option<wgpu::Buffer>; 4],
+    /// Per-texture-key bind groups for the main cull pipelines.
+    /// Keyed by (albedo_id, normal_map_id, ao_map_id); invalidated when
+    /// `visibility_index_buf` is resized.
+    pub(crate) instance_cull_bind_groups:
+        std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
+    /// Per-cascade instance+visibility bind groups for shadow cull path.
+    /// Invalidated when `shadow_vis_bufs` are reallocated.
+    pub(crate) shadow_cull_instance_bgs: [Option<wgpu::BindGroup>; 4],
+}
+
+impl ViewportCullState {
+    pub(crate) fn new() -> Self {
+        Self {
+            batch_counter_buf: None,
+            visibility_index_buf: None,
+            visibility_index_capacity: 0,
+            indirect_args_buf: None,
+            shadow_indirect_bufs: [None, None, None, None],
+            shadow_vis_bufs: [None, None, None, None],
+            instance_cull_bind_groups: std::collections::HashMap::new(),
+            shadow_cull_instance_bgs: [None, None, None, None],
+        }
+    }
 }

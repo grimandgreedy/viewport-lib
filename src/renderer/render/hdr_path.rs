@@ -417,6 +417,10 @@ impl ViewportRenderer {
             });
 
             let resources = &self.resources;
+            // Cull outputs live on slot 0 (the canonical cull slot the scene-scope
+            // dispatch writes to). Read the indirect args and cull bind groups from
+            // there, not from the drawn slot.
+            let cull0 = &self.viewport_slots[0].cull;
             render_pass.set_bind_group(0, camera_bg, &[]);
 
             // Check skybox eligibility early; drawn after all opaques below.
@@ -469,13 +473,13 @@ impl ViewportRenderer {
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
                         let use_indirect = self.instancing.gpu_culling_enabled
                             && resources.hdr_solid_instanced_cull_pipeline.is_some()
-                            && resources.indirect_args_buf.is_some();
+                            && cull0.indirect_args_buf.is_some();
 
                         if use_indirect {
                             if let (Some(pipeline), Some(pipeline_two_sided), Some(indirect_buf)) = (
                                 &resources.hdr_solid_instanced_cull_pipeline,
                                 &resources.hdr_solid_instanced_cull_two_sided_pipeline,
-                                &resources.indirect_args_buf,
+                                &cull0.indirect_args_buf,
                             ) {
                                 render_pass.set_bind_group(
                                     2,
@@ -496,7 +500,7 @@ impl ViewportRenderer {
                                         batch.ao_map_id.unwrap_or(u64::MAX),
                                     );
                                     let Some(inst_tex_bg) =
-                                        resources.instance_cull_bind_groups.get(&mat_key)
+                                        cull0.instance_cull_bind_groups.get(&mat_key)
                                     else {
                                         continue;
                                     };
@@ -1388,7 +1392,9 @@ impl ViewportRenderer {
                             continue;
                         };
                         let Some(mesh) = resources.mesh_store.get(
-                            crate::resources::mesh::mesh_store::MeshId::from_index(mesh_id as usize),
+                            crate::resources::mesh::mesh_store::MeshId::from_index(
+                                mesh_id as usize,
+                            ),
                         ) else {
                             continue;
                         };
@@ -1867,14 +1873,16 @@ impl ViewportRenderer {
                 oit_pass.set_bind_group(0, camera_bg, &[]);
 
                 if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
+                    // Cull outputs live on slot 0 (the canonical cull slot).
+                    let cull0 = &self.viewport_slots[0].cull;
                     let use_indirect_oit = self.instancing.gpu_culling_enabled
                         && self.resources.oit_instanced_cull_pipeline.is_some()
-                        && self.resources.indirect_args_buf.is_some();
+                        && cull0.indirect_args_buf.is_some();
 
                     if use_indirect_oit {
                         if let (Some(pipeline), Some(indirect_buf)) = (
                             &self.resources.oit_instanced_cull_pipeline,
-                            &self.resources.indirect_args_buf,
+                            &cull0.indirect_args_buf,
                         ) {
                             oit_pass.set_pipeline(pipeline);
                             oit_pass.set_bind_group(
@@ -1898,7 +1906,7 @@ impl ViewportRenderer {
                                     batch.ao_map_id.unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) =
-                                    self.resources.instance_cull_bind_groups.get(&mat_key)
+                                    cull0.instance_cull_bind_groups.get(&mat_key)
                                 else {
                                     continue;
                                 };

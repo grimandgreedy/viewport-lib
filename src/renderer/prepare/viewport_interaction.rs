@@ -1118,11 +1118,13 @@ impl ViewportRenderer {
                         resource: buf.as_entire_binding(),
                     }],
                 });
-                mc_outline_data.push(crate::resources::volume::gpu_marching_cubes::McOutlineItem {
-                    mc_gpu_idx: i,
-                    _uniform_buf: buf,
-                    mask_bind_group: bg,
-                });
+                mc_outline_data.push(
+                    crate::resources::volume::gpu_marching_cubes::McOutlineItem {
+                        mc_gpu_idx: i,
+                        _uniform_buf: buf,
+                        mask_bind_group: bg,
+                    },
+                );
             }
         }
 
@@ -1574,10 +1576,10 @@ impl ViewportRenderer {
                 &self.ribbon_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
             let polyline_gpu_ptr =
                 &self.polyline_gpu_data as *const Vec<crate::resources::PolylineGpuData>;
-            let implicit_gpu_ptr =
-                &self.implicit_gpu_data as *const Vec<crate::resources::volume::implicit::ImplicitGpuItem>;
-            let mc_gpu_data_ptr =
-                &self.mc_gpu_data as *const Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>;
+            let implicit_gpu_ptr = &self.implicit_gpu_data
+                as *const Vec<crate::resources::volume::implicit::ImplicitGpuItem>;
+            let mc_gpu_data_ptr = &self.mc_gpu_data
+                as *const Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;

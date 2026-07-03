@@ -99,6 +99,10 @@ pub(crate) struct ViewportSlot {
     ///
     /// Created lazily on first HDR render call and resized when viewport dimensions change.
     pub hdr: Option<crate::resources::ViewportHdrState>,
+    /// Per-viewport GPU culling outputs (visibility indices, indirect args,
+    /// batch counters, and their bind groups). The cull dispatch for this
+    /// viewport's camera writes here; the draw path reads from here.
+    pub cull: crate::resources::ViewportCullState,
     /// Per-fragment debug storage buffer (group 0 binding 12). Allocated at
     /// `width * height * 16` bytes when debug_vis is active; None otherwise.
     pub debug_frag_buf: Option<wgpu::Buffer>,
@@ -1923,6 +1927,7 @@ impl ViewportRenderer {
                 camera_bind_group,
                 grid_bind_group,
                 hdr: None,
+                cull: crate::resources::ViewportCullState::new(),
                 debug_frag_buf: None,
                 debug_frag_dims: (0, 0),
                 outline_object_buffers: Vec::new(),

@@ -60,7 +60,7 @@ pub(crate) use self::types::{
     OverlayUniform, PickInstance, ProjectedTetUniform, RawGeomOutlineBuffers, SHADOW_ATLAS_SIZE,
     ScreenRectOutlineBuffers, ShadowAtlasUniform, SplatOutlineBuffers, SplatOutlineMaskUniform,
     SpriteGpuData, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData,
-    ToneMapUniform, ViewportHdrState, VolumeSurfaceSliceGpuData,
+    ToneMapUniform, ViewportCullState, ViewportHdrState, VolumeSurfaceSliceGpuData,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

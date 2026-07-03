@@ -9,6 +9,7 @@ impl ViewportRenderer {
     /// Returns `(batches_reuploaded, batches_skipped)` for frame stats.
     pub(super) fn prepare_instanced(
         resources: &mut ViewportGpuResources,
+        cull_state: &mut crate::resources::ViewportCullState,
         instancing: &mut InstancingState,
         instanceable: &[bool],
         scene_items: &[SceneRenderItem],
@@ -264,7 +265,13 @@ impl ViewportRenderer {
                 }
             } else {
                 resources.upload_instance_data(device, queue, &all_instances);
-                resources.upload_aabb_and_batch_meta(device, queue, &all_aabbs, &batch_metas);
+                resources.upload_aabb_and_batch_meta(
+                    cull_state,
+                    device,
+                    queue,
+                    &all_aabbs,
+                    &batch_metas,
+                );
                 batches_reuploaded = instanced_batches.len() as u32;
                 // Rebuild the hash cache so the next partial-upload check is seeded.
                 instancing.cached_instance_hashes.clear();
@@ -328,6 +335,7 @@ impl ViewportRenderer {
             resources.ensure_cull_instance_pipelines(device);
             for batch in &instancing.batches.clone() {
                 resources.get_instance_cull_bind_group(
+                    cull_state,
                     device,
                     batch.texture_id,
                     batch.normal_map_id,
@@ -345,9 +353,9 @@ impl ViewportRenderer {
             ) = (
                 resources.instance_aabb_buf.as_ref(),
                 resources.batch_meta_buf.as_ref(),
-                resources.batch_counter_buf.as_ref(),
-                resources.visibility_index_buf.as_ref(),
-                resources.indirect_args_buf.as_ref(),
+                cull_state.batch_counter_buf.as_ref(),
+                cull_state.visibility_index_buf.as_ref(),
+                cull_state.indirect_args_buf.as_ref(),
             ) {
                 let vp_mat = frame.camera.render_camera.view_proj();
                 let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);

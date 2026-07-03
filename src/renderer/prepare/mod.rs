@@ -177,6 +177,15 @@ impl ViewportRenderer {
 
         let plugin_frame_index = self.plugin_frame_index;
 
+        // The GPU cull runs here in scene scope against the primary camera and
+        // writes its outputs into a per-viewport `ViewportCullState`. Slot 0 is
+        // the canonical home for that single result; the draw path reads it from
+        // the same slot. Slots are normally grown later in
+        // `prepare_viewport_internal`, so ensure slot 0 exists before the
+        // dispatch. (When cull moves fully per-viewport, this dispatch moves
+        // into viewport scope and this early-ensure goes away.)
+        self.ensure_viewport_slot(device, 0);
+
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
 
@@ -278,6 +287,7 @@ impl ViewportRenderer {
         let (batches_reuploaded, batches_skipped) = if self.instancing.use_instancing {
             Self::prepare_instanced(
                 resources,
+                &mut self.viewport_slots[0].cull,
                 &mut self.instancing,
                 &instanceable,
                 scene_items,
@@ -695,6 +705,7 @@ impl ViewportRenderer {
         let shadow_start = std::time::Instant::now();
         Self::prepare_shadow_pass(
             resources,
+            &mut self.viewport_slots[0].cull,
             &mut self.instancing,
             &self.compute_filter_results,
             &self.item_type_plugins,

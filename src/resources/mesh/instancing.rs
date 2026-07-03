@@ -353,6 +353,7 @@ impl ViewportGpuResources {
     /// Call on every batch cache miss, immediately after `upload_instance_data`.
     pub(crate) fn upload_aabb_and_batch_meta(
         &mut self,
+        cull_state: &mut crate::resources::ViewportCullState,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         aabbs: &[crate::resources::types::InstanceAabb],
@@ -383,27 +384,28 @@ impl ViewportGpuResources {
         }
 
         // --- visibility_index_buf + shadow_vis_bufs: same count as instances ---
-        if aabbs.len() > self.visibility_index_capacity {
+        if aabbs.len() > cull_state.visibility_index_capacity {
             let new_cap = (aabbs.len() * 2).max(64).min(max_instances);
             let vis_size = (new_cap * std::mem::size_of::<u32>()) as u64;
-            self.visibility_index_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            cull_state.visibility_index_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("visibility_index_buf"),
                 size: vis_size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            self.visibility_index_capacity = new_cap;
+            cull_state.visibility_index_capacity = new_cap;
             // Per-cascade shadow visibility buffers grow with the instance count.
             for i in 0..4 {
-                self.shadow_vis_bufs[i] = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!("shadow_vis_buf_{i}")),
-                    size: vis_size,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }));
+                cull_state.shadow_vis_bufs[i] =
+                    Some(device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(&format!("shadow_vis_buf_{i}")),
+                        size: vis_size,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    }));
             }
             // Invalidate bind groups that reference the old shadow vis buffers.
-            self.shadow_cull_instance_bgs = [None, None, None, None];
+            cull_state.shadow_cull_instance_bgs = [None, None, None, None];
         }
 
         // --- Batch meta + counter + indirect args buffers (per-batch) ---
@@ -426,7 +428,7 @@ impl ViewportGpuResources {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            self.batch_counter_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            cull_state.batch_counter_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("batch_counter_buf"),
                 size: counter_size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
@@ -436,17 +438,18 @@ impl ViewportGpuResources {
             // reliably support INDIRECT_EXECUTION. Leave these as None so
             // the renderer falls back to direct draw calls.
             if cfg!(not(any(target_os = "ios", target_os = "android"))) {
-                self.indirect_args_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("indirect_args_buf"),
-                    size: indirect_size,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::INDIRECT
-                        | wgpu::BufferUsages::COPY_DST
-                        | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                }));
+                cull_state.indirect_args_buf =
+                    Some(device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("indirect_args_buf"),
+                        size: indirect_size,
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::INDIRECT
+                            | wgpu::BufferUsages::COPY_DST
+                            | wgpu::BufferUsages::COPY_SRC,
+                        mapped_at_creation: false,
+                    }));
                 for i in 0..4 {
-                    self.shadow_indirect_bufs[i] =
+                    cull_state.shadow_indirect_bufs[i] =
                         Some(device.create_buffer(&wgpu::BufferDescriptor {
                             label: Some(&format!("shadow_indirect_buf_{i}")),
                             size: indirect_size,
@@ -471,8 +474,8 @@ impl ViewportGpuResources {
         // Invalidate cull bind groups when visibility_index_buf was just (re-)allocated.
         // The new buffer is only detectable by comparing capacity before and after.
         // Simplest approach: always invalidate on upload (cache miss already guards frequency).
-        self.instance_cull_bind_groups.clear();
-        self.shadow_cull_instance_bgs = [None, None, None, None];
+        cull_state.instance_cull_bind_groups.clear();
+        cull_state.shadow_cull_instance_bgs = [None, None, None, None];
     }
 
     /// Ensure the GPU-driven cull variant pipelines and BGL are created.
@@ -723,15 +726,16 @@ impl ViewportGpuResources {
     ///
     /// Binds `instance_storage_buf` (binding 0) and `shadow_vis_bufs[cascade_idx]` (binding 5).
     /// Returns `None` if the required buffers or BGL are not yet allocated.
-    pub(crate) fn get_shadow_cull_instance_bind_group(
-        &mut self,
+    pub(crate) fn get_shadow_cull_instance_bind_group<'a>(
+        &self,
+        cull_state: &'a mut crate::resources::ViewportCullState,
         device: &wgpu::Device,
         cascade_idx: usize,
-    ) -> Option<&wgpu::BindGroup> {
-        if self.shadow_cull_instance_bgs[cascade_idx].is_none() {
+    ) -> Option<&'a wgpu::BindGroup> {
+        if cull_state.shadow_cull_instance_bgs[cascade_idx].is_none() {
             let bgl = self.shadow_cull_instance_bgl.as_ref()?;
             let inst_buf = self.instance_storage_buf.as_ref()?;
-            let vis_buf = self.shadow_vis_bufs[cascade_idx].as_ref()?;
+            let vis_buf = cull_state.shadow_vis_bufs[cascade_idx].as_ref()?;
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("shadow_cull_instance_bg_{cascade_idx}")),
                 layout: bgl,
@@ -746,32 +750,33 @@ impl ViewportGpuResources {
                     },
                 ],
             });
-            self.shadow_cull_instance_bgs[cascade_idx] = Some(bg);
+            cull_state.shadow_cull_instance_bgs[cascade_idx] = Some(bg);
         }
-        self.shadow_cull_instance_bgs[cascade_idx].as_ref()
+        cull_state.shadow_cull_instance_bgs[cascade_idx].as_ref()
     }
 
     /// Get or create a cull-path bind group for the instanced cull pipeline.
     ///
     /// Identical to `get_instance_bind_group` but uses `instance_cull_bind_group_layout`
     /// and includes the `visibility_index_buf` at binding 5.
-    pub(crate) fn get_instance_cull_bind_group(
-        &mut self,
+    pub(crate) fn get_instance_cull_bind_group<'a>(
+        &self,
+        cull_state: &'a mut crate::resources::ViewportCullState,
         device: &wgpu::Device,
         albedo_id: Option<u64>,
         normal_map_id: Option<u64>,
         ao_map_id: Option<u64>,
-    ) -> Option<&wgpu::BindGroup> {
+    ) -> Option<&'a wgpu::BindGroup> {
         let key = (
             albedo_id.unwrap_or(u64::MAX),
             normal_map_id.unwrap_or(u64::MAX),
             ao_map_id.unwrap_or(u64::MAX),
         );
 
-        if !self.instance_cull_bind_groups.contains_key(&key) {
+        if !cull_state.instance_cull_bind_groups.contains_key(&key) {
             let bgl = self.instance_cull_bind_group_layout.as_ref()?;
             let inst_buf = self.instance_storage_buf.as_ref()?;
-            let vis_buf = self.visibility_index_buf.as_ref()?;
+            let vis_buf = cull_state.visibility_index_buf.as_ref()?;
 
             let albedo_view = match albedo_id {
                 Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
@@ -816,10 +821,10 @@ impl ViewportGpuResources {
                     },
                 ],
             });
-            self.instance_cull_bind_groups.insert(key, bg);
+            cull_state.instance_cull_bind_groups.insert(key, bg);
         }
 
-        self.instance_cull_bind_groups.get(&key)
+        cull_state.instance_cull_bind_groups.get(&key)
     }
 
     /// Get or create a combined instance+texture bind group for the instanced pipeline.
