@@ -440,7 +440,7 @@ pub(crate) struct Decal46State {
     pub scroll_handle: Option<DecalHandle>,
 
     // D5
-    pub wall_obstacle_node: Option<viewport_lib::interaction::selection::NodeId>,
+    pub wall_obstacle_node: Option<viewport_lib::interaction::select::selection::NodeId>,
     pub show_obstacle: bool,
 
     // D6
@@ -463,7 +463,7 @@ pub(crate) struct Decal46State {
 
     // D9
     pub column_mesh: Option<MeshId>,
-    pub column_node: Option<viewport_lib::interaction::selection::NodeId>,
+    pub column_node: Option<viewport_lib::interaction::select::selection::NodeId>,
     pub label_tex: Option<u64>,
     pub cyl_facing: CylindricalFacing,
 

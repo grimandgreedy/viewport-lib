@@ -1,7 +1,7 @@
 //! Smooth camera motion with exponential damping and fly-to animations.
 //!
 //! `CameraAnimator` does NOT own the [`Camera`]. It takes `&mut Camera` in
-//! [`update()`](crate::camera::animator::CameraAnimator::update) so the application decides whether to
+//! [`update()`](crate::camera::controllers::animator::CameraAnimator::update) so the application decides whether to
 //! use animation at all.
 
 use crate::camera::camera::{Camera, Projection};

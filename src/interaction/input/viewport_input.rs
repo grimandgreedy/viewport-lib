@@ -1,7 +1,7 @@
 //! Stateful viewport input accumulator and resolver.
 //!
 //! [`ViewportInput`] is the lower-level input resolver. Most consumers should
-//! use [`super::controller::OrbitCameraController`] which wraps it.
+//! use [`crate::camera::controllers::orbit::OrbitCameraController`] which wraps it.
 
 use std::collections::HashSet;
 

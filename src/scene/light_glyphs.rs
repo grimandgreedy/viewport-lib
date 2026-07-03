@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::interaction::selection::Selection;
+use crate::interaction::select::selection::Selection;
 use crate::renderer::PickId;
 use crate::renderer::{GlyphItem, GlyphType, PolylineItem, sphere_wireframe_polyline};
 use crate::scene::LayerId;

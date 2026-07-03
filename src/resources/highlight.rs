@@ -1,5 +1,5 @@
 use super::types::{SubHighlightGpuData, SubHighlightUniform, ViewportGpuResources};
-use crate::interaction::sub_object::{SubObjectRef, SubSelectionRef};
+use crate::interaction::select::sub_object::{SubObjectRef, SubSelectionRef};
 
 /// Recover the two world-space endpoint positions for a global polyline segment index.
 ///

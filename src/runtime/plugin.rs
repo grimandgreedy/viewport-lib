@@ -1,7 +1,7 @@
 //! Runtime plugin trait and phase ordering.
 
 use super::context::RuntimeStepContext;
-use crate::interaction::selection::NodeId;
+use crate::interaction::select::selection::NodeId;
 
 /// Named priority band constants for runtime plugins.
 ///

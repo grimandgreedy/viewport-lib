@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::camera::frustum::{CullStats, Frustum};
-use crate::interaction::selection::NodeId;
+use crate::interaction::select::selection::NodeId;
 use crate::scene::aabb::Aabb;
 
 // ---------------------------------------------------------------------------

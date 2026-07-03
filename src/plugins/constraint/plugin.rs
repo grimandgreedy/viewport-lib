@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::interaction::selection::NodeId;
+use crate::interaction::select::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
 use crate::runtime::plugin::{RuntimePlugin, phase};
 

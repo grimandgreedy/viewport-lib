@@ -107,7 +107,7 @@ impl FrameData {
     pub fn from_scene(
         camera: CameraFrame,
         scene: &mut crate::scene::scene::Scene,
-        selection: &crate::interaction::selection::Selection,
+        selection: &crate::interaction::select::selection::Selection,
     ) -> Self {
         Self {
             camera,

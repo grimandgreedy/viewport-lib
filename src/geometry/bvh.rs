@@ -39,7 +39,7 @@ use std::collections::HashMap;
 
 use rayon;
 
-use crate::interaction::selection::NodeId;
+use crate::interaction::select::selection::NodeId;
 use crate::resources::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
 use crate::scene::scene::Scene;
@@ -47,7 +47,7 @@ use crate::scene::scene::Scene;
 use parry3d::math::Vector;
 use parry3d::query::{Ray, RayCast};
 
-use crate::interaction::sub_object::SubObjectRef;
+use crate::interaction::select::sub_object::SubObjectRef;
 
 /// An entry in the BVH representing a single scene object.
 #[derive(Debug, Clone)]
@@ -165,9 +165,9 @@ impl PickAccelerator {
         ray_origin: glam::Vec3,
         ray_dir: glam::Vec3,
         mesh_lookup: &HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
-    ) -> Option<crate::interaction::picking::PickHit> {
+    ) -> Option<crate::interaction::query::picking::PickHit> {
         let root = self.root.as_ref()?;
-        let mut best: Option<(NodeId, f32, crate::interaction::picking::PickHit)> = None;
+        let mut best: Option<(NodeId, f32, crate::interaction::query::picking::PickHit)> = None;
 
         // Collect candidate entry indices via iterative BVH traversal (read-only).
         let mut candidates = Vec::new();
@@ -217,7 +217,7 @@ impl PickAccelerator {
         ray_origin: glam::Vec3,
         ray_dir: glam::Vec3,
         mesh_lookup: &HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
-    ) -> Option<(f32, crate::interaction::picking::PickHit)> {
+    ) -> Option<(f32, crate::interaction::query::picking::PickHit)> {
         let (positions, indices) = mesh_lookup.get(&(mesh_index as u64))?;
 
         // Lazily build and cache TriMesh.
@@ -289,7 +289,7 @@ impl PickAccelerator {
                 let world_normal = (rotation * (intersection.normal * inv_scale)).normalize();
 
                 #[allow(deprecated)]
-                let hit = crate::interaction::picking::PickHit {
+                let hit = crate::interaction::query::picking::PickHit {
                     id: 0, // placeholder : caller fills in actual node_id
                     sub_object,
                     triangle_index,
@@ -489,7 +489,7 @@ pub fn pick_scene_accelerated_cpu(
     ray_dir: glam::Vec3,
     accelerator: &mut PickAccelerator,
     mesh_lookup: &HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
-) -> Option<crate::interaction::picking::PickHit> {
+) -> Option<crate::interaction::query::picking::PickHit> {
     accelerator.pick(ray_origin, ray_dir, mesh_lookup)
 }
 

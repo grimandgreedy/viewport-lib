@@ -1,17 +1,19 @@
 //! Orbit/pan/zoom camera controller.
 //!
-//! [`OrbitCameraController`] wraps [`super::viewport_input::ViewportInput`] and
+//! [`OrbitCameraController`] wraps [`crate::interaction::input::viewport_input::ViewportInput`] and
 //! applies resolved orbit / pan / zoom actions directly to a [`crate::Camera`].
 
 use crate::Camera;
 
-use super::action::Action;
-use super::action_frame::ActionFrame;
-use super::context::ViewportContext;
-use super::event::ViewportEvent;
-use super::mode::NavigationMode;
-use super::preset::{BindingPreset, viewport_all_bindings, viewport_primitives_bindings};
-use super::viewport_input::ViewportInput;
+use crate::interaction::input::action::Action;
+use crate::interaction::input::action_frame::ActionFrame;
+use crate::interaction::input::context::ViewportContext;
+use crate::interaction::input::event::ViewportEvent;
+use crate::interaction::input::mode::NavigationMode;
+use crate::interaction::input::preset::{
+    BindingPreset, viewport_all_bindings, viewport_primitives_bindings,
+};
+use crate::interaction::input::viewport_input::ViewportInput;
 
 /// High-level orbit / pan / zoom camera controller.
 ///

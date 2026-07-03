@@ -4,7 +4,7 @@
 //! axis constraint) into world-space transform components that the app can apply directly.
 
 use crate::camera::camera::Camera;
-use crate::interaction::gizmo::{GizmoAxis, project_drag_onto_axis};
+use crate::interaction::manipulation::gizmo::{GizmoAxis, project_drag_onto_axis};
 
 /// Compute the signed rotation angle (radians) produced by the cursor sweeping around the
 /// screen-projected gizmo center.
@@ -237,7 +237,7 @@ pub(super) fn excluded_axes(axis: GizmoAxis) -> (glam::Vec3, glam::Vec3) {
 }
 
 // Re-export project_drag_onto_rotation for use within the crate.
-pub(super) use crate::interaction::gizmo::project_drag_onto_rotation as drag_onto_rotation;
+pub(super) use crate::interaction::manipulation::gizmo::project_drag_onto_rotation as drag_onto_rotation;
 
 #[cfg(test)]
 mod tests {

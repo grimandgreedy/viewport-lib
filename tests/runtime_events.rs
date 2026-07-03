@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 use viewport_lib::camera::camera::Camera;
 use viewport_lib::interaction::input::ActionFrame;
-use viewport_lib::interaction::selection::Selection;
+use viewport_lib::interaction::select::selection::Selection;
 use viewport_lib::runtime::{
     FixedTimestep, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, ViewportRuntime,
     plugin::phase,

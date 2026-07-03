@@ -9,12 +9,15 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        mode: crate::interaction::gizmo::GizmoMode,
-        hovered: crate::interaction::gizmo::GizmoAxis,
+        mode: crate::interaction::manipulation::gizmo::GizmoMode,
+        hovered: crate::interaction::manipulation::gizmo::GizmoAxis,
         space_orientation: glam::Quat,
     ) {
-        let (verts, indices) =
-            crate::interaction::gizmo::build_gizmo_mesh(mode, hovered, space_orientation);
+        let (verts, indices) = crate::interaction::manipulation::gizmo::build_gizmo_mesh(
+            mode,
+            hovered,
+            space_orientation,
+        );
 
         let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
         let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
@@ -44,7 +47,7 @@ impl ViewportGpuResources {
 
     /// Update the gizmo model matrix uniform (translation to gizmo center + scale for screen size).
     pub fn update_gizmo_uniform(&self, queue: &wgpu::Queue, model: glam::Mat4) {
-        let uniform = crate::interaction::gizmo::GizmoUniform {
+        let uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
             model: model.to_cols_array_2d(),
         };
         queue.write_buffer(&self.gizmo_uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
@@ -54,7 +57,7 @@ impl ViewportGpuResources {
     pub fn create_constraint_overlay(
         &self,
         device: &wgpu::Device,
-        overlay: &crate::interaction::snap::ConstraintOverlay,
+        overlay: &crate::interaction::query::snap::ConstraintOverlay,
     ) -> (
         wgpu::Buffer,
         wgpu::Buffer,
@@ -65,7 +68,7 @@ impl ViewportGpuResources {
         use bytemuck::cast_slice;
 
         let (vertices, colour): (Vec<OverlayVertex>, [f32; 4]) = match overlay {
-            crate::interaction::snap::ConstraintOverlay::AxisLine {
+            crate::interaction::query::snap::ConstraintOverlay::AxisLine {
                 origin,
                 direction,
                 colour,
@@ -80,7 +83,7 @@ impl ViewportGpuResources {
                 ],
                 *colour,
             ),
-            crate::interaction::snap::ConstraintOverlay::Plane {
+            crate::interaction::query::snap::ConstraintOverlay::Plane {
                 origin,
                 axis_a,
                 axis_b,
@@ -169,7 +172,7 @@ impl ViewportGpuResources {
     pub(crate) fn create_clip_plane_fill_overlay(
         &self,
         device: &wgpu::Device,
-        overlay: &crate::interaction::clip_plane::ClipPlaneOverlay,
+        overlay: &crate::interaction::manipulation::clip_plane::ClipPlaneOverlay,
     ) -> (
         wgpu::Buffer,
         wgpu::Buffer,
@@ -177,7 +180,7 @@ impl ViewportGpuResources {
         wgpu::Buffer,
         wgpu::BindGroup,
     ) {
-        use crate::interaction::clip_plane::plane_tangents;
+        use crate::interaction::manipulation::clip_plane::plane_tangents;
         use bytemuck::cast_slice;
 
         let (t1, t2) = plane_tangents(overlay.normal);
@@ -265,7 +268,7 @@ impl ViewportGpuResources {
     pub(crate) fn create_clip_plane_line_overlay(
         &self,
         device: &wgpu::Device,
-        overlay: &crate::interaction::clip_plane::ClipPlaneOverlay,
+        overlay: &crate::interaction::manipulation::clip_plane::ClipPlaneOverlay,
     ) -> (
         wgpu::Buffer,
         wgpu::Buffer,
@@ -273,7 +276,7 @@ impl ViewportGpuResources {
         wgpu::Buffer,
         wgpu::BindGroup,
     ) {
-        use crate::interaction::clip_plane::plane_tangents;
+        use crate::interaction::manipulation::clip_plane::plane_tangents;
         use bytemuck::cast_slice;
 
         let (t1, t2) = plane_tangents(overlay.normal);

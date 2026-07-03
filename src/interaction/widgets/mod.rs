@@ -15,6 +15,8 @@
 //! }
 //! ```
 
+/// Axes orientation indicator drawn in the viewport corner.
+pub mod axes_indicator;
 pub mod box_widget;
 pub mod cylinder;
 pub mod disk;
@@ -101,7 +103,11 @@ pub(super) fn handle_world_radius(
 /// Build a ray from the context cursor position.
 pub(super) fn ctx_ray(ctx: &WidgetContext) -> (glam::Vec3, glam::Vec3) {
     let vp = ctx.camera.projection * ctx.camera.view;
-    crate::interaction::picking::screen_to_ray(ctx.cursor_viewport, ctx.viewport_size, vp.inverse())
+    crate::interaction::query::picking::screen_to_ray(
+        ctx.cursor_viewport,
+        ctx.viewport_size,
+        vp.inverse(),
+    )
 }
 
 /// Shortest distance from a ray to a point.

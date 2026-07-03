@@ -1851,11 +1851,12 @@ impl ViewportRenderer {
             });
 
             // Per-viewport gizmo buffers (initial mesh: Translate, no hover, identity orientation).
-            let (gizmo_verts, gizmo_indices) = crate::interaction::gizmo::build_gizmo_mesh(
-                crate::interaction::gizmo::GizmoMode::Translate,
-                crate::interaction::gizmo::GizmoAxis::None,
-                glam::Quat::IDENTITY,
-            );
+            let (gizmo_verts, gizmo_indices) =
+                crate::interaction::manipulation::gizmo::build_gizmo_mesh(
+                    crate::interaction::manipulation::gizmo::GizmoMode::Translate,
+                    crate::interaction::manipulation::gizmo::GizmoAxis::None,
+                    glam::Quat::IDENTITY,
+                );
             let gizmo_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_gizmo_vertex_buf"),
                 size: (std::mem::size_of::<crate::resources::Vertex>() * gizmo_verts.len().max(1))
@@ -1880,12 +1881,13 @@ impl ViewportRenderer {
                 .get_mapped_range_mut()
                 .copy_from_slice(bytemuck::cast_slice(&gizmo_indices));
             gizmo_index_buffer.unmap();
-            let gizmo_uniform = crate::interaction::gizmo::GizmoUniform {
+            let gizmo_uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
                 model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             };
             let gizmo_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_gizmo_uniform_buf"),
-                size: std::mem::size_of::<crate::interaction::gizmo::GizmoUniform>() as u64,
+                size: std::mem::size_of::<crate::interaction::manipulation::gizmo::GizmoUniform>()
+                    as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
@@ -1906,8 +1908,8 @@ impl ViewportRenderer {
             // Per-viewport axes vertex buffer (2048 vertices = enough for all axes geometry).
             let axes_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_axes_vertex_buf"),
-                size: (std::mem::size_of::<crate::widgets::axes_indicator::AxesVertex>() * 2048)
-                    as u64,
+                size: (std::mem::size_of::<crate::interaction::widgets::axes_indicator::AxesVertex>(
+                ) * 2048) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });

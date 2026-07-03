@@ -79,14 +79,14 @@ impl ViewportRenderer {
 pub struct PickRectResult {
     /// IDs of whole items that have geometry inside the pick rect.
     ///
-    /// Populated when [`crate::interaction::pick_mask::PickMask::OBJECT`] is set.
+    /// Populated when [`crate::interaction::select::pick_mask::PickMask::OBJECT`] is set.
     pub objects: Vec<u64>,
     /// Sub-elements inside the pick rect as `(item_id, sub_object)` pairs.
     ///
     /// Populated when any sub-element bit is set in the mask. All entries
     /// belong to the same geometric dimension when the mask is
     /// dimension-homogeneous (the common case).
-    pub elements: Vec<(u64, crate::interaction::sub_object::SubObjectRef)>,
+    pub elements: Vec<(u64, crate::interaction::select::sub_object::SubObjectRef)>,
 }
 
 impl PickRectResult {

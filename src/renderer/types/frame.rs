@@ -1,7 +1,7 @@
 use super::*;
-use crate::interaction::gizmo::{GizmoAxis, GizmoMode};
-use crate::interaction::snap::ConstraintOverlay;
-use crate::interaction::sub_object::SubSelectionRef;
+use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode};
+use crate::interaction::query::snap::ConstraintOverlay;
+use crate::interaction::select::sub_object::SubSelectionRef;
 use crate::resources::CameraUniform;
 
 // ---------------------------------------------------------------------------
@@ -464,7 +464,7 @@ impl SceneFrame {
     /// Use [`SceneFrame::from_surface_items`] when you need to assemble render items manually.
     pub fn from_scene(
         scene: &mut crate::scene::scene::Scene,
-        selection: &crate::interaction::selection::Selection,
+        selection: &crate::interaction::select::selection::Selection,
     ) -> Self {
         let items = scene.collect_render_items(selection);
         let lights = scene.collect_lights();
@@ -612,10 +612,10 @@ impl Default for InteractionFrame {
 impl InteractionFrame {
     /// Build an interaction frame stamped with the current selection version.
     ///
-    /// Sets `selection_generation` from [`Selection::version`](crate::interaction::selection::Selection::version)
+    /// Sets `selection_generation` from [`Selection::version`](crate::interaction::select::selection::Selection::version)
     /// so the renderer can skip overlay rebuilds on unchanged frames.
     /// All other fields remain at their defaults.
-    pub fn from_selection(selection: &crate::interaction::selection::Selection) -> Self {
+    pub fn from_selection(selection: &crate::interaction::select::selection::Selection) -> Self {
         Self {
             selection_generation: selection.version(),
             ..Self::default()

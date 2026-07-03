@@ -1,13 +1,11 @@
-/// Smooth camera motion with exponential damping and fly-to animations.
-pub mod animator;
 /// Arcball camera with perspective and orthographic projections.
 pub mod camera;
+/// Orbit, first-person, third-person, turntable, and fly-to camera controllers.
+pub mod controllers;
 /// View frustum planes and AABB culling.
 pub mod frustum;
 /// Keyframe camera animation with Catmull-Rom interpolation.
 pub mod track;
-/// Continuous turntable (orbit) camera controller.
-pub mod turntable;
 /// Named standard camera orientations (front, top, isometric, etc.).
 pub mod view_preset;
 

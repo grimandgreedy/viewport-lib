@@ -9,8 +9,8 @@
 //! The new pipeline works like this:
 //!
 //! 1. Translate native events to [`ViewportEvent`]
-//! 2. Feed into [`OrbitCameraController`] (or lower-level [`ViewportInput`])
-//! 3. Call [`OrbitCameraController::apply_to_camera`] each frame
+//! 2. Feed into [`OrbitCameraController`](crate::camera::controllers::orbit::OrbitCameraController) (or lower-level [`ViewportInput`])
+//! 3. Call [`OrbitCameraController::apply_to_camera`](crate::camera::controllers::orbit::OrbitCameraController::apply_to_camera) each frame
 //!
 //! # Legacy input system (compatibility)
 //!
@@ -32,20 +32,10 @@ pub mod query;
 pub mod action_frame;
 /// Per-frame viewport context.
 pub mod context;
-/// High-level orbit/pan/zoom camera controller.
-pub mod controller;
 /// Framework-agnostic viewport events.
 pub mod event;
-/// Body-attached first-person camera controller.
-pub mod first_person;
-/// Shared look-basis math for the character cameras.
-mod look;
-/// Movement-input helper for the character cameras.
-pub mod movement;
 /// Named control presets.
 pub mod preset;
-/// Body-attached third-person camera controller.
-pub mod third_person;
 /// Viewport gesture and binding types.
 pub mod viewport_binding;
 /// Stateful viewport input accumulator and resolver.
@@ -61,12 +51,8 @@ pub use query::{ActionState, FrameInput};
 // New pipeline re-exports
 pub use action_frame::{ActionFrame, NavigationActions, ResolvedActionState};
 pub use context::ViewportContext;
-pub use controller::OrbitCameraController;
 pub use event::{ButtonState, ScrollUnits, ViewportEvent};
-pub use first_person::FirstPersonCameraController;
-pub use movement::wish_xy_from_actions;
 pub use preset::{BindingPreset, viewport_all_bindings};
-pub use third_person::ThirdPersonCameraController;
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 pub use viewport_input::ViewportInput;
 

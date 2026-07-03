@@ -13,7 +13,7 @@
 //! - `pitch` is the angle above the horizontal plane: positive looks up,
 //!   clamped to `+/- pitch_clamp`.
 //!
-//! Unlike [`OrbitCameraController`](super::OrbitCameraController), this
+//! Unlike [`OrbitCameraController`](crate::camera::controllers::orbit::OrbitCameraController), this
 //! controller does not own a camera: call
 //! [`apply`](FirstPersonCameraController::apply) with the host's `&mut Camera`.
 //! Look is read from `frame.navigation.orbit`, so the same input pipeline and
@@ -21,9 +21,9 @@
 
 use glam::Vec3;
 
-use super::action_frame::ActionFrame;
 use super::look::{build_orientation, orientation_to_aim, yaw_pitch_from_orientation};
 use crate::Camera;
+use crate::interaction::input::action_frame::ActionFrame;
 
 /// Body-attached first-person camera controller.
 ///

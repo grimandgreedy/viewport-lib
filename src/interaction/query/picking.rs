@@ -28,7 +28,7 @@
 //! (`crate::renderer::picking`) reads the rasterised object-ID buffer and therefore
 //! picks the deformed silhouette automatically.
 use crate::geometry::marching_cubes::VolumeData;
-use crate::interaction::sub_object::SubObjectRef;
+use crate::interaction::select::sub_object::SubObjectRef;
 use crate::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 use crate::resources::{AttributeData, AttributeKind, AttributeRef};
 use crate::scene::traits::ViewportObject;

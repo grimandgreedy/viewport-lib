@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use crate::interaction::selection::NodeId;
+use crate::interaction::select::selection::NodeId;
 
 /// Previous and current world-space transforms for one physics-driven node.
 #[derive(Debug, Clone, Copy)]

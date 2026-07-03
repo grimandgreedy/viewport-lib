@@ -1,6 +1,6 @@
 //! PhysicsLitePlugin: simple velocity integration, gravity, and bounded collision.
 
-use crate::interaction::selection::NodeId;
+use crate::interaction::select::selection::NodeId;
 use crate::runtime::context::RuntimeStepContext;
 use crate::runtime::plugin::{RuntimePlugin, phase};
 use crate::scene::aabb::Aabb;

@@ -77,7 +77,7 @@ pub use snapshot::{TransformSnapshot, TransformSnapshotTable};
 pub use systems::{ManipulationSystem, SelectionSystem};
 pub use timestep::{FixedStepIter, FixedTimestep};
 
-use crate::interaction::selection::Selection;
+use crate::interaction::select::selection::Selection;
 use crate::scene::scene::Scene;
 
 // ---- free function ----------------------------------------------------------
@@ -162,7 +162,7 @@ mod tests {
     use super::*;
     use crate::camera::camera::Camera;
     use crate::interaction::input::ActionFrame;
-    use crate::interaction::selection::{NodeId, Selection};
+    use crate::interaction::select::selection::{NodeId, Selection};
     use crate::scene::material::Material;
     use crate::scene::scene::Scene;
     use std::sync::{Arc, Mutex};
@@ -1539,7 +1539,7 @@ pub struct ViewportRuntime {
     /// Typed resource registry shared across plugins each frame.
     resources: RuntimeResources,
     /// Node IDs present at the end of the previous frame.
-    prev_node_ids: std::collections::HashSet<crate::interaction::selection::NodeId>,
+    prev_node_ids: std::collections::HashSet<crate::interaction::select::selection::NodeId>,
     /// False on the very first step call; after that, lifecycle events are emitted.
     scene_initialized: bool,
     /// Per-plugin timing from the most recent step / pre_prepare / post_paint.
@@ -1897,7 +1897,7 @@ impl ViewportRuntime {
 
         // --- Lifecycle event detection ---------------------------------------
         // Collect current node IDs from the scene.
-        let current_ids: std::collections::HashSet<crate::interaction::selection::NodeId> =
+        let current_ids: std::collections::HashSet<crate::interaction::select::selection::NodeId> =
             scene.nodes().map(|n| n.id()).collect();
 
         if self.scene_initialized {

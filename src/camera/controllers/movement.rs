@@ -1,7 +1,7 @@
 //! Movement-input helper shared across the character camera controllers.
 //!
-//! [`FirstPersonCameraController`](super::FirstPersonCameraController) and
-//! [`ThirdPersonCameraController`](super::ThirdPersonCameraController) expose a
+//! [`FirstPersonCameraController`](crate::camera::controllers::first_person::FirstPersonCameraController) and
+//! [`ThirdPersonCameraController`](crate::camera::controllers::third_person::ThirdPersonCameraController) expose a
 //! `forward_dir()` / `right_dir()` pair defining the ground-plane basis the
 //! player walks in. [`wish_xy_from_actions`] resolves the standard fly-movement
 //! actions against that basis and returns a normalised horizontal wish vector,
@@ -14,8 +14,8 @@
 
 use glam::{Vec2, Vec3};
 
-use super::action::Action;
-use super::action_frame::ActionFrame;
+use crate::interaction::input::action::Action;
+use crate::interaction::input::action_frame::ActionFrame;
 
 /// Resolve the forward / back / left / right movement actions into a horizontal
 /// wish vector in the camera's ground-plane basis.

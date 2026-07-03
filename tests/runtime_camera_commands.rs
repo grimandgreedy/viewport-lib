@@ -2,7 +2,7 @@
 
 use viewport_lib::camera::camera::{Camera, CameraTarget};
 use viewport_lib::interaction::input::ActionFrame;
-use viewport_lib::interaction::selection::Selection;
+use viewport_lib::interaction::select::selection::Selection;
 use viewport_lib::runtime::{
     CameraCommand, CameraFollowTarget, RuntimeFrameContext, RuntimeOutput, RuntimePlugin,
     RuntimeStepContext, ViewportRuntime, apply_camera_commands, plugin::phase,

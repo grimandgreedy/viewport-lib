@@ -76,8 +76,8 @@ impl PivotMode {
 /// Returns `None` if the selection is empty or positions are unavailable.
 pub fn gizmo_center_for_pivot(
     pivot: &PivotMode,
-    selection: &crate::interaction::selection::Selection,
-    position_fn: impl Fn(crate::interaction::selection::NodeId) -> Option<glam::Vec3>,
+    selection: &crate::interaction::select::selection::Selection,
+    position_fn: impl Fn(crate::interaction::select::selection::NodeId) -> Option<glam::Vec3>,
 ) -> Option<glam::Vec3> {
     if selection.is_empty() {
         return None;
@@ -1060,8 +1060,8 @@ pub fn project_drag_onto_screen_plane(
 ///
 /// Thin wrapper around `Selection::centroid()` for discoverability in gizmo workflows.
 pub fn gizmo_center_from_selection(
-    selection: &crate::interaction::selection::Selection,
-    position_fn: impl Fn(crate::interaction::selection::NodeId) -> Option<glam::Vec3>,
+    selection: &crate::interaction::select::selection::Selection,
+    position_fn: impl Fn(crate::interaction::select::selection::NodeId) -> Option<glam::Vec3>,
 ) -> Option<glam::Vec3> {
     selection.centroid(position_fn)
 }
@@ -1301,7 +1301,7 @@ mod tests {
 
     #[test]
     fn test_gizmo_center_single_selection() {
-        let mut sel = crate::interaction::selection::Selection::new();
+        let mut sel = crate::interaction::select::selection::Selection::new();
         sel.select_one(1);
         let center = gizmo_center_from_selection(&sel, |id| match id {
             1 => Some(glam::Vec3::new(3.0, 0.0, 0.0)),
@@ -1313,7 +1313,7 @@ mod tests {
 
     #[test]
     fn test_gizmo_center_multi_selection() {
-        let mut sel = crate::interaction::selection::Selection::new();
+        let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         sel.add(2);
         let center = gizmo_center_from_selection(&sel, |id| match id {
@@ -1329,10 +1329,10 @@ mod tests {
 
     #[test]
     fn test_pivot_selection_centroid_matches_centroid() {
-        let mut sel = crate::interaction::selection::Selection::new();
+        let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         sel.add(2);
-        let pos_fn = |id: crate::interaction::selection::NodeId| match id {
+        let pos_fn = |id: crate::interaction::select::selection::NodeId| match id {
             1 => Some(glam::Vec3::new(0.0, 0.0, 0.0)),
             2 => Some(glam::Vec3::new(4.0, 0.0, 0.0)),
             _ => None,
@@ -1344,7 +1344,7 @@ mod tests {
 
     #[test]
     fn test_pivot_world_origin_returns_zero() {
-        let mut sel = crate::interaction::selection::Selection::new();
+        let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         let result = gizmo_center_for_pivot(&PivotMode::WorldOrigin, &sel, |_| {
             Some(glam::Vec3::new(5.0, 0.0, 0.0))
@@ -1354,14 +1354,14 @@ mod tests {
 
     #[test]
     fn test_pivot_world_origin_empty_selection_returns_none() {
-        let sel = crate::interaction::selection::Selection::new();
+        let sel = crate::interaction::select::selection::Selection::new();
         let result = gizmo_center_for_pivot(&PivotMode::WorldOrigin, &sel, |_| None);
         assert_eq!(result, None);
     }
 
     #[test]
     fn test_pivot_individual_origins_uses_primary() {
-        let mut sel = crate::interaction::selection::Selection::new();
+        let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         sel.add(2); // primary = 2
         let result = gizmo_center_for_pivot(&PivotMode::IndividualOrigins, &sel, |id| match id {
@@ -1379,10 +1379,10 @@ mod tests {
 
     #[test]
     fn test_pivot_median_point_same_as_centroid() {
-        let mut sel = crate::interaction::selection::Selection::new();
+        let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         sel.add(2);
-        let pos_fn = |id: crate::interaction::selection::NodeId| match id {
+        let pos_fn = |id: crate::interaction::select::selection::NodeId| match id {
             1 => Some(glam::Vec3::new(0.0, 0.0, 0.0)),
             2 => Some(glam::Vec3::new(6.0, 0.0, 0.0)),
             _ => None,
@@ -1394,7 +1394,7 @@ mod tests {
 
     #[test]
     fn test_pivot_cursor3d_returns_cursor_pos() {
-        let mut sel = crate::interaction::selection::Selection::new();
+        let mut sel = crate::interaction::select::selection::Selection::new();
         sel.add(1);
         let cursor = glam::Vec3::new(7.0, 2.0, 3.0);
         let result = gizmo_center_for_pivot(&PivotMode::Cursor3D(cursor), &sel, |_| {
@@ -1405,7 +1405,7 @@ mod tests {
 
     #[test]
     fn test_pivot_cursor3d_empty_selection_returns_none() {
-        let sel = crate::interaction::selection::Selection::new();
+        let sel = crate::interaction::select::selection::Selection::new();
         let cursor = glam::Vec3::new(1.0, 2.0, 3.0);
         let result = gizmo_center_for_pivot(&PivotMode::Cursor3D(cursor), &sel, |_| None);
         assert_eq!(result, None);

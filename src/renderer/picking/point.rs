@@ -31,14 +31,14 @@ impl ViewportRenderer {
         click_pos: glam::Vec2,
         viewport_size: glam::Vec2,
         view_proj: glam::Mat4,
-        mask: crate::interaction::pick_mask::PickMask,
-    ) -> Option<crate::interaction::picking::PickHit> {
-        use crate::interaction::pick_mask::PickMask;
-        use crate::interaction::picking::{
+        mask: crate::interaction::select::pick_mask::PickMask,
+    ) -> Option<crate::interaction::query::picking::PickHit> {
+        use crate::interaction::query::picking::{
             PickHit, pick_gaussian_splat_cpu, pick_point_cloud_cpu,
             pick_transparent_volume_mesh_cpu, pick_volume_cpu, screen_to_ray,
         };
-        use crate::interaction::sub_object::SubObjectRef;
+        use crate::interaction::select::pick_mask::PickMask;
+        use crate::interaction::select::sub_object::SubObjectRef;
         use parry3d::math::{Pose, Vector};
         use parry3d::query::{Ray, RayCast};
 

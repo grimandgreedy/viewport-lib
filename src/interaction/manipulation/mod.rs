@@ -22,14 +22,18 @@
 //! }
 //! ```
 
+/// Interactive clip plane controller: position and orient section planes.
+pub mod clip_plane;
+/// Transform gizmo (translate, rotate, scale) with hit testing.
+pub mod gizmo;
 mod session;
 pub mod solvers;
 pub mod types;
 
 pub use types::*;
 
-use crate::interaction::gizmo::{Gizmo, GizmoAxis, GizmoMode, GizmoSpace};
 use crate::interaction::input::{Action, ActionFrame};
+use crate::interaction::manipulation::gizmo::{Gizmo, GizmoAxis, GizmoMode, GizmoSpace};
 use session::{ManipulationSession, update_constraint, update_numeric_state};
 
 /// Manages a single object-manipulation session (G/R/S + axis constraints + gizmo drag).
@@ -252,7 +256,8 @@ impl ManipulationController {
                     hovered_axis: GizmoAxis::None,
                     active_axis: GizmoAxis::None,
                     drag_start_mouse: None,
-                    pivot_mode: crate::interaction::gizmo::PivotMode::SelectionCentroid,
+                    pivot_mode:
+                        crate::interaction::manipulation::gizmo::PivotMode::SelectionCentroid,
                 };
                 let hit = temp_gizmo.hit_test_oriented(
                     ray_origin,

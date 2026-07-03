@@ -2,7 +2,7 @@
 
 use super::events::RuntimeEventBus;
 use crate::camera::camera::{Camera, CameraTarget};
-use crate::interaction::selection::{NodeId, Selection};
+use crate::interaction::select::selection::{NodeId, Selection};
 
 /// Write buffer for transform changes produced by plugins.
 ///

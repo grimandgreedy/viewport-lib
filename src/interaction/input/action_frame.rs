@@ -34,7 +34,7 @@ pub struct NavigationActions {
 
 /// Per-frame resolved action output.
 ///
-/// Returned by [`super::controller::OrbitCameraController::apply_to_camera`] and
+/// Returned by [`crate::camera::controllers::orbit::OrbitCameraController::apply_to_camera`] and
 /// available from [`super::viewport_input::ViewportInput`] after a frame.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]

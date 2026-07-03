@@ -521,7 +521,9 @@ impl ViewportRenderer {
                         .flat_map(|s| s.items.iter())
                         .filter_map(|(node_id, sub)| {
                             if *node_id == item.settings.pick_id.0 {
-                                if let crate::interaction::sub_object::SubObjectRef::Splat(i) = sub
+                                if let crate::interaction::select::sub_object::SubObjectRef::Splat(
+                                    i,
+                                ) = sub
                                 {
                                     return Some(*i);
                                 }
@@ -677,7 +679,9 @@ impl ViewportRenderer {
                         .flat_map(|s| s.items.iter())
                         .filter_map(|(node_id, sub)| {
                             if *node_id == item.settings.pick_id.0 {
-                                if let crate::interaction::sub_object::SubObjectRef::Point(i) = sub
+                                if let crate::interaction::select::sub_object::SubObjectRef::Point(
+                                    i,
+                                ) = sub
                                 {
                                     return item.positions.get(*i as usize).copied();
                                 }
@@ -752,7 +756,7 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.settings.pick_id.0 {
-                                    if let crate::interaction::sub_object::SubObjectRef::Instance(
+                                    if let crate::interaction::select::sub_object::SubObjectRef::Instance(
                                         i,
                                     ) = sub
                                     {
@@ -795,7 +799,7 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.settings.pick_id.0 {
-                                    if let crate::interaction::sub_object::SubObjectRef::Instance(
+                                    if let crate::interaction::select::sub_object::SubObjectRef::Instance(
                                         idx,
                                     ) = sub
                                     {
@@ -873,7 +877,7 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.settings.pick_id.0 {
-                                    if let crate::interaction::sub_object::SubObjectRef::Instance(
+                                    if let crate::interaction::select::sub_object::SubObjectRef::Instance(
                                         i,
                                     ) = sub
                                     {
@@ -1239,7 +1243,7 @@ impl ViewportRenderer {
                     ]
                 };
 
-                let overlay = crate::interaction::clip_plane::ClipPlaneOverlay {
+                let overlay = crate::interaction::manipulation::clip_plane::ClipPlaneOverlay {
                     center,
                     normal: n,
                     extent: obj.extent,
@@ -1352,7 +1356,7 @@ impl ViewportRenderer {
             && frame.camera.viewport_size[0] > 0.0
             && frame.camera.viewport_size[1] > 0.0
         {
-            let verts = crate::widgets::axes_indicator::build_axes_geometry(
+            let verts = crate::interaction::widgets::axes_indicator::build_axes_geometry(
                 frame.camera.viewport_size[0],
                 frame.camera.viewport_size[1],
                 frame.camera.render_camera.orientation,
@@ -1364,7 +1368,7 @@ impl ViewportRenderer {
 
         // Gizmo mesh + uniform (built here, written to slot buffers below).
         let gizmo_update = frame.interaction.gizmo_model.map(|model| {
-            let (verts, indices) = crate::interaction::gizmo::build_gizmo_mesh(
+            let (verts, indices) = crate::interaction::manipulation::gizmo::build_gizmo_mesh(
                 frame.interaction.gizmo_mode,
                 frame.interaction.gizmo_hovered,
                 frame.interaction.gizmo_space_orientation,
@@ -1437,7 +1441,7 @@ impl ViewportRenderer {
                 queue.write_buffer(&slot.gizmo_vertex_buffer, 0, vert_bytes);
                 queue.write_buffer(&slot.gizmo_index_buffer, 0, idx_bytes);
                 slot.gizmo_index_count = indices.len() as u32;
-                let uniform = crate::interaction::gizmo::GizmoUniform {
+                let uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
                     model: model.to_cols_array_2d(),
                 };
                 queue.write_buffer(&slot.gizmo_uniform_buf, 0, bytemuck::cast_slice(&[uniform]));

@@ -716,8 +716,7 @@ pub fn torus_stadium(
             ([half - u * sl, br, 0.0], [-1.0, 0.0])
         } else if s < 2.0 * arc + sl {
             // Left semicircle, centre (-half, 0), angle pi/2 .. 3pi/2.
-            let a =
-                std::f32::consts::FRAC_PI_2 + ((s - arc - sl) / arc) * std::f32::consts::PI;
+            let a = std::f32::consts::FRAC_PI_2 + ((s - arc - sl) / arc) * std::f32::consts::PI;
             (
                 [-half + br * a.cos(), br * a.sin(), 0.0],
                 [-a.sin(), a.cos()],

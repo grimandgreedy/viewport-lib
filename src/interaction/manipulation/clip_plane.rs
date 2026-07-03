@@ -39,7 +39,7 @@
 
 use crate::camera::camera::Camera;
 use crate::interaction::input::{Action, ActionFrame};
-use crate::interaction::snap::snap_value;
+use crate::interaction::query::snap::snap_value;
 use crate::renderer::{ClipObject, ClipShape};
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::interaction::selection::{NodeId, Selection};
+use crate::interaction::select::selection::{NodeId, Selection};
 use crate::renderer::{PickId, SceneRenderItem};
 use crate::resources::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;

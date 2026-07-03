@@ -2,12 +2,12 @@
 
 use std::collections::HashMap;
 
-use crate::interaction::gizmo::{self, Gizmo, GizmoAxis, GizmoMode};
 use crate::interaction::manipulation::GizmoInfo;
+use crate::interaction::manipulation::gizmo::{self, Gizmo, GizmoAxis, GizmoMode};
 use crate::interaction::manipulation::{
     ManipResult, ManipulationContext, ManipulationController, TransformDelta,
 };
-use crate::interaction::selection::{NodeId, Selection};
+use crate::interaction::select::selection::{NodeId, Selection};
 use crate::runtime::context::RuntimeFrameContext;
 use crate::runtime::output::{RuntimeOutput, TransformWriteback};
 use crate::scene::scene::Scene;
@@ -21,7 +21,7 @@ use crate::scene::scene::Scene;
 ///
 /// To suppress orbit while a session is active, check
 /// [`ViewportRuntime::is_manipulating`](super::super::ViewportRuntime::is_manipulating)
-/// before calling [`OrbitCameraController::apply_to_camera`].
+/// before calling [`OrbitCameraController::apply_to_camera`](crate::camera::controllers::orbit::OrbitCameraController::apply_to_camera).
 pub struct ManipulationSystem {
     controller: ManipulationController,
     transforms_snapshot: HashMap<NodeId, glam::Mat4>,

@@ -93,8 +93,6 @@ pub mod resources;
 pub mod runtime;
 /// Scene graph, material, traits, and AABB.
 pub mod scene;
-/// Axes orientation indicator.
-pub mod widgets;
 
 // ---------------------------------------------------------------------------
 // Module re-exports : preserve old `viewport_lib::foo::Bar` paths.
@@ -102,13 +100,14 @@ pub mod widgets;
 
 pub use geometry::bvh;
 pub use geometry::primitives;
-pub use interaction::clip_plane;
-pub use interaction::gizmo;
 pub use interaction::input;
 pub use interaction::manipulation;
-pub use interaction::picking;
-pub use interaction::selection;
-pub use interaction::snap;
+pub use interaction::manipulation::clip_plane;
+pub use interaction::manipulation::gizmo;
+pub use interaction::query::picking;
+pub use interaction::query::snap;
+pub use interaction::select::selection;
+pub use interaction::widgets::axes_indicator;
 pub use scene::aabb;
 pub use scene::material;
 pub use scene::scatter_volume;
@@ -117,7 +116,6 @@ pub use scene::scatter_volume::{
     ScatterShape, ScatterVolume,
 };
 pub use scene::traits;
-pub use widgets::axes_indicator;
 
 // ---------------------------------------------------------------------------
 // Flat re-exports : these form the public crate API.
@@ -125,11 +123,11 @@ pub use widgets::axes_indicator;
 
 pub use error::{ViewportError, ViewportResult};
 
-pub use camera::animator::{CameraAnimator, CameraDamping, Easing};
 pub use camera::camera::{Camera, CameraTarget, Projection};
+pub use camera::controllers::TurntableController;
+pub use camera::controllers::{CameraAnimator, CameraDamping, Easing};
 pub use camera::frustum::{CullStats, Frustum};
 pub use camera::track::{CameraTrack, interpolate_camera};
-pub use camera::turntable::TurntableController;
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
@@ -149,19 +147,22 @@ pub use geometry::implicit::{
 pub use geometry::isoline::{IsolineItem, extract_isolines};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
 
-pub use interaction::gizmo::{
-    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_center_for_pivot,
-};
 pub use interaction::input::{
     Action, ActionState, Binding, FrameInput, InputMode, InputSystem, KeyCode, Modifiers,
     MouseButton, NavigationMode,
 };
+pub use interaction::manipulation::gizmo::{
+    Gizmo, GizmoAxis, GizmoMode, GizmoSpace, PivotMode, gizmo_center_for_pivot,
+};
 // New input pipeline : re-exported at crate root for convenience.
+pub use camera::controllers::{
+    FirstPersonCameraController, OrbitCameraController, ThirdPersonCameraController,
+    wish_xy_from_actions,
+};
 pub use interaction::input::{
-    ActionFrame, BindingPreset, ButtonState, FirstPersonCameraController, ModifiersMatch,
-    NavigationActions, OrbitCameraController, ResolvedActionState, ScrollUnits,
-    ThirdPersonCameraController, ViewportBinding, ViewportContext, ViewportEvent, ViewportGesture,
-    ViewportInput, viewport_all_bindings, wish_xy_from_actions,
+    ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions,
+    ResolvedActionState, ScrollUnits, ViewportBinding, ViewportContext, ViewportEvent,
+    ViewportGesture, ViewportInput, viewport_all_bindings,
 };
 pub use interaction::manipulation::solvers::{
     angular_rotation_from_cursor, constrained_scale, constrained_translation,
@@ -176,28 +177,28 @@ pub use interaction::widgets::{
     SphereWidget, SplineWidget, WidgetContext, WidgetResult,
 };
 
-pub use interaction::clip_plane::{
+pub use interaction::manipulation::clip_plane::{
     ClipAxis, ClipPlaneContext, ClipPlaneController, ClipPlaneDelta, ClipPlaneHit, ClipPlaneResult,
     ClipPlaneSessionKind, hit_test_normal_handle, hit_test_plane_quad, plane_from_axis_preset,
     project_drag_onto_normal, ray_plane_intersection, snap_plane_distance,
 };
-pub use interaction::pick_mask::PickMask;
-pub use interaction::picking::{
+pub use interaction::query::picking::{
     GpuPickHit, PickHit, ProbeBinding, RectPickResult, nearest_vertex_on_hit,
     pick_gaussian_splat_cpu, pick_gaussian_splat_rect, pick_point_cloud_cpu,
     pick_scene_accelerated_with_probe_cpu, pick_scene_nodes_with_probe_cpu,
     pick_scene_with_probe_cpu, pick_transparent_volume_mesh_cpu, pick_transparent_volume_mesh_rect,
     pick_volume_cpu, pick_volume_rect, voxel_world_aabb,
 };
-pub use interaction::selection::{NodeId, Selection};
-pub use interaction::snap::{ConstraintOverlay, SnapConfig};
-pub use interaction::sub_object;
-pub use interaction::sub_object::{
+pub use interaction::query::snap::{ConstraintOverlay, SnapConfig};
+pub use interaction::select::pick_mask::PickMask;
+pub use interaction::select::selection::{NodeId, Selection};
+pub use interaction::select::sub_object;
+pub use interaction::select::sub_object::{
     CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
     VolumeSelectionInfo,
 };
 
-pub use widgets::axes_indicator::AxisView;
+pub use interaction::widgets::axes_indicator::AxisView;
 
 pub use renderer::ShadowDebugStats;
 pub use renderer::shader_hashes::ShaderValidation;

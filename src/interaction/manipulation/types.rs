@@ -1,6 +1,6 @@
 //! Public types for the manipulation controller: kinds, results, state, and context.
 
-use crate::interaction::gizmo::{GizmoAxis, GizmoMode};
+use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode};
 
 /// Which kind of transform manipulation is in progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

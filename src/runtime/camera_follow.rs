@@ -1,6 +1,6 @@
 //! Camera tracking binding for follow-camera behavior.
 
-use crate::interaction::selection::NodeId;
+use crate::interaction::select::selection::NodeId;
 
 /// Camera tracking mode for [`super::ViewportRuntime`].
 ///

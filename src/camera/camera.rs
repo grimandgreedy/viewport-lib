@@ -3,7 +3,7 @@
 /// Returned by framing helpers such as [`Camera::fit_sphere_target`] and
 /// [`Camera::fit_aabb_target`]. Useful for presets and animation targets: pass
 /// `target.center` / `target.distance` / `target.orientation` to
-/// [`CameraAnimator::fly_to`](crate::camera::animator::CameraAnimator::fly_to).
+/// [`CameraAnimator::fly_to`](crate::camera::controllers::animator::CameraAnimator::fly_to).
 ///
 /// The getters/setters on [`Camera`] (`center()`, `distance()`, `orientation()`)
 /// are provided as convenience accessors. Field access (`camera.center` etc.)

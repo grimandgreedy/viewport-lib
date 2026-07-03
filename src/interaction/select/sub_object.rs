@@ -2,17 +2,17 @@
 //!
 //! [`SubObjectRef`] is the single canonical way to identify a face, vertex,
 //! edge, or point-cloud point relative to its parent object. It is carried
-//! inside [`PickHit::sub_object`](crate::interaction::picking::PickHit::sub_object)
+//! inside [`PickHit::sub_object`](crate::interaction::query::picking::PickHit::sub_object)
 //! and used as the key type in [`SubSelection`].
 //!
 //! [`SubSelection`] is the sub-object counterpart to
-//! [`crate::interaction::selection::Selection`]. Typically an app holds both:
+//! [`crate::interaction::select::selection::Selection`]. Typically an app holds both:
 //! `Selection` for which objects are selected, `SubSelection` for which faces
 //! or points within those objects are selected.
 
 use std::collections::HashSet;
 
-use crate::interaction::selection::NodeId;
+use crate::interaction::select::selection::NodeId;
 
 // ---------------------------------------------------------------------------
 // SubObjectRef
@@ -21,7 +21,7 @@ use crate::interaction::selection::NodeId;
 /// A typed reference to a sub-object within a parent scene object.
 ///
 /// Produced by all pick functions when a specific surface feature is hit, and
-/// stored in [`PickHit::sub_object`](crate::interaction::picking::PickHit::sub_object).
+/// stored in [`PickHit::sub_object`](crate::interaction::query::picking::PickHit::sub_object).
 ///
 /// # Variants
 ///
@@ -63,8 +63,8 @@ pub enum SubObjectRef {
     /// A cell within an unstructured volume mesh, by its index in
     /// [`VolumeMeshData::cells`](crate::resources::volume_mesh::VolumeMeshData::cells).
     ///
-    /// Produced by [`pick_transparent_volume_mesh_cpu`](crate::interaction::picking::pick_transparent_volume_mesh_cpu)
-    /// and [`pick_transparent_volume_mesh_rect`](crate::interaction::picking::pick_transparent_volume_mesh_rect).
+    /// Produced by [`pick_transparent_volume_mesh_cpu`](crate::interaction::query::picking::pick_transparent_volume_mesh_cpu)
+    /// and [`pick_transparent_volume_mesh_rect`](crate::interaction::query::picking::pick_transparent_volume_mesh_rect).
     Cell(u32),
     /// A gaussian splat identified by its index in the splat buffer.
     Splat(u32),
@@ -143,7 +143,7 @@ impl SubObjectRef {
 /// A set of selected sub-objects (faces, vertices, edges, or points) across
 /// one or more parent objects.
 ///
-/// Parallel to [`crate::interaction::selection::Selection`] but operates at
+/// Parallel to [`crate::interaction::select::selection::Selection`] but operates at
 /// sub-object granularity. Each entry pairs a parent `object_id` with a
 /// [`SubObjectRef`]. No ordering is maintained beyond the tracked `primary`.
 ///
@@ -250,11 +250,14 @@ impl SubSelection {
         self.version = self.version.wrapping_add(1);
     }
 
-    /// Populate from a [`RectPickResult`](crate::interaction::picking::RectPickResult).
+    /// Populate from a [`RectPickResult`](crate::interaction::query::picking::RectPickResult).
     ///
     /// Adds all sub-objects from the rect pick without clearing the current
     /// selection. Call [`clear`](Self::clear) first if you want a fresh selection.
-    pub fn extend_from_rect_pick(&mut self, result: &crate::interaction::picking::RectPickResult) {
+    pub fn extend_from_rect_pick(
+        &mut self,
+        result: &crate::interaction::query::picking::RectPickResult,
+    ) {
         for (&object_id, subs) in &result.hits {
             for &sub in subs {
                 self.selected.insert((object_id, sub));
@@ -391,7 +394,7 @@ pub struct SubSelectionRef {
     /// CPU-side vertex positions and triangle indices keyed by node id.
     ///
     /// Same format as the `mesh_lookup` parameter to
-    /// [`pick_scene_cpu`](crate::interaction::picking::pick_scene_cpu):
+    /// [`pick_scene_cpu`](crate::interaction::query::picking::pick_scene_cpu):
     /// the value is `(positions, indices)` where every three consecutive
     /// indices form one triangle.
     pub(crate) mesh_lookup: std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
@@ -530,7 +533,7 @@ impl SubSelectionRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interaction::picking::RectPickResult;
+    use crate::interaction::query::picking::RectPickResult;
 
     // --- SubObjectRef ---
 

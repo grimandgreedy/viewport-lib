@@ -2,8 +2,8 @@
 //!
 //! This module is not part of the public API. All types are `pub(super)`.
 
-use crate::interaction::gizmo::GizmoAxis;
 use crate::interaction::input::{Action, ActionFrame};
+use crate::interaction::manipulation::gizmo::GizmoAxis;
 
 use super::types::{ManipulationKind, ManipulationState};
 

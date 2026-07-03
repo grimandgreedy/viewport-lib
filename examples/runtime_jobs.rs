@@ -25,7 +25,7 @@ use std::time::Duration;
 use viewport_lib::{
     camera::camera::Camera,
     interaction::input::ActionFrame,
-    interaction::selection::Selection,
+    interaction::select::selection::Selection,
     runtime::{
         JobPoll, JobSlot, RuntimeFrameContext, RuntimePlugin, RuntimeStepContext, ViewportRuntime,
         plugin::phase,

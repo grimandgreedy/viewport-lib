@@ -14,7 +14,7 @@ impl ViewportRenderer {
     /// This is O(1) in mesh complexity : every object is rendered with a flat
     /// `u32` ID, and only one pixel is read back. For triangle-level queries
     /// (barycentric scalar probe, exact world position), use the CPU
-    /// [`crate::interaction::picking::pick_scene_cpu`] path instead.
+    /// [`crate::interaction::query::picking::pick_scene_cpu`] path instead.
     ///
     /// The pipeline is lazily initialized on first call : zero overhead when
     /// this method is never invoked.
@@ -33,7 +33,7 @@ impl ViewportRenderer {
         queue: &wgpu::Queue,
         cursor: glam::Vec2,
         frame: &FrameData,
-    ) -> Option<crate::interaction::picking::GpuPickHit> {
+    ) -> Option<crate::interaction::query::picking::GpuPickHit> {
         // In Playback mode, throttle picking to every 4th frame to reduce overhead
         // during animation. Interactive, Paused, and Capture modes always pick.
         if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
@@ -372,7 +372,7 @@ impl ViewportRenderer {
             return None;
         }
 
-        Some(crate::interaction::picking::GpuPickHit {
+        Some(crate::interaction::query::picking::GpuPickHit {
             object_id: PickId(object_id as u64),
             depth,
         })

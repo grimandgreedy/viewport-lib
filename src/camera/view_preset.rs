@@ -1,6 +1,6 @@
 //! Named camera orientations for standard engineering views.
 //!
-//! Use with [`CameraAnimator::fly_to`](crate::camera::animator::CameraAnimator::fly_to)
+//! Use with [`CameraAnimator::fly_to`](crate::camera::controllers::animator::CameraAnimator::fly_to)
 //! for smooth animated transitions.
 
 use crate::camera::camera::Projection;
