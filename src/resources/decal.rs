@@ -352,14 +352,14 @@ impl ViewportGpuResources {
         });
 
         let resolve_tex = |id: Option<u64>| -> &wgpu::TextureView {
-            id.and_then(|i| self.textures.get(i as usize))
+            id.and_then(|i| self.textures.get(i))
                 .map(|t| &t.view)
                 .unwrap_or(&self.fallback_texture.view)
         };
 
         let tex_view = self
             .textures
-            .get(item.texture_id as usize)
+            .get(item.texture_id)
             .map(|t| &t.view)
             .unwrap_or(&self.fallback_texture.view);
         let normal_view = resolve_tex(item.normal_texture_id);

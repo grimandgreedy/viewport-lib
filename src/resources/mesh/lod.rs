@@ -21,13 +21,33 @@ use crate::scene::aabb::Aabb;
 const LOD_HYSTERESIS: f32 = 0.1;
 
 /// Handle to a LOD group in the renderer's group registry.
+///
+/// Carries the slot index plus the generation the slot had when the handle was
+/// issued. A group freed with [`free_lod_group`](crate::ViewportGpuResources::free_lod_group)
+/// bumps its slot generation, so a stale handle resolves to `None` rather than
+/// aliasing a group registered later into the reused slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LodGroupId(pub(crate) usize);
+pub struct LodGroupId {
+    pub(crate) index: u32,
+    pub(crate) generation: u32,
+}
 
 impl LodGroupId {
-    /// The raw index into the group registry.
+    /// A handle that refers to no LOD group. Store lookups always return `None`.
+    pub const INVALID: LodGroupId = LodGroupId {
+        index: u32::MAX,
+        generation: u32::MAX,
+    };
+
+    /// The raw slot index into the group registry.
     pub fn index(&self) -> usize {
-        self.0
+        self.index as usize
+    }
+
+    /// Construct a handle from raw parts. Crate-internal: outside code obtains a
+    /// `LodGroupId` from `register_lod_group` and treats it as opaque.
+    pub(crate) fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation }
     }
 }
 
@@ -186,29 +206,81 @@ pub fn projected_screen_size(local_aabb: &Aabb, model: &glam::Mat4, camera: &Ren
     radius / (distance * half_fov_tan)
 }
 
-/// Registry of LOD groups owned by the renderer. Groups are append-only: a
-/// `LodGroupId` stays valid for the life of the renderer.
+/// One group slot: the group (when occupied) and the slot's current generation.
+struct LodSlot {
+    group: Option<LodGroup>,
+    generation: u32,
+}
+
+/// Registry of LOD groups owned by the renderer. Slotted with generational
+/// handles: `free_lod_group` frees a slot and bumps its generation, so a later
+/// `register_lod_group` can reuse the slot without a stale `LodGroupId` aliasing
+/// the new group.
 pub(crate) struct LodGroupStore {
-    groups: Vec<LodGroup>,
+    slots: Vec<LodSlot>,
+    free_list: Vec<usize>,
 }
 
 impl LodGroupStore {
     pub fn new() -> Self {
-        Self { groups: Vec::new() }
+        Self {
+            slots: Vec::new(),
+            free_list: Vec::new(),
+        }
     }
 
     pub fn insert(&mut self, group: LodGroup) -> LodGroupId {
-        let id = LodGroupId(self.groups.len());
-        self.groups.push(group);
-        id
+        if let Some(idx) = self.free_list.pop() {
+            let slot = &mut self.slots[idx];
+            slot.group = Some(group);
+            LodGroupId::new(idx as u32, slot.generation)
+        } else {
+            let idx = self.slots.len();
+            self.slots.push(LodSlot {
+                group: Some(group),
+                generation: 0,
+            });
+            LodGroupId::new(idx as u32, 0)
+        }
     }
 
     pub fn get(&self, id: LodGroupId) -> Option<&LodGroup> {
-        self.groups.get(id.0)
+        let slot = self.slots.get(id.index as usize)?;
+        if slot.generation != id.generation {
+            return None;
+        }
+        slot.group.as_ref()
     }
 
     pub fn get_mut(&mut self, id: LodGroupId) -> Option<&mut LodGroup> {
-        self.groups.get_mut(id.0)
+        let slot = self.slots.get_mut(id.index as usize)?;
+        if slot.generation != id.generation {
+            return None;
+        }
+        slot.group.as_mut()
+    }
+
+    /// Remove the group for `id`, bump the slot generation, and free the slot.
+    /// Returns the removed group so the caller can free member meshes, or `None`
+    /// if the slot was empty, out of range, or the handle was stale.
+    pub fn remove(&mut self, id: LodGroupId) -> Option<LodGroup> {
+        let slot = self.slots.get_mut(id.index as usize)?;
+        if slot.generation != id.generation {
+            return None;
+        }
+        let group = slot.group.take()?;
+        slot.generation = slot.generation.wrapping_add(1);
+        self.free_list.push(id.index as usize);
+        Some(group)
+    }
+
+    /// Iterate the meshes still referenced by any live group. Used to decide
+    /// whether a member mesh of a freed group is shared with another group.
+    pub fn live_member_meshes(&self) -> impl Iterator<Item = MeshId> + '_ {
+        self.slots
+            .iter()
+            .filter_map(|s| s.group.as_ref())
+            .flat_map(|g| g.levels.iter().map(|l| l.mesh))
     }
 }
 
@@ -281,6 +353,34 @@ impl crate::resources::ViewportGpuResources {
     #[allow(dead_code)]
     pub(crate) fn lod_group(&self, id: LodGroupId) -> Option<&LodGroup> {
         self.lod_groups.get(id)
+    }
+
+    /// Free a LOD group and, composition-aware, its member meshes.
+    ///
+    /// Removes the group from the registry and bumps its slot generation so
+    /// `id` no longer resolves. Each member mesh is freed with
+    /// [`free_mesh`](Self::free_mesh) unless another still-live group also
+    /// references it, in which case the shared mesh is left resident. Freeing
+    /// the member meshes is the point of the call: freeing a group without it
+    /// would leak every level's GPU buffers.
+    ///
+    /// Returns `true` if a group was freed, `false` if `id` did not resolve to a
+    /// live group (already freed or a stale handle).
+    pub fn free_lod_group(&mut self, id: LodGroupId) -> bool {
+        let Some(group) = self.lod_groups.remove(id) else {
+            return false;
+        };
+
+        // Meshes still owned by any other live group must not be freed.
+        let shared: std::collections::HashSet<MeshId> =
+            self.lod_groups.live_member_meshes().collect();
+
+        for level in &group.levels {
+            if !shared.contains(&level.mesh) {
+                self.free_mesh(level.mesh);
+            }
+        }
+        true
     }
 
     /// Set the screen size, as a fraction of viewport height, below which

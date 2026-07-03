@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::resources::ViewportGpuResources;
-use crate::resources::mesh_sidecar::registry::{DeformStage, DeformerDesc, DeformerId};
 use crate::resources::mesh::mesh_store::MeshId;
+use crate::resources::mesh_sidecar::registry::{DeformStage, DeformerDesc, DeformerId};
 
 /// A per-mesh deformation update produced by a skinning plugin on the CPU
 /// path. Apply by calling `write_mesh_positions_normals`:

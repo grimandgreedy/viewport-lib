@@ -1747,6 +1747,33 @@ pub struct TextureMemoryStats {
     pub texture_count: u32,
 }
 
+/// Resident GPU bytes for the user-uploaded working set, from
+/// [`ViewportGpuResources::resident_bytes`].
+///
+/// These are the classes a streaming or eviction policy frees and re-uploads:
+/// meshes (`upload_mesh_data` and friends) and user textures (`upload_texture`
+/// and friends). The totals are maintained counters, updated on every upload,
+/// replace, and free, so the query is cheap enough to poll each frame.
+///
+/// Built-in resources are not counted: colourmap and matcap LUTs, IBL maps, the
+/// shadow atlas, and post-process render targets. They are created once (or
+/// resized with the viewport) and are not part of the evictable working set.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ResidentBytes {
+    /// GPU buffer bytes across every resident mesh (geometry, attributes,
+    /// overrides, per-object uniforms).
+    pub mesh_bytes: u64,
+    /// GPU bytes across every resident user-uploaded texture.
+    pub texture_bytes: u64,
+}
+
+impl ResidentBytes {
+    /// Total resident bytes across meshes and user textures.
+    pub fn total(&self) -> u64 {
+        self.mesh_bytes + self.texture_bytes
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GpuMesh: per-object GPU buffers
 // ---------------------------------------------------------------------------
@@ -1834,6 +1861,39 @@ impl GpuMesh {
     /// against the mesh it will be bound to.
     pub fn vertex_count(&self) -> usize {
         (self.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize
+    }
+
+    /// Total GPU buffer bytes held by this mesh.
+    ///
+    /// Sums the geometry, attribute, override, and per-object uniform buffers.
+    /// Used for the resident-bytes accounting so freeing the mesh decrements the
+    /// running total by the same amount it added at upload.
+    pub(crate) fn gpu_byte_size(&self) -> u64 {
+        let mut bytes = self.vertex_buffer.size()
+            + self.index_buffer.size()
+            + self.edge_index_buffer.size()
+            + self.object_uniform_buf.size()
+            + self.normal_uniform_buf.size();
+        for buf in [
+            self.normal_line_buffer.as_ref(),
+            self.face_vertex_buffer.as_ref(),
+            self.position_override_buffer.as_ref(),
+            self.normal_override_buffer.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            bytes += buf.size();
+        }
+        for map in [
+            &self.attribute_buffers,
+            &self.face_attribute_buffers,
+            &self.face_colour_buffers,
+            &self.vector_attribute_buffers,
+        ] {
+            bytes += map.values().map(|b| b.size()).sum::<u64>();
+        }
+        bytes
     }
 }
 
@@ -2721,8 +2781,9 @@ pub struct ViewportGpuResources {
     /// u64::MAX sentinel = use fallback texture for that slot.
     #[allow(dead_code)]
     pub(crate) material_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
-    /// User-uploaded textures, indexed by `texture_id` in Material.
-    pub textures: Vec<GpuTexture>,
+    /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
+    /// with generational ids so a freed slot cannot alias a later upload.
+    pub(crate) textures: crate::resources::material::texture_store::TextureStore,
     /// Background runner used by async upload entry points. Drained once per
     /// frame during `prepare_scene` so completion is visible to the caller.
     /// Wrapped in a mutex because mpsc receivers and boxed `FnOnce`
@@ -2897,10 +2958,6 @@ pub struct ViewportGpuResources {
     pub(crate) sprite_set_store: super::SpriteSetStore,
     /// Pre-uploaded sprite instance set storage.
     pub(crate) sprite_instance_set_store: super::SpriteInstanceSetStore,
-    /// Bytes allocated on the GPU for user-uploaded textures.
-    /// Incremented by `upload_texture`, `upload_normal_map`, and the async
-    /// upload paths once a texture's apply step lands.
-    pub(crate) texture_allocated_bytes: u64,
 
     // --- Matcap texture system ---
     /// Matcap textures (256x256 RGBA), indexed by `MatcapId::index`.

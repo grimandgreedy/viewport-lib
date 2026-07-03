@@ -429,9 +429,7 @@ impl ViewportGpuResources {
                     crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
                         submission,
                         Box::new(move |resources: &mut ViewportGpuResources| {
-                            let tex_id = resources.textures.len() as u64;
-                            resources.textures.push(gpu_texture);
-                            resources.texture_allocated_bytes += data_bytes;
+                            let tex_id = resources.textures.insert(gpu_texture, data_bytes);
                             slot_for_apply.set(tex_id);
                         }),
                     ),
@@ -457,9 +455,76 @@ impl ViewportGpuResources {
     /// IBL, post-processing targets) are not included.
     pub fn texture_memory_stats(&self) -> TextureMemoryStats {
         TextureMemoryStats {
-            used_bytes: self.texture_allocated_bytes,
+            used_bytes: self.textures.allocated_bytes(),
             texture_count: self.textures.len() as u32,
         }
+    }
+
+    /// Resident GPU bytes for the user-uploaded working set: meshes plus user
+    /// textures.
+    ///
+    /// Maintained as running counters (updated on upload, replace, and free),
+    /// so this is cheap to poll per frame. A streaming or eviction policy
+    /// compares [`ResidentBytes::total`] against its own byte budget and calls
+    /// [`free_mesh`](Self::free_mesh) / [`release_texture`](Self::release_texture)
+    /// to stay under it. Built-in LUTs, IBL maps, and render targets are not
+    /// counted; see [`ResidentBytes`].
+    pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
+        crate::resources::types::ResidentBytes {
+            mesh_bytes: self.mesh_store.allocated_bytes(),
+            texture_bytes: self.textures.allocated_bytes(),
+        }
+    }
+
+    /// Release a user-uploaded texture, reclaiming its slot and GPU memory.
+    ///
+    /// Drops the `GpuTexture` (wgpu defers the real free until in-flight
+    /// commands that reference it complete), bumps the slot generation so `id`
+    /// no longer resolves, and evicts the cached bind groups that named the
+    /// texture: the shared `material_bind_groups` / `instance_bind_groups`
+    /// entries whose key contains `id`, and any per-mesh object bind group built
+    /// against it (invalidated so the next `prepare` rebinds the fallback).
+    ///
+    /// Returns `true` if a texture was released, `false` if `id` did not resolve
+    /// to a live texture (already freed, never uploaded, or a stale handle).
+    /// Materials still holding `id` are not rewritten; they fall back to the
+    /// fallback texture until reassigned.
+    pub fn release_texture(&mut self, id: u64) -> bool {
+        if !self.textures.remove(id) {
+            return false;
+        }
+
+        // Drop shared cache entries keyed on any texture slot equal to `id`.
+        self.material_bind_groups
+            .retain(|&(a, n, ao), _| a != id && n != id && ao != id);
+        self.instance_bind_groups
+            .retain(|&(a, n, ao), _| a != id && n != id && ao != id);
+
+        // Invalidate per-mesh object bind groups that sampled the released
+        // texture so `update_mesh_texture_bind_group` rebuilds them against the
+        // fallback. `last_tex_key` positions holding user-texture ids are
+        // albedo, normal, ao, metallic-roughness, and emissive.
+        const INVALID_KEY: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) = (
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+        );
+        for (_, mesh) in self.mesh_store.iter_mut() {
+            let k = mesh.last_tex_key;
+            if k.0 == id || k.1 == id || k.2 == id || k.7 == id || k.8 == id {
+                mesh.last_tex_key = INVALID_KEY;
+            }
+        }
+
+        true
     }
 }
 
@@ -551,15 +616,15 @@ impl ViewportGpuResources {
 
         if !self.material_bind_groups.contains_key(&key) {
             let albedo_view = match albedo_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_texture.view,
             };
             let normal_view = match normal_map_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_normal_map_view,
             };
             let ao_view = match ao_map_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_ao_map_view,
             };
 
@@ -660,15 +725,15 @@ impl ViewportGpuResources {
         }
 
         let albedo_view = match albedo_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_texture.view,
         };
         let normal_view = match normal_map_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_normal_map_view,
         };
         let ao_view = match ao_map_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_ao_map_view,
         };
         let lut_view = match lut_id {
@@ -726,11 +791,11 @@ impl ViewportGpuResources {
             .unwrap_or(&self.fallback_normal_override_buf);
 
         let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_metallic_roughness_texture_view,
         };
         let emissive_view: &wgpu::TextureView = match emissive_texture_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_emissive_texture_view,
         };
 
@@ -873,15 +938,15 @@ impl ViewportGpuResources {
         }
 
         let albedo_view = match albedo_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_texture.view,
         };
         let normal_view = match normal_map_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_normal_map_view,
         };
         let ao_view = match ao_map_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_ao_map_view,
         };
         let lut_view = match lut_id {
@@ -934,11 +999,11 @@ impl ViewportGpuResources {
             .unwrap_or(&self.fallback_normal_override_buf);
 
         let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_metallic_roughness_texture_view,
         };
         let emissive_view: &wgpu::TextureView = match emissive_texture_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_emissive_texture_view,
         };
 

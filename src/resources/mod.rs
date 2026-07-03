@@ -67,8 +67,8 @@ pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
     LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
-    PointCloudGpuData, PolylineGpuData, ProjectedTetId, ScreenImageGpuData, SingleLightUniform,
-    TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
+    PointCloudGpuData, PolylineGpuData, ProjectedTetId, ResidentBytes, ScreenImageGpuData,
+    SingleLightUniform, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;

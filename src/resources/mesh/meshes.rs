@@ -601,10 +601,17 @@ impl ViewportGpuResources {
     /// present, the existing GPU buffers are reused and data is written in place, avoiding
     /// GPU memory allocation. When topology changes, new buffers are allocated.
     ///
+    /// This is the only slot-targeting mesh operation, so it doubles as the
+    /// guard against a free racing a queued replace: the `mesh_id` generation is
+    /// checked here (and again in `MeshStore::replace`), so a handle whose mesh
+    /// was freed, or freed and its slot reused by a later upload, is rejected
+    /// rather than overwriting the mesh now in that slot. The async upload paths
+    /// need no such guard because they allocate a fresh slot at apply time.
+    ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds) if `mesh_index` is out of range,
-    /// or any mesh validation error from the new data.
+    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds) if `mesh_index` is out of range
+    /// or the handle is stale, or any mesh validation error from the new data.
     pub fn replace_mesh_data(
         &mut self,
         device: &wgpu::Device,
@@ -766,6 +773,25 @@ impl ViewportGpuResources {
     ///
     /// Returns `true` if a mesh was removed, `false` if the slot was already empty.
     pub fn remove_mesh(&mut self, id: crate::resources::mesh::mesh_store::MeshId) -> bool {
+        self.free_mesh(id)
+    }
+
+    /// Free a mesh, reclaiming its GPU buffers and slot.
+    ///
+    /// Drops the `GpuMesh` (vertex, index, attribute buffers and its object bind
+    /// group; wgpu defers the real free until in-flight commands complete),
+    /// bumps the slot generation so `id` no longer resolves, and frees the slot
+    /// for a later upload to reuse. A stale `id` held elsewhere degrades to
+    /// fallback rendering rather than aliasing the reused slot.
+    ///
+    /// Returns `true` if a mesh was freed, `false` if `id` did not resolve to a
+    /// live mesh. This is the residency-facing name for [`remove_mesh`]; the two
+    /// are equivalent. To free a mesh that is a member of a LOD group, free the
+    /// group with [`free_lod_group`](Self::free_lod_group) instead so shared
+    /// members are handled.
+    ///
+    /// [`remove_mesh`]: Self::remove_mesh
+    pub fn free_mesh(&mut self, id: crate::resources::mesh::mesh_store::MeshId) -> bool {
         self.mesh_store.remove(id)
     }
 
@@ -2658,6 +2684,73 @@ mod override_tests {
         assert!(
             resources.mesh_store.get(id1).is_none(),
             "the stale handle must not alias the mesh now occupying its slot"
+        );
+    }
+
+    #[test]
+    fn stale_handle_replace_is_rejected_after_free_and_reuse() {
+        // The in-flight guard: an operation carrying a handle whose mesh was
+        // freed (and whose slot a later upload reused) must not land on the new
+        // mesh. `replace_mesh_data` is the slot-targeting path; its generation
+        // check is what makes a free racing a queued replace safe.
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let stale = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        assert!(resources.free_mesh(stale));
+
+        // A later upload reuses the freed slot at a new generation.
+        let live = resources
+            .upload_mesh_data(&device, &primitives::cube(2.0))
+            .unwrap();
+        assert_eq!(stale.index(), live.index());
+
+        // Replaying the stale handle must be rejected, not silently overwrite
+        // the mesh now occupying the slot.
+        let err = resources.replace_mesh_data(&device, &queue, stale, &primitives::cube(3.0));
+        assert!(
+            matches!(
+                err,
+                Err(crate::error::ViewportError::MeshIndexOutOfBounds { .. })
+            ),
+            "replace through a stale handle must fail rather than alias the reused slot"
+        );
+        assert!(
+            resources.mesh_store.get(live).is_some(),
+            "the live mesh must be untouched by the rejected replace"
+        );
+    }
+
+    #[test]
+    fn resident_bytes_track_mesh_upload_and_free() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let start = resources.resident_bytes().mesh_bytes;
+        let id = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        let after_upload = resources.resident_bytes().mesh_bytes;
+        assert!(
+            after_upload > start,
+            "uploading a mesh must increase resident mesh bytes"
+        );
+
+        assert!(resources.free_mesh(id));
+        let after_free = resources.resident_bytes().mesh_bytes;
+        assert_eq!(
+            after_free, start,
+            "freeing the mesh must return resident bytes to the starting total"
         );
     }
 }

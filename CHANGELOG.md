@@ -28,6 +28,17 @@ An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that 
 
 - **`MeshId` is now a generational handle** and is checked on lookup: a handle whose mesh was removed (its slot freed and reused by a later upload) resolves to no mesh rather than aliasing whatever now occupies the slot. `MeshId::from_index` is removed; use the handle returned by `upload_mesh_data`, or `MeshId::INVALID` for a not-yet-assigned placeholder. `MeshInstanceItem::mesh_id` and `ParticleRender::Mesh::mesh_id` now take a `MeshId` instead of a raw integer index.
 
+- **`LodGroupId` is now a generational handle** for the same reason: `free_lod_group` frees a group's slot and bumps its generation, so a stale group id resolves to no group. Keep the id returned by `register_lod_group`; `LodGroupId::INVALID` is the placeholder. The internal tuple constructor is gone.
+
+- **Texture ids now carry a generation.** Textures moved to a slotted store, so a released texture's slot can be reused without a stale id aliasing the new texture. Ids stay `u64` and a never-freed texture keeps the dense index it always had (the generation is 0), so existing code that only uploads textures is unaffected. The `ViewportGpuResources::textures` field (previously `pub Vec<GpuTexture>`) is no longer public; use `texture_view` / `texture_sampler` / `texture_count` to read textures.
+
+### GPU resource freeing and accounting
+
+New residency mechanism (the policy stays with the consumer):
+
+- **`free_mesh(MeshId)`** / **`release_texture(u64)`** / **`free_lod_group(LodGroupId)`** reclaim GPU memory and free the slot. `release_texture` also evicts the cached bind groups that named the texture and invalidates the per-mesh bind groups that sampled it, so they rebind the fallback. `free_lod_group` frees each member mesh unless another live group still references it. `remove_mesh` still works and is now an alias for `free_mesh`.
+- **`resident_bytes() -> ResidentBytes`** reports GPU bytes for the user-uploaded working set (meshes plus user textures) from maintained counters, cheap to poll each frame. A streaming or eviction policy compares `ResidentBytes::total()` against a byte budget it chooses and frees to stay under it. Built-in LUTs, IBL maps, and render targets are not counted.
+
 ### Bug Fixes
 
 #### Per-object meshes ignored their level of detail

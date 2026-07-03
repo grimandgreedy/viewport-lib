@@ -239,7 +239,9 @@ pub use quantities::{
 pub use resources::material::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
-pub use resources::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
+pub use resources::mesh::lod::{
+    LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size,
+};
 pub use resources::mesh::mesh_store::MeshId;
 pub use resources::volume::sparse_volume::SparseVolumeGridData;
 pub use resources::volume::tetmesh::{TetMesh, TetMeshAttributes};
@@ -251,8 +253,9 @@ pub use resources::{
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc,
     ComputeFilterResult, FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions,
     GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform,
-    MatcapId, MeshData, ProgressHandle, SingleLightUniform, TextureMemoryStats, UploadStatus,
-    ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes, supports_texture_format,
+    MatcapId, MeshData, ProgressHandle, ResidentBytes, SingleLightUniform, TextureMemoryStats,
+    UploadStatus, ViewportGpuResources, VolumeGpuId, VolumeId, lerp_attributes,
+    supports_texture_format,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,

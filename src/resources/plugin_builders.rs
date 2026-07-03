@@ -104,7 +104,7 @@ impl ViewportGpuResources {
     /// recreation). A safer pattern is to fetch the view each frame just
     /// before building / rebuilding the bind group.
     pub fn texture_view(&self, id: u64) -> Option<&wgpu::TextureView> {
-        self.textures.get(id as usize).map(|t| &t.view)
+        self.textures.get(id).map(|t| &t.view)
     }
 
     /// Borrow the sampler the texture was uploaded with.
@@ -113,7 +113,7 @@ impl ViewportGpuResources {
     /// prefer [`material_sampler`](Self::material_sampler) when you need
     /// the shared lib sampler rather than the per-texture instance.
     pub fn texture_sampler(&self, id: u64) -> Option<&wgpu::Sampler> {
-        self.textures.get(id as usize).map(|t| &t.sampler)
+        self.textures.get(id).map(|t| &t.sampler)
     }
 
     /// Shared linear-repeat sampler used by the lib's material pipelines.

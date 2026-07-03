@@ -6,4 +6,6 @@ pub mod environment;
 mod ibl_compute;
 /// Built-in matcap texture data (procedurally generated).
 pub mod matcap_data;
+/// Slotted texture storage with generational ids.
+pub(crate) mod texture_store;
 pub(crate) mod textures;

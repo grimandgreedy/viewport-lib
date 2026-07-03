@@ -671,7 +671,7 @@ impl ViewportGpuResources {
 
         let (texture_view, has_texture): (&wgpu::TextureView, u32) =
             if let Some(id) = item.texture_id {
-                if let Some(tex) = self.textures.get(id as usize) {
+                if let Some(tex) = self.textures.get(id) {
                     (&tex.view, 1)
                 } else {
                     (&self.fallback_lut_view, 0)
@@ -694,7 +694,7 @@ impl ViewportGpuResources {
 
         let (normal_view, has_normal_map): (&wgpu::TextureView, u32) =
             if let Some(id) = item.normal_texture_id {
-                if let Some(tex) = self.textures.get(id as usize) {
+                if let Some(tex) = self.textures.get(id) {
                     (&tex.view, 1)
                 } else {
                     (&self.fallback_normal_map_view, 0)

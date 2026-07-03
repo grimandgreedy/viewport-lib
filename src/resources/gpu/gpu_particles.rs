@@ -396,8 +396,8 @@ impl crate::resources::ViewportGpuResources {
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
                 let texture_view = match texture_id {
-                    Some(id) if (id as usize) < self.textures.len() => {
-                        &self.textures[id as usize].view
+                    Some(id) if self.textures.get(id).is_some() => {
+                        &self.textures.get(id).unwrap().view
                     }
                     _ => &self.fallback_lut_view,
                 };
@@ -433,8 +433,8 @@ impl crate::resources::ViewportGpuResources {
                         .as_ref()
                         .expect("ensure_particle_pipelines failed to create lit BGL");
                     let normal_view = match normal_texture_id {
-                        Some(id) if (id as usize) < self.textures.len() => {
-                            &self.textures[id as usize].view
+                        Some(id) if self.textures.get(id).is_some() => {
+                            &self.textures.get(id).unwrap().view
                         }
                         _ => &self.fallback_normal_map_view,
                     };
@@ -484,8 +484,8 @@ impl crate::resources::ViewportGpuResources {
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
                 let texture_view = match texture_id {
-                    Some(id) if (id as usize) < self.textures.len() => {
-                        &self.textures[id as usize].view
+                    Some(id) if self.textures.get(id).is_some() => {
+                        &self.textures.get(id).unwrap().view
                     }
                     _ => &self.fallback_texture.view,
                 };

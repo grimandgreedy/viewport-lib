@@ -1455,7 +1455,7 @@ mod tests {
         );
         assert_eq!(scene.node(id).unwrap().lod_group(), None);
 
-        let group = crate::resources::LodGroupId(7);
+        let group = crate::resources::LodGroupId::new(7, 0);
         scene.set_lod_group(id, Some(group));
         assert_eq!(scene.node(id).unwrap().lod_group(), Some(group));
 

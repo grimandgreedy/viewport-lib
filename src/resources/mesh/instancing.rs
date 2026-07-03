@@ -712,15 +712,15 @@ impl ViewportGpuResources {
             let vis_buf = cull_state.visibility_index_buf.as_ref()?;
 
             let albedo_view = match albedo_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_texture.view,
             };
             let normal_view = match normal_map_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_normal_map_view,
             };
             let ao_view = match ao_map_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_ao_map_view,
             };
 
@@ -784,15 +784,15 @@ impl ViewportGpuResources {
             let buf = self.instance_storage_buf.as_ref()?;
 
             let albedo_view = match albedo_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_texture.view,
             };
             let normal_view = match normal_map_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_normal_map_view,
             };
             let ao_view = match ao_map_id {
-                Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
                 _ => &self.fallback_ao_map_view,
             };
 
@@ -901,7 +901,7 @@ impl ViewportGpuResources {
 
         let has_texture = if item
             .texture_id
-            .is_some_and(|id| (id as usize) < self.textures.len())
+            .is_some_and(|id| self.textures.get(id).is_some())
         {
             1u32
         } else {
@@ -951,7 +951,7 @@ impl ViewportGpuResources {
 
         let bgl = self.instance_bind_group_layout.as_ref()?;
         let albedo_view = match item.texture_id {
-            Some(id) if (id as usize) < self.textures.len() => &self.textures[id as usize].view,
+            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_texture.view,
         };
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
