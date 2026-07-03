@@ -24,9 +24,35 @@ impl ShDegree {
     }
 }
 
-/// Opaque handle to an uploaded Gaussian splat set.
+/// Handle to an uploaded Gaussian splat set.
+///
+/// Carries the slot index plus the generation the slot had when the handle was
+/// issued. A handle whose splat set was removed (its slot freed and reused by a
+/// later upload) resolves to no set on lookup, so it cannot alias whatever now
+/// occupies the slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GaussianSplatId(pub(crate) usize);
+pub struct GaussianSplatId {
+    pub(crate) index: u32,
+    pub(crate) generation: u32,
+}
+
+impl GaussianSplatId {
+    /// A handle that refers to no splat set. Store lookups always return `None`
+    /// for it. Use it as the default / placeholder value.
+    pub const INVALID: GaussianSplatId = GaussianSplatId {
+        index: u32::MAX,
+        generation: u32::MAX,
+    };
+
+    /// The raw slot index this handle points at.
+    pub fn index(&self) -> usize {
+        self.index as usize
+    }
+
+    pub(crate) fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+}
 
 /// Upload data for a Gaussian splat set. Submitted once via
 /// `resources_mut().upload_gaussian_splats(data)`.
@@ -74,7 +100,7 @@ pub struct GaussianSplatItem {
 impl Default for GaussianSplatItem {
     fn default() -> Self {
         Self {
-            id: GaussianSplatId(usize::MAX),
+            id: GaussianSplatId::INVALID,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             settings: ItemSettings::default(),
         }

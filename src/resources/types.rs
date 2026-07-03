@@ -2048,9 +2048,20 @@ pub(crate) struct GaussianSplatDrawData {
     pub wireframe: bool,
 }
 
-/// Slotted store for Gaussian splat sets.
+/// One splat slot: the set (when occupied) and the slot's current generation.
+pub(crate) struct GaussianSplatSlot {
+    pub set: Option<GaussianSplatGpuSet>,
+    pub generation: u32,
+}
+
+/// Slotted store for Gaussian splat sets with generational handles.
+///
+/// A removed set leaves an empty slot that a later insert reuses. Each slot
+/// carries a generation bumped on removal, and a [`GaussianSplatId`] captures
+/// the generation it was issued against, so a stale handle resolves to `None`
+/// rather than aliasing the set now in its slot.
 pub(crate) struct GaussianSplatStore {
-    pub slots: Vec<Option<GaussianSplatGpuSet>>,
+    pub slots: Vec<GaussianSplatSlot>,
     free_list: Vec<usize>,
 }
 
@@ -2062,30 +2073,52 @@ impl GaussianSplatStore {
         }
     }
 
-    pub fn insert(&mut self, set: GaussianSplatGpuSet) -> usize {
+    pub fn insert(&mut self, set: GaussianSplatGpuSet) -> crate::renderer::GaussianSplatId {
         if let Some(idx) = self.free_list.pop() {
-            self.slots[idx] = Some(set);
-            idx
+            let slot = &mut self.slots[idx];
+            slot.set = Some(set);
+            crate::renderer::GaussianSplatId::new(idx as u32, slot.generation)
         } else {
             let idx = self.slots.len();
-            self.slots.push(Some(set));
-            idx
+            self.slots.push(GaussianSplatSlot {
+                set: Some(set),
+                generation: 0,
+            });
+            crate::renderer::GaussianSplatId::new(idx as u32, 0)
         }
     }
 
-    pub fn get(&self, idx: usize) -> Option<&GaussianSplatGpuSet> {
-        self.slots.get(idx)?.as_ref()
+    /// Look up a set by handle, validating the generation. Returns `None` for a
+    /// stale handle, an empty slot, or an out-of-range index.
+    pub fn get(&self, id: crate::renderer::GaussianSplatId) -> Option<&GaussianSplatGpuSet> {
+        let slot = self.slots.get(id.index as usize)?;
+        if slot.generation != id.generation {
+            return None;
+        }
+        slot.set.as_ref()
     }
 
-    pub fn get_mut(&mut self, idx: usize) -> Option<&mut GaussianSplatGpuSet> {
-        self.slots.get_mut(idx)?.as_mut()
+    /// Look up a set by raw slot index, without a generation check. For the
+    /// per-frame draw path, where the index was already validated through
+    /// [`get`](Self::get) earlier in the same frame.
+    pub fn get_by_index(&self, idx: usize) -> Option<&GaussianSplatGpuSet> {
+        self.slots.get(idx)?.set.as_ref()
     }
 
-    pub fn remove(&mut self, idx: usize) -> bool {
-        if let Some(slot) = self.slots.get_mut(idx) {
-            if slot.is_some() {
-                *slot = None;
-                self.free_list.push(idx);
+    /// Mutable raw-index lookup, same contract as [`get_by_index`](Self::get_by_index).
+    pub fn get_mut_by_index(&mut self, idx: usize) -> Option<&mut GaussianSplatGpuSet> {
+        self.slots.get_mut(idx)?.set.as_mut()
+    }
+
+    /// Remove a set by handle, bumping the slot generation and freeing the slot.
+    /// Returns `true` if a set was removed, `false` for a stale handle or an
+    /// already-empty slot.
+    pub fn remove(&mut self, id: crate::renderer::GaussianSplatId) -> bool {
+        if let Some(slot) = self.slots.get_mut(id.index as usize) {
+            if slot.generation == id.generation && slot.set.is_some() {
+                slot.set = None;
+                slot.generation = slot.generation.wrapping_add(1);
+                self.free_list.push(id.index as usize);
                 return true;
             }
         }

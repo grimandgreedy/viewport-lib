@@ -51,7 +51,11 @@ impl ViewportRenderer {
                     if dd.wireframe {
                         continue;
                     }
-                    if let Some(set) = self.resources.gaussian_splat_store.get(dd.store_index) {
+                    if let Some(set) = self
+                        .resources
+                        .gaussian_splat_store
+                        .get_by_index(dd.store_index)
+                    {
                         if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
                             render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
                             render_pass.draw(0..6, 0..dd.count);

@@ -24,8 +24,33 @@ use crate::{
 ///
 /// Returned by [`ViewportGpuResources::upload_volume_for_mc`]. Pass to
 /// [`GpuMarchingCubesJob`] to select which volume to triangulate each frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct VolumeGpuId(pub(crate) usize);
+///
+/// Carries the slot index plus the generation the slot had when the handle was
+/// issued. A handle whose volume was removed (its slot freed and reused by a
+/// later upload) resolves to nothing on lookup, so it cannot alias the volume
+/// now in its slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VolumeGpuId {
+    pub(crate) index: u32,
+    pub(crate) generation: u32,
+}
+
+impl VolumeGpuId {
+    /// A handle that refers to no volume. Store lookups always return `None`.
+    pub const INVALID: VolumeGpuId = VolumeGpuId {
+        index: u32::MAX,
+        generation: u32::MAX,
+    };
+
+    /// The raw slot index this handle points at.
+    pub fn index(&self) -> usize {
+        self.index as usize
+    }
+
+    pub(crate) fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // GPU-internal types
@@ -60,6 +85,9 @@ pub(crate) struct McVolumeGpuData {
     pub slabs: Vec<McSlabGpuData>,
     /// False after `remove_mc_volume` is called; the slot is reused lazily.
     pub alive: bool,
+    /// Bumped each time the slot is freed, so a handle issued for an earlier
+    /// occupant no longer resolves once the slot is reused.
+    pub generation: u32,
 }
 
 /// Per-frame data for one MC job, consumed by the render phase.
@@ -500,20 +528,36 @@ impl ViewportGpuResources {
         vol: &VolumeData,
     ) -> crate::ViewportResult<VolumeGpuId> {
         let gpu_data = build_mc_volume_gpu_data(device, queue, vol)?;
-        let idx = self.insert_mc_volume_gpu_data(gpu_data);
-        Ok(VolumeGpuId(idx))
+        Ok(self.insert_mc_volume_gpu_data(gpu_data))
     }
 
     /// Main-thread half of an async marching-cubes volume upload: insert
-    /// pre-built GPU data into the store and return its slot index.
-    pub(crate) fn insert_mc_volume_gpu_data(&mut self, gpu_data: McVolumeGpuData) -> usize {
+    /// pre-built GPU data into the store and return its handle. Reuses a freed
+    /// slot when one is available, carrying that slot's current generation so a
+    /// stale handle to the previous occupant no longer resolves.
+    pub(crate) fn insert_mc_volume_gpu_data(
+        &mut self,
+        mut gpu_data: McVolumeGpuData,
+    ) -> VolumeGpuId {
         if let Some(free_idx) = self.mc_volumes.iter().position(|v| !v.alive) {
+            gpu_data.generation = self.mc_volumes[free_idx].generation;
             self.mc_volumes[free_idx] = gpu_data;
-            free_idx
+            VolumeGpuId::new(free_idx as u32, self.mc_volumes[free_idx].generation)
         } else {
+            let idx = self.mc_volumes.len();
             self.mc_volumes.push(gpu_data);
-            self.mc_volumes.len() - 1
+            VolumeGpuId::new(idx as u32, 0)
         }
+    }
+
+    /// Look up a live volume by handle, validating the generation. Returns
+    /// `None` for a stale handle, a freed slot, or an out-of-range index.
+    pub(crate) fn mc_volume(&self, id: VolumeGpuId) -> Option<&McVolumeGpuData> {
+        let vol = self.mc_volumes.get(id.index as usize)?;
+        if vol.generation != id.generation || !vol.alive {
+            return None;
+        }
+        Some(vol)
     }
 }
 
@@ -652,7 +696,11 @@ pub(crate) fn build_mc_volume_gpu_data(
 
         let _ = queue; // retained for potential future use (e.g. scalar updates)
 
-        Ok(McVolumeGpuData { slabs, alive: true })
+        Ok(McVolumeGpuData {
+            slabs,
+            alive: true,
+            generation: 0,
+        })
     }
 }
 
@@ -695,8 +743,8 @@ impl ViewportGpuResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut ViewportGpuResources| {
-                        let idx = resources.insert_mc_volume_gpu_data(gpu_data);
-                        slot_for_apply.set(VolumeGpuId(idx));
+                        let id = resources.insert_mc_volume_gpu_data(gpu_data);
+                        slot_for_apply.set(id);
                     }),
                 ))
             })
@@ -736,10 +784,14 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Mark a MC volume slot as free. The GPU buffers are dropped immediately.
+    /// Mark a MC volume slot as free and bump its generation. The GPU buffers
+    /// are dropped when the slot is reused. A stale handle no longer resolves.
     pub fn remove_mc_volume(&mut self, id: VolumeGpuId) {
-        if let Some(v) = self.mc_volumes.get_mut(id.0) {
-            v.alive = false;
+        if let Some(v) = self.mc_volumes.get_mut(id.index as usize) {
+            if v.generation == id.generation && v.alive {
+                v.alive = false;
+                v.generation = v.generation.wrapping_add(1);
+            }
         }
     }
 
@@ -853,10 +905,9 @@ impl ViewportGpuResources {
         });
 
         for job in jobs {
-            let vol = &self.mc_volumes[job.volume_id.0];
-            if !vol.alive {
+            let Some(vol) = self.mc_volume(job.volume_id) else {
                 continue;
-            }
+            };
 
             // ----------------------------------------------------------
             // Per-job surface material (one bind group shared by all slabs).
@@ -1122,7 +1173,7 @@ impl ViewportGpuResources {
                 };
 
             frame_data.push(McFrameData {
-                volume_idx: job.volume_id.0,
+                volume_idx: job.volume_id.index(),
                 render_bg,
                 wireframe: job.settings.wireframe,
                 wire_slab_bgs,
@@ -1174,5 +1225,67 @@ fn bgl_storage_rw(binding: u32) -> wgpu::BindGroupLayoutEntry {
             min_binding_size: None,
         },
         count: None,
+    }
+}
+
+#[cfg(test)]
+mod residency_tests {
+    use crate::ViewportGpuResources;
+    use crate::geometry::marching_cubes::VolumeData;
+
+    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    fn sample_volume() -> VolumeData {
+        let dims = [4u32, 4, 4];
+        let data = (0..(dims[0] * dims[1] * dims[2]))
+            .map(|i| (i % 2) as f32)
+            .collect();
+        VolumeData {
+            data,
+            dims,
+            origin: [0.0, 0.0, 0.0],
+            spacing: [1.0, 1.0, 1.0],
+        }
+    }
+
+    #[test]
+    fn stale_mc_volume_handle_does_not_alias_after_slot_reuse() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let id1 = resources
+            .upload_volume_for_mc(&device, &queue, &sample_volume())
+            .unwrap();
+        assert!(resources.mc_volume(id1).is_some());
+        resources.remove_mc_volume(id1);
+        assert!(
+            resources.mc_volume(id1).is_none(),
+            "a removed handle must not resolve"
+        );
+
+        // The next upload reuses the freed slot at a new generation.
+        let id2 = resources
+            .upload_volume_for_mc(&device, &queue, &sample_volume())
+            .unwrap();
+        assert_eq!(id1.index(), id2.index(), "the freed slot should be reused");
+        assert_ne!(id1, id2, "the reused slot must carry a new generation");
+        assert!(resources.mc_volume(id2).is_some());
+        assert!(
+            resources.mc_volume(id1).is_none(),
+            "the stale handle must not alias the volume now occupying its slot"
+        );
     }
 }
