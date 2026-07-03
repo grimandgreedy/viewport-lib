@@ -1748,7 +1748,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     // Gaussian splat grid (pick_id=10).
     if let Some(splat_id) = app.pl_state.splat_id {
         let mut item = GaussianSplatItem::default();
-        item.id = splat_id;
+        item.source = splat_id;
         item.model = pl_splat_model().to_cols_array_2d();
         item.settings.pick_id = PickId(10);
         item.settings.selected = app.pl_state.selection.contains(10);

@@ -86,3 +86,31 @@ macro_rules! slot_handle {
 }
 
 pub(crate) use slot_handle;
+
+/// Define an append-only registry handle: a stable index into a grow-only store
+/// that never frees or reuses slots, so it needs no generation.
+///
+/// These name resources created once and kept for the session (density volumes,
+/// projected-tet meshes, GPU particle systems). The handle is opaque: it is
+/// obtained from a create / upload call, and its inner index is crate-private so
+/// it cannot be synthesised by hand. If a resource class later becomes
+/// evictable, its handle graduates to [`slot_handle!`] and gains a generation;
+/// because it is already opaque, that is an additive change for consumers.
+macro_rules! registry_handle {
+    ($(#[$meta:meta])* $vis:vis struct $name:ident;) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        $vis struct $name(pub(crate) usize);
+
+        impl $name {
+            /// The raw registry index this handle points at. Stable for the
+            /// session; useful for debug overlays. Do not synthesise handles by
+            /// hand.
+            pub fn index(&self) -> usize {
+                self.0
+            }
+        }
+    };
+}
+
+pub(crate) use registry_handle;

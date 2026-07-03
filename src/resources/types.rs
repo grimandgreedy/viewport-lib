@@ -12,13 +12,17 @@
 // ---------------------------------------------------------------------------
 
 /// Identifies a colourmap (LUT) uploaded to the GPU.
+///
+/// An append-only registry handle. The inner index is public because the
+/// built-in colourmaps have stable indices a consumer can name directly; the
+/// registry is never freed, so this stays a plain index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ColourmapId(pub usize);
 
 /// Identifies a matcap texture uploaded to the GPU.
 ///
 /// Obtained from [`ViewportGpuResources::upload_matcap`] or
-/// [`ViewportGpuResources::builtin_matcap_id`].
+/// [`ViewportGpuResources::builtin_matcap_id`]. An append-only registry handle.
 /// The `blendable` flag controls whether the alpha channel tints the base
 /// geometry colour (`true`) or the matcap fully replaces the object colour (`false`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -54,15 +58,22 @@ pub enum BuiltinMatcap {
     Normal = 7,
 }
 
-/// Identifies a 3D volume texture uploaded to the GPU.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct VolumeId(pub(crate) usize);
+crate::resources::handle::registry_handle! {
+    /// Identifies a 3D volume texture uploaded to the GPU.
+    ///
+    /// An append-only registry handle: volume textures are kept for the session
+    /// and not individually freed.
+    pub struct VolumeId;
+}
 
-/// Identifies a projected-tetrahedra mesh uploaded to the GPU for transparent volume rendering.
-///
-/// Obtained from [`ViewportGpuResources::upload_projected_tet_mesh`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ProjectedTetId(pub(crate) usize);
+crate::resources::handle::registry_handle! {
+    /// Identifies a projected-tetrahedra mesh uploaded to the GPU for transparent
+    /// volume rendering.
+    ///
+    /// Obtained from [`ViewportGpuResources::upload_projected_tet_mesh`]. An
+    /// append-only registry handle.
+    pub struct ProjectedTetId;
+}
 
 /// Scalar attribute interpolation domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

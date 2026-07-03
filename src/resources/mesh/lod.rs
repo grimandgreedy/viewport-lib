@@ -282,7 +282,7 @@ impl crate::resources::ViewportGpuResources {
     /// - [`ViewportError::LodGroupEmpty`] if `levels` is empty.
     /// - [`ViewportError::LodLevelCountMismatch`] if the two lists differ in
     ///   length.
-    /// - [`ViewportError::MeshSlotEmpty`] if a mesh id is not in the store.
+    /// - [`ViewportError::SlotEmpty`] if a mesh id is not in the store.
     /// - [`ViewportError::LodThresholdsNotDescending`] if a threshold is not
     ///   smaller than the previous one.
     /// - [`ViewportError::LodLevelIncompatible`] if a level's attribute set or
@@ -304,7 +304,7 @@ impl crate::resources::ViewportGpuResources {
 
         for (i, &mesh) in levels.iter().enumerate() {
             if !self.mesh_store.contains(mesh) {
-                return Err(ViewportError::MeshSlotEmpty {
+                return Err(ViewportError::SlotEmpty {
                     index: mesh.index(),
                 });
             }

@@ -38,12 +38,13 @@ pub enum ViewportError {
         override_vertices: usize,
     },
 
-    /// Mesh index is out of bounds for the mesh storage.
-    #[error("mesh index {index} out of bounds (mesh count: {count})")]
-    MeshIndexOutOfBounds {
-        /// The requested mesh index.
+    /// A handle does not resolve to a live resource: its slot was freed, reused
+    /// at a newer generation, or its index is out of range for the store.
+    #[error("handle {index} does not resolve to a live resource (store holds {count})")]
+    StaleHandle {
+        /// The slot index the handle points at.
         index: usize,
-        /// The number of meshes currently stored.
+        /// The number of live entries currently in the store.
         count: usize,
     },
 
@@ -123,9 +124,10 @@ pub enum ViewportError {
         actual: usize,
     },
 
-    /// Attempted to access or replace a mesh slot that is empty (previously removed).
-    #[error("mesh slot {index} is empty")]
-    MeshSlotEmpty {
+    /// Attempted to access or replace a slot that is empty (its resource was
+    /// previously freed).
+    #[error("slot {index} is empty")]
+    SlotEmpty {
         /// The slot index that was accessed.
         index: usize,
     },

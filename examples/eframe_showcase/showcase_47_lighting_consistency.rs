@@ -589,7 +589,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
     if let Some(sid) = s.splat_id {
         let p = cell(4, 1);
         let mut item = GaussianSplatItem::default();
-        item.id = sid;
+        item.source = sid;
         item.model = glam::Mat4::from_translation(p).to_cols_array_2d();
         broadcast(s, &mut item.settings);
         fd.scene.gaussian_splats.push(item);

@@ -24,20 +24,25 @@ impl ViewportRenderer {
                 if item.settings.hidden {
                     continue;
                 }
-                if self.resources.gaussian_splat_store.get(item.id).is_none() {
+                if self
+                    .resources
+                    .gaussian_splat_store
+                    .get(item.source)
+                    .is_none()
+                {
                     continue;
                 }
-                let store_index = item.id.index();
+                let store_index = item.source.index();
                 let sh_degree = self
                     .resources
                     .gaussian_splat_store
-                    .get(item.id)
+                    .get(item.source)
                     .unwrap()
                     .sh_degree;
                 let count = self
                     .resources
                     .gaussian_splat_store
-                    .get(item.id)
+                    .get(item.source)
                     .unwrap()
                     .count;
                 self.resources.run_gaussian_splat_sort(
@@ -86,7 +91,7 @@ impl ViewportRenderer {
                 if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
                     continue;
                 }
-                let Some(gpu_set) = self.resources.gaussian_splat_store.get(item.id) else {
+                let Some(gpu_set) = self.resources.gaussian_splat_store.get(item.source) else {
                     continue;
                 };
                 let count = gpu_set.count as usize;

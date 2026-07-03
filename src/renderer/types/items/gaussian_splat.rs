@@ -69,8 +69,8 @@ impl Default for GaussianSplatData {
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct GaussianSplatItem {
-    /// Handle to the uploaded splat set.
-    pub id: GaussianSplatId,
+    /// Handle to the uploaded splat set this item draws.
+    pub source: GaussianSplatId,
     /// World-space model matrix.
     pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
@@ -80,7 +80,7 @@ pub struct GaussianSplatItem {
 impl Default for GaussianSplatItem {
     fn default() -> Self {
         Self {
-            id: GaussianSplatId::INVALID,
+            source: GaussianSplatId::INVALID,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             settings: ItemSettings::default(),
         }

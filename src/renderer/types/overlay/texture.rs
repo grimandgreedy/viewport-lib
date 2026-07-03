@@ -3,6 +3,8 @@
 /// Pass this to `OverlayShapeItem::texture` to use the image as fill. The
 /// handle remains valid for the lifetime of the `ViewportGpuResources` it
 /// came from; using it after the resources are dropped is a logic error.
+///
+/// An append-only registry handle: overlay textures are kept for the session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OverlayTextureId(pub(crate) u64);
 

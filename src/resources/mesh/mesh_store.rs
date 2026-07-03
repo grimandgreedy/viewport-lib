@@ -95,7 +95,7 @@ impl MeshStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshSlotEmpty`] if the slot is empty, out of
+    /// Returns [`ViewportError::SlotEmpty`] if the slot is empty, out of
     /// bounds, or the handle's generation is stale.
     pub fn replace(&mut self, id: MeshId, mesh: GpuMesh) -> crate::error::ViewportResult<()> {
         let bytes = mesh.gpu_byte_size();
@@ -106,7 +106,7 @@ impl MeshStore {
                 slot.mesh = Some(mesh);
                 Ok(())
             }
-            _ => Err(crate::error::ViewportError::MeshSlotEmpty {
+            _ => Err(crate::error::ViewportError::SlotEmpty {
                 index: id.index as usize,
             }),
         }

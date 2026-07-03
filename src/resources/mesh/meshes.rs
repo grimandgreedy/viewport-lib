@@ -360,7 +360,7 @@ impl ViewportGpuResources {
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `mesh_id` is out of range, [`ViewportError::MeshLengthMismatch`](crate::error::ViewportError::MeshLengthMismatch)
     /// if `positions` and `normals` differ in length or do not match the existing vertex count.
     pub fn write_mesh_positions_normals(
@@ -373,7 +373,7 @@ impl ViewportGpuResources {
         use bytemuck::cast_slice;
 
         if !self.mesh_store.contains(mesh_id) {
-            return Err(crate::error::ViewportError::MeshIndexOutOfBounds {
+            return Err(crate::error::ViewportError::StaleHandle {
                 index: mesh_id.index(),
                 count: self.mesh_store.len(),
             });
@@ -499,7 +499,7 @@ impl ViewportGpuResources {
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `mesh_id` is not registered.
     pub fn set_position_override_buffer(
         &mut self,
@@ -507,12 +507,13 @@ impl ViewportGpuResources {
         buffer: wgpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
-        let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
-            crate::error::ViewportError::MeshIndexOutOfBounds {
-                index: mesh_id.index(),
-                count: store_len,
-            },
-        )?;
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
         mesh.position_override_buffer = Some(buffer);
         // Bump only the gen counter; don't touch `last_tex_key.9` here. The
         // bind-group rebuild path reads `position_override_gen` into the new
@@ -528,7 +529,7 @@ impl ViewportGpuResources {
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `mesh_id` is not registered.
     pub fn set_normal_override_buffer(
         &mut self,
@@ -536,12 +537,13 @@ impl ViewportGpuResources {
         buffer: wgpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
-        let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
-            crate::error::ViewportError::MeshIndexOutOfBounds {
-                index: mesh_id.index(),
-                count: store_len,
-            },
-        )?;
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
         mesh.normal_override_buffer = Some(buffer);
         // See `set_position_override_buffer` for why this only bumps the gen
         // counter and not `last_tex_key.10`.
@@ -555,19 +557,20 @@ impl ViewportGpuResources {
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `mesh_id` is not registered.
     pub fn clear_position_override(
         &mut self,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
-        let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
-            crate::error::ViewportError::MeshIndexOutOfBounds {
-                index: mesh_id.index(),
-                count: store_len,
-            },
-        )?;
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
         mesh.position_override_buffer = None;
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
         Ok(())
@@ -577,19 +580,20 @@ impl ViewportGpuResources {
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds)
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `mesh_id` is not registered.
     pub fn clear_normal_override(
         &mut self,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
-        let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
-            crate::error::ViewportError::MeshIndexOutOfBounds {
-                index: mesh_id.index(),
-                count: store_len,
-            },
-        )?;
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
         mesh.normal_override_buffer = None;
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
         Ok(())
@@ -610,7 +614,7 @@ impl ViewportGpuResources {
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshIndexOutOfBounds`](crate::error::ViewportError::MeshIndexOutOfBounds) if `mesh_index` is out of range
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle) if `mesh_index` is out of range
     /// or the handle is stale, or any mesh validation error from the new data.
     pub fn replace_mesh_data(
         &mut self,
@@ -620,7 +624,7 @@ impl ViewportGpuResources {
         data: &MeshData,
     ) -> crate::error::ViewportResult<()> {
         if !self.mesh_store.contains(mesh_id) {
-            return Err(crate::error::ViewportError::MeshIndexOutOfBounds {
+            return Err(crate::error::ViewportError::StaleHandle {
                 index: mesh_id.index(),
                 count: self.mesh_store.len(),
             });
@@ -2646,7 +2650,7 @@ mod override_tests {
         let err = resources.set_position_override_buffer(bogus, buf);
         assert!(matches!(
             err,
-            Err(crate::error::ViewportError::MeshIndexOutOfBounds { .. })
+            Err(crate::error::ViewportError::StaleHandle { .. })
         ));
     }
 
@@ -2714,10 +2718,7 @@ mod override_tests {
         // the mesh now occupying the slot.
         let err = resources.replace_mesh_data(&device, &queue, stale, &primitives::cube(3.0));
         assert!(
-            matches!(
-                err,
-                Err(crate::error::ViewportError::MeshIndexOutOfBounds { .. })
-            ),
+            matches!(err, Err(crate::error::ViewportError::StaleHandle { .. })),
             "replace through a stale handle must fail rather than alias the reused slot"
         );
         assert!(

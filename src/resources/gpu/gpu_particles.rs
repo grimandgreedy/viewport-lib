@@ -23,18 +23,13 @@ use wgpu::util::DeviceExt;
 
 use crate::renderer::{ParticleMeshAlign, SpriteBlend, SpriteLitParams, SpriteSizeMode};
 
-/// Handle to a persistent GPU particle system.
-///
-/// Returned by [`ViewportGpuResources::create_gpu_particle_system`]. Stable
-/// until [`ViewportGpuResources::drop_gpu_particle_system`] is called.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct GpuParticleSystemId(pub(crate) usize);
-
-impl GpuParticleSystemId {
-    /// Raw slot index. Useful for debug overlays; do not synthesise these by hand.
-    pub fn index(self) -> usize {
-        self.0
-    }
+crate::resources::handle::registry_handle! {
+    /// Handle to a persistent GPU particle system.
+    ///
+    /// Returned by [`ViewportGpuResources::create_gpu_particle_system`]. Stable
+    /// until [`ViewportGpuResources::drop_gpu_particle_system`] is called. An
+    /// append-only registry handle.
+    pub struct GpuParticleSystemId;
 }
 
 /// Persistent configuration for a particle system. Set at creation; the render

@@ -401,7 +401,7 @@ impl ViewportGpuResources {
     ///
     /// # Errors
     ///
-    /// - [`ViewportError::MeshSlotEmpty`](crate::error::ViewportError::MeshSlotEmpty) : `mesh_id` not found in the store.
+    /// - [`ViewportError::SlotEmpty`](crate::error::ViewportError::SlotEmpty) : `mesh_id` not found in the store.
     /// - [`ViewportError::AttributeNotFound`](crate::error::ViewportError::AttributeNotFound) : `name` not present on the mesh.
     /// - [`ViewportError::AttributeLengthMismatch`](crate::error::ViewportError::AttributeLengthMismatch) : `data.len()` differs from
     ///   the original upload (same-topology requirement).
@@ -416,7 +416,7 @@ impl ViewportGpuResources {
         let gpu_mesh =
             self.mesh_store
                 .get_mut(mesh_id)
-                .ok_or(crate::error::ViewportError::MeshSlotEmpty {
+                .ok_or(crate::error::ViewportError::SlotEmpty {
                     index: mesh_id.index(),
                 })?;
 

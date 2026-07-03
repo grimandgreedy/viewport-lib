@@ -139,6 +139,8 @@ pub struct DeformerDesc {
 
 /// Handle to a registered deformer. The inner index is the slot the registry
 /// assigned; only used internally to address the storage buffer and flag bit.
+/// An append-only registry handle: deformers are registered once and kept for
+/// the session.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct DeformerId(pub(crate) usize);
 

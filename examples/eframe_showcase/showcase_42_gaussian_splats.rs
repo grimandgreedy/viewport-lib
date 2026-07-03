@@ -45,7 +45,7 @@ pub(crate) struct GaussianSplatsState {
 
 impl Default for GaussianSplatsState {
     fn default() -> Self {
-        let dummy = GaussianSplatItem::default().id;
+        let dummy = GaussianSplatItem::default().source;
         Self {
             built: false,
             id_dti: dummy,
@@ -368,7 +368,7 @@ pub(crate) fn gaussian_splat_items(app: &App) -> Vec<GaussianSplatItem> {
     }
     let rot = glam::Mat4::from_rotation_y(app.splat_state.angle);
     let mut item = GaussianSplatItem::default();
-    item.id = match app.splat_state.scene {
+    item.source = match app.splat_state.scene {
         SplatScene::Dti => app.splat_state.id_dti,
         SplatScene::Tgv => app.splat_state.id_tgv,
     };

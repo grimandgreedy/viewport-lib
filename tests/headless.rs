@@ -141,7 +141,7 @@ fn replace_mesh_data_bad_index() {
             .replace_mesh_data(&device, &queue, MeshId::INVALID, &box_mesh());
     assert!(matches!(
         result.unwrap_err(),
-        ViewportError::MeshIndexOutOfBounds { .. }
+        ViewportError::StaleHandle { .. }
     ));
 }
 
