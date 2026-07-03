@@ -21,10 +21,10 @@ use viewport_lib::{
     BuiltinColourmap, CellSelectionInfo, ColourmapId, FrameData, GaussianSplatData,
     GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
     GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
-    LightingSettings, Material, MeshId, NodeId, PickId, PickMask, PickRectResult, PointCloudItem,
-    PolylineItem, PolylineSelectionInfo, RibbonItem, SceneRenderItem, ScreenImageItem, ShDegree,
-    SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef, TensorGlyphItem, TubeItem,
-    ViewportRenderer, VolumeData, VolumeGpuId, VolumeMeshData, VolumeMeshItem,
+    LightingSettings, Material, McVolumeId, MeshId, NodeId, PickId, PickMask, PickRectResult,
+    PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, SceneRenderItem,
+    ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
+    TensorGlyphItem, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData, VolumeMeshItem,
     VolumeSurfaceSliceItem,
 };
 
@@ -357,7 +357,7 @@ pub(crate) struct PlState {
     /// Plane mesh uploaded for VolumeSurfaceSliceItem (pick_id=51).
     pub surface_slice_mesh_id: Option<MeshId>,
     /// GPU volume handle for the GpuMarchingCubesJob (pick_id=54).
-    pub mc_volume_id: Option<VolumeGpuId>,
+    pub mc_volume_id: Option<McVolumeId>,
     /// CPU-side copy of the MC volume data, retained for CPU picking.
     pub mc_volume_data: Option<std::sync::Arc<viewport_lib::VolumeData>>,
 }

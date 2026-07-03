@@ -135,7 +135,7 @@ pub(crate) fn hash_decal_item(item: &crate::renderer::DecalItem) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     h.write(bytemuck::bytes_of(&raw));
     h.write_u8(item.blend_mode as u8);
-    h.write_u64(item.texture_id);
+    h.write_u64(item.texture_id.raw());
     for id in [
         item.normal_texture_id,
         item.roughness_texture_id,
@@ -143,7 +143,7 @@ pub(crate) fn hash_decal_item(item: &crate::renderer::DecalItem) -> u64 {
         item.emissive_texture_id,
     ] {
         h.write_u8(id.is_some() as u8);
-        h.write_u64(id.unwrap_or(0));
+        h.write_u64(id.map(|t| t.raw()).unwrap_or(0));
     }
     h.finish()
 }
@@ -351,7 +351,7 @@ impl ViewportGpuResources {
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
-        let resolve_tex = |id: Option<u64>| -> &wgpu::TextureView {
+        let resolve_tex = |id: Option<crate::resources::TextureId>| -> &wgpu::TextureView {
             id.and_then(|i| self.textures.get(i))
                 .map(|t| &t.view)
                 .unwrap_or(&self.fallback_texture.view)
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn identical_decals_hash_equal() {
         let a = DecalItem {
-            texture_id: 3,
+            texture_id: crate::resources::TextureId(3),
             ..DecalItem::default()
         };
         let b = a.clone();
@@ -598,7 +598,7 @@ mod tests {
     fn texture_and_transform_change_hash() {
         let base = DecalItem::default();
         let tex = DecalItem {
-            texture_id: 7,
+            texture_id: crate::resources::TextureId(7),
             ..DecalItem::default()
         };
         assert_ne!(hash_decal_item(&base), hash_decal_item(&tex));

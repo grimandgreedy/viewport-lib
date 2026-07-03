@@ -1,4 +1,4 @@
-use crate::resources::VolumeGpuId;
+use crate::resources::McVolumeId;
 use crate::scene::material::{ItemSettings, Material};
 
 /// One GPU marching cubes draw job submitted per frame.
@@ -8,7 +8,7 @@ use crate::scene::material::{ItemSettings, Material};
 /// determined by an indirect draw call.
 pub struct GpuMarchingCubesJob {
     /// Volume to triangulate (must remain alive).
-    pub volume_id: VolumeGpuId,
+    pub volume_id: McVolumeId,
     /// Isovalue at which to extract the surface.
     pub isovalue: f32,
     /// Surface material (colour + roughness).

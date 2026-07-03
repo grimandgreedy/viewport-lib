@@ -285,9 +285,9 @@ impl ViewportRenderer {
                         &resources.shadow_instanced_two_sided_pipeline,
                         instancing.batches.first().and_then(|b| {
                             resources.instance_bind_groups.get(&(
-                                b.texture_id.unwrap_or(u64::MAX),
-                                b.normal_map_id.unwrap_or(u64::MAX),
-                                b.ao_map_id.unwrap_or(u64::MAX),
+                                b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                b.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                b.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                             ))
                         }),
                     ) {

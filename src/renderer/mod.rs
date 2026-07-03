@@ -1383,7 +1383,7 @@ impl ViewportRenderer {
     /// Upload a Gaussian splat set to the GPU.
     ///
     /// Call once per splat set at startup or when it changes. The returned
-    /// [`GaussianSplatId`] is valid until [`remove_gaussian_splats`](Self::remove_gaussian_splats) is called.
+    /// [`GaussianSplatId`] is valid until [`free_gaussian_splats`](Self::free_gaussian_splats) is called.
     ///
     /// # Errors
     ///
@@ -1413,8 +1413,8 @@ impl ViewportRenderer {
     /// Remove an uploaded Gaussian splat set by handle.
     ///
     /// After this call the `id` is invalid and must not be submitted in `SceneFrame`.
-    pub fn remove_gaussian_splats(&mut self, id: GaussianSplatId) {
-        self.resources.remove_gaussian_splats(id);
+    pub fn free_gaussian_splats(&mut self, id: GaussianSplatId) {
+        self.resources.free_gaussian_splats(id);
     }
 
     /// Upload an equirectangular HDR environment map and precompute IBL textures.
@@ -1514,12 +1514,12 @@ impl ViewportRenderer {
             .begin_upload_volume_for_mc(device, queue, vol)
     }
 
-    /// Take the [`VolumeGpuId`](crate::resources::VolumeGpuId) produced by a
+    /// Take the [`McVolumeId`](crate::resources::McVolumeId) produced by a
     /// completed [`begin_upload_volume_for_mc`](Self::begin_upload_volume_for_mc) job.
     pub fn upload_result_volume_mc(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::VolumeGpuId> {
+    ) -> crate::error::ViewportResult<crate::resources::McVolumeId> {
         self.resources.upload_result_volume_mc(id)
     }
 
@@ -1678,7 +1678,7 @@ impl ViewportRenderer {
     pub fn upload_result_texture(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<u64> {
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         self.resources.upload_result_texture(id)
     }
 

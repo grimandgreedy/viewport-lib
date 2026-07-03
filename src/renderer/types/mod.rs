@@ -15,9 +15,9 @@ pub(super) const INSTANCING_THRESHOLD: usize = 1;
 #[derive(Debug, Clone)]
 pub(crate) struct InstancedBatch {
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    pub texture_id: Option<u64>,
-    pub normal_map_id: Option<u64>,
-    pub ao_map_id: Option<u64>,
+    pub texture_id: Option<crate::resources::TextureId>,
+    pub normal_map_id: Option<crate::resources::TextureId>,
+    pub ao_map_id: Option<crate::resources::TextureId>,
     pub instance_offset: u32,
     pub instance_count: u32,
     pub is_transparent: bool,
@@ -241,9 +241,9 @@ macro_rules! emit_draw_calls {
                             for batch in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
-                                    batch.texture_id.unwrap_or(u64::MAX),
-                                    batch.normal_map_id.unwrap_or(u64::MAX),
-                                    batch.ao_map_id.unwrap_or(u64::MAX),
+                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
                                 let Some(inst_tex_bg) = resources.instance_bind_groups.get(&mat_key) else { continue };
@@ -271,9 +271,9 @@ macro_rules! emit_draw_calls {
                             for batch in &transparent_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
-                                    batch.texture_id.unwrap_or(u64::MAX),
-                                    batch.normal_map_id.unwrap_or(u64::MAX),
-                                    batch.ao_map_id.unwrap_or(u64::MAX),
+                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) = resources.instance_bind_groups.get(&mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);

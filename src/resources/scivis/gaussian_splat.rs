@@ -385,7 +385,7 @@ impl ViewportGpuResources {
     /// Upload one Gaussian splat set to the GPU and return its handle.
     ///
     /// Call once per splat set at startup (or when the set changes). The returned
-    /// [`GaussianSplatId`] is stable until [`remove_gaussian_splats`] is called.
+    /// [`GaussianSplatId`] is stable until [`free_gaussian_splats`] is called.
     ///
     /// # Errors
     ///
@@ -508,7 +508,7 @@ impl ViewportGpuResources {
     }
 
     /// Remove an uploaded Gaussian splat set by handle.
-    pub fn remove_gaussian_splats(&mut self, id: crate::renderer::GaussianSplatId) {
+    pub fn free_gaussian_splats(&mut self, id: crate::renderer::GaussianSplatId) {
         self.gaussian_splat_store.remove(id);
     }
 
@@ -1122,7 +1122,7 @@ mod async_tests {
             .upload_gaussian_splats(&device, &queue, &sample_splats(8))
             .unwrap();
         assert!(resources.gaussian_splat_store.get(id1).is_some());
-        resources.remove_gaussian_splats(id1);
+        resources.free_gaussian_splats(id1);
         assert!(
             resources.gaussian_splat_store.get(id1).is_none(),
             "a removed handle must not resolve"

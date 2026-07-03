@@ -67,7 +67,7 @@ pub enum ParticleRender {
     Sprite {
         /// Optional texture sampled per fragment. `None` renders solid quads
         /// tinted by the particle colour.
-        texture_id: Option<u64>,
+        texture_id: Option<crate::resources::TextureId>,
         /// GPU blend state.
         blend: SpriteBlend,
         /// Screen-space or world-space sizing for the per-particle `size`.
@@ -81,7 +81,7 @@ pub enum ParticleRender {
         /// Lighting parameters used when `lit` is `true`.
         lit_params: SpriteLitParams,
         /// Optional tangent-space normal map for the `NormalMap` mode.
-        normal_texture_id: Option<u64>,
+        normal_texture_id: Option<crate::resources::TextureId>,
     },
     /// Draw each particle as an instance of an uploaded mesh. The vertex
     /// shader composes the per-instance transform from the live particle's
@@ -91,7 +91,7 @@ pub enum ParticleRender {
         /// Mesh handle returned by `ViewportGpuResources::upload_mesh_data`.
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         /// Optional albedo texture handle. `None` renders flat-tinted.
-        texture_id: Option<u64>,
+        texture_id: Option<crate::resources::TextureId>,
         /// GPU blend state.
         blend: SpriteBlend,
         /// How per-particle rotation is derived.
@@ -287,14 +287,14 @@ impl crate::resources::ViewportGpuResources {
         // and a `has_texture` flag.
         enum DrawState {
             Sprite {
-                texture_id: Option<u64>,
+                texture_id: Option<crate::resources::TextureId>,
                 size_mode: SpriteSizeMode,
                 lit: bool,
                 lit_params: SpriteLitParams,
-                normal_texture_id: Option<u64>,
+                normal_texture_id: Option<crate::resources::TextureId>,
             },
             Mesh {
-                texture_id: Option<u64>,
+                texture_id: Option<crate::resources::TextureId>,
                 align: ParticleMeshAlign,
             },
         }

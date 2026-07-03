@@ -2837,7 +2837,10 @@ pub struct ViewportGpuResources {
     /// `begin_upload_texture` / `begin_upload_normal_map`; drained by
     /// `upload_result_texture`.
     pub(crate) job_texture_results: std::sync::Mutex<
-        std::collections::HashMap<super::upload_jobs::JobId, super::upload_jobs::ResultSlot<u64>>,
+        std::collections::HashMap<
+            super::upload_jobs::JobId,
+            super::upload_jobs::ResultSlot<crate::resources::TextureId>,
+        >,
     >,
     /// Boxed result slots for jobs submitted through the plugin facade.
     /// Filled by the apply closure of `Jobs::submit_cpu` with a
@@ -2925,7 +2928,7 @@ pub struct ViewportGpuResources {
     pub(crate) job_volume_mc_results: std::sync::Mutex<
         std::collections::HashMap<
             super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::VolumeGpuId>,
+            super::upload_jobs::ResultSlot<super::McVolumeId>,
         >,
     >,
     /// Typed result slots for async volume-mesh uploads. Holds the mesh id

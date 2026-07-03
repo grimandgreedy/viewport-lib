@@ -30,7 +30,7 @@ crate::resources::handle::slot_handle! {
     /// was issued. A handle whose volume was removed (its slot freed and reused
     /// by a later upload) resolves to nothing on lookup, so it cannot alias the
     /// volume now in its slot.
-    pub struct VolumeGpuId;
+    pub struct McVolumeId;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ pub(crate) struct McSlabGpuData {
 /// regardless of volume size. The single-slab path is equivalent to the old layout.
 pub(crate) struct McVolumeGpuData {
     pub slabs: Vec<McSlabGpuData>,
-    /// False after `remove_mc_volume` is called; the slot is reused lazily.
+    /// False after `free_mc_volume` is called; the slot is reused lazily.
     pub alive: bool,
     /// Bumped each time the slot is freed, so a handle issued for an earlier
     /// occupant no longer resolves once the slot is reused.
@@ -497,7 +497,7 @@ impl ViewportGpuResources {
     /// Upload a [`VolumeData`] to GPU, pre-allocating all intermediate and output
     /// buffers for GPU marching cubes.
     ///
-    /// The returned [`VolumeGpuId`] is stable until [`remove_mc_volume`] is called.
+    /// The returned [`McVolumeId`] is stable until [`free_mc_volume`] is called.
     ///
     /// Returns `Err(ViewportError::McBufferTooLarge)` if any required buffer exceeds
     /// the device's `max_buffer_size`; the caller should fall back to CPU isosurface
@@ -507,7 +507,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         vol: &VolumeData,
-    ) -> crate::ViewportResult<VolumeGpuId> {
+    ) -> crate::ViewportResult<McVolumeId> {
         let gpu_data = build_mc_volume_gpu_data(device, queue, vol)?;
         Ok(self.insert_mc_volume_gpu_data(gpu_data))
     }
@@ -519,21 +519,21 @@ impl ViewportGpuResources {
     pub(crate) fn insert_mc_volume_gpu_data(
         &mut self,
         mut gpu_data: McVolumeGpuData,
-    ) -> VolumeGpuId {
+    ) -> McVolumeId {
         if let Some(free_idx) = self.mc_volumes.iter().position(|v| !v.alive) {
             gpu_data.generation = self.mc_volumes[free_idx].generation;
             self.mc_volumes[free_idx] = gpu_data;
-            VolumeGpuId::new(free_idx as u32, self.mc_volumes[free_idx].generation)
+            McVolumeId::new(free_idx as u32, self.mc_volumes[free_idx].generation)
         } else {
             let idx = self.mc_volumes.len();
             self.mc_volumes.push(gpu_data);
-            VolumeGpuId::new(idx as u32, 0)
+            McVolumeId::new(idx as u32, 0)
         }
     }
 
     /// Look up a live volume by handle, validating the generation. Returns
     /// `None` for a stale handle, a freed slot, or an out-of-range index.
-    pub(crate) fn mc_volume(&self, id: VolumeGpuId) -> Option<&McVolumeGpuData> {
+    pub(crate) fn mc_volume(&self, id: McVolumeId) -> Option<&McVolumeGpuData> {
         let vol = self.mc_volumes.get(id.index as usize)?;
         if vol.generation != id.generation || !vol.alive {
             return None;
@@ -694,7 +694,7 @@ impl ViewportGpuResources {
     /// handles. The apply step inserts the resulting GPU buffers into the
     /// MC volume store; once `UploadStatus::Ready`, call
     /// [`upload_result_volume_mc`](Self::upload_result_volume_mc) to take
-    /// the [`VolumeGpuId`].
+    /// the [`McVolumeId`].
     ///
     /// Ownership of `vol` transfers into the worker.
     ///
@@ -710,7 +710,7 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         vol: VolumeData,
     ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<VolumeGpuId>::new();
+        let slot = crate::resources::ResultSlot::<McVolumeId>::new();
         let slot_for_apply = slot.clone();
         let device_for_worker = device.clone();
         let queue_for_worker = queue.clone();
@@ -738,12 +738,12 @@ impl ViewportGpuResources {
         id
     }
 
-    /// Take the [`VolumeGpuId`] produced by a completed
+    /// Take the [`McVolumeId`] produced by a completed
     /// [`begin_upload_volume_for_mc`](Self::begin_upload_volume_for_mc) job.
     pub fn upload_result_volume_mc(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<VolumeGpuId> {
+    ) -> crate::error::ViewportResult<McVolumeId> {
         let mut map = self
             .job_volume_mc_results
             .lock()
@@ -767,7 +767,7 @@ impl ViewportGpuResources {
 
     /// Mark a MC volume slot as free and bump its generation. The GPU buffers
     /// are dropped when the slot is reused. A stale handle no longer resolves.
-    pub fn remove_mc_volume(&mut self, id: VolumeGpuId) {
+    pub fn free_mc_volume(&mut self, id: McVolumeId) {
         if let Some(v) = self.mc_volumes.get_mut(id.index as usize) {
             if v.generation == id.generation && v.alive {
                 v.alive = false;
@@ -1251,7 +1251,7 @@ mod residency_tests {
             .upload_volume_for_mc(&device, &queue, &sample_volume())
             .unwrap();
         assert!(resources.mc_volume(id1).is_some());
-        resources.remove_mc_volume(id1);
+        resources.free_mc_volume(id1);
         assert!(
             resources.mc_volume(id1).is_none(),
             "a removed handle must not resolve"

@@ -312,7 +312,7 @@ pub struct RibbonItem {
     /// Optional streak texture sampled along the ribbon. `None` renders the
     /// ribbon without a texture (the resolved colour is used directly). Use
     /// for lightning, slash arcs, dragon breath, laser beams.
-    pub texture_id: Option<u64>,
+    pub texture_id: Option<crate::resources::TextureId>,
     /// Optional per-vertex `u` coordinate along the strip. When empty, `u` is
     /// derived from cumulative arc length: 0.0 at the first vertex of each
     /// strip, 1.0 at the last. The cross-strip `v` is fixed at 0.0 on one

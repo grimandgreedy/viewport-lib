@@ -281,24 +281,24 @@ pub struct Material {
     /// Roughness factor for PBR microfacet distribution. 0=mirror, 1=fully rough. Default 0.5.
     pub roughness: f32,
     /// Optional albedo texture identifier. None = no texture applied. Default None.
-    pub texture_id: Option<u64>,
+    pub texture_id: Option<crate::resources::TextureId>,
     /// Optional normal map texture identifier. None = no normal mapping. Default None.
     ///
     /// The normal map must be in tangent-space with XY encoded as RG (0..1 -> -1..+1).
     /// Requires UVs and tangents on the mesh for correct TBN construction.
-    pub normal_map_id: Option<u64>,
+    pub normal_map_id: Option<crate::resources::TextureId>,
     /// Optional ambient occlusion map texture identifier. None = no AO map. Default None.
     ///
     /// The AO map R channel encodes cavity factor (0=fully occluded, 1=fully lit).
     /// Applied multiplicatively to ambient and diffuse terms.
-    pub ao_map_id: Option<u64>,
+    pub ao_map_id: Option<crate::resources::TextureId>,
     /// Optional combined metallic-roughness texture (ORM layout). Default None.
     ///
     /// Matches the glTF `metallicRoughnessTexture`: G channel encodes roughness,
     /// B channel encodes metallic. Each channel is multiplied by the corresponding
     /// scalar factor (`roughness`, `metallic`). Only sampled when the material's
     /// `shading_model` is `ShadingModel::Pbr`.
-    pub metallic_roughness_texture_id: Option<u64>,
+    pub metallic_roughness_texture_id: Option<crate::resources::TextureId>,
     /// Self-illumination colour added after lighting. Default [0.0, 0.0, 0.0].
     ///
     /// Matches glTF `emissiveFactor`. Applied to both Blinn-Phong and PBR paths.
@@ -307,7 +307,7 @@ pub struct Material {
     /// Optional emissive texture identifier. Default None.
     ///
     /// Matches glTF `emissiveTexture`. Sampled and multiplied by `emissive`.
-    pub emissive_texture_id: Option<u64>,
+    pub emissive_texture_id: Option<crate::resources::TextureId>,
     /// Alpha handling mode. Default [`AlphaMode::Opaque`].
     ///
     /// `Mask(cutoff)` discards fragments below the cutoff using the alpha channel.
@@ -493,7 +493,7 @@ impl Material {
     /// Useful when the mesh already carries a UV layout and the only requirement is
     /// to apply a texture. Base colour, lighting model, and all other fields stay at
     /// their default values.
-    pub fn textured(texture_id: u64) -> Self {
+    pub fn textured(texture_id: crate::resources::TextureId) -> Self {
         Self {
             texture_id: Some(texture_id),
             ..Default::default()
@@ -513,7 +513,7 @@ impl Material {
         base_colour: [f32; 3],
         metallic: f32,
         roughness: f32,
-        ao_map: Option<u64>,
+        ao_map: Option<crate::resources::TextureId>,
     ) -> Self {
         Self {
             base_colour,
@@ -666,8 +666,8 @@ mod tests {
 
     #[test]
     fn textured_sets_texture_id() {
-        let m = Material::textured(42);
-        assert_eq!(m.texture_id, Some(42));
+        let m = Material::textured(crate::resources::TextureId(42));
+        assert_eq!(m.texture_id, Some(crate::resources::TextureId(42)));
         let def = Material::default();
         assert!((m.base_colour[0] - def.base_colour[0]).abs() < 1e-6);
         assert!(!m.is_pbr());
@@ -675,11 +675,16 @@ mod tests {
 
     #[test]
     fn pbr_with_ao_sets_fields() {
-        let m = Material::pbr_with_ao([0.8, 0.2, 0.1], 0.9, 0.3, Some(7));
+        let m = Material::pbr_with_ao(
+            [0.8, 0.2, 0.1],
+            0.9,
+            0.3,
+            Some(crate::resources::TextureId(7)),
+        );
         assert!(m.is_pbr());
         assert!((m.metallic - 0.9).abs() < 1e-6);
         assert!((m.roughness - 0.3).abs() < 1e-6);
-        assert_eq!(m.ao_map_id, Some(7));
+        assert_eq!(m.ao_map_id, Some(crate::resources::TextureId(7)));
         assert!((m.base_colour[0] - 0.8).abs() < 1e-6);
     }
 

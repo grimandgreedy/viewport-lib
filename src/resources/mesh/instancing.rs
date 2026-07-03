@@ -696,14 +696,14 @@ impl ViewportGpuResources {
         &self,
         cull_state: &'a mut crate::resources::ViewportCullState,
         device: &wgpu::Device,
-        albedo_id: Option<u64>,
-        normal_map_id: Option<u64>,
-        ao_map_id: Option<u64>,
+        albedo_id: Option<crate::resources::TextureId>,
+        normal_map_id: Option<crate::resources::TextureId>,
+        ao_map_id: Option<crate::resources::TextureId>,
     ) -> Option<&'a wgpu::BindGroup> {
         let key = (
-            albedo_id.unwrap_or(u64::MAX),
-            normal_map_id.unwrap_or(u64::MAX),
-            ao_map_id.unwrap_or(u64::MAX),
+            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
         );
 
         if !cull_state.instance_cull_bind_groups.contains_key(&key) {
@@ -769,14 +769,14 @@ impl ViewportGpuResources {
     pub(crate) fn get_instance_bind_group(
         &mut self,
         device: &wgpu::Device,
-        albedo_id: Option<u64>,
-        normal_map_id: Option<u64>,
-        ao_map_id: Option<u64>,
+        albedo_id: Option<crate::resources::TextureId>,
+        normal_map_id: Option<crate::resources::TextureId>,
+        ao_map_id: Option<crate::resources::TextureId>,
     ) -> Option<&wgpu::BindGroup> {
         let key = (
-            albedo_id.unwrap_or(u64::MAX),
-            normal_map_id.unwrap_or(u64::MAX),
-            ao_map_id.unwrap_or(u64::MAX),
+            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
         );
 
         if !self.instance_bind_groups.contains_key(&key) {

@@ -309,7 +309,7 @@ struct Meshes {
     /// a single unit cube in `--simple` mode).
     prop_ids: Vec<MeshId>,
     slab_id: MeshId,
-    textures: Vec<u64>,
+    textures: Vec<viewport_lib::TextureId>,
     /// Grid half-extent in world units.
     extent: f32,
     /// Average triangle count across the prop set (for the startup banner).

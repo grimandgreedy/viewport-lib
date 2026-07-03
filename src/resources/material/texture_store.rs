@@ -13,17 +13,57 @@
 
 use crate::resources::GpuTexture;
 
+/// Handle to a user-uploaded texture.
+///
+/// Wraps a packed slot index (low 32 bits) and generation (high 32 bits). A
+/// handle whose texture was freed (its slot reused by a later upload) carries a
+/// stale generation and resolves to `None` on lookup, falling back to the
+/// fallback texture instead of aliasing whatever now occupies the slot. For a
+/// texture that is never freed the generation is 0, so the handle's raw value
+/// equals its dense slot index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TextureId(pub(crate) u64);
+
+impl TextureId {
+    /// A handle that refers to no texture. Store lookups always return `None`
+    /// for it. Use it as the default / placeholder value.
+    pub const INVALID: TextureId = TextureId(u64::MAX);
+
+    /// The raw slot index this handle points at.
+    pub fn index(&self) -> usize {
+        (self.0 as u32) as usize
+    }
+
+    /// The packed raw value, for keying caches and crossing the plugin boundary.
+    pub(crate) fn raw(&self) -> u64 {
+        self.0
+    }
+}
+
+impl crate::resources::handle::ContentHandle for TextureId {
+    const INVALID: Self = TextureId(u64::MAX);
+
+    fn index(&self) -> usize {
+        (self.0 as u32) as usize
+    }
+
+    fn generation(&self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+}
+
 /// Pack a slot index and generation into a texture id.
 ///
 /// Generation 0 leaves the high bits clear, so `pack(index, 0) == index` and a
 /// never-freed texture keeps the dense-index id it always had.
-pub(crate) fn pack_texture_id(index: u32, generation: u32) -> u64 {
-    ((generation as u64) << 32) | index as u64
+fn pack_texture_id(index: u32, generation: u32) -> TextureId {
+    TextureId(((generation as u64) << 32) | index as u64)
 }
 
 /// Split a texture id back into `(index, generation)`.
-pub(crate) fn unpack_texture_id(id: u64) -> (u32, u32) {
-    (id as u32, (id >> 32) as u32)
+fn unpack_texture_id(id: TextureId) -> (u32, u32) {
+    (id.0 as u32, (id.0 >> 32) as u32)
 }
 
 /// One texture slot: the texture (when occupied), the slot's current
@@ -56,8 +96,8 @@ impl TextureStore {
     }
 
     /// Insert a texture charging `bytes` against it, reusing a free slot if one
-    /// is available. Returns the packed id carrying the slot's generation.
-    pub fn insert(&mut self, texture: GpuTexture, bytes: u64) -> u64 {
+    /// is available. Returns the handle carrying the slot's generation.
+    pub fn insert(&mut self, texture: GpuTexture, bytes: u64) -> TextureId {
         self.allocated_bytes += bytes;
         self.live_count += 1;
         if let Some(idx) = self.free_list.pop() {
@@ -78,7 +118,7 @@ impl TextureStore {
 
     /// Look up the live texture for `id`, or `None` if the index is out of
     /// range, the slot is empty, or the handle's generation is stale.
-    pub fn get(&self, id: u64) -> Option<&GpuTexture> {
+    pub fn get(&self, id: TextureId) -> Option<&GpuTexture> {
         let (index, generation) = unpack_texture_id(id);
         let slot = self.slots.get(index as usize)?;
         if slot.generation != generation {
@@ -92,7 +132,7 @@ impl TextureStore {
     ///
     /// Returns `true` if a texture was actually removed, `false` if the slot was
     /// empty, out of range, or the handle was stale.
-    pub fn remove(&mut self, id: u64) -> bool {
+    pub fn remove(&mut self, id: TextureId) -> bool {
         let (index, generation) = unpack_texture_id(id);
         if let Some(slot) = self.slots.get_mut(index as usize) {
             if slot.generation == generation && slot.texture.is_some() {

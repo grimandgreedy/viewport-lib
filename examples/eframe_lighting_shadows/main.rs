@@ -166,7 +166,7 @@ struct App {
     m_rough: MeshId,
     m_cube2: MeshId,
     m_percy: MeshId,
-    tex_percy: u64,
+    tex_percy: viewport_lib::TextureId,
     matcap_clay: MatcapId,
     matcap_ceramic: MatcapId,
 
@@ -244,7 +244,7 @@ impl App {
         m_rough: MeshId,
         m_cube2: MeshId,
         m_percy: MeshId,
-        tex_percy: u64,
+        tex_percy: viewport_lib::TextureId,
         matcap_clay: MatcapId,
         matcap_ceramic: MatcapId,
     ) -> Self {

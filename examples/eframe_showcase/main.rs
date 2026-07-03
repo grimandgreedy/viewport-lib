@@ -1741,7 +1741,8 @@ impl App {
                 // Upload the random texture pool on the main thread (GPU access),
                 // then hand the ids to the background build so each box can pick
                 // one. Each distinct texture is one instanced batch.
-                let texture_pool: Vec<u64> = (0..showcase_23_performance::TEXTURE_POOL_SIZE)
+                let texture_pool: Vec<viewport_lib::TextureId> = (0
+                    ..showcase_23_performance::TEXTURE_POOL_SIZE)
                     .map(|i| {
                         let (size, rgba) = showcase_23_performance::make_box_texture(i);
                         renderer

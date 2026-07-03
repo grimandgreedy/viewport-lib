@@ -126,16 +126,16 @@ pub(crate) struct SpriteState {
 
     // Mode A
     pub sphere_id: MeshId,
-    pub sprite_tex: u64,
+    pub sprite_tex: viewport_lib::TextureId,
     pub placed_positions: Vec<[f32; 3]>,
 
     // Mode B
     pub particles: Vec<Particle>,
-    pub glow_tex: u64,
+    pub glow_tex: viewport_lib::TextureId,
     pub rings: [Ring; 2],
 
     // Mode C
-    pub atlas_tex: u64,
+    pub atlas_tex: viewport_lib::TextureId,
     pub atlas_positions: Vec<[f32; 3]>,
     pub atlas_frame: u32,
     pub atlas_time: f32,
@@ -149,15 +149,15 @@ pub(crate) struct SpriteState {
     // Streak texture: a procedural noisy lengthwise stripe used to demonstrate
     // ribbon texturing in the Trails sub-mode (toggle below) and the
     // velocity-stretched rain in the Orientations sub-mode.
-    pub streak_tex: u64,
+    pub streak_tex: viewport_lib::TextureId,
     pub trail_streak_enabled: bool,
     /// Flame texture: tall taper with hot inner gradient. Used by the
     /// axis-locked candle flames in the Orientations sub-mode.
-    pub flame_tex: u64,
+    pub flame_tex: viewport_lib::TextureId,
     /// Shockwave ring texture: a thin ring whose R/G channels encode outward
     /// displacement (heat-haze direction). Drives the refractive sprite in
     /// the Distortion sub-mode.
-    pub shockwave_tex: u64,
+    pub shockwave_tex: viewport_lib::TextureId,
     /// Flat plane mesh used as the three corner walls in the Distortion
     /// sub-mode.
     pub wall_id: MeshId,
@@ -223,10 +223,10 @@ impl Default for SpriteState {
             built: false,
             sub_mode: SpriteSubMode::Particles,
             sphere_id: MeshId::INVALID,
-            sprite_tex: 0,
+            sprite_tex: viewport_lib::TextureId::INVALID,
             placed_positions: Vec::new(),
             particles: Vec::new(),
-            glow_tex: 0,
+            glow_tex: viewport_lib::TextureId::INVALID,
             rings: [
                 Ring {
                     spin: 0.0,
@@ -251,7 +251,7 @@ impl Default for SpriteState {
                     particle_perturb: Vec::new(),
                 },
             ],
-            atlas_tex: 0,
+            atlas_tex: viewport_lib::TextureId::INVALID,
             atlas_positions: Vec::new(),
             atlas_frame: 0,
             atlas_time: 0.0,
@@ -261,10 +261,10 @@ impl Default for SpriteState {
             trail_length: 80,
             trail_width: 0.18,
             trail_blend: SpriteBlend::Additive,
-            streak_tex: 0,
+            streak_tex: viewport_lib::TextureId::INVALID,
             trail_streak_enabled: false,
-            flame_tex: 0,
-            shockwave_tex: 0,
+            flame_tex: viewport_lib::TextureId::INVALID,
+            shockwave_tex: viewport_lib::TextureId::INVALID,
             wall_id: MeshId::INVALID,
             distortion_strength: 60.0,
             lit_angle: 0.0,

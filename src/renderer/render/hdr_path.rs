@@ -495,9 +495,9 @@ impl ViewportRenderer {
                                         continue;
                                     };
                                     let mat_key = (
-                                        batch.texture_id.unwrap_or(u64::MAX),
-                                        batch.normal_map_id.unwrap_or(u64::MAX),
-                                        batch.ao_map_id.unwrap_or(u64::MAX),
+                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     );
                                     let Some(inst_tex_bg) =
                                         cull0.instance_cull_bind_groups.get(&mat_key)
@@ -537,9 +537,9 @@ impl ViewportRenderer {
                                     continue;
                                 };
                                 let mat_key = (
-                                    batch.texture_id.unwrap_or(u64::MAX),
-                                    batch.normal_map_id.unwrap_or(u64::MAX),
-                                    batch.ao_map_id.unwrap_or(u64::MAX),
+                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) =
                                     resources.instance_bind_groups.get(&mat_key)
@@ -1915,9 +1915,9 @@ impl ViewportRenderer {
                                     continue;
                                 };
                                 let mat_key = (
-                                    batch.texture_id.unwrap_or(u64::MAX),
-                                    batch.normal_map_id.unwrap_or(u64::MAX),
-                                    batch.ao_map_id.unwrap_or(u64::MAX),
+                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) =
                                     cull0.instance_cull_bind_groups.get(&mat_key)
@@ -1947,9 +1947,9 @@ impl ViewportRenderer {
                                 continue;
                             };
                             let mat_key = (
-                                batch.texture_id.unwrap_or(u64::MAX),
-                                batch.normal_map_id.unwrap_or(u64::MAX),
-                                batch.ao_map_id.unwrap_or(u64::MAX),
+                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                             );
                             let Some(inst_tex_bg) =
                                 self.resources.instance_bind_groups.get(&mat_key)

@@ -16,7 +16,7 @@ impl ViewportGpuResources {
         width: u32,
         height: u32,
         rgba_data: &[u8],
-    ) -> crate::error::ViewportResult<u64> {
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         // Sync wrapper around the async path: build the job, drive it to
         // completion on the calling thread, and take the typed result. The
         // worker performs the same texture creation, sampler setup, and
@@ -40,7 +40,7 @@ impl ViewportGpuResources {
         width: u32,
         height: u32,
         rgba_data: &[u8],
-    ) -> crate::error::ViewportResult<u64> {
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         // Sync wrapper; see `upload_texture` for the worker / apply layout.
         let id = self.begin_upload_normal_map(device, queue, width, height, rgba_data.to_vec())?;
         self.drain_until(device, queue, id)?;
@@ -142,7 +142,7 @@ impl ViewportGpuResources {
     pub fn upload_result_texture(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<u64> {
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         let mut map = self
             .job_texture_results
             .lock()
@@ -178,7 +178,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         desc: CompressedTextureDesc<'_>,
-    ) -> crate::error::ViewportResult<u64> {
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         let id = self.begin_upload_compressed_texture(device, queue, desc)?;
         self.drain_until(device, queue, id)?;
         self.upload_result_texture(id)
@@ -278,7 +278,7 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         spec: TextureUploadSpec,
     ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<u64>::new();
+        let slot = crate::resources::ResultSlot::<crate::resources::TextureId>::new();
         let slot_for_apply = slot.clone();
 
         // Clone the fallback views and the bind-group layout into the
@@ -466,7 +466,7 @@ impl ViewportGpuResources {
     /// Maintained as running counters (updated on upload, replace, and free),
     /// so this is cheap to poll per frame. A streaming or eviction policy
     /// compares [`ResidentBytes::total`] against its own byte budget and calls
-    /// [`free_mesh`](Self::free_mesh) / [`release_texture`](Self::release_texture)
+    /// [`free_mesh`](Self::free_mesh) / [`free_texture`](Self::free_texture)
     /// to stay under it. Built-in LUTs, IBL maps, and render targets are not
     /// counted; see [`ResidentBytes`].
     pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
@@ -489,16 +489,17 @@ impl ViewportGpuResources {
     /// to a live texture (already freed, never uploaded, or a stale handle).
     /// Materials still holding `id` are not rewritten; they fall back to the
     /// fallback texture until reassigned.
-    pub fn release_texture(&mut self, id: u64) -> bool {
+    pub fn free_texture(&mut self, id: crate::resources::TextureId) -> bool {
         if !self.textures.remove(id) {
             return false;
         }
 
         // Drop shared cache entries keyed on any texture slot equal to `id`.
+        let raw = id.raw();
         self.material_bind_groups
-            .retain(|&(a, n, ao), _| a != id && n != id && ao != id);
+            .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
         self.instance_bind_groups
-            .retain(|&(a, n, ao), _| a != id && n != id && ao != id);
+            .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
 
         // Invalidate per-mesh object bind groups that sampled the released
         // texture so `update_mesh_texture_bind_group` rebuilds them against the
@@ -519,7 +520,7 @@ impl ViewportGpuResources {
         );
         for (_, mesh) in self.mesh_store.iter_mut() {
             let k = mesh.last_tex_key;
-            if k.0 == id || k.1 == id || k.2 == id || k.7 == id || k.8 == id {
+            if k.0 == raw || k.1 == raw || k.2 == raw || k.7 == raw || k.8 == raw {
                 mesh.last_tex_key = INVALID_KEY;
             }
         }
@@ -604,14 +605,14 @@ impl ViewportGpuResources {
     pub(crate) fn get_material_bind_group(
         &mut self,
         device: &wgpu::Device,
-        albedo_id: Option<u64>,
-        normal_map_id: Option<u64>,
-        ao_map_id: Option<u64>,
+        albedo_id: Option<crate::resources::TextureId>,
+        normal_map_id: Option<crate::resources::TextureId>,
+        ao_map_id: Option<crate::resources::TextureId>,
     ) -> &wgpu::BindGroup {
         let key = (
-            albedo_id.unwrap_or(u64::MAX),
-            normal_map_id.unwrap_or(u64::MAX),
-            ao_map_id.unwrap_or(u64::MAX),
+            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
         );
 
         if !self.material_bind_groups.contains_key(&key) {
@@ -672,15 +673,15 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
-        albedo_id: Option<u64>,
-        normal_map_id: Option<u64>,
-        ao_map_id: Option<u64>,
+        albedo_id: Option<crate::resources::TextureId>,
+        normal_map_id: Option<crate::resources::TextureId>,
+        ao_map_id: Option<crate::resources::TextureId>,
         lut_id: Option<ColourmapId>,
         active_attr: Option<&str>,
         matcap_id: Option<crate::resources::MatcapId>,
         warp_attr: Option<&str>,
-        metallic_roughness_id: Option<u64>,
-        emissive_texture_id: Option<u64>,
+        metallic_roughness_id: Option<crate::resources::TextureId>,
+        emissive_texture_id: Option<crate::resources::TextureId>,
     ) {
         let hash_str = |name: &str| -> u64 {
             use std::hash::{Hash, Hasher};
@@ -702,15 +703,15 @@ impl ViewportGpuResources {
         };
 
         let key = (
-            albedo_id.unwrap_or(u64::MAX),
-            normal_map_id.unwrap_or(u64::MAX),
-            ao_map_id.unwrap_or(u64::MAX),
+            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             lut_id.map(|id| id.0 as u64).unwrap_or(u64::MAX),
             attr_hash,
             matcap_id.map(|id| id.index as u64).unwrap_or(u64::MAX),
             warp_hash,
-            metallic_roughness_id.unwrap_or(u64::MAX),
-            emissive_texture_id.unwrap_or(u64::MAX),
+            metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            emissive_texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             pos_override_gen,
             nrm_override_gen,
         );
@@ -881,15 +882,15 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         item_uniform_buf: &wgpu::Buffer,
-        albedo_id: Option<u64>,
-        normal_map_id: Option<u64>,
-        ao_map_id: Option<u64>,
+        albedo_id: Option<crate::resources::TextureId>,
+        normal_map_id: Option<crate::resources::TextureId>,
+        ao_map_id: Option<crate::resources::TextureId>,
         lut_id: Option<ColourmapId>,
         active_attr: Option<&str>,
         matcap_id: Option<crate::resources::MatcapId>,
         warp_attr: Option<&str>,
-        metallic_roughness_id: Option<u64>,
-        emissive_texture_id: Option<u64>,
+        metallic_roughness_id: Option<crate::resources::TextureId>,
+        emissive_texture_id: Option<crate::resources::TextureId>,
         prev_key: Option<u64>,
     ) -> Option<(wgpu::BindGroup, u64)> {
         let hash_str = |name: &str| -> u64 {
@@ -909,9 +910,12 @@ impl ViewportGpuResources {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             mesh_id.index().hash(&mut h);
-            albedo_id.unwrap_or(u64::MAX).hash(&mut h);
-            normal_map_id.unwrap_or(u64::MAX).hash(&mut h);
-            ao_map_id.unwrap_or(u64::MAX).hash(&mut h);
+            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
+            normal_map_id
+                .map(|t| t.raw())
+                .unwrap_or(u64::MAX)
+                .hash(&mut h);
+            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
             lut_id
                 .map(|id| id.0 as u64)
                 .unwrap_or(u64::MAX)
@@ -922,8 +926,14 @@ impl ViewportGpuResources {
                 .unwrap_or(u64::MAX)
                 .hash(&mut h);
             warp_hash.hash(&mut h);
-            metallic_roughness_id.unwrap_or(u64::MAX).hash(&mut h);
-            emissive_texture_id.unwrap_or(u64::MAX).hash(&mut h);
+            metallic_roughness_id
+                .map(|t| t.raw())
+                .unwrap_or(u64::MAX)
+                .hash(&mut h);
+            emissive_texture_id
+                .map(|t| t.raw())
+                .unwrap_or(u64::MAX)
+                .hash(&mut h);
             pos_override_gen.hash(&mut h);
             nrm_override_gen.hash(&mut h);
             h.finish()
@@ -1466,7 +1476,7 @@ mod async_texture_tests {
 
         let tex_id = resources.upload_result_texture(id).expect("ready result");
         // The first uploaded texture lands at index 0.
-        assert_eq!(tex_id, 0);
+        assert_eq!(tex_id, crate::resources::TextureId(0));
 
         // Taking the result again reports missing.
         let err = resources.upload_result_texture(id).unwrap_err();
@@ -1491,7 +1501,7 @@ mod async_texture_tests {
             .unwrap();
         drive_until_ready(&mut resources, &device, &queue, id);
         let tex_id = resources.upload_result_texture(id).expect("ready result");
-        assert_eq!(tex_id, 0);
+        assert_eq!(tex_id, crate::resources::TextureId(0));
     }
 
     #[test]
@@ -1507,7 +1517,7 @@ mod async_texture_tests {
         let tex_id = resources
             .upload_texture(&device, &queue, 4, 4, &rgba)
             .unwrap();
-        assert_eq!(tex_id, 0);
+        assert_eq!(tex_id, crate::resources::TextureId(0));
     }
 
     #[test]
@@ -1703,7 +1713,7 @@ mod async_texture_tests {
             .unwrap();
         drive_until_ready(&mut resources, &device, &queue, id);
         let tex_id = resources.upload_result_texture(id).expect("ready result");
-        assert_eq!(tex_id, 0);
+        assert_eq!(tex_id, crate::resources::TextureId(0));
 
         let stats = resources.texture_memory_stats();
         assert_eq!(stats.used_bytes - before, 16);

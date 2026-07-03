@@ -21,7 +21,7 @@ pub(crate) struct NormalMapsState {
     pub built: bool,
     pub scene: Scene,
     /// (node_id, normal_map_id, ao_map_id) for every mapped object.
-    pub mapped_nodes: Vec<(NodeId, u64, u64)>,
+    pub mapped_nodes: Vec<(NodeId, viewport_lib::TextureId, viewport_lib::TextureId)>,
     pub normal_on: bool,
     pub ao_on: bool,
     /// Min/max remap applied to the AO map's R sample. Identity `[0.0, 1.0]`

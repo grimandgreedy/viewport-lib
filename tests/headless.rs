@@ -187,7 +187,7 @@ fn test_remove_mesh_frees_slot() {
         .unwrap();
     assert!(renderer.resources().mesh(idx).is_some());
 
-    let removed = renderer.resources_mut().remove_mesh(idx);
+    let removed = renderer.resources_mut().free_mesh(idx);
     assert!(removed);
     assert!(renderer.resources().mesh(idx).is_none());
 }
@@ -203,7 +203,7 @@ fn test_upload_reuses_freed_slot() {
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .unwrap();
-    renderer.resources_mut().remove_mesh(idx1);
+    renderer.resources_mut().free_mesh(idx1);
 
     // Next upload should reuse the freed slot, but at a new generation so the
     // old handle no longer matches.

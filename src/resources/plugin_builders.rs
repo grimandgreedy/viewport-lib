@@ -93,17 +93,16 @@ impl ViewportGpuResources {
     /// [`upload_texture`](Self::upload_texture) or
     /// [`upload_normal_map`](Self::upload_normal_map).
     ///
-    /// Returns `None` if `id` does not refer to a live texture (out of
-    /// range, or the texture was unloaded).
+    /// Returns `None` if `id` does not refer to a live texture (a stale handle
+    /// whose texture was freed, or one out of range).
     ///
-    /// Lifetime contract: the returned view is valid until the texture
-    /// is removed (currently no public removal API exists, so views are
-    /// effectively stable for the lifetime of `self`). Plugins that build a
-    /// bind group from this view must rebuild it after any operation that
-    /// could invalidate the texture (texture-store compaction, device
-    /// recreation). A safer pattern is to fetch the view each frame just
-    /// before building / rebuilding the bind group.
-    pub fn texture_view(&self, id: u64) -> Option<&wgpu::TextureView> {
+    /// Lifetime contract: the returned view is valid until the texture is freed
+    /// with [`free_texture`](Self::free_texture). Plugins that build a bind
+    /// group from this view must rebuild it after any operation that could
+    /// invalidate the texture (a free, device recreation). A safer pattern is to
+    /// fetch the view each frame just before building / rebuilding the bind
+    /// group.
+    pub fn texture_view(&self, id: crate::resources::TextureId) -> Option<&wgpu::TextureView> {
         self.textures.get(id).map(|t| &t.view)
     }
 
@@ -112,7 +111,7 @@ impl ViewportGpuResources {
     /// Most user textures are uploaded with a shared linear-repeat sampler;
     /// prefer [`material_sampler`](Self::material_sampler) when you need
     /// the shared lib sampler rather than the per-texture instance.
-    pub fn texture_sampler(&self, id: u64) -> Option<&wgpu::Sampler> {
+    pub fn texture_sampler(&self, id: crate::resources::TextureId) -> Option<&wgpu::Sampler> {
         self.textures.get(id).map(|t| &t.sampler)
     }
 

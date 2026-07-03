@@ -50,7 +50,7 @@ pub enum SpriteBlend {
 pub struct SpriteItem {
     /// Texture ID from [`ViewportGpuResources::upload_texture`].
     /// `None` renders solid-colour quads using `colours` / `default_colour` only.
-    pub texture_id: Option<u64>,
+    pub texture_id: Option<crate::resources::TextureId>,
     /// World-space positions, one per sprite instance.
     pub positions: Vec<[f32; 3]>,
     /// Per-instance RGBA colour tints. Empty = use `default_colour` for all.
@@ -130,7 +130,7 @@ pub struct SpriteItem {
     /// Texture sampled as a tangent-space normal map when `lit_params.normal_mode`
     /// is [`SpriteNormalMode::NormalMap`]. `None` falls back to the spherical
     /// normal even when the mode requests a map.
-    pub normal_texture_id: Option<u64>,
+    pub normal_texture_id: Option<crate::resources::TextureId>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -260,7 +260,7 @@ mod lit_sprite_tests {
                 receive_shadows: true,
                 ambient_scale: 0.2,
             },
-            normal_texture_id: Some(7),
+            normal_texture_id: Some(crate::resources::TextureId(7)),
             orientation: SpriteOrientation::VelocityStretched,
             velocities: vec![[1.0, 0.0, 0.0]],
             positions: vec![[0.0, 0.0, 0.0]],
@@ -271,7 +271,7 @@ mod lit_sprite_tests {
         assert!(item.lit);
         assert_eq!(item.lit_params.normal_mode, SpriteNormalMode::NormalMap);
         assert!(item.lit_params.receive_shadows);
-        assert_eq!(item.normal_texture_id, Some(7));
+        assert_eq!(item.normal_texture_id, Some(crate::resources::TextureId(7)));
         assert_eq!(item.orientation, SpriteOrientation::VelocityStretched);
     }
 

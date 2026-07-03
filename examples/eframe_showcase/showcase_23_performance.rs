@@ -81,7 +81,7 @@ impl Default for PerfState {
 /// display a live loading bar.
 pub(crate) fn build_perf_scene_threaded(
     meshes: Vec<(MeshId, Option<Aabb>)>,
-    texture_pool: Vec<u64>,
+    texture_pool: Vec<viewport_lib::TextureId>,
     progress: &AtomicU32,
 ) -> (Scene, PickAccelerator) {
     let spacing = 2.5_f32;

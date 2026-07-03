@@ -152,7 +152,7 @@ pub(crate) struct AsyncUploadsState {
     pub sprite_instance_set_state: AssetState,
 
     pub loaded_mesh_id: Option<MeshId>,
-    pub loaded_texture_id: Option<u64>,
+    pub loaded_texture_id: Option<viewport_lib::TextureId>,
     pub loaded_polyline_id: Option<PolylineId>,
     pub loaded_streamtube_id: Option<StreamtubeId>,
     pub loaded_tube_id: Option<TubeId>,

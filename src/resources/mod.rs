@@ -27,6 +27,7 @@ use self::extra_impls::{
 };
 pub use self::gpu::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 pub use self::handle::ContentHandle;
+pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::mesh_sidecar::deform::{
@@ -76,7 +77,7 @@ pub use self::types::{
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
-pub use self::volume::gpu_marching_cubes::VolumeGpuId;
+pub use self::volume::gpu_marching_cubes::McVolumeId;
 pub use self::volume::implicit::{GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive};
 pub use self::volume::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]

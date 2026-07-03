@@ -411,12 +411,12 @@ pub(crate) struct Decal46State {
     pub ground_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
     pub column_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
 
-    pub albedo_tex: Option<u64>,
-    pub normal_tex: Option<u64>,
-    pub wet_tex: Option<u64>,
-    pub stripe_tex: Option<u64>,
-    pub footprint_tex: Option<u64>,
-    pub blood_tex: Option<u64>,
+    pub albedo_tex: Option<viewport_lib::TextureId>,
+    pub normal_tex: Option<viewport_lib::TextureId>,
+    pub wet_tex: Option<viewport_lib::TextureId>,
+    pub stripe_tex: Option<viewport_lib::TextureId>,
+    pub footprint_tex: Option<viewport_lib::TextureId>,
+    pub blood_tex: Option<viewport_lib::TextureId>,
 
     // D1/D2/D3: manually placed gunshot decals
     pub decals: Vec<PlacedDecal>,
@@ -444,8 +444,8 @@ pub(crate) struct Decal46State {
     pub show_obstacle: bool,
 
     // D6
-    pub rune_tex: Option<u64>,
-    pub spark_tex: Option<u64>,
+    pub rune_tex: Option<viewport_lib::TextureId>,
+    pub spark_tex: Option<viewport_lib::TextureId>,
     pub show_rune: bool,
     pub rune_emissive: f32,
     pub show_spark: bool,
@@ -456,7 +456,7 @@ pub(crate) struct Decal46State {
     pub apply_edge_fade: bool,
 
     // D8
-    pub checker_tex: Option<u64>,
+    pub checker_tex: Option<viewport_lib::TextureId>,
     pub show_corner_decal: bool,
     pub use_tri_planar: bool,
     pub tri_blend_sharpness: f32,
@@ -464,11 +464,11 @@ pub(crate) struct Decal46State {
     // D9
     pub column_mesh: Option<MeshId>,
     pub column_node: Option<viewport_lib::interaction::select::selection::NodeId>,
-    pub label_tex: Option<u64>,
+    pub label_tex: Option<viewport_lib::TextureId>,
     pub cyl_facing: CylindricalFacing,
 
     // D10
-    pub fire_tex: Option<u64>,
+    pub fire_tex: Option<viewport_lib::TextureId>,
     pub show_fire: bool,
     pub fire_alpha: f32,
 }

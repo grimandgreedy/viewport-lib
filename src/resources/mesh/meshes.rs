@@ -769,9 +769,8 @@ impl ViewportGpuResources {
         self.mesh_store.slot_count()
     }
 
-    /// Remove a mesh, dropping its GPU buffers and freeing its slot for reuse.
-    ///
-    /// Returns `true` if a mesh was removed, `false` if the slot was already empty.
+    /// Deprecated alias for [`free_mesh`](Self::free_mesh).
+    #[deprecated(note = "renamed to free_mesh")]
     pub fn remove_mesh(&mut self, id: crate::resources::mesh::mesh_store::MeshId) -> bool {
         self.free_mesh(id)
     }
@@ -2665,7 +2664,7 @@ mod override_tests {
             .upload_mesh_data(&device, &primitives::cube(1.0))
             .unwrap();
         assert!(resources.mesh_store.get(id1).is_some());
-        assert!(resources.remove_mesh(id1));
+        assert!(resources.free_mesh(id1));
         assert!(
             resources.mesh_store.get(id1).is_none(),
             "a removed handle must not resolve"

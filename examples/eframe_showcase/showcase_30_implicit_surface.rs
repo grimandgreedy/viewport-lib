@@ -94,7 +94,7 @@ pub(crate) struct IsState {
     pub depth_composite: bool,
     pub resolution_div: u32,
     pub sdf_variant: IsSdfVariant,
-    pub gmc_volume_id: Option<viewport_lib::VolumeGpuId>,
+    pub gmc_volume_id: Option<viewport_lib::McVolumeId>,
     pub gmc_isovalue: f32,
 }
 
