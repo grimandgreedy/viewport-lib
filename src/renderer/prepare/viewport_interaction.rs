@@ -1086,7 +1086,7 @@ impl ViewportRenderer {
         }
 
         // MC surface outlines: build per-job outline uniform + bind group.
-        let mut mc_outline_data: Vec<crate::resources::gpu_marching_cubes::McOutlineItem> =
+        let mut mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem> =
             Vec::new();
         if frame.interaction.outline_selected {
             for (i, job) in frame.scene.gpu_mc_jobs.iter().enumerate() {
@@ -1118,7 +1118,7 @@ impl ViewportRenderer {
                         resource: buf.as_entire_binding(),
                     }],
                 });
-                mc_outline_data.push(crate::resources::gpu_marching_cubes::McOutlineItem {
+                mc_outline_data.push(crate::resources::volume::gpu_marching_cubes::McOutlineItem {
                     mc_gpu_idx: i,
                     _uniform_buf: buf,
                     mask_bind_group: bg,
@@ -1128,7 +1128,7 @@ impl ViewportRenderer {
 
         // X-ray buffers for selected objects.
         let mut xray_object_buffers: Vec<(
-            crate::resources::mesh_store::MeshId,
+            crate::resources::mesh::mesh_store::MeshId,
             wgpu::Buffer,
             wgpu::BindGroup,
         )> = Vec::new();
@@ -1560,7 +1560,7 @@ impl ViewportRenderer {
                 as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
             let implicit_outline_idx_ptr = &slot_ref.implicit_outline_indices as *const Vec<usize>;
             let mc_outlines_ptr = &slot_ref.mc_outline_data
-                as *const Vec<crate::resources::gpu_marching_cubes::McOutlineItem>;
+                as *const Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>;
             let glyph_gpu_ptr = &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
             let tensor_glyph_gpu_ptr =
                 &self.tensor_glyph_gpu_data as *const Vec<crate::resources::TensorGlyphGpuData>;
@@ -1575,9 +1575,9 @@ impl ViewportRenderer {
             let polyline_gpu_ptr =
                 &self.polyline_gpu_data as *const Vec<crate::resources::PolylineGpuData>;
             let implicit_gpu_ptr =
-                &self.implicit_gpu_data as *const Vec<crate::resources::implicit::ImplicitGpuItem>;
+                &self.implicit_gpu_data as *const Vec<crate::resources::volume::implicit::ImplicitGpuItem>;
             let mc_gpu_data_ptr =
-                &self.mc_gpu_data as *const Vec<crate::resources::gpu_marching_cubes::McFrameData>;
+                &self.mc_gpu_data as *const Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;

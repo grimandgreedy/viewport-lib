@@ -236,14 +236,14 @@ pub use quantities::{
     volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 
-pub use resources::colourmap_data::{
+pub use resources::material::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
-pub use resources::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
-pub use resources::mesh_store::MeshId;
-pub use resources::sparse_volume::SparseVolumeGridData;
-pub use resources::tetmesh::{TetMesh, TetMeshAttributes};
-pub use resources::volume_mesh::{
+pub use resources::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
+pub use resources::mesh::mesh_store::MeshId;
+pub use resources::volume::sparse_volume::SparseVolumeGridData;
+pub use resources::volume::tetmesh::{TetMesh, TetMeshAttributes};
+pub use resources::volume::volume_mesh::{
     CELL_SENTINEL, ConversionReport, ToTetMeshError, VolumeMeshData, extract_clipped_volume_faces,
 };
 pub use resources::{

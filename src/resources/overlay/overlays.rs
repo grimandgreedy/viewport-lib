@@ -1,4 +1,4 @@
-use super::*;
+use crate::resources::*;
 
 impl ViewportGpuResources {
     /// Re-upload the gizmo mesh with updated hover highlight colours.

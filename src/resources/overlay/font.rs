@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 /// Default font embedded in the library binary (Inter Regular, SIL OFL 1.1).
-const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../fonts/Inter-Regular.ttf");
+const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../../fonts/Inter-Regular.ttf");
 
 // ---------------------------------------------------------------------------
 // FontHandle : public opaque identifier
@@ -548,7 +548,7 @@ pub enum FontError {
 // ViewportGpuResources integration
 // ---------------------------------------------------------------------------
 
-impl super::ViewportGpuResources {
+impl crate::resources::ViewportGpuResources {
     /// Upload a user-supplied TTF font for use with overlay items.
     ///
     /// Returns an opaque [`FontHandle`] that can be passed to [`LabelItem`],

@@ -55,7 +55,7 @@ pub struct LabelItem {
     pub font_size: f32,
 
     /// Font to use.  `None` uses the built-in default font.
-    pub font: Option<crate::resources::font::FontHandle>,
+    pub font: Option<crate::resources::overlay::font::FontHandle>,
 
     /// Draw a filled rectangle behind the text.
     pub background: bool,

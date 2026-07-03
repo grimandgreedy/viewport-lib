@@ -1,4 +1,4 @@
-use super::*;
+use crate::resources::*;
 
 impl ViewportGpuResources {
     /// Upload an RGBA texture to the GPU and return its texture ID.
@@ -606,7 +606,7 @@ impl ViewportGpuResources {
     pub(crate) fn update_mesh_texture_bind_group(
         &mut self,
         device: &wgpu::Device,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         albedo_id: Option<u64>,
         normal_map_id: Option<u64>,
         ao_map_id: Option<u64>,
@@ -814,7 +814,7 @@ impl ViewportGpuResources {
     pub(crate) fn build_per_item_object_bind_group(
         &self,
         device: &wgpu::Device,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         item_uniform_buf: &wgpu::Buffer,
         albedo_id: Option<u64>,
         normal_map_id: Option<u64>,
@@ -1093,49 +1093,52 @@ impl ViewportGpuResources {
         let viridis = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::viridis_rgba(),
+            &crate::resources::material::colourmap_data::viridis_rgba(),
         );
         let plasma = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::plasma_rgba(),
+            &crate::resources::material::colourmap_data::plasma_rgba(),
         );
         let greyscale = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::greyscale_rgba(),
+            &crate::resources::material::colourmap_data::greyscale_rgba(),
         );
         let coolwarm = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::coolwarm_rgba(),
+            &crate::resources::material::colourmap_data::coolwarm_rgba(),
         );
         let rainbow = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::rainbow_rgba(),
+            &crate::resources::material::colourmap_data::rainbow_rgba(),
         );
         let magma = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::magma_rgba(),
+            &crate::resources::material::colourmap_data::magma_rgba(),
         );
         let inferno = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::inferno_rgba(),
+            &crate::resources::material::colourmap_data::inferno_rgba(),
         );
         let turbo = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::turbo_rgba(),
+            &crate::resources::material::colourmap_data::turbo_rgba(),
         );
-        let jet =
-            self.upload_colourmap(device, queue, &crate::resources::colourmap_data::jet_rgba());
+        let jet = self.upload_colourmap(
+            device,
+            queue,
+            &crate::resources::material::colourmap_data::jet_rgba(),
+        );
         let rdbu = self.upload_colourmap(
             device,
             queue,
-            &crate::resources::colourmap_data::rdbu_r_rgba(),
+            &crate::resources::material::colourmap_data::rdbu_r_rgba(),
         );
         self.builtin_colourmap_ids = Some([
             viridis, plasma, greyscale, coolwarm, rainbow, magma, inferno, turbo, jet, rdbu,
@@ -1260,7 +1263,7 @@ impl ViewportGpuResources {
         if self.matcaps_initialized {
             return;
         }
-        use crate::resources::matcap_data;
+        use crate::resources::material::matcap_data;
         let clay = self
             .upload_matcap(device, queue, &matcap_data::clay(), true)
             .unwrap();

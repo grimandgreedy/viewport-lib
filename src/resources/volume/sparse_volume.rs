@@ -25,7 +25,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::types::{AttributeData, MeshData};
+use crate::resources::types::{AttributeData, MeshData};
 
 // ---------------------------------------------------------------------------
 // Face corner table

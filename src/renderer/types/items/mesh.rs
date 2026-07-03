@@ -33,7 +33,7 @@ impl LicOverlay {
 #[non_exhaustive]
 pub struct SceneRenderItem {
     /// `MeshId` of the uploaded GPU mesh for this object.
-    pub mesh_id: crate::resources::mesh_store::MeshId,
+    pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// World-space model matrix (Translation * Rotation * Scale).
     pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
@@ -92,7 +92,7 @@ pub struct SceneRenderItem {
 impl Default for SceneRenderItem {
     fn default() -> Self {
         Self {
-            mesh_id: crate::resources::mesh_store::MeshId(0),
+            mesh_id: crate::resources::mesh::mesh_store::MeshId(0),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             settings: ItemSettings::default(),
             show_normals: false,

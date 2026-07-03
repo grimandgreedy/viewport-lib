@@ -72,7 +72,7 @@ pub struct ScalarBarItem {
     pub margin_px: f32,
 
     /// Font to use for tick labels and title.  `None` uses the built-in default.
-    pub font: Option<crate::resources::font::FontHandle>,
+    pub font: Option<crate::resources::overlay::font::FontHandle>,
 
     /// Font size for tick labels and title in logical pixels.  Default: `12.0`.
     pub font_size: f32,

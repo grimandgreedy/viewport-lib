@@ -533,7 +533,7 @@ impl ViewportGpuResources {
         // Pipeline layout (shared between solid and transparent pipelines)
         // Groups: 0=camera, 1=object+texture, and optionally 2=deform sidecar
         // ------------------------------------------------------------------
-        let pipeline_layout = crate::resources::mesh_pipelines::mesh_pipeline_layout(
+        let pipeline_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "mesh_pipeline_layout",
             &camera_bgl,
@@ -546,7 +546,7 @@ impl ViewportGpuResources {
         // Built through the shared factory so `register_deformer` can rebuild
         // them with a freshly composed shader module.
         // ------------------------------------------------------------------
-        let ldr = crate::resources::mesh_pipelines::build_ldr_mesh_pipelines(
+        let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
             device,
             &pipeline_layout,
             &shader,
@@ -774,7 +774,7 @@ impl ViewportGpuResources {
             mapped_at_creation: false,
         });
 
-        let clustered = crate::resources::clustered::ClusteredResources::new(device);
+        let clustered = crate::resources::gpu::clustered::ClusteredResources::new(device);
 
         mark("clustered");
 
@@ -909,20 +909,21 @@ impl ViewportGpuResources {
         // - cull-none for two-sided materials (`BackfacePolicy::Identical`):
         //   both sides of cloth and planar surfaces rasterise; a larger
         //   caster-side bias keeps the receiver from self-shadowing.
-        let shadow_pipeline = crate::resources::mesh_pipelines::build_shadow_pipeline(
+        let shadow_pipeline = crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
             device,
             &shadow_pipeline_layout,
             &shadow_shader,
             Some(wgpu::Face::Front),
             pipeline_cache.as_ref(),
         );
-        let shadow_pipeline_two_sided = crate::resources::mesh_pipelines::build_shadow_pipeline(
-            device,
-            &shadow_pipeline_layout,
-            &shadow_shader,
-            None,
-            pipeline_cache.as_ref(),
-        );
+        let shadow_pipeline_two_sided =
+            crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
+                device,
+                &shadow_pipeline_layout,
+                &shadow_shader,
+                None,
+                pipeline_cache.as_ref(),
+            );
 
         // Shadow pass uniform buffer : 4 cascade slots x 256 bytes (wgpu dynamic-offset alignment).
         // Each slot holds one 4x4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
@@ -992,12 +993,13 @@ impl ViewportGpuResources {
                 bind_group_layouts: &shadow_point_pl_bgls,
                 push_constant_ranges: &[],
             });
-        let shadow_point_pipeline = crate::resources::mesh_pipelines::build_shadow_point_pipeline(
-            device,
-            &shadow_point_pipeline_layout,
-            &shadow_point_shader,
-            pipeline_cache.as_ref(),
-        );
+        let shadow_point_pipeline =
+            crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
+                device,
+                &shadow_point_pipeline_layout,
+                &shadow_point_shader,
+                pipeline_cache.as_ref(),
+            );
 
         // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
@@ -2054,7 +2056,7 @@ impl ViewportGpuResources {
             label: Some("outline_mask_shader"),
             source: wgpu::ShaderSource::Wgsl(outline_mask_src.into()),
         });
-        let outline_masks = crate::resources::mesh_pipelines::build_outline_mask_pipelines(
+        let outline_masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
             device,
             &outline_pipeline_layout,
             &outline_mask_shader,
@@ -2321,11 +2323,11 @@ impl ViewportGpuResources {
             camera_bind_group_layout: camera_bgl,
             object_bind_group_layout: object_bgl,
             mesh_store: {
-                let mut store = crate::resources::mesh_store::MeshStore::new();
+                let mut store = crate::resources::mesh::mesh_store::MeshStore::new();
                 store.insert(cube_mesh);
                 store
             },
-            lod_groups: crate::resources::lod::LodGroupStore::new(),
+            lod_groups: crate::resources::mesh::lod::LodGroupStore::new(),
             shadow_map_texture,
             shadow_map_view,
             shadow_sampler,
@@ -2759,7 +2761,7 @@ impl ViewportGpuResources {
             sub_highlight_edge_ldr_pipeline: None,
             sub_highlight_sprite_ldr_pipeline: None,
             sub_highlight_bgl: None,
-            glyph_atlas: super::font::GlyphAtlas::new(device),
+            glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),
             overlay_text_pipeline: None,
             overlay_text_bgl: None,
             overlay_text_sampler: None,

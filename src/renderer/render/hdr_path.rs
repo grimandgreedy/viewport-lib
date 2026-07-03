@@ -1335,7 +1335,7 @@ impl ViewportRenderer {
                     continue;
                 };
                 match pd.route {
-                    crate::resources::gpu_particles::ParticleDrawRoute::Sprite { lit } => {
+                    crate::resources::gpu::gpu_particles::ParticleDrawRoute::Sprite { lit } => {
                         let dual = match (pd.blend, lit) {
                             (crate::renderer::SpriteBlend::Additive, false) => {
                                 resources.particle_sprite_pipeline_additive.as_ref()
@@ -1371,7 +1371,7 @@ impl ViewportRenderer {
                         }
                         pass.draw(0..6, 0..system.capacity);
                     }
-                    crate::resources::gpu_particles::ParticleDrawRoute::Mesh { mesh_id } => {
+                    crate::resources::gpu::gpu_particles::ParticleDrawRoute::Mesh { mesh_id } => {
                         let dual = match pd.blend {
                             crate::renderer::SpriteBlend::Additive => {
                                 resources.particle_mesh_pipeline_additive.as_ref()
@@ -1388,7 +1388,7 @@ impl ViewportRenderer {
                             continue;
                         };
                         let Some(mesh) = resources.mesh_store.get(
-                            crate::resources::mesh_store::MeshId::from_index(mesh_id as usize),
+                            crate::resources::mesh::mesh_store::MeshId::from_index(mesh_id as usize),
                         ) else {
                             continue;
                         };

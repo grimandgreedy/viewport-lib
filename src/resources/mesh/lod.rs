@@ -12,7 +12,7 @@
 
 use crate::error::{ViewportError, ViewportResult};
 use crate::renderer::RenderCamera;
-use crate::resources::mesh_store::MeshId;
+use crate::resources::mesh::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
 
 /// Margin applied to a level boundary before a switch is allowed, as a fraction

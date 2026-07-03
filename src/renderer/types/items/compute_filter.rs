@@ -49,7 +49,7 @@ pub enum ComputeFilterKind {
 #[non_exhaustive]
 pub struct ComputeFilterItem {
     /// `MeshId` of the uploaded GPU mesh for this compute filter item.
-    pub mesh_id: crate::resources::mesh_store::MeshId,
+    pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Which filter to apply.
     pub kind: ComputeFilterKind,
     /// Name of the scalar attribute buffer (for Threshold). Ignored for Clip.
@@ -59,7 +59,7 @@ pub struct ComputeFilterItem {
 impl Default for ComputeFilterItem {
     fn default() -> Self {
         Self {
-            mesh_id: crate::resources::mesh_store::MeshId(0),
+            mesh_id: crate::resources::mesh::mesh_store::MeshId(0),
             kind: ComputeFilterKind::Clip {
                 plane_normal: [0.0, 0.0, 1.0],
                 plane_dist: 0.0,

@@ -64,7 +64,7 @@ impl Default for ImageSliceItem {
 /// a disk, a saddle, a paraboloid -- any shape that can be expressed as a mesh.
 ///
 /// Upload the surface mesh once with [`ViewportGpuResources::upload_mesh_data`]
-/// to get a [`MeshId`](crate::resources::mesh_store::MeshId), then submit a
+/// to get a [`MeshId`](crate::resources::mesh::mesh_store::MeshId), then submit a
 /// `VolumeSurfaceSliceItem` referencing that mesh each frame.
 ///
 /// Fragments whose world position falls outside the volume bounding box are
@@ -89,7 +89,7 @@ pub struct VolumeSurfaceSliceItem {
     /// Reference to a previously uploaded 3D volume texture.
     pub volume_id: crate::resources::VolumeId,
     /// Mesh defining the slice surface shape. Any mesh works: flat quad, disk, saddle, etc.
-    pub mesh_id: crate::resources::mesh_store::MeshId,
+    pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// World-space bounding box minimum corner of the volume.
     pub bbox_min: [f32; 3],
     /// World-space bounding box maximum corner of the volume.
@@ -114,7 +114,7 @@ impl Default for VolumeSurfaceSliceItem {
     fn default() -> Self {
         Self {
             volume_id: crate::resources::VolumeId(0),
-            mesh_id: crate::resources::mesh_store::MeshId::from_index(0),
+            mesh_id: crate::resources::mesh::mesh_store::MeshId::from_index(0),
             bbox_min: [0.0, 0.0, 0.0],
             bbox_max: [1.0, 1.0, 1.0],
             scalar_range: (0.0, 1.0),

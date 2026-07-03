@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::select::selection::{NodeId, Selection};
 use crate::renderer::{PickId, SceneRenderItem};
-use crate::resources::mesh_store::MeshId;
+use crate::resources::mesh::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
 use crate::scene::material::Material;
 use crate::scene::spatial_index::SpatialIndex;

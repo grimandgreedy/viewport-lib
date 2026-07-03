@@ -13,7 +13,7 @@ impl ViewportRenderer {
     pub(super) fn prepare_lighting(
         resources: &mut ViewportGpuResources,
         shadow: &mut ShadowState,
-        last_cluster_stats: &mut Option<crate::resources::clustered::ClusterStats>,
+        last_cluster_stats: &mut Option<crate::resources::gpu::clustered::ClusterStats>,
         last_frustum_culled_lights: &mut u32,
         viewport_slots: &[ViewportSlot],
         scene_fx: &SceneEffects<'_>,
@@ -702,7 +702,7 @@ impl ViewportRenderer {
         // per-cluster light index ranges from bindings 14 / 15 / 16 of the
         // camera bind group.
         {
-            use crate::resources::clustered::{
+            use crate::resources::gpu::clustered::{
                 ActiveLightView, CLUSTER_COUNT, CLUSTER_X_TILES, CLUSTER_Y_TILES, CLUSTER_Z_SLICES,
                 ClusterGridUniform,
             };
@@ -726,7 +726,7 @@ impl ViewportRenderer {
             // override also forces the fallback path so the two can be A/B'd
             // for correctness checks.
             let use_clusters = !frame.viewport.force_cluster_fallback
-                && active_count > crate::resources::clustered::SMALL_N_THRESHOLD;
+                && active_count > crate::resources::gpu::clustered::SMALL_N_THRESHOLD;
             let fallback_flag = if use_clusters { 0.0 } else { 1.0 };
             let grid_uniform = ClusterGridUniform {
                 dimensions: [

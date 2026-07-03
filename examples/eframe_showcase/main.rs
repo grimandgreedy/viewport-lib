@@ -532,7 +532,7 @@ pub(crate) struct App {
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
-    pub(crate) last_cluster_stats: Option<viewport_lib::resources::clustered::ClusterStats>,
+    pub(crate) last_cluster_stats: Option<viewport_lib::resources::gpu::clustered::ClusterStats>,
 }
 
 // ---------------------------------------------------------------------------

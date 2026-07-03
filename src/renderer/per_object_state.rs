@@ -2,7 +2,7 @@
 //! buffer and bind group per scene item, plus the wireframe and
 //! transparent-volume-mesh wireframe draw resources.
 
-use crate::resources::mesh_store::MeshId;
+use crate::resources::mesh::mesh_store::MeshId;
 use std::collections::HashMap;
 
 /// Stable key for a cached per-object draw resource.

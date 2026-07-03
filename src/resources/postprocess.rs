@@ -1171,7 +1171,7 @@ impl ViewportGpuResources {
             label: Some("mesh_oit_shader"),
             source: wgpu::ShaderSource::Wgsl(oit_mesh_source.into()),
         });
-        let oit_layout = crate::resources::mesh_pipelines::mesh_pipeline_layout(
+        let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "oit_pipeline_layout",
             &self.camera_bind_group_layout,
@@ -1180,8 +1180,11 @@ impl ViewportGpuResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let oit_pipeline =
-            crate::resources::mesh_pipelines::build_oit_pipeline(device, &oit_layout, &oit_shader);
+        let oit_pipeline = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+            device,
+            &oit_layout,
+            &oit_shader,
+        );
 
         // oit_instanced_pipeline is created lazily by ensure_oit_instanced_pipeline()
         // once instance_bind_group_layout becomes available. Splitting it out avoids the
@@ -1215,7 +1218,7 @@ impl ViewportGpuResources {
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         };
-        let hdr_pipeline_layout = crate::resources::mesh_pipelines::mesh_pipeline_layout(
+        let hdr_pipeline_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "hdr_mesh_pipeline_layout",
             &self.camera_bind_group_layout,
@@ -1224,7 +1227,7 @@ impl ViewportGpuResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let hdr = crate::resources::mesh_pipelines::build_hdr_mesh_pipelines(
+        let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
             device,
             &hdr_pipeline_layout,
             &hdr_shader,

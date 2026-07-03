@@ -127,7 +127,7 @@ pub(crate) struct ViewportSlot {
     /// Indices into `implicit_gpu_data` for selected GPU implicit items, rebuilt in prepare().
     pub implicit_outline_indices: Vec<usize>,
     /// Per-frame outline data for selected GPU marching cubes jobs, rebuilt in prepare().
-    pub mc_outline_data: Vec<crate::resources::gpu_marching_cubes::McOutlineItem>,
+    pub mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>,
     /// Outline items for selected streamtubes (index into streamtube_gpu_data + mask bind group).
     pub streamtube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
     /// Outline items for selected tubes.
@@ -138,7 +138,7 @@ pub(crate) struct ViewportSlot {
     pub polyline_outline_indices: Vec<usize>,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
-        crate::resources::mesh_store::MeshId,
+        crate::resources::mesh::mesh_store::MeshId,
         wgpu::Buffer,
         wgpu::BindGroup,
     )>,
@@ -192,10 +192,10 @@ pub(crate) struct ViewportSlot {
     // --- Sub-object highlight (per-viewport, generation-cached) ---
     /// Per-viewport dynamic resolution intermediate render target.
     /// `None` when render_scale == 1.0 or not yet initialised.
-    pub dyn_res: Option<crate::resources::dyn_res::DynResTarget>,
+    pub dyn_res: Option<crate::resources::gpu::dyn_res::DynResTarget>,
     /// Per-viewport intermediate render target for the HDR eframe callback path.
     /// `None` until the first `prepare_hdr_callback` call for this viewport.
-    pub hdr_callback: Option<crate::resources::dyn_res::HdrCallbackTarget>,
+    pub hdr_callback: Option<crate::resources::gpu::dyn_res::HdrCallbackTarget>,
     /// Cached GPU data for sub-object highlight rendering.
     /// `None` when no sub-object selection is active and no volumes are selected.
     pub sub_highlight: Option<crate::resources::SubHighlightGpuData>,
@@ -317,7 +317,7 @@ pub struct ViewportRenderer {
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint().
-    implicit_gpu_data: Vec<crate::resources::implicit::ImplicitGpuItem>,
+    implicit_gpu_data: Vec<crate::resources::volume::implicit::ImplicitGpuItem>,
     /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint() (D1).
     /// Entries are cheap clones of cached GPU handles from `decal_cache`.
     decal_gpu_data: Vec<crate::resources::decal::DecalGpuItem>,
@@ -329,13 +329,13 @@ pub struct ViewportRenderer {
     /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint() (D5).
     decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
     /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint().
-    mc_gpu_data: Vec<crate::resources::gpu_marching_cubes::McFrameData>,
+    mc_gpu_data: Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>,
     /// Per-frame sprite GPU data, rebuilt in prepare(), consumed in paint().
     sprite_gpu_data: Vec<crate::resources::SpriteGpuData>,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
     /// Per-frame GPU particle systems, dispatched in prepare(), consumed in paint().
-    particle_gpu_data: Vec<crate::resources::gpu_particles::ParticleFrameData>,
+    particle_gpu_data: Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
     /// Scene-colour resolve textures for the refractive sprite pass, indexed
     /// alongside `viewport_slots`. Lazily allocated when the first refractive
     /// sprite appears for a viewport.
@@ -536,7 +536,7 @@ pub struct ViewportRenderer {
     pub(crate) last_frustum_culled_lights: u32,
     /// Most recent cluster build readback. Populated when a frame's
     /// `ViewportFrame::cluster_stats_request` was true.
-    pub(crate) last_cluster_stats: Option<crate::resources::clustered::ClusterStats>,
+    pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
 }
 
 impl ViewportRenderer {
@@ -706,7 +706,7 @@ impl ViewportRenderer {
     /// Diagnostics from the cluster build pass on the most recent frame that
     /// requested them (`ViewportFrame::cluster_stats_request`). Returns
     /// `None` until a request has been served.
-    pub fn cluster_stats(&self) -> Option<crate::resources::clustered::ClusterStats> {
+    pub fn cluster_stats(&self) -> Option<crate::resources::gpu::clustered::ClusterStats> {
         self.last_cluster_stats
     }
 
@@ -1442,7 +1442,7 @@ impl ViewportRenderer {
         width: u32,
         height: u32,
     ) -> crate::error::ViewportResult<()> {
-        crate::resources::environment::upload_environment_map(
+        crate::resources::material::environment::upload_environment_map(
             &mut self.resources,
             device,
             queue,
@@ -1524,7 +1524,7 @@ impl ViewportRenderer {
     pub fn begin_upload_volume_mesh(
         &mut self,
         device: &wgpu::Device,
-        data: crate::resources::volume_mesh::VolumeMeshData,
+        data: crate::resources::volume::volume_mesh::VolumeMeshData,
     ) -> crate::resources::JobId {
         self.resources.begin_upload_volume_mesh(device, data)
     }
@@ -1544,7 +1544,7 @@ impl ViewportRenderer {
     pub fn begin_upload_clipped_volume_mesh(
         &mut self,
         device: &wgpu::Device,
-        data: crate::resources::volume_mesh::VolumeMeshData,
+        data: crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: Vec<[f32; 4]>,
     ) -> crate::resources::JobId {
         self.resources
@@ -1572,13 +1572,13 @@ impl ViewportRenderer {
             .begin_upload_sparse_volume_grid_data(device, data)
     }
 
-    /// Take the [`MeshId`](crate::resources::mesh_store::MeshId) produced by a completed
+    /// Take the [`MeshId`](crate::resources::mesh::mesh_store::MeshId) produced by a completed
     /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
     /// job.
     pub fn upload_result_sparse_volume_grid(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         self.resources.upload_result_sparse_volume_grid(id)
     }
 
@@ -1709,7 +1709,7 @@ impl ViewportRenderer {
     pub fn upload_result_mesh(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         self.resources.upload_result_mesh(id)
     }
 
@@ -1735,7 +1735,7 @@ impl ViewportRenderer {
         width: u32,
         height: u32,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        crate::resources::environment::begin_upload_environment_map(
+        crate::resources::material::environment::begin_upload_environment_map(
             &mut self.resources,
             device,
             queue,

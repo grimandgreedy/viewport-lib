@@ -15,7 +15,7 @@
 use rayon::prelude::*;
 use std::f32::consts::PI;
 
-use super::upload_jobs::{ApplyFn, JobId, JobProduct, ProgressHandle, UploadStatus};
+use crate::resources::upload_jobs::{ApplyFn, JobId, JobProduct, ProgressHandle, UploadStatus};
 
 // -------------------------------------------------------------------------
 // Public upload API
@@ -31,7 +31,7 @@ use super::upload_jobs::{ApplyFn, JobId, JobProduct, ProgressHandle, UploadStatu
 /// `begin_upload_environment_map` returns immediately and reports completion
 /// through the upload-job runner.
 pub fn upload_environment_map(
-    resources: &mut super::ViewportGpuResources,
+    resources: &mut crate::resources::ViewportGpuResources,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     pixels: &[f32],
@@ -68,7 +68,7 @@ pub fn upload_environment_map(
 ///
 /// Ownership of `pixels` transfers into the background worker.
 pub fn begin_upload_environment_map(
-    resources: &mut super::ViewportGpuResources,
+    resources: &mut crate::resources::ViewportGpuResources,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     pixels: Vec<f32>,
@@ -107,18 +107,20 @@ pub fn begin_upload_environment_map(
 }
 
 fn apply_gpu_result(result: super::ibl_compute::IblComputeResult) -> ApplyFn {
-    Box::new(move |resources: &mut super::ViewportGpuResources| {
-        resources.ibl_irradiance_view = Some(result.irradiance_view);
-        resources.ibl_prefiltered_view = Some(result.prefilter_view);
-        resources.ibl_skybox_view = Some(result.skybox_view);
-        resources.ibl_irradiance_texture = Some(result.irradiance_texture);
-        resources.ibl_prefiltered_texture = Some(result.prefilter_texture);
-        resources.ibl_skybox_texture = Some(result.skybox_texture);
-        if let (Some(brdf_tex), Some(brdf_view)) = (result.brdf_texture, result.brdf_view) {
-            resources.ibl_brdf_lut_view = Some(brdf_view);
-            resources.ibl_brdf_lut_texture = Some(brdf_tex);
-        }
-    })
+    Box::new(
+        move |resources: &mut crate::resources::ViewportGpuResources| {
+            resources.ibl_irradiance_view = Some(result.irradiance_view);
+            resources.ibl_prefiltered_view = Some(result.prefilter_view);
+            resources.ibl_skybox_view = Some(result.skybox_view);
+            resources.ibl_irradiance_texture = Some(result.irradiance_texture);
+            resources.ibl_prefiltered_texture = Some(result.prefilter_texture);
+            resources.ibl_skybox_texture = Some(result.skybox_texture);
+            if let (Some(brdf_tex), Some(brdf_view)) = (result.brdf_texture, result.brdf_view) {
+                resources.ibl_brdf_lut_view = Some(brdf_view);
+                resources.ibl_brdf_lut_texture = Some(brdf_tex);
+            }
+        },
+    )
 }
 
 /// CPU IBL path executed on a worker thread.
@@ -200,18 +202,20 @@ fn run_cpu_path(
 
     Ok(JobProduct::with_gpu_and_apply(
         submission,
-        Box::new(move |resources: &mut super::ViewportGpuResources| {
-            resources.ibl_irradiance_view = Some(irr_view);
-            resources.ibl_prefiltered_view = Some(spec_view);
-            resources.ibl_skybox_view = Some(skybox_view);
-            resources.ibl_irradiance_texture = Some(irr_tex);
-            resources.ibl_prefiltered_texture = Some(spec_tex);
-            resources.ibl_skybox_texture = Some(skybox_tex);
-            if let (Some(tex), Some(view)) = (brdf_tex, brdf_view) {
-                resources.ibl_brdf_lut_view = Some(view);
-                resources.ibl_brdf_lut_texture = Some(tex);
-            }
-        }),
+        Box::new(
+            move |resources: &mut crate::resources::ViewportGpuResources| {
+                resources.ibl_irradiance_view = Some(irr_view);
+                resources.ibl_prefiltered_view = Some(spec_view);
+                resources.ibl_skybox_view = Some(skybox_view);
+                resources.ibl_irradiance_texture = Some(irr_tex);
+                resources.ibl_prefiltered_texture = Some(spec_tex);
+                resources.ibl_skybox_texture = Some(skybox_tex);
+                if let (Some(tex), Some(view)) = (brdf_tex, brdf_view) {
+                    resources.ibl_brdf_lut_view = Some(view);
+                    resources.ibl_brdf_lut_texture = Some(tex);
+                }
+            },
+        ),
     ))
 }
 

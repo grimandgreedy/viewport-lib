@@ -1,8 +1,8 @@
 //! Lazy pipeline creation for overlay text and solid screen-space quads.
 
-use super::types::OverlayTextVertex;
+use crate::resources::types::OverlayTextVertex;
 
-impl super::ViewportGpuResources {
+impl crate::resources::ViewportGpuResources {
     /// Lazily create the overlay text render pipeline.
     ///
     /// No-op if already created.  Called from `prepare_viewport_internal()` when

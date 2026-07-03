@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
-use super::types::{AttributeData, MeshData};
+use crate::resources::types::{AttributeData, MeshData};
 
 const PARALLEL_THRESHOLD: usize = 1024;
 

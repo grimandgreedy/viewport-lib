@@ -1,9 +1,11 @@
 //! Lazy pipeline creation for SDF overlay shapes.
 
-use super::types::{OverlayShapeTexVertex, OverlayShapeTextureEntry, OverlayShapeVertex};
 use crate::renderer::OverlayTextureId;
+use crate::resources::types::{
+    OverlayShapeTexVertex, OverlayShapeTextureEntry, OverlayShapeVertex,
+};
 
-impl super::ViewportGpuResources {
+impl crate::resources::ViewportGpuResources {
     /// Lazily create the SDF overlay shape render pipeline.
     ///
     /// No-op if already created. Called from `prepare_viewport_internal()` when
@@ -323,14 +325,16 @@ impl super::ViewportGpuResources {
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut super::ViewportGpuResources| {
-                        let id = resources.overlay_textures.len() as u64;
-                        resources.overlay_textures.push(OverlayShapeTextureEntry {
-                            _texture: texture,
-                            view,
-                        });
-                        slot_for_apply.set(OverlayTextureId(id));
-                    }),
+                    Box::new(
+                        move |resources: &mut crate::resources::ViewportGpuResources| {
+                            let id = resources.overlay_textures.len() as u64;
+                            resources.overlay_textures.push(OverlayShapeTextureEntry {
+                                _texture: texture,
+                                view,
+                            });
+                            slot_for_apply.set(OverlayTextureId(id));
+                        },
+                    ),
                 ))
             })
         };

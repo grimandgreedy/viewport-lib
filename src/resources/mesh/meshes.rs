@@ -1,4 +1,4 @@
-use super::*;
+use crate::resources::*;
 
 /// CPU-prepared vertex stream and ancillary buffers needed to finish a mesh
 /// upload on the main thread.
@@ -43,7 +43,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         vertices: &[Vertex],
         indices: &[u32],
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         if vertices.is_empty() || indices.is_empty() {
             return Err(crate::error::ViewportError::EmptyMesh {
                 positions: vertices.len(),
@@ -90,7 +90,7 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         data: &MeshData,
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         Self::validate_mesh_data(data)?;
         let prep = Self::prep_mesh_data(data);
         Ok(self.assemble_mesh_data(device, data, prep))
@@ -157,7 +157,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         data: &MeshData,
         prep: MeshPrep,
-    ) -> crate::resources::mesh_store::MeshId {
+    ) -> crate::resources::mesh::mesh_store::MeshId {
         let MeshPrep {
             vertices,
             normal_line_verts,
@@ -241,7 +241,8 @@ impl ViewportGpuResources {
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         Self::validate_mesh_data(&data)?;
 
-        let slot = crate::resources::ResultSlot::<crate::resources::mesh_store::MeshId>::new();
+        let slot =
+            crate::resources::ResultSlot::<crate::resources::mesh::mesh_store::MeshId>::new();
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
@@ -276,7 +277,7 @@ impl ViewportGpuResources {
     pub fn upload_result_mesh(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         let mut map = self
             .job_mesh_results
             .lock()
@@ -312,7 +313,7 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         data: &MeshData,
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         self.upload_mesh_data(device, data)
     }
 
@@ -328,7 +329,11 @@ impl ViewportGpuResources {
     /// without re-uploading.
     ///
     /// Has no effect if `mesh_id` is not found.
-    pub fn set_pickable(&mut self, mesh_id: crate::resources::mesh_store::MeshId, pickable: bool) {
+    pub fn set_pickable(
+        &mut self,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        pickable: bool,
+    ) {
         if let Some(mesh) = self.mesh_store.get_mut(mesh_id) {
             if !pickable {
                 mesh.cpu_positions = None;
@@ -361,7 +366,7 @@ impl ViewportGpuResources {
     pub fn write_mesh_positions_normals(
         &mut self,
         queue: &wgpu::Queue,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         positions: &[[f32; 3]],
         normals: &[[f32; 3]],
     ) -> crate::error::ViewportResult<()> {
@@ -498,7 +503,7 @@ impl ViewportGpuResources {
     /// if `mesh_id` is not registered.
     pub fn set_position_override_buffer(
         &mut self,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         buffer: wgpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
@@ -527,7 +532,7 @@ impl ViewportGpuResources {
     /// if `mesh_id` is not registered.
     pub fn set_normal_override_buffer(
         &mut self,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         buffer: wgpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
@@ -554,7 +559,7 @@ impl ViewportGpuResources {
     /// if `mesh_id` is not registered.
     pub fn clear_position_override(
         &mut self,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
         let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
@@ -576,7 +581,7 @@ impl ViewportGpuResources {
     /// if `mesh_id` is not registered.
     pub fn clear_normal_override(
         &mut self,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
         let mesh = self.mesh_store.get_mut(mesh_id).ok_or(
@@ -604,7 +609,7 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         data: &MeshData,
     ) -> crate::error::ViewportResult<()> {
         if !self.mesh_store.contains(mesh_id) {
@@ -748,7 +753,7 @@ impl ViewportGpuResources {
     }
 
     /// Get a reference to the mesh at the given index, or `None` if the slot is empty/invalid.
-    pub fn mesh(&self, id: crate::resources::mesh_store::MeshId) -> Option<&GpuMesh> {
+    pub fn mesh(&self, id: crate::resources::mesh::mesh_store::MeshId) -> Option<&GpuMesh> {
         self.mesh_store.get(id)
     }
 
@@ -760,7 +765,7 @@ impl ViewportGpuResources {
     /// Remove a mesh, dropping its GPU buffers and freeing its slot for reuse.
     ///
     /// Returns `true` if a mesh was removed, `false` if the slot was already empty.
-    pub fn remove_mesh(&mut self, id: crate::resources::mesh_store::MeshId) -> bool {
+    pub fn remove_mesh(&mut self, id: crate::resources::mesh::mesh_store::MeshId) -> bool {
         self.mesh_store.remove(id)
     }
 
@@ -780,9 +785,10 @@ impl ViewportGpuResources {
     pub fn upload_volume_mesh(
         &mut self,
         device: &wgpu::Device,
-        data: &crate::resources::volume_mesh::VolumeMeshData,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
-        let (mesh_data, face_to_cell) = crate::resources::volume_mesh::extract_boundary_faces(data);
+        let (mesh_data, face_to_cell) =
+            crate::resources::volume::volume_mesh::extract_boundary_faces(data);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
         Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
     }
@@ -808,11 +814,11 @@ impl ViewportGpuResources {
     pub fn upload_volume_mesh_with_transparency(
         &mut self,
         device: &wgpu::Device,
-        data: crate::resources::volume_mesh::VolumeMeshData,
+        data: crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let (mesh_data, face_to_cell) =
-            crate::resources::volume_mesh::extract_boundary_faces(&data);
+            crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
         let (pt_id, _, _) = self.upload_projected_tet_mesh(device, &data, scalar_attribute)?;
         let mut item = crate::VolumeMeshItem::new(mesh_id, face_to_cell);
@@ -832,11 +838,11 @@ impl ViewportGpuResources {
     pub fn upload_clipped_volume_mesh(
         &mut self,
         device: &wgpu::Device,
-        data: &crate::resources::volume_mesh::VolumeMeshData,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let (mesh_data, face_to_cell) =
-            crate::resources::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
+            crate::resources::volume::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
         Ok(crate::VolumeMeshItem::new(mesh_id, face_to_cell))
     }
@@ -852,12 +858,12 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        mesh_id: crate::resources::mesh_store::MeshId,
-        data: &crate::resources::volume_mesh::VolumeMeshData,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
     ) -> crate::error::ViewportResult<Vec<u32>> {
         let (mesh_data, face_to_cell) =
-            crate::resources::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
+            crate::resources::volume::volume_mesh::extract_clipped_volume_faces(data, clip_planes);
         self.replace_mesh_data(device, queue, mesh_id, &mesh_data)?;
         Ok(face_to_cell)
     }
@@ -871,10 +877,10 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        mesh_id: crate::resources::mesh_store::MeshId,
-        data: &crate::resources::sparse_volume::SparseVolumeGridData,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        data: &crate::resources::volume::sparse_volume::SparseVolumeGridData,
     ) -> crate::error::ViewportResult<()> {
-        let mesh_data = crate::resources::sparse_volume::extract_sparse_boundary(data);
+        let mesh_data = crate::resources::volume::sparse_volume::extract_sparse_boundary(data);
         self.replace_mesh_data(device, queue, mesh_id, &mesh_data)
     }
 
@@ -890,9 +896,9 @@ impl ViewportGpuResources {
     pub fn upload_sparse_volume_grid_data(
         &mut self,
         device: &wgpu::Device,
-        data: &crate::resources::sparse_volume::SparseVolumeGridData,
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
-        let mesh_data = crate::resources::sparse_volume::extract_sparse_boundary(data);
+        data: &crate::resources::volume::sparse_volume::SparseVolumeGridData,
+    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
+        let mesh_data = crate::resources::volume::sparse_volume::extract_sparse_boundary(data);
         self.upload_mesh_data(device, &mesh_data)
     }
 
@@ -912,10 +918,12 @@ impl ViewportGpuResources {
     pub fn begin_upload_volume_mesh(
         &mut self,
         device: &wgpu::Device,
-        data: crate::resources::volume_mesh::VolumeMeshData,
+        data: crate::resources::volume::volume_mesh::VolumeMeshData,
     ) -> crate::resources::JobId {
-        let slot =
-            crate::resources::ResultSlot::<(crate::resources::mesh_store::MeshId, Vec<u32>)>::new();
+        let slot = crate::resources::ResultSlot::<(
+            crate::resources::mesh::mesh_store::MeshId,
+            Vec<u32>,
+        )>::new();
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
@@ -924,7 +932,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
                 let (mesh_data, face_to_cell) =
-                    crate::resources::volume_mesh::extract_boundary_faces(&data);
+                    crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
                 progress.set(0.5);
                 ViewportGpuResources::validate_mesh_data(&mesh_data)?;
                 let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
@@ -980,11 +988,13 @@ impl ViewportGpuResources {
     pub fn begin_upload_clipped_volume_mesh(
         &mut self,
         device: &wgpu::Device,
-        data: crate::resources::volume_mesh::VolumeMeshData,
+        data: crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: Vec<[f32; 4]>,
     ) -> crate::resources::JobId {
-        let slot =
-            crate::resources::ResultSlot::<(crate::resources::mesh_store::MeshId, Vec<u32>)>::new();
+        let slot = crate::resources::ResultSlot::<(
+            crate::resources::mesh::mesh_store::MeshId,
+            Vec<u32>,
+        )>::new();
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
@@ -993,7 +1003,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
                 let (mesh_data, face_to_cell) =
-                    crate::resources::volume_mesh::extract_clipped_volume_faces(
+                    crate::resources::volume::volume_mesh::extract_clipped_volume_faces(
                         &data,
                         &clip_planes,
                     );
@@ -1050,9 +1060,10 @@ impl ViewportGpuResources {
     pub fn begin_upload_sparse_volume_grid_data(
         &mut self,
         device: &wgpu::Device,
-        data: crate::resources::sparse_volume::SparseVolumeGridData,
+        data: crate::resources::volume::sparse_volume::SparseVolumeGridData,
     ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<crate::resources::mesh_store::MeshId>::new();
+        let slot =
+            crate::resources::ResultSlot::<crate::resources::mesh::mesh_store::MeshId>::new();
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
@@ -1060,7 +1071,8 @@ impl ViewportGpuResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
-                let mesh_data = crate::resources::sparse_volume::extract_sparse_boundary(&data);
+                let mesh_data =
+                    crate::resources::volume::sparse_volume::extract_sparse_boundary(&data);
                 progress.set(0.5);
                 ViewportGpuResources::validate_mesh_data(&mesh_data)?;
                 let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
@@ -1082,13 +1094,13 @@ impl ViewportGpuResources {
         id
     }
 
-    /// Take the [`MeshId`](crate::resources::mesh_store::MeshId) produced by a completed
+    /// Take the [`MeshId`](crate::resources::mesh::mesh_store::MeshId) produced by a completed
     /// [`begin_upload_sparse_volume_grid_data`](Self::begin_upload_sparse_volume_grid_data)
     /// job.
     pub fn upload_result_sparse_volume_grid(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::mesh_store::MeshId> {
+    ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         let mut map = self
             .job_sparse_volume_grid_results
             .lock()
@@ -2185,7 +2197,7 @@ impl ViewportGpuResources {
     pub(crate) fn upload_projected_tet_mesh(
         &mut self,
         device: &wgpu::Device,
-        data: &crate::resources::volume_mesh::VolumeMeshData,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
         self.ensure_pt_bind_group_layout(device);
@@ -2247,7 +2259,7 @@ impl ViewportGpuResources {
     pub(crate) fn begin_upload_projected_tet_mesh(
         &mut self,
         device: &wgpu::Device,
-        data: crate::resources::volume_mesh::VolumeMeshData,
+        data: crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: String,
     ) -> crate::resources::JobId {
         // Pipeline layout must exist when the apply step builds bind groups.
@@ -2361,7 +2373,7 @@ impl ViewportGpuResources {
         &mut self,
         device: &wgpu::Device,
         id: crate::resources::ProjectedTetId,
-        data: &crate::resources::volume_mesh::VolumeMeshData,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<()> {
         self.ensure_pt_bind_group_layout(device);
@@ -2416,7 +2428,7 @@ impl ViewportGpuResources {
     /// reference (new for upload, existing for replace).
     fn decompose_into_chunks(
         device: &wgpu::Device,
-        data: &crate::resources::volume_mesh::VolumeMeshData,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> (Vec<(wgpu::Buffer, u32)>, (f32, f32), wgpu::Buffer) {
         // Determine the maximum tets per chunk from device limits.
@@ -2446,17 +2458,21 @@ impl ViewportGpuResources {
             raw.clear();
         };
 
-        crate::resources::volume_mesh::for_each_tet(data, scalar_attribute, |verts, scalar| {
-            scalar_min = scalar_min.min(scalar);
-            scalar_max = scalar_max.max(scalar);
-            current_raw.extend_from_slice(&[verts[0][0], verts[0][1], verts[0][2], scalar]);
-            current_raw.extend_from_slice(&[verts[1][0], verts[1][1], verts[1][2], 0.0]);
-            current_raw.extend_from_slice(&[verts[2][0], verts[2][1], verts[2][2], 0.0]);
-            current_raw.extend_from_slice(&[verts[3][0], verts[3][1], verts[3][2], 0.0]);
-            if current_raw.len() == chunk_size_tets * 16 {
-                flush(&mut current_raw, &mut pending);
-            }
-        });
+        crate::resources::volume::volume_mesh::for_each_tet(
+            data,
+            scalar_attribute,
+            |verts, scalar| {
+                scalar_min = scalar_min.min(scalar);
+                scalar_max = scalar_max.max(scalar);
+                current_raw.extend_from_slice(&[verts[0][0], verts[0][1], verts[0][2], scalar]);
+                current_raw.extend_from_slice(&[verts[1][0], verts[1][1], verts[1][2], 0.0]);
+                current_raw.extend_from_slice(&[verts[2][0], verts[2][1], verts[2][2], 0.0]);
+                current_raw.extend_from_slice(&[verts[3][0], verts[3][1], verts[3][2], 0.0]);
+                if current_raw.len() == chunk_size_tets * 16 {
+                    flush(&mut current_raw, &mut pending);
+                }
+            },
+        );
 
         if !current_raw.is_empty() {
             flush(&mut current_raw, &mut pending);
@@ -2600,7 +2616,7 @@ mod override_tests {
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Fabricate an id that is beyond the store.
-        let bogus = crate::resources::mesh_store::MeshId::from_index(9999);
+        let bogus = crate::resources::mesh::mesh_store::MeshId::from_index(9999);
         let buf = dummy_override_buffer(&device, 4);
         let err = resources.set_position_override_buffer(bogus, buf);
         assert!(matches!(
@@ -2721,7 +2737,7 @@ mod async_upload_tests {
 
         // Submit an env-map job so we have a live JobId of the wrong type.
         let pixels = vec![0.5f32; 8 * 4 * 4];
-        let other_id = crate::resources::environment::begin_upload_environment_map(
+        let other_id = crate::resources::material::environment::begin_upload_environment_map(
             &mut resources,
             &device,
             &try_make_device().unwrap().1,
@@ -2742,7 +2758,7 @@ mod async_upload_tests {
 #[cfg(test)]
 mod c4_volume_mesh_tests {
     use crate::ViewportGpuResources;
-    use crate::resources::volume_mesh::VolumeMeshData;
+    use crate::resources::volume::volume_mesh::VolumeMeshData;
     use crate::resources::{CELL_SENTINEL, SparseVolumeGridData, UploadStatus};
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {

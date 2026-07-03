@@ -408,7 +408,7 @@ impl ViewportGpuResources {
     pub fn replace_attribute(
         &mut self,
         queue: &wgpu::Queue,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         name: &str,
         data: &[f32],
     ) -> crate::error::ViewportResult<()> {
@@ -595,7 +595,7 @@ pub struct ComputeFilterResult {
     /// Number of valid indices in `index_buffer` (may be 0 if all filtered).
     pub index_count: u32,
     /// `MeshId` this result corresponds to.
-    pub mesh_id: crate::resources::mesh_store::MeshId,
+    pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
 }
 
 impl ViewportGpuResources {

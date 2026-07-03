@@ -1,4 +1,4 @@
-use super::*;
+use crate::resources::*;
 
 impl ViewportGpuResources {
     /// Upload a 3D scalar field to the GPU as an `R32Float` 3D texture.

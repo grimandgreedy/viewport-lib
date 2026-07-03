@@ -1,6 +1,6 @@
 //! Screen-space decal pipeline (D1 + D2 + D5).
 
-use crate::resources::mesh_store::MeshId;
+use crate::resources::mesh::mesh_store::MeshId;
 use crate::resources::{DualPipeline, ViewportGpuResources};
 use wgpu::util::DeviceExt as _;
 

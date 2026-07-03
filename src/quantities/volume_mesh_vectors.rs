@@ -14,7 +14,7 @@
 //! Use [`volume_mesh_cell_vectors_to_glyphs`].
 
 use crate::GlyphItem;
-use crate::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
+use crate::resources::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 
 /// Convert per-vertex world-space vectors on a volume mesh to a [`GlyphItem`].
 ///

@@ -61,7 +61,7 @@ pub enum SubObjectRef {
     /// [`VolumeData`](crate::geometry::marching_cubes::VolumeData).
     Voxel(u32),
     /// A cell within an unstructured volume mesh, by its index in
-    /// [`VolumeMeshData::cells`](crate::resources::volume_mesh::VolumeMeshData::cells).
+    /// [`VolumeMeshData::cells`](crate::resources::volume::volume_mesh::VolumeMeshData::cells).
     ///
     /// Produced by [`pick_transparent_volume_mesh_cpu`](crate::interaction::query::picking::pick_transparent_volume_mesh_cpu)
     /// and [`pick_transparent_volume_mesh_rect`](crate::interaction::query::picking::pick_transparent_volume_mesh_rect).
@@ -361,14 +361,14 @@ pub struct PolylineSelectionInfo {
 /// Geometry info needed to highlight a [`SubObjectRef::Cell`] selection.
 ///
 /// Contains the vertex positions and cell connectivity from the host's
-/// [`VolumeMeshData`](crate::resources::volume_mesh::VolumeMeshData). Pass one
+/// [`VolumeMeshData`](crate::resources::volume::volume_mesh::VolumeMeshData). Pass one
 /// entry per volume mesh object via [`SubSelectionRef::with_cells`].
 pub struct CellSelectionInfo {
     /// World-space vertex positions. Indexed by cell connectivity entries.
     pub positions: Vec<[f32; 3]>,
     /// Cell connectivity. Each entry is `[u32; 8]` with
     /// `u32::MAX` padding for cells with fewer than 8 vertices (same encoding
-    /// as [`VolumeMeshData::cells`](crate::resources::volume_mesh::VolumeMeshData::cells)).
+    /// as [`VolumeMeshData::cells`](crate::resources::volume::volume_mesh::VolumeMeshData::cells)).
     pub cells: Vec<[u32; 8]>,
 }
 

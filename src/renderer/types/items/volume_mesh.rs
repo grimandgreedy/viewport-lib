@@ -43,7 +43,7 @@ pub struct VolumeMeshItem {
     ///
     /// Always populated. Used for the opaque draw, the selection-outline mask,
     /// and face- or cell-level picking via [`face_to_cell`](Self::face_to_cell).
-    pub boundary_mesh_id: crate::resources::mesh_store::MeshId,
+    pub boundary_mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Maps each boundary triangle to its originating cell index.
     ///
     /// `face_to_cell[face_index]` is the cell index in the original
@@ -65,7 +65,7 @@ pub struct VolumeMeshItem {
     /// Populated by [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency).
     /// Without it, transparent items still render but cell-level picking via
     /// `renderer.pick()` falls back to face-on-boundary hits only.
-    pub volume_mesh_data: Option<std::sync::Arc<crate::resources::volume_mesh::VolumeMeshData>>,
+    pub volume_mesh_data: Option<std::sync::Arc<crate::resources::volume::volume_mesh::VolumeMeshData>>,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
     /// Per-item render settings (visibility, opacity, pick identity, selection state).
@@ -96,7 +96,7 @@ impl VolumeMeshItem {
     /// host code that already has a `MeshId` and `face_to_cell` map (for
     /// example after a clipped re-upload).
     pub fn new(
-        boundary_mesh_id: crate::resources::mesh_store::MeshId,
+        boundary_mesh_id: crate::resources::mesh::mesh_store::MeshId,
         face_to_cell: Vec<u32>,
     ) -> Self {
         Self {
@@ -144,7 +144,7 @@ impl VolumeMeshItem {
     /// [`replace_clipped_volume_mesh`](crate::resources::ViewportGpuResources::replace_clipped_volume_mesh).
     pub fn update_mesh(
         &mut self,
-        boundary_mesh_id: crate::resources::mesh_store::MeshId,
+        boundary_mesh_id: crate::resources::mesh::mesh_store::MeshId,
         face_to_cell: Vec<u32>,
     ) {
         self.boundary_mesh_id = boundary_mesh_id;

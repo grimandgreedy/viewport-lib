@@ -14,7 +14,7 @@ pub(super) const INSTANCING_THRESHOLD: usize = 1;
 /// A batch of instances sharing the same mesh and material textures, drawn in one call.
 #[derive(Debug, Clone)]
 pub(crate) struct InstancedBatch {
-    pub mesh_id: crate::resources::mesh_store::MeshId,
+    pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     pub texture_id: Option<u64>,
     pub normal_map_id: Option<u64>,
     pub ao_map_id: Option<u64>,

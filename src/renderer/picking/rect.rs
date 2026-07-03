@@ -209,7 +209,7 @@ impl ViewportRenderer {
                 let Some(data) = item.volume_mesh_data.as_deref() else {
                     continue;
                 };
-                use crate::resources::volume_mesh::CELL_SENTINEL;
+                use crate::resources::volume::volume_mesh::CELL_SENTINEL;
                 let id = item.settings.pick_id.0;
                 let mvp = view_proj * glam::Mat4::from_cols_array_2d(&item.model);
                 let mut item_hit = false;

@@ -3,7 +3,7 @@
 //! When `render_scale < 1.0`, the scene is rendered into a scaled intermediate
 //! texture and then upscaled to the surface via bilinear filtering.
 
-use super::ViewportGpuResources;
+use crate::resources::ViewportGpuResources;
 
 /// Per-viewport intermediate render target for dynamic resolution rendering.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use crate::resources::*;
 
 impl ViewportGpuResources {
     /// Ensure the instanced pipelines and bind group layout are created.
@@ -82,7 +82,7 @@ impl ViewportGpuResources {
             })
         };
 
-        let instanced_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+        let instanced_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "instanced_pipeline_layout",
             &self.camera_bind_group_layout,
@@ -91,7 +91,7 @@ impl ViewportGpuResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let ldr_inst = crate::resources::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
+        let ldr_inst = crate::resources::mesh::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
             device,
             &instanced_layout,
             &instanced_shader,
@@ -169,12 +169,12 @@ impl ViewportGpuResources {
         let shadow_instanced = make_shadow_instanced(
             "shadow_instanced_pipeline",
             Some(wgpu::Face::Front),
-            crate::resources::mesh_pipelines::CSM_SHADOW_BIAS,
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
         );
         let shadow_instanced_two_sided = make_shadow_instanced(
             "shadow_instanced_two_sided_pipeline",
             None,
-            crate::resources::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
         );
 
         // Allocate 4 per-cascade uniform buffers (64 bytes each = one mat4x4) and
@@ -233,7 +233,7 @@ impl ViewportGpuResources {
                 source: wgpu::ShaderSource::Wgsl(composed.into()),
             })
         };
-        let inst_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+        let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_pipeline_layout",
             &self.camera_bind_group_layout,
@@ -242,7 +242,7 @@ impl ViewportGpuResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let hdr_inst = crate::resources::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
+        let hdr_inst = crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
             device,
             &inst_layout,
             &inst_shader,
@@ -277,16 +277,17 @@ impl ViewportGpuResources {
                 source: wgpu::ShaderSource::Wgsl(composed.into()),
             })
         };
-        let instanced_oit_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
-            device,
-            "oit_instanced_pipeline_layout",
-            &self.camera_bind_group_layout,
-            instance_bgl,
-            self.deform
-                .enabled
-                .then_some(&self.deform.bind_group_layout),
-        );
-        let pipeline = crate::resources::mesh_pipelines::build_oit_instanced_pipeline(
+        let instanced_oit_layout =
+            crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
+                device,
+                "oit_instanced_pipeline_layout",
+                &self.camera_bind_group_layout,
+                instance_bgl,
+                self.deform
+                    .enabled
+                    .then_some(&self.deform.bind_group_layout),
+            );
+        let pipeline = crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
             device,
             &instanced_oit_layout,
             &instanced_oit_shader,
@@ -562,7 +563,7 @@ impl ViewportGpuResources {
                 source: wgpu::ShaderSource::Wgsl(composed.into()),
             })
         };
-        let inst_cull_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+        let inst_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_cull_pipeline_layout",
             &self.camera_bind_group_layout,
@@ -571,13 +572,14 @@ impl ViewportGpuResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let hdr_solid_cull = crate::resources::mesh_pipelines::build_hdr_instanced_cull_pipeline(
-            device,
-            &inst_cull_layout,
-            &instanced_shader,
-        );
+        let hdr_solid_cull =
+            crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline(
+                device,
+                &inst_cull_layout,
+                &instanced_shader,
+            );
         let hdr_solid_cull_two_sided =
-            crate::resources::mesh_pipelines::build_hdr_instanced_cull_two_sided_pipeline(
+            crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_two_sided_pipeline(
                 device,
                 &inst_cull_layout,
                 &instanced_shader,
@@ -595,7 +597,7 @@ impl ViewportGpuResources {
                 source: wgpu::ShaderSource::Wgsl(composed.into()),
             })
         };
-        let oit_cull_layout = crate::resources::mesh_pipelines::instanced_pipeline_layout(
+        let oit_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "oit_instanced_cull_pipeline_layout",
             &self.camera_bind_group_layout,
@@ -604,7 +606,7 @@ impl ViewportGpuResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let oit_cull = crate::resources::mesh_pipelines::build_oit_instanced_pipeline(
+        let oit_cull = crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
             device,
             &oit_cull_layout,
             &oit_shader,
@@ -705,12 +707,12 @@ impl ViewportGpuResources {
         let shadow_instanced_cull = make_shadow_cull(
             "shadow_instanced_cull_pipeline",
             Some(wgpu::Face::Front),
-            crate::resources::mesh_pipelines::CSM_SHADOW_BIAS,
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
         );
         let shadow_instanced_cull_two_sided = make_shadow_cull(
             "shadow_instanced_cull_two_sided_pipeline",
             None,
-            crate::resources::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
         );
         self.shadow_instanced_cull_pipeline = Some(shadow_instanced_cull);
         self.shadow_instanced_cull_two_sided_pipeline = Some(shadow_instanced_cull_two_sided);
@@ -905,7 +907,7 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         item: &crate::renderer::MeshInstanceItem,
     ) -> Option<crate::resources::types::MeshInstanceGpuData> {
-        let mesh_id = crate::resources::mesh_store::MeshId(item.mesh_id as usize);
+        let mesh_id = crate::resources::mesh::mesh_store::MeshId(item.mesh_id as usize);
         self.upload_mesh_instance_from(device, queue, item, mesh_id, None)
     }
 
@@ -919,7 +921,7 @@ impl ViewportGpuResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         item: &crate::renderer::MeshInstanceItem,
-        mesh_id: crate::resources::mesh_store::MeshId,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         indices: Option<&[u32]>,
     ) -> Option<crate::resources::types::MeshInstanceGpuData> {
         let instance_count = match indices {

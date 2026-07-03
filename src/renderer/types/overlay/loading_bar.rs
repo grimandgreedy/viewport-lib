@@ -48,7 +48,7 @@ pub struct LoadingBarItem {
     /// Corner radius of the bar rectangles in logical pixels.
     pub corner_radius: f32,
     /// Font for the label text. `None` uses the built-in default font.
-    pub font: Option<crate::resources::font::FontHandle>,
+    pub font: Option<crate::resources::overlay::font::FontHandle>,
 }
 
 impl Default for LoadingBarItem {

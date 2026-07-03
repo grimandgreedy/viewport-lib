@@ -220,7 +220,7 @@ impl App {
         // TVM carries no model matrix, so the tet is uploaded at its grid-cell
         // world position (row 2, col 2) by translating the vertices here.
         {
-            use viewport_lib::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
+            use viewport_lib::resources::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
             let p = cell(2, 2);
             let mut data = VolumeMeshData::default();
             data.positions = vec![

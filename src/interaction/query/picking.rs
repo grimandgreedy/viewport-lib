@@ -29,7 +29,7 @@
 //! picks the deformed silhouette automatically.
 use crate::geometry::marching_cubes::VolumeData;
 use crate::interaction::select::sub_object::SubObjectRef;
-use crate::resources::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
+use crate::resources::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 use crate::resources::{AttributeData, AttributeKind, AttributeRef};
 use crate::scene::traits::ViewportObject;
 use parry3d::math::{Pose, Vector};
@@ -1590,7 +1590,7 @@ mod tests {
 
         let mut scene = crate::scene::scene::Scene::new();
         scene.add(
-            Some(crate::resources::mesh_store::MeshId(0)),
+            Some(crate::resources::mesh::mesh_store::MeshId(0)),
             glam::Mat4::IDENTITY,
             crate::scene::material::Material::default(),
         );
@@ -1613,7 +1613,7 @@ mod tests {
 
         let mut scene = crate::scene::scene::Scene::new();
         scene.add(
-            Some(crate::resources::mesh_store::MeshId(0)),
+            Some(crate::resources::mesh::mesh_store::MeshId(0)),
             glam::Mat4::IDENTITY,
             crate::scene::material::Material::default(),
         );

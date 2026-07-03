@@ -945,7 +945,7 @@ pub(crate) struct OutlineUniform {
 }
 
 pub(crate) struct OutlineObjectBuffers {
-    pub mesh_id: crate::resources::mesh_store::MeshId,
+    pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     pub two_sided: bool,
     /// Per-instance deformer id for the picked node, or `None` when the node
     /// has no per-instance deformer data. When `Some` and the renderer has
@@ -1880,7 +1880,7 @@ pub struct PointCloudGpuData {
 /// scene instance array. Each batch is one draw call.
 pub struct MeshInstanceGpuData {
     /// Mesh handle used to look up the vertex / index buffers at draw time.
-    pub(crate) mesh_id: crate::resources::mesh_store::MeshId,
+    pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Number of instances in this batch (= draw instance count).
     pub(crate) instance_count: u32,
     /// Bind group (group 1): instance storage buf + albedo / sampler / normal / AO.
@@ -2184,7 +2184,7 @@ pub(crate) struct VolumeSurfaceSliceGpuData {
     // Keep uniform buffer alive.
     pub(crate) _uniform_buf: wgpu::Buffer,
     /// Mesh to draw (vertex + index buffers looked up from mesh_store at render time).
-    pub(crate) mesh_id: crate::resources::mesh_store::MeshId,
+    pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
 }
 
 // ---------------------------------------------------------------------------
@@ -2261,7 +2261,7 @@ pub struct LicSurfaceGpuData {
     /// Owned uniform buffer for the model matrix. Kept alive by this struct.
     pub(crate) _object_uniform_buf: wgpu::Buffer,
     /// MeshId used to look up vertex + index buffers in the render pass.
-    pub(crate) mesh_id: crate::resources::mesh_store::MeshId,
+    pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Name of the flow vector attribute for looking up the vertex buffer in the render pass.
     pub(crate) vector_attribute: String,
 }
@@ -2559,7 +2559,7 @@ pub struct ViewportGpuResources {
     /// Clustered-shading state: cluster grid, global light index list, and the
     /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
     /// group expose this state to every lit pipeline.
-    pub clustered: crate::resources::clustered::ClusteredResources,
+    pub clustered: crate::resources::gpu::clustered::ClusteredResources,
     /// Bind group (group 0) binding camera, light, clip-plane, and shadow uniforms.
     pub camera_bind_group: wgpu::BindGroup,
     /// Bind group layout for group 0 (shared by all scene pipelines).
@@ -2567,10 +2567,10 @@ pub struct ViewportGpuResources {
     /// Bind group layout for group 1 (per-object uniform: model, material, selection).
     pub object_bind_group_layout: wgpu::BindGroupLayout,
     /// Scene meshes (slotted storage with free-list removal).
-    pub(crate) mesh_store: crate::resources::mesh_store::MeshStore,
+    pub(crate) mesh_store: crate::resources::mesh::mesh_store::MeshStore,
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
-    pub(crate) lod_groups: crate::resources::lod::LodGroupStore,
+    pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,
     /// Per-vertex deformation sidecar storage: header uniform, dummy fallback
     /// buffers, and per-mesh slot bind groups. Every mesh-family pipeline
     /// binds `@group(2)` from this state; meshes without attached deformer
@@ -2735,7 +2735,7 @@ pub struct ViewportGpuResources {
     pub(crate) job_mesh_results: std::sync::Mutex<
         std::collections::HashMap<
             super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<crate::resources::mesh_store::MeshId>,
+            super::upload_jobs::ResultSlot<crate::resources::mesh::mesh_store::MeshId>,
         >,
     >,
     /// Typed result slots for async texture uploads (albedo + normal map),
@@ -2839,21 +2839,21 @@ pub struct ViewportGpuResources {
     pub(crate) job_volume_mesh_results: std::sync::Mutex<
         std::collections::HashMap<
             super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<(super::mesh_store::MeshId, Vec<u32>)>,
+            super::upload_jobs::ResultSlot<(crate::resources::mesh::mesh_store::MeshId, Vec<u32>)>,
         >,
     >,
     /// Typed result slots for async clipped-volume-mesh uploads.
     pub(crate) job_clipped_volume_mesh_results: std::sync::Mutex<
         std::collections::HashMap<
             super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<(super::mesh_store::MeshId, Vec<u32>)>,
+            super::upload_jobs::ResultSlot<(crate::resources::mesh::mesh_store::MeshId, Vec<u32>)>,
         >,
     >,
     /// Typed result slots for async sparse-volume-grid uploads.
     pub(crate) job_sparse_volume_grid_results: std::sync::Mutex<
         std::collections::HashMap<
             super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::mesh_store::MeshId>,
+            super::upload_jobs::ResultSlot<crate::resources::mesh::mesh_store::MeshId>,
         >,
     >,
     /// Typed result slots for async projected-tet-mesh uploads. Holds the
@@ -3600,14 +3600,14 @@ pub struct ViewportGpuResources {
     pub(crate) mc_render_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) mc_case_count_buf: Option<wgpu::Buffer>,
     pub(crate) mc_case_table_buf: Option<wgpu::Buffer>,
-    pub(crate) mc_volumes: Vec<crate::resources::gpu_marching_cubes::McVolumeGpuData>,
+    pub(crate) mc_volumes: Vec<crate::resources::volume::gpu_marching_cubes::McVolumeGpuData>,
     /// Outline mask pipeline for MC surfaces (stride-24 vertex buffer, draw_indirect). None until first selected item.
     pub(crate) mc_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- GPU particle systems ---
     /// Live particle systems indexed by `GpuParticleSystemId`. Slots can be
     /// reused after `drop_gpu_particle_system`.
-    pub(crate) particle_systems: Vec<Option<crate::resources::gpu_particles::ParticleSystem>>,
+    pub(crate) particle_systems: Vec<Option<crate::resources::gpu::gpu_particles::ParticleSystem>>,
     /// Bind group layout for the emit + sim compute pipelines (group 1:
     /// particle buffer + free-list buffer; emit/sim params are group 0).
     pub(crate) particle_sim_bgl: Option<wgpu::BindGroupLayout>,
@@ -3683,7 +3683,7 @@ pub struct ViewportGpuResources {
 
     // --- Font atlas (overlay text rendering) ---
     /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
-    pub(crate) glyph_atlas: super::font::GlyphAtlas,
+    pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
 
     // --- Overlay text pipeline (lazily created) ---
     /// Render pipeline for screen-space text and solid overlay quads.
@@ -3766,7 +3766,7 @@ pub struct ViewportGpuResources {
     /// Hierarchical-Z max-depth pyramid and its build pipelines. Lazily created
     /// the first frame occlusion culling is active; rebuilt when the depth
     /// target it samples changes size.
-    pub(crate) hiz: Option<crate::resources::hiz::HizState>,
+    pub(crate) hiz: Option<crate::resources::gpu::hiz::HizState>,
     /// When true, the main-camera GPU cull runs the HiZ occlusion test on top
     /// of the frustum test. Off by default (the test is scene-dependent and a
     /// safety valve against the one-frame-stale depth source).

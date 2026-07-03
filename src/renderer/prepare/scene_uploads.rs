@@ -108,7 +108,7 @@ impl ViewportRenderer {
                         reduced += 1;
                     }
                 }
-                let level_meshes: Vec<crate::resources::mesh_store::MeshId> =
+                let level_meshes: Vec<crate::resources::mesh::mesh_store::MeshId> =
                     group.levels().iter().map(|l| l.mesh).collect();
                 (level_meshes, buckets)
             };
@@ -148,7 +148,7 @@ impl ViewportRenderer {
         point_cloud_gpu_data: &mut Vec<crate::resources::PointCloudGpuData>,
         glyph_gpu_data: &mut Vec<crate::resources::GlyphGpuData>,
         sprite_gpu_data: &mut Vec<crate::resources::SpriteGpuData>,
-        particle_gpu_data: &mut Vec<crate::resources::gpu_particles::ParticleFrameData>,
+        particle_gpu_data: &mut Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
         tensor_glyph_gpu_data: &mut Vec<crate::resources::TensorGlyphGpuData>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -473,12 +473,12 @@ impl ViewportRenderer {
 
     pub(super) fn upload_implicit_decals_mc(
         resources: &mut ViewportGpuResources,
-        implicit_gpu_data: &mut Vec<crate::resources::implicit::ImplicitGpuItem>,
+        implicit_gpu_data: &mut Vec<crate::resources::volume::implicit::ImplicitGpuItem>,
         pick_implicit_items: &mut Vec<GpuImplicitPickItem>,
         decal_gpu_data: &mut Vec<crate::resources::decal::DecalGpuItem>,
         decal_cache: &mut std::collections::HashMap<u64, crate::resources::decal::DecalGpuItem>,
         decal_exclude_items: &mut Vec<crate::resources::decal::DecalExcludeGpuItem>,
-        mc_gpu_data: &mut Vec<crate::resources::gpu_marching_cubes::McFrameData>,
+        mc_gpu_data: &mut Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>,
         pick_mc_items: &mut Vec<GpuMcPickItem>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use rayon;
 
 use crate::interaction::select::selection::NodeId;
-use crate::resources::mesh_store::MeshId;
+use crate::resources::mesh::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
 use crate::scene::scene::Scene;
 
@@ -496,7 +496,7 @@ pub fn pick_scene_accelerated_cpu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resources::mesh_store::MeshId;
+    use crate::resources::mesh::mesh_store::MeshId;
     use crate::scene::material::Material;
 
     fn unit_cube_mesh() -> (Vec<[f32; 3]>, Vec<u32>) {
