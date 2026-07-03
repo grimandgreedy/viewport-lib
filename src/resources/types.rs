@@ -3050,79 +3050,34 @@ pub struct ViewportGpuResources {
     /// SSAO blur BGL: ssao_tex + sampler.
     pub(crate) ssao_blur_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Post-processing (HDR, bloom, SSAO) ---
-    /// HDR intermediate colour texture (Rgba16Float, viewport-sized).
-    pub(crate) hdr_texture: Option<wgpu::Texture>,
-    pub(crate) hdr_view: Option<wgpu::TextureView>,
-    /// HDR depth+stencil texture (Depth24PlusStencil8, viewport-sized, single-sample).
-    pub(crate) hdr_depth_texture: Option<wgpu::Texture>,
-    pub(crate) hdr_depth_view: Option<wgpu::TextureView>,
-    /// Depth-only view of hdr_depth_texture (for SSAO binding : depth aspect only).
-    pub(crate) hdr_depth_only_view: Option<wgpu::TextureView>,
-    /// Last HDR target size [w, h]. Used to detect resize.
-    pub(crate) hdr_size: [u32; 2],
-
+    // --- Post-processing shared pipelines / BGLs ---
+    // The viewport-sized textures, bind groups, and per-frame uniform buffers
+    // for these passes live in per-viewport ViewportHdrState. Only the shared,
+    // camera-independent pipelines and layouts sit here.
     /// Tone mapping pipeline (renders fullscreen tri, hdr_texture -> output).
     pub(crate) tone_map_pipeline: Option<wgpu::RenderPipeline>,
     /// Tone map bind group layout.
     pub(crate) tone_map_bgl: Option<wgpu::BindGroupLayout>,
-    /// Tone map bind group (rebuilt on HDR resize or placeholder change).
-    pub(crate) tone_map_bind_group: Option<wgpu::BindGroup>,
-    /// Tone map uniform buffer.
-    pub(crate) tone_map_uniform_buf: Option<wgpu::Buffer>,
 
-    /// Bloom threshold texture (Rgba16Float, full res).
-    pub(crate) bloom_threshold_texture: Option<wgpu::Texture>,
-    pub(crate) bloom_threshold_view: Option<wgpu::TextureView>,
-    /// Bloom ping (Rgba16Float, half res).
-    pub(crate) bloom_ping_texture: Option<wgpu::Texture>,
-    pub(crate) bloom_ping_view: Option<wgpu::TextureView>,
-    /// Bloom pong (Rgba16Float, half res).
-    pub(crate) bloom_pong_texture: Option<wgpu::Texture>,
-    pub(crate) bloom_pong_view: Option<wgpu::TextureView>,
     /// Shared bloom pipelines (threshold + blur use the same BGL, different bind groups).
     pub(crate) bloom_threshold_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) bloom_blur_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) bloom_threshold_bg: Option<wgpu::BindGroup>,
-    pub(crate) bloom_blur_h_bg: Option<wgpu::BindGroup>,
-    pub(crate) bloom_blur_v_bg: Option<wgpu::BindGroup>,
-    /// H-blur bind group that reads from bloom_pong (used for iteration passes 2+).
-    pub(crate) bloom_blur_h_pong_bg: Option<wgpu::BindGroup>,
-    /// Bloom threshold uniform buffer (threshold + intensity, written each frame).
-    pub(crate) bloom_uniform_buf: Option<wgpu::Buffer>,
-    /// Bloom H-blur uniform buffer (horizontal=1, constant).
-    pub(crate) bloom_h_uniform_buf: Option<wgpu::Buffer>,
-    /// Bloom V-blur uniform buffer (horizontal=0, constant).
-    pub(crate) bloom_v_uniform_buf: Option<wgpu::Buffer>,
 
-    /// SSAO result texture (R8Unorm, full res).
-    pub(crate) ssao_texture: Option<wgpu::Texture>,
-    pub(crate) ssao_view: Option<wgpu::TextureView>,
-    /// SSAO blur result texture (R8Unorm, full res).
-    pub(crate) ssao_blur_texture: Option<wgpu::Texture>,
-    pub(crate) ssao_blur_view: Option<wgpu::TextureView>,
-    /// 4x4 random rotation noise texture (Rgba8Unorm, REPEAT).
+    /// 4x4 random rotation noise texture (Rgba8Unorm, REPEAT). Shared across viewports.
     pub(crate) ssao_noise_texture: Option<wgpu::Texture>,
     pub(crate) ssao_noise_view: Option<wgpu::TextureView>,
     /// 64-sample hemisphere kernel (storage buffer, `vec4<f32>` per sample).
     pub(crate) ssao_kernel_buf: Option<wgpu::Buffer>,
     pub(crate) ssao_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) ssao_blur_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) ssao_bg: Option<wgpu::BindGroup>,
-    pub(crate) ssao_blur_bg: Option<wgpu::BindGroup>,
-    pub(crate) ssao_uniform_buf: Option<wgpu::Buffer>,
 
     // --- Depth of field shared resources ---
     pub(crate) dof_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) dof_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Contact shadow resources ---
-    pub(crate) contact_shadow_texture: Option<wgpu::Texture>,
-    pub(crate) contact_shadow_view: Option<wgpu::TextureView>,
+    // --- Contact shadow shared resources ---
     pub(crate) contact_shadow_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) contact_shadow_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) contact_shadow_bg: Option<wgpu::BindGroup>,
-    pub(crate) contact_shadow_uniform_buf: Option<wgpu::Buffer>,
 
     // --- Surface LIC shared resources ---
     /// Render pipeline: renders mesh with vector storage buffer -> lic_vector_texture (Rgba8Unorm).
