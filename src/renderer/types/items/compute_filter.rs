@@ -59,7 +59,7 @@ pub struct ComputeFilterItem {
 impl Default for ComputeFilterItem {
     fn default() -> Self {
         Self {
-            mesh_id: crate::resources::mesh::mesh_store::MeshId(0),
+            mesh_id: crate::resources::mesh::mesh_store::MeshId::INVALID,
             kind: ComputeFilterKind::Clip {
                 plane_normal: [0.0, 0.0, 1.0],
                 plane_dist: 0.0,

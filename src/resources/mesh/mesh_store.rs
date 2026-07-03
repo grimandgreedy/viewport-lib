@@ -1,30 +1,56 @@
-//! Slotted mesh storage with free-list removal.
+//! Slotted mesh storage with generational handles.
 //!
-//! `MeshStore` manages GPU mesh lifetimes using a slot-based approach:
-//! removed meshes leave `None` slots that are reused by subsequent inserts.
-//! This avoids invalidating existing `MeshId` handles when meshes are removed.
+//! `MeshStore` manages GPU mesh lifetimes using a slot-based approach: removed
+//! meshes leave empty slots that are reused by subsequent inserts. Each slot
+//! carries a generation counter that is bumped on removal, and a [`MeshId`]
+//! captures the generation it was issued against. A lookup with a handle whose
+//! generation no longer matches the slot returns `None`, so a stale handle held
+//! across a remove-then-reinsert cannot silently alias the new mesh.
 
 use crate::resources::GpuMesh;
 
-/// Opaque handle to a mesh in the store.
+/// Handle to a mesh in the store.
+///
+/// Carries the slot index plus the generation the slot had when the handle was
+/// issued. A handle whose generation is stale (its slot was freed and reused)
+/// resolves to `None` on lookup rather than aliasing a different mesh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MeshId(pub(crate) usize);
+pub struct MeshId {
+    pub(crate) index: u32,
+    pub(crate) generation: u32,
+}
 
 impl MeshId {
-    /// Create a `MeshId` from a raw index.
-    pub fn from_index(index: usize) -> Self {
-        Self(index)
+    /// A handle that refers to no mesh. Store lookups always return `None` for
+    /// it. Use it as the default / placeholder value where a real mesh has not
+    /// been assigned yet.
+    pub const INVALID: MeshId = MeshId {
+        index: u32::MAX,
+        generation: u32::MAX,
+    };
+
+    /// The raw slot index this handle points at. Used to index the parallel
+    /// per-mesh GPU arrays; not meaningful for [`MeshId::INVALID`].
+    pub fn index(&self) -> usize {
+        self.index as usize
     }
 
-    /// The raw index into the slot array.
-    pub fn index(&self) -> usize {
-        self.0
+    /// Construct a handle from raw parts. Crate-internal: outside code obtains a
+    /// `MeshId` from an upload call and treats it as opaque.
+    pub(crate) fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation }
     }
 }
 
-/// Slotted storage for GPU meshes with a free list for slot reuse.
+/// One mesh slot: the mesh (when occupied) and the slot's current generation.
+struct Slot {
+    mesh: Option<GpuMesh>,
+    generation: u32,
+}
+
+/// Slotted storage for GPU meshes with generational handles and a free list.
 pub(crate) struct MeshStore {
-    slots: Vec<Option<GpuMesh>>,
+    slots: Vec<Slot>,
     free_list: Vec<usize>,
 }
 
@@ -37,51 +63,78 @@ impl MeshStore {
         }
     }
 
-    /// Insert a mesh, reusing a free slot if available. Returns the assigned `MeshId`.
+    /// Insert a mesh, reusing a free slot if available. Returns the assigned
+    /// `MeshId` carrying the slot's current generation.
     pub fn insert(&mut self, mesh: GpuMesh) -> MeshId {
         if let Some(idx) = self.free_list.pop() {
-            self.slots[idx] = Some(mesh);
-            MeshId(idx)
+            let slot = &mut self.slots[idx];
+            slot.mesh = Some(mesh);
+            MeshId::new(idx as u32, slot.generation)
         } else {
             let idx = self.slots.len();
-            self.slots.push(Some(mesh));
-            MeshId(idx)
+            self.slots.push(Slot {
+                mesh: Some(mesh),
+                generation: 0,
+            });
+            MeshId::new(idx as u32, 0)
         }
     }
 
-    /// Get a reference to the mesh at the given ID, or `None` if the slot is empty/invalid.
+    /// Look up the live slot for `id`, or `None` if the index is out of range,
+    /// the slot is empty, or the handle's generation is stale.
+    fn live_slot(&self, id: MeshId) -> Option<&Slot> {
+        let slot = self.slots.get(id.index as usize)?;
+        if slot.generation != id.generation {
+            return None;
+        }
+        slot.mesh.is_some().then_some(slot)
+    }
+
+    /// Get a reference to the mesh at the given ID, or `None` if the slot is
+    /// empty, out of range, or the handle is stale.
     pub fn get(&self, id: MeshId) -> Option<&GpuMesh> {
-        self.slots.get(id.0)?.as_ref()
+        self.live_slot(id)?.mesh.as_ref()
     }
 
     /// Get a mutable reference to the mesh at the given ID.
     pub fn get_mut(&mut self, id: MeshId) -> Option<&mut GpuMesh> {
-        self.slots.get_mut(id.0)?.as_mut()
+        let slot = self.slots.get_mut(id.index as usize)?;
+        if slot.generation != id.generation {
+            return None;
+        }
+        slot.mesh.as_mut()
     }
 
     /// Replace the mesh at the given ID with a new one.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::MeshSlotEmpty`] if the slot is empty or out of bounds.
+    /// Returns [`ViewportError::MeshSlotEmpty`] if the slot is empty, out of
+    /// bounds, or the handle's generation is stale.
     pub fn replace(&mut self, id: MeshId, mesh: GpuMesh) -> crate::error::ViewportResult<()> {
-        match self.slots.get_mut(id.0) {
-            Some(slot) if slot.is_some() => {
-                *slot = Some(mesh);
+        match self.slots.get_mut(id.index as usize) {
+            Some(slot) if slot.generation == id.generation && slot.mesh.is_some() => {
+                slot.mesh = Some(mesh);
                 Ok(())
             }
-            _ => Err(crate::error::ViewportError::MeshSlotEmpty { index: id.0 }),
+            _ => Err(crate::error::ViewportError::MeshSlotEmpty {
+                index: id.index as usize,
+            }),
         }
     }
 
-    /// Remove a mesh, dropping its GPU buffers and pushing the slot to the free list.
+    /// Remove a mesh, dropping its GPU buffers, bumping the slot's generation,
+    /// and pushing the slot to the free list.
     ///
-    /// Returns `true` if a mesh was actually removed, `false` if the slot was already empty.
+    /// Returns `true` if a mesh was actually removed, `false` if the slot was
+    /// already empty, out of range, or the handle was stale.
     pub fn remove(&mut self, id: MeshId) -> bool {
-        if let Some(slot) = self.slots.get_mut(id.0) {
-            if slot.is_some() {
-                *slot = None;
-                self.free_list.push(id.0);
+        if let Some(slot) = self.slots.get_mut(id.index as usize) {
+            if slot.generation == id.generation && slot.mesh.is_some() {
+                slot.mesh = None;
+                // Bump so the just-removed handle no longer matches this slot.
+                slot.generation = slot.generation.wrapping_add(1);
+                self.free_list.push(id.index as usize);
                 return true;
             }
         }
@@ -90,7 +143,7 @@ impl MeshStore {
 
     /// Number of occupied (non-empty) slots.
     pub fn len(&self) -> usize {
-        self.slots.iter().filter(|s| s.is_some()).count()
+        self.slots.iter().filter(|s| s.mesh.is_some()).count()
     }
 
     /// Total number of slots (occupied + free).
@@ -98,7 +151,7 @@ impl MeshStore {
         self.slots.len()
     }
 
-    /// Whether the slot for the given ID contains a mesh.
+    /// Whether the slot for the given ID contains a live mesh.
     pub fn contains(&self, id: MeshId) -> bool {
         self.get(id).is_some()
     }

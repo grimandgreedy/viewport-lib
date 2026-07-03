@@ -8,6 +8,10 @@
 
 An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that skips objects fully hidden behind closer ones, on top of the existing frustum cull, so no time is spent drawing things you cannot see. It reuses the previous frame's depth, so it assumes mostly static occluders (a fast-moving blocker can briefly hide something visible, correcting next frame) and applies to one view at a time. It helps most in dense, front-to-back scenes like a busy street and does little in open views. Per-object cull counts are added to `FrameStats`: `gpu_culled_total`, `gpu_frustum_visible`, and `gpu_visible_instances`.
 
+#### Compressed texture uploads
+
+`upload_compressed_texture` and `begin_upload_compressed_texture` take pre-compressed block data with a full mip chain, keyed on `wgpu::TextureFormat` (BC7, BC5, BC4, ASTC, ETC2). The block-row math is data-driven, so desktop BC and mobile ASTC/ETC2 formats all upload through the same path. `supports_texture_format` reports whether the device can sample a given format, so a consumer chooses compressed or uncompressed per platform. Encoding stays in the asset pipeline: the library uploads the block data, it does not compress. Compressed textures use roughly a quarter of the VRAM of uncompressed RGBA8, which is what lets large scenes stay resident. Block-compressed textures must have block-aligned dimensions (a multiple of 4 for BC); an upload whose base size is not aligned returns `CompressedTextureNotBlockAligned` up front rather than failing later on the GPU, so a consumer can pad or fall back to an uncompressed upload for odd-sized textures.
+
 ### Improvements
 
 - **New primitives**: `torus_ellipse` and `torus_stadium`.
@@ -22,11 +26,21 @@ An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that 
 
 - **`ScatterVolumeItem` is now `#[non_exhaustive]`**, matching the other scene item types, so future fields can be added without breaking callers. Construct it with `ScatterVolumeItem::new(volume)` and set fields afterwards rather than with a struct literal.
 
+- **`MeshId` is now a generational handle** and is checked on lookup: a handle whose mesh was removed (its slot freed and reused by a later upload) resolves to no mesh rather than aliasing whatever now occupies the slot. `MeshId::from_index` is removed; use the handle returned by `upload_mesh_data`, or `MeshId::INVALID` for a not-yet-assigned placeholder. `MeshInstanceItem::mesh_id` and `ParticleRender::Mesh::mesh_id` now take a `MeshId` instead of a raw integer index.
+
 ### Bug Fixes
 
 #### Per-object meshes ignored their level of detail
 
 Objects drawn outside the instanced batch path always drew at full detail and never dropped out when they shrank into the distance, even though the stats said they should. They now switch to simpler geometry with distance and cull once too small, the same as the rest of the scene.
+
+#### Decals drew a full-screen quad each
+
+Every screen-space decal rasterized a full-screen quad, so a scene with many decals paid full-screen overdraw of the decal shader once per decal (a street pack with 173 decals spent roughly two-thirds of its scene-pass time here). Each decal is now confined to a scissor rect covering only its projected screen footprint, and decals entirely off screen are skipped. The projection and shading are unchanged; far fewer fragments run.
+
+#### Decals rebuilt their GPU resources every frame
+
+The decal pass recreated a uniform buffer and bind group for every decal every frame, even though decals are static, flooding the driver with per-frame descriptor-set and buffer allocations. Decal GPU resources are now cached across frames and rebuilt only when a decal actually changes, so a static decal allocates once. This is transparent to consumers; the decal submission API is unchanged.
 
 ## [0.18.3]
 

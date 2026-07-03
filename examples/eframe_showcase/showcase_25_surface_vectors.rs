@@ -73,7 +73,7 @@ impl Default for SvState {
             scale: 0.15,
             density: 1.0,
             glyph_density: -1.0,
-            mesh_index: [MeshId::from_index(0); 3],
+            mesh_index: [MeshId::INVALID; 3],
             positions: [Vec::new(), Vec::new(), Vec::new()],
             normals: [Vec::new(), Vec::new(), Vec::new()],
             tangents: [None, None, None],

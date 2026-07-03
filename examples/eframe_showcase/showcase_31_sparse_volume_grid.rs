@@ -363,12 +363,12 @@ impl Default for SvgState {
     fn default() -> Self {
         Self {
             built: false,
-            mesh_id: MeshId::from_index(0),
-            shell_id: MeshId::from_index(0),
-            terrain_id: MeshId::from_index(0),
+            mesh_id: MeshId::INVALID,
+            shell_id: MeshId::INVALID,
+            terrain_id: MeshId::INVALID,
             colourmap: BuiltinColourmap::Viridis,
             field: SvgField::CellHeight,
-            paint_mesh_id: MeshId::from_index(0),
+            paint_mesh_id: MeshId::INVALID,
             paint_data: SparseVolumeGridData::default(),
             paint_colour: PAINT_SWATCHES[1].0, // red
             paint_dirty: false,

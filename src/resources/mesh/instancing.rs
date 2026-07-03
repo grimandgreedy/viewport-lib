@@ -845,8 +845,7 @@ impl ViewportGpuResources {
         queue: &wgpu::Queue,
         item: &crate::renderer::MeshInstanceItem,
     ) -> Option<crate::resources::types::MeshInstanceGpuData> {
-        let mesh_id = crate::resources::mesh::mesh_store::MeshId(item.mesh_id as usize);
-        self.upload_mesh_instance_from(device, queue, item, mesh_id, None)
+        self.upload_mesh_instance_from(device, queue, item, item.mesh_id, None)
     }
 
     /// Build a mesh-instance batch from a subset of an item's instances drawn

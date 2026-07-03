@@ -170,7 +170,7 @@ fn instanced_item_without_group_makes_one_batch() {
         .unwrap();
 
     let mut item = MeshInstanceItem::default();
-    item.mesh_id = mesh.index() as u64;
+    item.mesh_id = mesh;
     item.transforms = vec![translate(-3.0), translate(-300.0)];
 
     let fd = frame_looking_down_z(item);

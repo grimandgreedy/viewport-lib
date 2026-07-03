@@ -1405,11 +1405,7 @@ impl ViewportRenderer {
                         let Some(draw_bg) = system.draw_bg_mesh.as_ref() else {
                             continue;
                         };
-                        let Some(mesh) = resources.mesh_store.get(
-                            crate::resources::mesh::mesh_store::MeshId::from_index(
-                                mesh_id as usize,
-                            ),
-                        ) else {
+                        let Some(mesh) = resources.mesh_store.get(mesh_id) else {
                             continue;
                         };
                         pass.set_pipeline(dual.for_format(true));

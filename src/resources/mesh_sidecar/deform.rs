@@ -1306,7 +1306,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId(7);
+        let mesh = MeshId::new(7, 0);
         assert_eq!(s.flag_bits(mesh), 0);
         assert!(!s.has_slot(mesh, 0));
 
@@ -1327,7 +1327,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId(11);
+        let mesh = MeshId::new(11, 0);
         s.attach_slot(&device, mesh, 1, 1, &[0u8; 16]);
         assert_eq!(s.flag_bits(mesh), 0b0010);
 
@@ -1343,7 +1343,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId(42);
+        let mesh = MeshId::new(42, 0);
         let instance = 3u32;
         assert_eq!(s.flag_bits(mesh), 0);
 
@@ -1380,7 +1380,7 @@ mod tests {
         };
         let mut s = DeformationState::new(&device);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            s.attach_slot(&device, MeshId(0), DEFORM_SLOT_COUNT, 1, &[0u8; 4])
+            s.attach_slot(&device, MeshId::new(0, 0), DEFORM_SLOT_COUNT, 1, &[0u8; 4])
         }));
         assert!(result.is_err());
     }

@@ -1450,7 +1450,7 @@ mod tests {
         let positions = vec![[0.0f32, 0.0, 0.0]];
         let normals = vec![[0.0f32, 1.0, 0.0]];
         let weights = single_vertex_weights(0, 1.0);
-        let mesh_id = crate::resources::mesh::mesh_store::MeshId(0);
+        let mesh_id = crate::resources::mesh::mesh_store::MeshId::new(0, 0);
 
         let mut runtime = ViewportRuntime::new().with_plugin(SkeletonPlugin::new(
             sk, mesh_id, positions, normals, weights,
@@ -1472,7 +1472,7 @@ mod tests {
             parent: None,
             inverse_bind: glam::Affine3A::IDENTITY,
         }]);
-        let mesh_id = crate::resources::mesh::mesh_store::MeshId(0);
+        let mesh_id = crate::resources::mesh::mesh_store::MeshId::new(0, 0);
         let mut runtime = ViewportRuntime::new().with_plugin(SkeletonPlugin::new(
             sk,
             mesh_id,
@@ -1492,7 +1492,7 @@ mod tests {
             parent: None,
             inverse_bind: glam::Affine3A::IDENTITY,
         }]);
-        let mesh_id = crate::resources::mesh::mesh_store::MeshId(0);
+        let mesh_id = crate::resources::mesh::mesh_store::MeshId::new(0, 0);
         let mut runtime = ViewportRuntime::new().with_plugin(SkeletonPlugin::new(
             sk,
             mesh_id,

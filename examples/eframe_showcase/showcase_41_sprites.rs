@@ -222,7 +222,7 @@ impl Default for SpriteState {
         Self {
             built: false,
             sub_mode: SpriteSubMode::Particles,
-            sphere_id: MeshId::from_index(0),
+            sphere_id: MeshId::INVALID,
             sprite_tex: 0,
             placed_positions: Vec::new(),
             particles: Vec::new(),
@@ -255,7 +255,7 @@ impl Default for SpriteState {
             atlas_positions: Vec::new(),
             atlas_frame: 0,
             atlas_time: 0.0,
-            cube_id: MeshId::from_index(0),
+            cube_id: MeshId::INVALID,
             demo_time: 0.0,
             trails: Vec::new(),
             trail_length: 80,
@@ -265,7 +265,7 @@ impl Default for SpriteState {
             trail_streak_enabled: false,
             flame_tex: 0,
             shockwave_tex: 0,
-            wall_id: MeshId::from_index(0),
+            wall_id: MeshId::INVALID,
             distortion_strength: 60.0,
             lit_angle: 0.0,
             lit_auto_rotate: true,
@@ -584,7 +584,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
     let mut mesh_particle_cfg = GpuParticleSystemConfig::default();
     mesh_particle_cfg.capacity = 30_000;
     mesh_particle_cfg.render = ParticleRender::Mesh {
-        mesh_id: cube_id.index() as u64,
+        mesh_id: cube_id,
         texture_id: None,
         blend: SpriteBlend::AlphaBlend,
         align: ParticleMeshAlign::Random,
@@ -1652,7 +1652,7 @@ pub(crate) fn mesh_instance_items(app: &App) -> Vec<MeshInstanceItem> {
         colours.push([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 0.8]);
     }
     let mut item = MeshInstanceItem::default();
-    item.mesh_id = app.sprite_state.cube_id.index() as u64;
+    item.mesh_id = app.sprite_state.cube_id;
     item.transforms = transforms;
     item.colours = colours;
     item.blend = SpriteBlend::Additive;

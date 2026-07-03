@@ -92,7 +92,7 @@ pub struct SceneRenderItem {
 impl Default for SceneRenderItem {
     fn default() -> Self {
         Self {
-            mesh_id: crate::resources::mesh::mesh_store::MeshId(0),
+            mesh_id: crate::resources::mesh::mesh_store::MeshId::INVALID,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             settings: ItemSettings::default(),
             show_normals: false,

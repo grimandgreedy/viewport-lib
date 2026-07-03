@@ -2616,13 +2616,49 @@ mod override_tests {
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Fabricate an id that is beyond the store.
-        let bogus = crate::resources::mesh::mesh_store::MeshId::from_index(9999);
+        let bogus = crate::resources::mesh::mesh_store::MeshId::new(9999, 0);
         let buf = dummy_override_buffer(&device, 4);
         let err = resources.set_position_override_buffer(bogus, buf);
         assert!(matches!(
             err,
             Err(crate::error::ViewportError::MeshIndexOutOfBounds { .. })
         ));
+    }
+
+    #[test]
+    fn stale_mesh_handle_does_not_alias_after_slot_reuse() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // Upload a mesh, then remove it. The handle is now stale.
+        let id1 = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        assert!(resources.mesh_store.get(id1).is_some());
+        assert!(resources.remove_mesh(id1));
+        assert!(
+            resources.mesh_store.get(id1).is_none(),
+            "a removed handle must not resolve"
+        );
+
+        // The next upload reuses the freed slot but at a new generation.
+        let id2 = resources
+            .upload_mesh_data(&device, &primitives::cube(2.0))
+            .unwrap();
+        assert_eq!(id1.index(), id2.index(), "the freed slot should be reused");
+        assert_ne!(
+            id1, id2,
+            "the reused slot must carry a new generation so the old handle differs"
+        );
+        assert!(resources.mesh_store.get(id2).is_some());
+        assert!(
+            resources.mesh_store.get(id1).is_none(),
+            "the stale handle must not alias the mesh now occupying its slot"
+        );
     }
 }
 

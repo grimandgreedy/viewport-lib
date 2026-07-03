@@ -38,7 +38,7 @@ impl Default for IsolinesState {
         Self {
             built: false,
             scene: Scene::new(),
-            mesh_index: MeshId::from_index(0),
+            mesh_index: MeshId::INVALID,
             positions: Vec::new(),
             indices: Vec::new(),
             scalars: Vec::new(),

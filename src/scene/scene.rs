@@ -1449,7 +1449,7 @@ mod tests {
         let mut scene = Scene::new();
         // A node needs a mesh to be collected; the LOD group rides alongside.
         let id = scene.add(
-            Some(MeshId::from_index(0)),
+            Some(MeshId::new(0, 0)),
             glam::Mat4::IDENTITY,
             Material::default(),
         );
@@ -1622,7 +1622,11 @@ mod tests {
     fn test_layer_visibility_hides_nodes() {
         let mut scene = Scene::new();
         let layer = scene.add_layer("Hidden");
-        let id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+        let id = scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
         scene.set_layer(id, layer);
         scene.set_layer_visible(layer, false);
 
@@ -1633,7 +1637,11 @@ mod tests {
     #[test]
     fn test_collect_skips_invisible_nodes() {
         let mut scene = Scene::new();
-        let id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+        let id = scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
         scene.set_visible(id, false);
 
         let items = scene.collect_render_items(&Selection::new());
@@ -1652,7 +1660,11 @@ mod tests {
     #[test]
     fn test_collect_marks_selected() {
         let mut scene = Scene::new();
-        let id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+        let id = scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
 
         let mut sel = Selection::new();
         sel.select_one(id);
@@ -1679,10 +1691,14 @@ mod tests {
     fn test_collect_culled_filters_offscreen() {
         let mut scene = Scene::new();
         // Object at origin : should be visible.
-        let visible_id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+        let visible_id = scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
         // Object far behind camera : should be culled.
         let _behind = scene.add(
-            Some(MeshId(1)),
+            Some(MeshId::new(1, 0)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 100.0)),
             Material::default(),
         );
@@ -1711,7 +1727,7 @@ mod tests {
         assert_eq!(stats.culled, 1);
         assert_eq!(items.len(), 1);
         // The visible item should be the one at the origin (mesh_index 0).
-        assert_eq!(items[0].mesh_id.index(), visible_id as usize - 1); // MeshId(0).index() == 0
+        assert_eq!(items[0].mesh_id.index(), visible_id as usize - 1); // MeshId::new(0, 0).index() == 0
         let _ = visible_id; // suppress unused warning
     }
 
@@ -1770,7 +1786,11 @@ mod tests {
     fn test_locked_layer_suppresses_selection_in_render_items() {
         let mut scene = Scene::new();
         let layer_id = scene.add_layer("Locked");
-        let node_id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+        let node_id = scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
         scene.set_layer(node_id, layer_id);
         scene.set_layer_locked(layer_id, true);
 
@@ -1862,27 +1882,47 @@ mod tests {
     #[test]
     fn test_mesh_ref_count_zero_for_unused_mesh() {
         let scene = Scene::new();
-        assert_eq!(scene.mesh_ref_count(MeshId(42)), 0);
+        assert_eq!(scene.mesh_ref_count(MeshId::new(42, 0)), 0);
     }
 
     #[test]
     fn test_mesh_ref_count_correct_for_nodes() {
         let mut scene = Scene::new();
-        scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
-        scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
-        scene.add(Some(MeshId(1)), glam::Mat4::IDENTITY, Material::default());
-        assert_eq!(scene.mesh_ref_count(MeshId(0)), 2);
-        assert_eq!(scene.mesh_ref_count(MeshId(1)), 1);
+        scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
+        scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
+        scene.add(
+            Some(MeshId::new(1, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
+        assert_eq!(scene.mesh_ref_count(MeshId::new(0, 0)), 2);
+        assert_eq!(scene.mesh_ref_count(MeshId::new(1, 0)), 1);
     }
 
     #[test]
     fn test_mesh_ref_count_decreases_after_remove() {
         let mut scene = Scene::new();
-        let node_a = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
-        scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
-        assert_eq!(scene.mesh_ref_count(MeshId(0)), 2);
+        let node_a = scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
+        scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
+        assert_eq!(scene.mesh_ref_count(MeshId::new(0, 0)), 2);
         scene.remove(node_a);
-        assert_eq!(scene.mesh_ref_count(MeshId(0)), 1);
+        assert_eq!(scene.mesh_ref_count(MeshId::new(0, 0)), 1);
     }
 
     #[test]
@@ -1943,12 +1983,16 @@ mod tests {
 
         // 100 visible nodes at origin.
         for _ in 0..100 {
-            scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+            scene.add(
+                Some(MeshId::new(0, 0)),
+                glam::Mat4::IDENTITY,
+                Material::default(),
+            );
         }
         // 500 culled nodes behind camera (z >> 300 far plane).
         for _ in 0..500 {
             let mat = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 9000.0));
-            scene.add(Some(MeshId(0)), mat, Material::default());
+            scene.add(Some(MeshId::new(0, 0)), mat, Material::default());
         }
 
         assert!(scene.node_count() >= SPATIAL_THRESHOLD);
@@ -1981,7 +2025,11 @@ mod tests {
         let mut ids = Vec::new();
         // 600 nodes all at origin (all visible).
         for _ in 0..600 {
-            let id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+            let id = scene.add(
+                Some(MeshId::new(0, 0)),
+                glam::Mat4::IDENTITY,
+                Material::default(),
+            );
             ids.push(id);
         }
 
@@ -2011,7 +2059,11 @@ mod tests {
 
         let mut ids = Vec::new();
         for _ in 0..600 {
-            let id = scene.add(Some(MeshId(0)), glam::Mat4::IDENTITY, Material::default());
+            let id = scene.add(
+                Some(MeshId::new(0, 0)),
+                glam::Mat4::IDENTITY,
+                Material::default(),
+            );
             ids.push(id);
         }
 

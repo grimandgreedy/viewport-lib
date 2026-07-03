@@ -371,7 +371,7 @@ mod tests {
 
     fn lvl(min_screen_size: f32) -> LodLevel {
         // Mesh id is irrelevant to the selection math.
-        LodLevel::new(MeshId::from_index(0), min_screen_size)
+        LodLevel::new(MeshId::INVALID, min_screen_size)
     }
 
     #[test]

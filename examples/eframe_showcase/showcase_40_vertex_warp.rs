@@ -35,7 +35,7 @@ impl Default for VertexWarpState {
     fn default() -> Self {
         Self {
             built: false,
-            mesh_ids: [MeshId::from_index(0); 3],
+            mesh_ids: [MeshId::INVALID; 3],
             scale: 0.5,
         }
     }

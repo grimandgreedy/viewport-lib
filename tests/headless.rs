@@ -135,15 +135,13 @@ fn replace_mesh_data_bad_index() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    let result = renderer.resources_mut().replace_mesh_data(
-        &device,
-        &queue,
-        MeshId::from_index(999),
-        &box_mesh(),
-    );
+    let result =
+        renderer
+            .resources_mut()
+            .replace_mesh_data(&device, &queue, MeshId::INVALID, &box_mesh());
     assert!(matches!(
         result.unwrap_err(),
-        ViewportError::MeshIndexOutOfBounds { index: 999, .. }
+        ViewportError::MeshIndexOutOfBounds { .. }
     ));
 }
 
@@ -207,12 +205,17 @@ fn test_upload_reuses_freed_slot() {
         .unwrap();
     renderer.resources_mut().remove_mesh(idx1);
 
-    // Next upload should reuse the freed slot.
+    // Next upload should reuse the freed slot, but at a new generation so the
+    // old handle no longer matches.
     let idx2 = renderer
         .resources_mut()
         .upload_mesh_data(&device, &box_mesh())
         .unwrap();
-    assert_eq!(idx1, idx2, "freed slot should be reused");
+    assert_eq!(idx1.index(), idx2.index(), "freed slot should be reused");
+    assert_ne!(
+        idx1, idx2,
+        "reused slot must carry a new generation so the old handle differs"
+    );
 }
 
 #[test]

@@ -102,7 +102,7 @@ impl Default for IsState {
     fn default() -> Self {
         Self {
             built: false,
-            mesh_id: MeshId::from_index(0),
+            mesh_id: MeshId::INVALID,
             mc_mesh_id: None,
             depth_composite: true,
             resolution_div: 2,

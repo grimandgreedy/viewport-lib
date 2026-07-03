@@ -51,7 +51,7 @@ impl Default for DcState {
     fn default() -> Self {
         Self {
             built: false,
-            mesh_id: MeshId::from_index(0),
+            mesh_id: MeshId::INVALID,
             mode: DcMode::DepthComposite,
             pixels: Vec::new(),
             depths: Vec::new(),

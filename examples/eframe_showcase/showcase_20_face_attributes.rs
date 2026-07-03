@@ -39,7 +39,7 @@ impl Default for FaceAttrState {
         Self {
             scene: Scene::new(),
             built: false,
-            mesh_indices: [MeshId::from_index(0); 3],
+            mesh_indices: [MeshId::INVALID; 3],
             node_ids: [0; 3],
             colourmap: BuiltinColourmap::Viridis,
             opacity: 1.0,

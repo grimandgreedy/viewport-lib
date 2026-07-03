@@ -47,7 +47,7 @@ impl Default for ScalarFieldsState {
             bar_anchor: ScalarBarAnchor::BottomRight,
             bar_orientation: ScalarBarOrientation::Vertical,
             node_ids: [0; 3],
-            mesh_indices: [MeshId::from_index(0); 3],
+            mesh_indices: [MeshId::INVALID; 3],
             pick_positions: [Vec::new(), Vec::new(), Vec::new()],
             pick_indices: [Vec::new(), Vec::new(), Vec::new()],
             values: [Vec::new(), Vec::new(), Vec::new()],

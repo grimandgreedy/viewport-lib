@@ -179,7 +179,7 @@ pub(crate) fn submit_lod_items(app: &mut App, fd: &mut FrameData) {
     if st.lod_enabled {
         item.lod_group = Some(group);
     } else {
-        item.mesh_id = st.level_meshes[0].index() as u64;
+        item.mesh_id = st.level_meshes[0];
     }
     fd.scene.mesh_instances.push(item);
 }

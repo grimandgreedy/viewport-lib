@@ -89,7 +89,7 @@ pub enum ParticleRender {
     /// Unlit; the particle colour multiplies an optional albedo sample.
     Mesh {
         /// Mesh handle returned by `ViewportGpuResources::upload_mesh_data`.
-        mesh_id: u64,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
         /// Optional albedo texture handle. `None` renders flat-tinted.
         texture_id: Option<u64>,
         /// GPU blend state.
@@ -227,8 +227,12 @@ pub(crate) struct ParticleSystem {
 /// Which draw family the render loop should dispatch for this system.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum ParticleDrawRoute {
-    Sprite { lit: bool },
-    Mesh { mesh_id: u64 },
+    Sprite {
+        lit: bool,
+    },
+    Mesh {
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    },
 }
 
 /// Per-frame data for one particle system, populated in prepare and consumed

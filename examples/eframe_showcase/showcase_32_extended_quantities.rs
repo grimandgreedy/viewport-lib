@@ -182,14 +182,14 @@ impl Default for EqState {
         Self {
             built: false,
             sub_mode: EqSubMode::EdgeCornerScalars,
-            edge_mesh_ids: [MeshId::from_index(0); 3],
-            vm_mesh_id: MeshId::from_index(0),
+            edge_mesh_ids: [MeshId::INVALID; 3],
+            vm_mesh_id: MeshId::INVALID,
             vm_data: viewport_lib::VolumeMeshData::default(),
             pc_positions: Vec::new(),
             pc_scalars: Vec::new(),
             pc_radii: Vec::new(),
             pc_transp: Vec::new(),
-            pc_bg_mesh_id: MeshId::from_index(0),
+            pc_bg_mesh_id: MeshId::INVALID,
             colourmap: BuiltinColourmap::Viridis,
         }
     }
