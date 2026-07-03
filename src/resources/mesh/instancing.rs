@@ -661,14 +661,14 @@ impl ViewportGpuResources {
     /// Returns `None` if the required buffers or BGL are not yet allocated.
     pub(crate) fn get_shadow_cull_instance_bind_group<'a>(
         &self,
-        cull_state: &'a mut crate::resources::ViewportCullState,
+        shadow_cull: &'a mut crate::resources::ShadowCullState,
         device: &wgpu::Device,
         cascade_idx: usize,
     ) -> Option<&'a wgpu::BindGroup> {
-        if cull_state.shadow_cull_instance_bgs[cascade_idx].is_none() {
+        if shadow_cull.shadow_cull_instance_bgs[cascade_idx].is_none() {
             let bgl = self.shadow_cull_instance_bgl.as_ref()?;
             let inst_buf = self.instance_storage_buf.as_ref()?;
-            let vis_buf = cull_state.shadow_vis_bufs[cascade_idx].as_ref()?;
+            let vis_buf = shadow_cull.shadow_vis_bufs[cascade_idx].as_ref()?;
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("shadow_cull_instance_bg_{cascade_idx}")),
                 layout: bgl,
@@ -683,9 +683,9 @@ impl ViewportGpuResources {
                     },
                 ],
             });
-            cull_state.shadow_cull_instance_bgs[cascade_idx] = Some(bg);
+            shadow_cull.shadow_cull_instance_bgs[cascade_idx] = Some(bg);
         }
-        cull_state.shadow_cull_instance_bgs[cascade_idx].as_ref()
+        shadow_cull.shadow_cull_instance_bgs[cascade_idx].as_ref()
     }
 
     /// Get or create a cull-path bind group for the instanced cull pipeline.

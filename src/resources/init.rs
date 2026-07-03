@@ -2766,7 +2766,6 @@ impl ViewportGpuResources {
             backdrop_blur_bgl: None,
             backdrop_blur_sampler: None,
             frame_upload_bytes: 0,
-            hiz: None,
             occlusion_culling_enabled: false,
             depth_blit_pipeline: None,
             depth_blit_bgl: None,

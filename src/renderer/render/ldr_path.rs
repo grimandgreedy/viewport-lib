@@ -215,15 +215,16 @@ impl ViewportRenderer {
         }
         // -- End of scene render pass (dropped above). ---
 
-        // Copy the scene depth just written into the HiZ prev-depth target so
-        // next frame's occlusion cull can reproject it. Mirrors the HDR path's
-        // store at the end of `hdr_scene_pass`; without it, occlusion culling is
-        // a silent no-op on the LDR path. Only when occlusion is enabled (the
-        // depth was kept via `store_scene_depth`). `self.viewport_slots` and
-        // `self.resources` are disjoint fields, so both borrows coexist.
+        // Copy the scene depth just written into this viewport's HiZ prev-depth
+        // target so next frame's occlusion cull can reproject it. Mirrors the HDR
+        // path's `hdr_store_hiz_depth`; without it, occlusion culling is a silent
+        // no-op on the LDR path. Only when occlusion is enabled (the depth was
+        // kept via `store_scene_depth`). The depth view is read from `hdr` /
+        // `dyn_res` while the pyramid is written into `cull`, disjoint fields of
+        // the slot.
         if store_scene_depth {
             let view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
-            let slot = &self.viewport_slots[vp_idx];
+            let slot = &mut self.viewport_slots[vp_idx];
             let (depth_only_view, dw, dh) = if use_dyn_res {
                 let dr = slot.dyn_res.as_ref().unwrap();
                 (&dr.depth_only_view, dr.scaled_size[0], dr.scaled_size[1])
@@ -232,7 +233,7 @@ impl ViewportRenderer {
                 let tex = &slot_hdr.outline_depth_texture;
                 (&slot_hdr.outline_depth_only_view, tex.width(), tex.height())
             };
-            self.resources.store_hiz_prev_depth(
+            slot.cull.store_hiz_prev_depth(
                 device,
                 &mut encoder,
                 depth_only_view,

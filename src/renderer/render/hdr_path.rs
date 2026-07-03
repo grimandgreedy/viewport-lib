@@ -290,6 +290,7 @@ impl ViewportRenderer {
         };
 
         self.hdr_scene_pass(&ctx, &mut encoder);
+        self.hdr_store_hiz_depth(&ctx, &mut encoder);
         self.hdr_sprite_passes(&ctx, &mut encoder);
         self.hdr_ssaa_refraction(&ctx, &mut encoder);
         self.hdr_decals(&ctx, &mut encoder);
@@ -975,30 +976,44 @@ impl ViewportRenderer {
                 render_pass.draw(0..3, 0..1);
             }
         }
+    }
 
-        // Keep the depth just written for next frame's occlusion cull, which
-        // reprojects it into the new camera before building the HiZ pyramid.
-        // Only when occlusion culling is enabled, since the copy is otherwise
-        // unused. `slot_hdr` (a borrow of viewport_slots) and `self.resources`
-        // are disjoint fields, so both borrows coexist.
-        if self.resources.occlusion_culling_enabled() {
-            let use_ssaa = ssaa_factor > 1
-                && slot_hdr.ssaa_depth_texture.is_some()
-                && slot_hdr.ssaa_depth_only_view.is_some();
-            let (depth_view, depth_tex) = if use_ssaa {
-                (
-                    slot_hdr.ssaa_depth_only_view.as_ref().unwrap(),
-                    slot_hdr.ssaa_depth_texture.as_ref().unwrap(),
-                )
-            } else {
-                (&slot_hdr.hdr_depth_only_view, &slot_hdr.hdr_depth_texture)
-            };
-            let w = depth_tex.width();
-            let h = depth_tex.height();
-            let view_proj = frame.camera.render_camera.view_proj().to_cols_array_2d();
-            self.resources
-                .store_hiz_prev_depth(ctx.device, encoder, depth_view, w, h, view_proj);
+    /// Copy this viewport's scene depth into its HiZ prev-depth target for next
+    /// frame's occlusion cull, which reprojects it into the new camera before
+    /// building the pyramid. Runs right after the scene pass so it captures the
+    /// opaque depth, and only when occlusion culling is enabled (the copy is
+    /// otherwise unused).
+    fn hdr_store_hiz_depth(&mut self, ctx: &HdrFrameCtx, encoder: &mut wgpu::CommandEncoder) {
+        if !self.resources.occlusion_culling_enabled() {
+            return;
         }
+        let view_proj = ctx
+            .frame
+            .camera
+            .render_camera
+            .view_proj()
+            .to_cols_array_2d();
+        // Borrow the slot mutably and split its fields: the depth view is read
+        // from `hdr` while the pyramid is written into `cull`.
+        let slot = &mut self.viewport_slots[ctx.vp_idx];
+        let Some(slot_hdr) = slot.hdr.as_ref() else {
+            return;
+        };
+        let use_ssaa = ctx.ssaa_factor > 1
+            && slot_hdr.ssaa_depth_texture.is_some()
+            && slot_hdr.ssaa_depth_only_view.is_some();
+        let (depth_view, depth_tex) = if use_ssaa {
+            (
+                slot_hdr.ssaa_depth_only_view.as_ref().unwrap(),
+                slot_hdr.ssaa_depth_texture.as_ref().unwrap(),
+            )
+        } else {
+            (&slot_hdr.hdr_depth_only_view, &slot_hdr.hdr_depth_texture)
+        };
+        let w = depth_tex.width();
+        let h = depth_tex.height();
+        slot.cull
+            .store_hiz_prev_depth(ctx.device, encoder, depth_view, w, h, view_proj);
     }
 
     fn hdr_sprite_passes(&mut self, ctx: &HdrFrameCtx, encoder: &mut wgpu::CommandEncoder) {

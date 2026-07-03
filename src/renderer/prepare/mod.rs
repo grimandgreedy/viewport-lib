@@ -177,11 +177,6 @@ impl ViewportRenderer {
 
         let plugin_frame_index = self.plugin_frame_index;
 
-        // The shadow cull runs here in scene scope and reads slot 0's cull
-        // output buffers. Slots are otherwise grown in prepare_viewport_internal,
-        // which runs after this, so ensure slot 0 exists first.
-        self.ensure_viewport_slot(device, 0);
-
         let resources = &mut self.resources;
         let lighting = scene_fx.lighting;
 
@@ -283,7 +278,6 @@ impl ViewportRenderer {
         let (batches_reuploaded, batches_skipped) = if self.instancing.use_instancing {
             Self::prepare_instanced(
                 resources,
-                &mut self.viewport_slots[0].cull,
                 &mut self.instancing,
                 &instanceable,
                 scene_items,
@@ -699,7 +693,6 @@ impl ViewportRenderer {
         let shadow_start = std::time::Instant::now();
         Self::prepare_shadow_pass(
             resources,
-            &mut self.viewport_slots[0].cull,
             &mut self.instancing,
             &self.compute_filter_results,
             &self.item_type_plugins,

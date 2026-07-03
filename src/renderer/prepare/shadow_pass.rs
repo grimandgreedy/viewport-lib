@@ -8,7 +8,6 @@ impl ViewportRenderer {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare_shadow_pass(
         resources: &mut ViewportGpuResources,
-        cull_state: &mut crate::resources::ViewportCullState,
         instancing: &mut InstancingState,
         compute_filter_results: &[crate::resources::ComputeFilterResult],
         plugins: &std::collections::HashMap<
@@ -89,17 +88,31 @@ impl ViewportRenderer {
                         Some(crate::renderer::indirect::CullResources::new(device));
                 }
                 resources.ensure_cull_instance_pipelines(device);
-                for c in 0..light.effective_cascade_count {
-                    resources.get_shadow_cull_instance_bind_group(cull_state, device, c);
-                }
 
                 let instance_count = instancing.cached_instance_count as u32;
                 let batch_count = instancing.batches.len() as u32;
+                instancing
+                    .shadow_cull
+                    .ensure_outputs(device, instance_count, batch_count);
+                // Drop shadow cull bind groups whose binding-0 instance storage
+                // buffer was rebuilt this frame; ensure_outputs already handles a
+                // resized shadow-vis buffer.
+                if instancing.shadow_cull.built_gen != instancing.instance_gen {
+                    instancing.shadow_cull.shadow_cull_instance_bgs = [None, None, None, None];
+                    instancing.shadow_cull.built_gen = instancing.instance_gen;
+                }
+                for c in 0..light.effective_cascade_count {
+                    resources.get_shadow_cull_instance_bind_group(
+                        &mut instancing.shadow_cull,
+                        device,
+                        c,
+                    );
+                }
 
                 if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf)) = (
                     resources.instance_aabb_buf.as_ref(),
                     resources.batch_meta_buf.as_ref(),
-                    cull_state.batch_counter_buf.as_ref(),
+                    instancing.shadow_cull.batch_counter_buf.as_ref(),
                 ) {
                     let cull = instancing.cull_resources.as_ref().unwrap();
                     let mut shadow_cull_encoder =
@@ -108,8 +121,8 @@ impl ViewportRenderer {
                         });
                     for c in 0..light.effective_cascade_count {
                         if let (Some(shadow_vis_buf), Some(shadow_indirect_buf)) = (
-                            cull_state.shadow_vis_bufs[c].as_ref(),
-                            cull_state.shadow_indirect_bufs[c].as_ref(),
+                            instancing.shadow_cull.shadow_vis_bufs[c].as_ref(),
+                            instancing.shadow_cull.shadow_indirect_bufs[c].as_ref(),
                         ) {
                             let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(
                                 &light.cascade_view_projs[c],
@@ -176,7 +189,7 @@ impl ViewportRenderer {
                 if instancing.use_instancing {
                     let use_shadow_indirect = instancing.gpu_culling_enabled
                         && resources.shadow_instanced_cull_pipeline.is_some()
-                        && cull_state.shadow_vis_bufs[0].is_some();
+                        && instancing.shadow_cull.shadow_vis_bufs[0].is_some();
 
                     if use_shadow_indirect {
                         // GPU-culled indirect shadow path.
@@ -224,12 +237,12 @@ impl ViewportRenderer {
                                 continue;
                             };
                             let Some(inst_cull_bg) =
-                                cull_state.shadow_cull_instance_bgs[cascade].as_ref()
+                                instancing.shadow_cull.shadow_cull_instance_bgs[cascade].as_ref()
                             else {
                                 continue;
                             };
                             let Some(shadow_indirect_buf) =
-                                cull_state.shadow_indirect_bufs[cascade].as_ref()
+                                instancing.shadow_cull.shadow_indirect_bufs[cascade].as_ref()
                             else {
                                 continue;
                             };

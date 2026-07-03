@@ -3747,13 +3747,10 @@ pub struct ViewportGpuResources {
     pub(crate) decal_exclude_obj_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- HiZ occlusion culling ---
-    /// Hierarchical-Z max-depth pyramid and its build pipelines. Lazily created
-    /// the first frame occlusion culling is active; rebuilt when the depth
-    /// target it samples changes size.
-    pub(crate) hiz: Option<crate::resources::gpu::hiz::HizState>,
     /// When true, the main-camera GPU cull runs the HiZ occlusion test on top
     /// of the frustum test. Off by default (the test is scene-dependent and a
-    /// safety valve against the one-frame-stale depth source).
+    /// safety valve against the one-frame-stale depth source). The HiZ pyramid
+    /// itself is per-viewport and lives on `ViewportCullState::hiz`.
     pub(crate) occlusion_culling_enabled: bool,
 }
 
@@ -3776,26 +3773,24 @@ pub(crate) struct ViewportCullState {
     pub(crate) visibility_index_capacity: usize,
     /// Indirect draw args buffer for the main pass (one DrawIndexedIndirect per batch).
     pub(crate) indirect_args_buf: Option<wgpu::Buffer>,
-    /// Capacity (in batches) of the counter and indirect-args buffers below.
+    /// Capacity (in batches) of the counter and indirect-args buffers.
     pub(crate) batch_output_capacity: usize,
-    /// Indirect draw args buffers for shadow cascades (one per cascade).
-    pub(crate) shadow_indirect_bufs: [Option<wgpu::Buffer>; 4],
-    /// Per-cascade visibility index buffers for shadow GPU culling (same capacity
-    /// as `visibility_index_buf`).
-    pub(crate) shadow_vis_bufs: [Option<wgpu::Buffer>; 4],
     /// Per-texture-key bind groups for the main cull pipelines.
     /// Keyed by (albedo_id, normal_map_id, ao_map_id); invalidated when
     /// `visibility_index_buf` is resized.
     pub(crate) instance_cull_bind_groups:
         std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
-    /// Per-cascade instance+visibility bind groups for shadow cull path.
-    /// Invalidated when `shadow_vis_bufs` are reallocated.
-    pub(crate) shadow_cull_instance_bgs: [Option<wgpu::BindGroup>; 4],
     /// Generation of the shared instance buffers the main cull bind groups were
     /// built against. When it falls behind `InstancingState::instance_gen` the
     /// shared instance storage buffer was rebuilt, so those bind groups (which
     /// bind it at binding 0) are stale and get cleared.
     pub(crate) built_gen: u64,
+    /// Hierarchical-Z max-depth pyramid for this viewport's occlusion test.
+    /// Lazily created the first frame occlusion culling stores depth here, and
+    /// rebuilt when the depth target changes size. Per-viewport so two viewports
+    /// on different cameras reproject their own depth instead of clobbering a
+    /// shared pyramid.
+    pub(crate) hiz: Option<crate::resources::gpu::hiz::HizState>,
 }
 
 impl ViewportCullState {
@@ -3806,26 +3801,24 @@ impl ViewportCullState {
             visibility_index_capacity: 0,
             indirect_args_buf: None,
             batch_output_capacity: 0,
-            shadow_indirect_bufs: [None, None, None, None],
-            shadow_vis_bufs: [None, None, None, None],
             instance_cull_bind_groups: std::collections::HashMap::new(),
-            shadow_cull_instance_bgs: [None, None, None, None],
             built_gen: u64::MAX,
+            hiz: None,
         }
     }
 
     /// Allocate or grow this viewport's cull output buffers to fit the current
-    /// instance and batch counts. The per-instance visibility buffers grow with
-    /// `instance_count`; the per-batch counter and indirect-args buffers grow
-    /// with `batch_count`. Uses the same 2x growth as the shared input buffers.
-    /// Bind groups referencing a reallocated buffer are cleared.
+    /// instance and batch counts. The visibility buffer grows with
+    /// `instance_count`; the counter and indirect-args buffers grow with
+    /// `batch_count`. Uses the same 2x growth as the shared input buffers. Bind
+    /// groups referencing a reallocated buffer are cleared.
     pub(crate) fn ensure_outputs(
         &mut self,
         device: &wgpu::Device,
         instance_count: u32,
         batch_count: u32,
     ) {
-        // Per-instance visibility buffers, sized like the shared AABB buffer.
+        // Visibility buffer, sized like the shared AABB buffer.
         let max_instances = (device.limits().max_storage_buffer_binding_size as usize)
             / std::mem::size_of::<InstanceAabb>();
         let instance_count = (instance_count as usize).min(max_instances);
@@ -3839,22 +3832,11 @@ impl ViewportCullState {
                 mapped_at_creation: false,
             }));
             self.visibility_index_capacity = new_cap;
-            for i in 0..4 {
-                self.shadow_vis_bufs[i] = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!("shadow_vis_buf_{i}")),
-                    size: vis_size,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }));
-            }
-            // The main and shadow cull bind groups bind these vis buffers at
-            // binding 5, so both caches are now stale.
+            // The cull bind groups bind the vis buffer at binding 5.
             self.instance_cull_bind_groups.clear();
-            self.shadow_cull_instance_bgs = [None, None, None, None];
         }
 
-        // Per-batch counter and indirect-args buffers, sized like the shared
-        // batch-meta buffer.
+        // Counter and indirect-args buffers, sized like the shared batch-meta buffer.
         let max_batches = (device.limits().max_storage_buffer_binding_size as usize)
             / std::mem::size_of::<BatchMeta>();
         let batch_count = (batch_count as usize).min(max_batches);
@@ -3882,6 +3864,95 @@ impl ViewportCullState {
                         | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 }));
+            }
+            self.batch_output_capacity = new_cap;
+        }
+    }
+}
+
+/// Scene-scoped GPU culling outputs for the directional shadow cascades.
+///
+/// Shadows are fit to the primary camera and rendered once into a shared atlas,
+/// so the shadow cull is not per-viewport: it runs once per frame and its
+/// outputs live here rather than on any `ViewportSlot`. Owned by
+/// `InstancingState`.
+pub(crate) struct ShadowCullState {
+    /// Per-batch atomic counter buffer. Zeroed at the start of each cascade's
+    /// cull dispatch.
+    pub(crate) batch_counter_buf: Option<wgpu::Buffer>,
+    /// Per-cascade visibility index buffers (grow with the instance count).
+    pub(crate) shadow_vis_bufs: [Option<wgpu::Buffer>; 4],
+    /// Per-cascade indirect draw args buffers (grow with the batch count).
+    pub(crate) shadow_indirect_bufs: [Option<wgpu::Buffer>; 4],
+    /// Per-cascade instance+visibility bind groups. Invalidated when
+    /// `shadow_vis_bufs` are reallocated.
+    pub(crate) shadow_cull_instance_bgs: [Option<wgpu::BindGroup>; 4],
+    /// Capacity (in instances) of `shadow_vis_bufs`.
+    pub(crate) vis_capacity: usize,
+    /// Capacity (in batches) of the counter and indirect-args buffers.
+    pub(crate) batch_output_capacity: usize,
+    /// Generation of the shared instance buffers the shadow cull bind groups were
+    /// built against. Mirrors `ViewportCullState::built_gen`: when it falls behind
+    /// `InstancingState::instance_gen` the instance storage buffer was rebuilt, so
+    /// the bind groups (which bind it at binding 0) are stale.
+    pub(crate) built_gen: u64,
+}
+
+impl ShadowCullState {
+    pub(crate) fn new() -> Self {
+        Self {
+            batch_counter_buf: None,
+            shadow_vis_bufs: [None, None, None, None],
+            shadow_indirect_bufs: [None, None, None, None],
+            shadow_cull_instance_bgs: [None, None, None, None],
+            vis_capacity: 0,
+            batch_output_capacity: 0,
+            built_gen: u64::MAX,
+        }
+    }
+
+    /// Allocate or grow the shadow cull output buffers to fit the current
+    /// instance and batch counts. Mirrors `ViewportCullState::ensure_outputs`
+    /// for the shadow cascades.
+    pub(crate) fn ensure_outputs(
+        &mut self,
+        device: &wgpu::Device,
+        instance_count: u32,
+        batch_count: u32,
+    ) {
+        let max_instances = (device.limits().max_storage_buffer_binding_size as usize)
+            / std::mem::size_of::<InstanceAabb>();
+        let instance_count = (instance_count as usize).min(max_instances);
+        if instance_count > self.vis_capacity {
+            let new_cap = (instance_count * 2).max(64).min(max_instances);
+            let vis_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            for i in 0..4 {
+                self.shadow_vis_bufs[i] = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("shadow_vis_buf_{i}")),
+                    size: vis_size,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            }
+            self.vis_capacity = new_cap;
+            // The shadow cull bind groups bind these vis buffers at binding 5.
+            self.shadow_cull_instance_bgs = [None, None, None, None];
+        }
+
+        let max_batches = (device.limits().max_storage_buffer_binding_size as usize)
+            / std::mem::size_of::<BatchMeta>();
+        let batch_count = (batch_count as usize).min(max_batches);
+        if batch_count > self.batch_output_capacity {
+            let new_cap = (batch_count * 2).max(16).min(max_batches);
+            let counter_size = (new_cap * std::mem::size_of::<u32>()) as u64;
+            let indirect_size = (new_cap * 20) as u64;
+            self.batch_counter_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("shadow_batch_counter_buf"),
+                size: counter_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            if cfg!(not(any(target_os = "ios", target_os = "android"))) {
                 for i in 0..4 {
                     self.shadow_indirect_bufs[i] =
                         Some(device.create_buffer(&wgpu::BufferDescriptor {

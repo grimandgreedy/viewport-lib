@@ -468,10 +468,10 @@ impl HizState {
     }
 }
 
-impl crate::resources::ViewportGpuResources {
-    /// Copy this frame's scene depth into the HiZ prev-depth target for next
-    /// frame's reprojection. Called at the end of the HDR scene pass. Allocates
-    /// or resizes the HiZ state to match the depth target.
+impl crate::resources::ViewportCullState {
+    /// Copy this frame's scene depth into this viewport's HiZ prev-depth target
+    /// for next frame's reprojection. Called at the end of the scene pass.
+    /// Allocates or resizes the HiZ state to match the depth target.
     pub(crate) fn store_hiz_prev_depth(
         &mut self,
         device: &wgpu::Device,
@@ -516,7 +516,9 @@ impl crate::resources::ViewportGpuResources {
             .as_ref()
             .map(|s| (s.cull_view(), [s.dims[0] as f32, s.dims[1] as f32]))
     }
+}
 
+impl crate::resources::ViewportGpuResources {
     /// Enable or disable the HiZ occlusion test on the main-camera cull.
     pub(crate) fn set_occlusion_culling(&mut self, enabled: bool) {
         self.occlusion_culling_enabled = enabled;

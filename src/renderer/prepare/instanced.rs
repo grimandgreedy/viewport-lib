@@ -9,7 +9,6 @@ impl ViewportRenderer {
     /// Returns `(batches_reuploaded, batches_skipped)` for frame stats.
     pub(super) fn prepare_instanced(
         resources: &mut ViewportGpuResources,
-        cull_state: &mut crate::resources::ViewportCullState,
         instancing: &mut InstancingState,
         instanceable: &[bool],
         scene_items: &[SceneRenderItem],
@@ -309,21 +308,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Ensure the cull pipelines exist and slot 0's cull output buffers are
-        // sized to the current scene. The scene-scope shadow cull reads slot 0's
-        // buffers, so they must exist before the shadow pass. The main cull
-        // dispatch for each viewport runs later in `run_viewport_cull`.
-        if instancing.gpu_culling_enabled
-            && !instancing.batches.is_empty()
-            && instancing.cached_instance_count > 0
-        {
-            resources.ensure_cull_instance_pipelines(device);
-            cull_state.ensure_outputs(
-                device,
-                instancing.cached_instance_count as u32,
-                instancing.batches.len() as u32,
-            );
-        }
         (batches_reuploaded, batches_skipped)
     }
 
@@ -418,9 +402,9 @@ impl ViewportRenderer {
             // the cull frustum-only for that frame.
             let vp_cols = vp_mat.to_cols_array_2d();
             let built = resources.occlusion_culling_enabled()
-                && resources.build_hiz_reprojected(queue, &mut encoder, vp_cols);
+                && cull_state.build_hiz_reprojected(queue, &mut encoder, vp_cols);
             let (hiz_view, hiz_dims) = if built {
-                let (view, dims) = resources.hiz_cull_view().unwrap();
+                let (view, dims) = cull_state.hiz_cull_view().unwrap();
                 (Some(view), dims)
             } else {
                 (None, [1.0, 1.0])
