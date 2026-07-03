@@ -3,6 +3,8 @@ pub(crate) mod decal;
 mod extra_impls;
 /// GPU compute resources: clustered shading, hierarchical-Z, particles, and dynamic resolution.
 pub mod gpu;
+/// Shared generational handle primitive and the `ContentHandle` interface.
+pub mod handle;
 mod init;
 /// Texture, matcap, colourmap, and environment/IBL resources.
 pub mod material;
@@ -24,6 +26,7 @@ use self::extra_impls::{
     build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
 };
 pub use self::gpu::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
+pub use self::handle::ContentHandle;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::mesh_sidecar::deform::{

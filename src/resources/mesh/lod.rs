@@ -20,35 +20,15 @@ use crate::scene::aabb::Aabb;
 /// every frame: it must move past the boundary by this much to switch.
 const LOD_HYSTERESIS: f32 = 0.1;
 
-/// Handle to a LOD group in the renderer's group registry.
-///
-/// Carries the slot index plus the generation the slot had when the handle was
-/// issued. A group freed with [`free_lod_group`](crate::ViewportGpuResources::free_lod_group)
-/// bumps its slot generation, so a stale handle resolves to `None` rather than
-/// aliasing a group registered later into the reused slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LodGroupId {
-    pub(crate) index: u32,
-    pub(crate) generation: u32,
-}
-
-impl LodGroupId {
-    /// A handle that refers to no LOD group. Store lookups always return `None`.
-    pub const INVALID: LodGroupId = LodGroupId {
-        index: u32::MAX,
-        generation: u32::MAX,
-    };
-
-    /// The raw slot index into the group registry.
-    pub fn index(&self) -> usize {
-        self.index as usize
-    }
-
-    /// Construct a handle from raw parts. Crate-internal: outside code obtains a
-    /// `LodGroupId` from `register_lod_group` and treats it as opaque.
-    pub(crate) fn new(index: u32, generation: u32) -> Self {
-        Self { index, generation }
-    }
+crate::resources::handle::slot_handle! {
+    /// Handle to a LOD group in the renderer's group registry.
+    ///
+    /// Carries the slot index plus the generation the slot had when the handle
+    /// was issued. A group freed with
+    /// [`free_lod_group`](crate::ViewportGpuResources::free_lod_group) bumps its
+    /// slot generation, so a stale handle resolves to `None` rather than
+    /// aliasing a group registered later into the reused slot.
+    pub struct LodGroupId;
 }
 
 /// One detail level of a [`LodGroup`].

@@ -1004,6 +1004,35 @@ mod tests {
     }
 
     #[test]
+    fn stale_polyline_handle_does_not_alias_after_slot_reuse() {
+        // The curve stores share one macro, so this covers the whole family
+        // (tube, ribbon, glyph set, sprite set, and the rest).
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let id1 = resources.upload_polyline(&device, &queue, &sample_polyline());
+        assert!(resources.polyline_store.get(id1).is_some());
+        assert!(resources.drop_polyline(id1));
+        assert!(
+            resources.polyline_store.get(id1).is_none(),
+            "a dropped handle must not resolve"
+        );
+
+        let id2 = resources.upload_polyline(&device, &queue, &sample_polyline());
+        assert_eq!(id1.index(), id2.index(), "the freed slot should be reused");
+        assert_ne!(id1, id2, "the reused slot must carry a new generation");
+        assert!(resources.polyline_store.get(id2).is_some());
+        assert!(
+            resources.polyline_store.get(id1).is_none(),
+            "the stale handle must not alias the polyline now in its slot"
+        );
+    }
+
+    #[test]
     fn replace_polyline_keeps_handle_stable() {
         let Some((device, queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");

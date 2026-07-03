@@ -10,21 +10,21 @@ use crate::resources::{
     TensorGlyphGpuData,
 };
 
+/// One store slot: the data (when occupied) and the slot's current generation.
+struct CurveSlot<T> {
+    data: Option<T>,
+    generation: u32,
+}
+
 macro_rules! curve_store {
     ($(#[$id_doc:meta])* $id:ident, $store:ident, $data:ty) => {
-        $(#[$id_doc])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub struct $id(pub(crate) usize);
-
-        impl $id {
-            /// Build an id from a raw slot index.
-            pub fn from_index(index: usize) -> Self { Self(index) }
-            /// The raw slot index.
-            pub fn index(&self) -> usize { self.0 }
+        crate::resources::handle::slot_handle! {
+            $(#[$id_doc])*
+            pub struct $id;
         }
 
         pub(crate) struct $store {
-            slots: Vec<Option<$data>>,
+            slots: Vec<CurveSlot<$data>>,
             free_list: Vec<usize>,
         }
 
@@ -35,31 +35,40 @@ macro_rules! curve_store {
 
             pub fn insert(&mut self, data: $data) -> $id {
                 if let Some(idx) = self.free_list.pop() {
-                    self.slots[idx] = Some(data);
-                    $id(idx)
+                    let slot = &mut self.slots[idx];
+                    slot.data = Some(data);
+                    $id::new(idx as u32, slot.generation)
                 } else {
                     let idx = self.slots.len();
-                    self.slots.push(Some(data));
-                    $id(idx)
+                    self.slots.push(CurveSlot { data: Some(data), generation: 0 });
+                    $id::new(idx as u32, 0)
                 }
             }
 
             pub fn get(&self, id: $id) -> Option<&$data> {
-                self.slots.get(id.0)?.as_ref()
+                let slot = self.slots.get(id.index())?;
+                if slot.generation != id.generation {
+                    return None;
+                }
+                slot.data.as_ref()
             }
 
             pub fn replace(&mut self, id: $id, data: $data) -> bool {
-                match self.slots.get_mut(id.0) {
-                    Some(slot) if slot.is_some() => { *slot = Some(data); true }
+                match self.slots.get_mut(id.index()) {
+                    Some(slot) if slot.generation == id.generation && slot.data.is_some() => {
+                        slot.data = Some(data);
+                        true
+                    }
                     _ => false,
                 }
             }
 
             pub fn remove(&mut self, id: $id) -> bool {
-                if let Some(slot) = self.slots.get_mut(id.0) {
-                    if slot.is_some() {
-                        *slot = None;
-                        self.free_list.push(id.0);
+                if let Some(slot) = self.slots.get_mut(id.index()) {
+                    if slot.generation == id.generation && slot.data.is_some() {
+                        slot.data = None;
+                        slot.generation = slot.generation.wrapping_add(1);
+                        self.free_list.push(id.index());
                         return true;
                     }
                 }
@@ -72,7 +81,7 @@ macro_rules! curve_store {
 
             #[allow(dead_code)]
             pub fn len(&self) -> usize {
-                self.slots.iter().filter(|s| s.is_some()).count()
+                self.slots.iter().filter(|s| s.data.is_some()).count()
             }
         }
     };

@@ -9,37 +9,14 @@
 
 use crate::resources::GpuMesh;
 
-/// Handle to a mesh in the store.
-///
-/// Carries the slot index plus the generation the slot had when the handle was
-/// issued. A handle whose generation is stale (its slot was freed and reused)
-/// resolves to `None` on lookup rather than aliasing a different mesh.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MeshId {
-    pub(crate) index: u32,
-    pub(crate) generation: u32,
-}
-
-impl MeshId {
-    /// A handle that refers to no mesh. Store lookups always return `None` for
-    /// it. Use it as the default / placeholder value where a real mesh has not
-    /// been assigned yet.
-    pub const INVALID: MeshId = MeshId {
-        index: u32::MAX,
-        generation: u32::MAX,
-    };
-
-    /// The raw slot index this handle points at. Used to index the parallel
-    /// per-mesh GPU arrays; not meaningful for [`MeshId::INVALID`].
-    pub fn index(&self) -> usize {
-        self.index as usize
-    }
-
-    /// Construct a handle from raw parts. Crate-internal: outside code obtains a
-    /// `MeshId` from an upload call and treats it as opaque.
-    pub(crate) fn new(index: u32, generation: u32) -> Self {
-        Self { index, generation }
-    }
+crate::resources::handle::slot_handle! {
+    /// Handle to a mesh in the store.
+    ///
+    /// Carries the slot index plus the generation the slot had when the handle
+    /// was issued. A handle whose generation is stale (its slot was freed and
+    /// reused) resolves to `None` on lookup rather than aliasing a different
+    /// mesh.
+    pub struct MeshId;
 }
 
 /// One mesh slot: the mesh (when occupied), the slot's current generation, and
