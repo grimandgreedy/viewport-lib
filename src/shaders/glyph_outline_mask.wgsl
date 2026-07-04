@@ -58,7 +58,9 @@ fn rotation_to_align_y(dir: vec3<f32>) -> mat3x3<f32> {
         ref_v = vec3<f32>(1.0, 0.0, 0.0);
     }
     let right = normalize(cross(ref_v, up));
-    let fwd   = cross(up, right);
+    // Right-handed frame (determinant +1); see the note in glyph.wgsl. A
+    // reflection here would invert winding and break back-face culling.
+    let fwd   = cross(right, up);
     return mat3x3<f32>(right, up, fwd);
 }
 

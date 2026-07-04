@@ -259,6 +259,18 @@ pub(super) fn build_glyph_arrow() -> (Vec<Vertex>, Vec<u32>) {
         idx.extend_from_slice(&[cone_cap_center, b, a]);
     }
 
+    // The arrow above is authored along local +Z. The glyph shader aligns the
+    // local +Y axis with the vector direction, so rotate the whole mesh so its
+    // axis becomes +Y. This is a rotation about X by -90 degrees,
+    // (x, y, z) -> (x, z, -y), which preserves triangle winding and keeps the
+    // normals pointing outward (no need to reorder indices).
+    for v in &mut verts {
+        let [px, py, pz] = v.position;
+        v.position = [px, pz, -py];
+        let [nx, ny, nz] = v.normal;
+        v.normal = [nx, nz, -ny];
+    }
+
     (verts, idx)
 }
 
