@@ -7,6 +7,13 @@
 //! `is_skinned_mesh` so hosts can answer the "does this mesh have skinning
 //! data attached" question without consulting the registry.
 //!
+//! The handle has a symmetric lifecycle: `install` -> `attach_weights` /
+//! `attach_palette` (or the `begin_upload_weights` / event forms) ->
+//! `detach_weights` / `detach_palette` for individual meshes, or `uninstall`
+//! to reclaim every attached buffer at once. The deformer body stays
+//! registered for the session (its slot is an append-only registry entry), so
+//! re-installing after `uninstall` returns the same `DeformerId` at no cost.
+//!
 //! Hosts that do not need GPU skinning never call `install` and pay nothing.
 //! Static meshes pay nothing either way: the per-object `deform_flags`
 //! branch in the composed shader gates the LBS body off.
@@ -326,6 +333,82 @@ impl SkinningPlugin {
             .expect("skinning marker poisoned")
             .contains_key(&mesh_id)
     }
+
+    /// Detach the skin weights attached to `mesh_id` and unmark it as skinnable.
+    ///
+    /// Reverses [`attach_weights`](Self::attach_weights): reclaims the per-mesh
+    /// weight buffer and drops the mesh from the skinnable set, so it renders as
+    /// a static mesh afterward (the deformer branch gates off once its slot has
+    /// no data). Returns `true` if weights were removed, `false` if the mesh had
+    /// none. Any joint palettes attached for the mesh become inert; reclaim them
+    /// with [`detach_palette`](Self::detach_palette) or by freeing the mesh.
+    pub fn detach_weights(
+        &self,
+        resources: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        mesh_id: MeshId,
+    ) -> bool {
+        let removed = resources.detach_deform_slot(device, mesh_id, self.deformer_id.slot());
+        self.skinned_meshes
+            .lock()
+            .expect("skinning marker poisoned")
+            .remove(&mesh_id);
+        removed
+    }
+
+    /// Detach the joint palette for one instance of a skinned mesh.
+    ///
+    /// Reverses [`attach_palette`](Self::attach_palette) for a single
+    /// `(mesh_id, instance_id)` pair, reclaiming that palette buffer. Returns
+    /// `true` if a palette was removed, `false` if none was attached. Leaves the
+    /// mesh's weight slot and skinnable marker in place.
+    pub fn detach_palette(
+        &self,
+        resources: &mut ViewportGpuResources,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+    ) -> bool {
+        resources.detach_deform_slot_instance(
+            device,
+            queue,
+            mesh_id,
+            instance_id,
+            self.deformer_id.slot(),
+        )
+    }
+
+    /// Tear down every per-mesh skin buffer attached through this handle.
+    ///
+    /// Detaches the weight slot of every mesh marked skinnable and clears the
+    /// marker set, reclaiming that GPU memory. Consumes the handle: its
+    /// lifecycle is `install` -> `attach_weights` / `attach_palette` (or the
+    /// `begin_upload_weights` / event forms) -> `uninstall`.
+    ///
+    /// The deformer body itself stays registered for the session: `DeformerId`
+    /// is an append-only registry slot, so a later [`install`](Self::install)
+    /// returns the same id at no cost. Per-instance palettes are keyed by
+    /// `(mesh, instance)` and are not tracked here; reclaim them with
+    /// [`detach_palette`](Self::detach_palette) or by freeing the meshes before
+    /// uninstalling if their buffers must go immediately.
+    pub fn uninstall(self, resources: &mut ViewportGpuResources, device: &wgpu::Device) {
+        let slot = self.deformer_id.slot();
+        let meshes: Vec<MeshId> = {
+            let marker = self
+                .skinned_meshes
+                .lock()
+                .expect("skinning marker poisoned");
+            marker.keys().copied().collect()
+        };
+        for mesh_id in meshes {
+            resources.detach_deform_slot(device, mesh_id, slot);
+        }
+        self.skinned_meshes
+            .lock()
+            .expect("skinning marker poisoned")
+            .clear();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +485,67 @@ mod async_skin_tests {
 
         skinning.attach_weights(&mut resources, &device, mesh_id, &weights);
         assert!(skinning.is_skinned_mesh(mesh_id));
+    }
+
+    #[test]
+    fn detach_weights_unmarks_mesh() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let skinning = SkinningPlugin::install(&mut resources, &device).unwrap();
+        let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        skinning.attach_weights(
+            &mut resources,
+            &device,
+            mesh_id,
+            &unit_weights(plane.positions.len()),
+        );
+        assert!(skinning.is_skinned_mesh(mesh_id));
+
+        assert!(skinning.detach_weights(&mut resources, &device, mesh_id));
+        assert!(
+            !skinning.is_skinned_mesh(mesh_id),
+            "detach must unmark the mesh"
+        );
+        assert!(
+            !skinning.detach_weights(&mut resources, &device, mesh_id),
+            "detaching again removes nothing"
+        );
+    }
+
+    #[test]
+    fn uninstall_detaches_all_skinned_meshes() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let skinning = SkinningPlugin::install(&mut resources, &device).unwrap();
+        let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
+        let a = resources.upload_mesh_data(&device, &plane).unwrap();
+        let b = resources.upload_mesh_data(&device, &plane).unwrap();
+        let w = unit_weights(plane.positions.len());
+        skinning.attach_weights(&mut resources, &device, a, &w);
+        skinning.attach_weights(&mut resources, &device, b, &w);
+        let slot = skinning.deformer_id().slot();
+
+        let probe = skinning.clone();
+        skinning.uninstall(&mut resources, &device);
+        assert!(!probe.is_skinned_mesh(a));
+        assert!(!probe.is_skinned_mesh(b));
+        assert!(
+            !resources.has_deform_slot(a, slot),
+            "weight slot must be freed"
+        );
+        assert!(
+            !resources.has_deform_slot(b, slot),
+            "weight slot must be freed"
+        );
     }
 
     #[test]

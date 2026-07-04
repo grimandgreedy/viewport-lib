@@ -1135,6 +1135,24 @@ impl ViewportRenderer {
         self.item_type_plugins.contains_key(type_name)
     }
 
+    /// Notify every registered item-type plugin that the wgpu device has been
+    /// recreated (device loss, surface re-init, host-driven reset).
+    ///
+    /// Calls [`ItemTypePlugin::on_device_recreated`](crate::plugin_api::ItemTypePlugin::on_device_recreated)
+    /// on each plugin, then re-runs its `init_gpu` against the new device and
+    /// the current shared bind layout, mirroring registration. The renderer
+    /// does not detect device loss on its own; the host invokes this after it
+    /// recreates the device. Matches
+    /// [`ViewportRuntime::notify_device_recreated`](crate::runtime::ViewportRuntime::notify_device_recreated)
+    /// on the GPU-plugin side.
+    pub fn notify_device_recreated(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let shared = self.resources.shared_bindings();
+        for plugin in self.item_type_plugins.values_mut() {
+            plugin.on_device_recreated(device, queue);
+            plugin.init_gpu(device, &shared);
+        }
+    }
+
     /// Walk registered item-type plugins, invoke `prepare` for each one
     /// that has a matching collection submitted on `frame.scene`, and
     /// return the concatenated command buffers.
