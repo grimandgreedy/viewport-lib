@@ -696,12 +696,11 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compute_filter_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/compute_filter.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "compute_filter_shader",
+            crate::resources::builders::wgsl_source!("compute_filter"),
+        );
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("compute_filter_pipeline"),
@@ -1050,12 +1049,11 @@ impl DeviceResources {
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("pick_id_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/pick_id.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "pick_id_shader",
+            crate::resources::builders::wgsl_source!("pick_id"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pick_pipeline_layout"),

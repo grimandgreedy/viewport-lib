@@ -706,18 +706,16 @@ impl crate::resources::DeviceResources {
         });
 
         // Compute pipelines.
-        let emit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("particle_emit_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/particle_emit.wgsl")).into(),
-            ),
-        });
-        let sim_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("particle_sim_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/particle_sim.wgsl")).into(),
-            ),
-        });
+        let emit_shader = crate::resources::builders::wgsl_module(
+            device,
+            "particle_emit_shader",
+            crate::resources::builders::wgsl_source!("particle_emit"),
+        );
+        let sim_shader = crate::resources::builders::wgsl_module(
+            device,
+            "particle_sim_shader",
+            crate::resources::builders::wgsl_source!("particle_sim"),
+        );
 
         let compute_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("particle_compute_layout"),
@@ -744,12 +742,11 @@ impl crate::resources::DeviceResources {
         });
 
         // Draw pipelines: three blend variants of the same shader.
-        let sprite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("particle_sprite_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/particle_sprite.wgsl")).into(),
-            ),
-        });
+        let sprite_shader = crate::resources::builders::wgsl_module(
+            device,
+            "particle_sprite_shader",
+            crate::resources::builders::wgsl_source!("particle_sprite"),
+        );
 
         let draw_layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -866,12 +863,11 @@ impl crate::resources::DeviceResources {
             ],
         });
 
-        let lit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("particle_sprite_lit_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/particle_sprite_lit.wgsl")).into(),
-            ),
-        });
+        let lit_shader = crate::resources::builders::wgsl_module(
+            device,
+            "particle_sprite_lit_shader",
+            crate::resources::builders::wgsl_source!("particle_sprite_lit"),
+        );
 
         let lit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("particle_draw_lit_layout"),
@@ -997,12 +993,11 @@ impl crate::resources::DeviceResources {
             ],
         });
 
-        let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("particle_mesh_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/particle_mesh.wgsl")).into(),
-            ),
-        });
+        let mesh_shader = crate::resources::builders::wgsl_module(
+            device,
+            "particle_mesh_shader",
+            crate::resources::builders::wgsl_source!("particle_mesh"),
+        );
 
         let mesh_layout = crate::resources::builders::standard_scene_layout(
             device,

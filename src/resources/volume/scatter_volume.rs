@@ -404,12 +404,11 @@ impl crate::resources::DeviceResources {
         let per_tex = self.scatter.per_volume_tex_bgl.as_ref().unwrap();
         let frame_bgl = self.scatter.frame_bgl.as_ref().unwrap();
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter_volume_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/scatter_volume.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "scatter_volume_shader",
+            crate::resources::builders::wgsl_source!("scatter_volume"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scatter_volume_pipeline_layout"),
@@ -507,12 +506,11 @@ impl crate::resources::DeviceResources {
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter_composite_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/scatter_composite.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "scatter_composite_shader",
+            crate::resources::builders::wgsl_source!("scatter_composite"),
+        );
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scatter_composite_pipeline_layout"),
             bind_group_layouts: &[&bgl],
@@ -573,12 +571,11 @@ impl crate::resources::DeviceResources {
         }
         self.ensure_scatter_temporal_resolve_bgl(device);
         let bgl = self.scatter.temporal_resolve_bgl.as_ref().unwrap();
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter_temporal_resolve_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/scatter_temporal_resolve.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "scatter_temporal_resolve_shader",
+            crate::resources::builders::wgsl_source!("scatter_temporal_resolve"),
+        );
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scatter_temporal_resolve_pipeline_layout"),
             bind_group_layouts: &[bgl],
@@ -1021,12 +1018,11 @@ impl crate::resources::DeviceResources {
         let per_vol = self.scatter.refraction_per_volume_bgl.as_ref().unwrap();
         let source_bgl = self.scatter.refraction_source_bgl.as_ref().unwrap();
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter_refraction_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/scatter_refraction.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "scatter_refraction_shader",
+            crate::resources::builders::wgsl_source!("scatter_refraction"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scatter_refraction_pipeline_layout"),
@@ -1086,12 +1082,11 @@ impl crate::resources::DeviceResources {
         }
         self.ensure_scatter_composite_pipeline(device, colour_format);
         let bgl = self.scatter.composite_bgl.as_ref().unwrap();
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter_refraction_blit_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/scatter_composite.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "scatter_refraction_blit_shader",
+            crate::resources::builders::wgsl_source!("scatter_composite"),
+        );
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scatter_refraction_blit_pipeline_layout"),
             bind_group_layouts: &[bgl],

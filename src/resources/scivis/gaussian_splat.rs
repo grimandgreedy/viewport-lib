@@ -276,12 +276,11 @@ impl DeviceResources {
             ],
         });
 
-        let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("gaussian_splat_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/gaussian_splat.wgsl")).into(),
-            ),
-        });
+        let render_shader = crate::resources::builders::wgsl_module(
+            device,
+            "gaussian_splat_shader",
+            crate::resources::builders::wgsl_source!("gaussian_splat"),
+        );
 
         let render_layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -314,12 +313,11 @@ impl DeviceResources {
         // Sort compute pipelines
         // ---------------------------------------------------------------
 
-        let sort_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("gaussian_splat_sort_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/gaussian_splat_sort.wgsl")).into(),
-            ),
-        });
+        let sort_shader = crate::resources::builders::wgsl_module(
+            device,
+            "gaussian_splat_sort_shader",
+            crate::resources::builders::wgsl_source!("gaussian_splat_sort"),
+        );
 
         // Depth compute BGL: DepthUniform (b0), positions (b1), keys_ping_out (b2).
         let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

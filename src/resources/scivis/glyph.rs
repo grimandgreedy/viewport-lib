@@ -68,12 +68,11 @@ impl DeviceResources {
                 }],
             });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("glyph_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/glyph.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "glyph_shader",
+            crate::resources::builders::wgsl_source!("glyph"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("glyph_pipeline_layout"),
@@ -454,12 +453,11 @@ impl DeviceResources {
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("tensor_glyph_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/tensor_glyph.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "tensor_glyph_shader",
+            crate::resources::builders::wgsl_source!("tensor_glyph"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("tensor_glyph_pipeline_layout"),
@@ -767,12 +765,11 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_glyph_pipeline must be called first");
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("glyph_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/glyph_outline_mask.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "glyph_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("glyph_outline_mask"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("glyph_outline_mask_pipeline_layout"),
@@ -846,12 +843,11 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_tensor_glyph_pipeline must be called first");
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("tensor_glyph_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/tensor_glyph_outline_mask.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "tensor_glyph_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("tensor_glyph_outline_mask"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("tensor_glyph_outline_mask_pipeline_layout"),

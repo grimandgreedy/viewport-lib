@@ -57,24 +57,21 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let fill_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sub_highlight_fill_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_fill.wgsl")).into(),
-            ),
-        });
-        let edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sub_highlight_edge_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_edge.wgsl")).into(),
-            ),
-        });
-        let sprite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sub_highlight_sprite_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/sub_highlight_sprite.wgsl")).into(),
-            ),
-        });
+        let fill_shader = crate::resources::builders::wgsl_module(
+            device,
+            "sub_highlight_fill_shader",
+            crate::resources::builders::wgsl_source!("sub_highlight_fill"),
+        );
+        let edge_shader = crate::resources::builders::wgsl_module(
+            device,
+            "sub_highlight_edge_shader",
+            crate::resources::builders::wgsl_source!("sub_highlight_edge"),
+        );
+        let sprite_shader = crate::resources::builders::wgsl_module(
+            device,
+            "sub_highlight_sprite_shader",
+            crate::resources::builders::wgsl_source!("sub_highlight_sprite"),
+        );
 
         // Inline helper: build one fill pipeline for the given colour format.
         let make_fill = |label: &'static str, fmt: wgpu::TextureFormat| {

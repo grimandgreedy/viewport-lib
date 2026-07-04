@@ -997,10 +997,8 @@ impl DeviceResources {
         // mesh.wgsl: LDR + HDR families.
         if let Some(base) = lookup_source("mesh.wgsl") {
             let composed = compose_shader(base, &registrations);
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_shader_composed"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            });
+            let shader =
+                crate::resources::builders::wgsl_module(device, "mesh_shader_composed", composed);
 
             let ldr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
                 device,
@@ -1047,10 +1045,11 @@ impl DeviceResources {
         if self.oit.pipeline.is_some() {
             if let Some(base) = lookup_source("mesh_oit.wgsl") {
                 let composed = compose_shader(base, &registrations);
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("mesh_oit_shader_composed"),
-                    source: wgpu::ShaderSource::Wgsl(composed.into()),
-                });
+                let shader = crate::resources::builders::wgsl_module(
+                    device,
+                    "mesh_oit_shader_composed",
+                    composed,
+                );
                 let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
                     device,
                     "oit_pipeline_layout",
@@ -1070,10 +1069,8 @@ impl DeviceResources {
         // shadow.wgsl: depth-only cascade pass.
         if let Some(base) = lookup_source("shadow.wgsl") {
             let composed = compose_shader(base, &registrations);
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("shadow_shader_composed"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            });
+            let shader =
+                crate::resources::builders::wgsl_module(device, "shadow_shader_composed", composed);
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_pipeline_layout"),
                 bind_group_layouts: &[
@@ -1099,10 +1096,11 @@ impl DeviceResources {
         // outline_mask.wgsl: mask-write pass for the selection silhouette.
         if let Some(base) = lookup_source("outline_mask.wgsl") {
             let composed = compose_shader(base, &registrations);
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("outline_mask_shader_composed"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            });
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "outline_mask_shader_composed",
+                composed,
+            );
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("outline_pipeline_layout"),
                 bind_group_layouts: &[
@@ -1129,10 +1127,11 @@ impl DeviceResources {
         // `ensure_cull_instance_pipelines` have run.
         if let Some(base) = lookup_source("mesh_instanced.wgsl") {
             let composed = compose_shader(base, &registrations);
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_instanced_shader_composed"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            });
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "mesh_instanced_shader_composed",
+                composed,
+            );
 
             if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
                 if self.instancing.solid_pipeline.is_some() {
@@ -1200,10 +1199,11 @@ impl DeviceResources {
         // mesh_instanced_oit.wgsl: non-cull and cull OIT pipelines.
         if let Some(base) = lookup_source("mesh_instanced_oit.wgsl") {
             let composed = compose_shader(base, &registrations);
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_instanced_oit_shader_composed"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            });
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "mesh_instanced_oit_shader_composed",
+                composed,
+            );
             if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
                 if self.oit.instanced_pipeline.is_some() {
                     let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(

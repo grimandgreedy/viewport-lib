@@ -69,12 +69,11 @@ impl DeviceResources {
             ..Default::default()
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("dyn_res_upscale_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/dyn_res_upscale.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "dyn_res_upscale_shader",
+            crate::resources::builders::wgsl_source!("dyn_res_upscale"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("dyn_res_upscale_layout"),
@@ -133,12 +132,11 @@ impl DeviceResources {
             .dyn_res_upscale_bgl
             .as_ref()
             .expect("ensure_dyn_res_pipeline must be called before ensure_dyn_res_ds_pipeline");
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("dyn_res_upscale_ds_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/dyn_res_upscale.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "dyn_res_upscale_ds_shader",
+            crate::resources::builders::wgsl_source!("dyn_res_upscale"),
+        );
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("dyn_res_upscale_ds_layout"),
             bind_group_layouts: &[bgl],

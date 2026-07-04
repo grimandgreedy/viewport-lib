@@ -199,12 +199,11 @@ fn build_irradiance_pipeline(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
 ) -> wgpu::ComputePipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("ibl_irradiance_shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(env!("OUT_DIR"), "/ibl_irradiance.wgsl")).into(),
-        ),
-    });
+    let shader = crate::resources::builders::wgsl_module(
+        device,
+        "ibl_irradiance_shader",
+        crate::resources::builders::wgsl_source!("ibl_irradiance"),
+    );
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("ibl_irradiance_layout"),
         bind_group_layouts: &[bgl],
@@ -224,12 +223,11 @@ fn build_prefilter_pipeline(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
 ) -> wgpu::ComputePipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("ibl_prefilter_shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(env!("OUT_DIR"), "/ibl_prefilter.wgsl")).into(),
-        ),
-    });
+    let shader = crate::resources::builders::wgsl_module(
+        device,
+        "ibl_prefilter_shader",
+        crate::resources::builders::wgsl_source!("ibl_prefilter"),
+    );
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("ibl_prefilter_layout"),
         bind_group_layouts: &[bgl],
@@ -249,12 +247,11 @@ fn build_brdf_pipeline(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
 ) -> wgpu::ComputePipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("ibl_brdf_lut_shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!(concat!(env!("OUT_DIR"), "/ibl_brdf_lut.wgsl")).into(),
-        ),
-    });
+    let shader = crate::resources::builders::wgsl_module(
+        device,
+        "ibl_brdf_lut_shader",
+        crate::resources::builders::wgsl_source!("ibl_brdf_lut"),
+    );
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("ibl_brdf_lut_layout"),
         bind_group_layouts: &[bgl],

@@ -11,6 +11,35 @@
 
 use wgpu::ShaderStages;
 
+/// Create a WGSL shader module. This is the one place the crate calls
+/// `create_shader_module`, so a wgpu upgrade that changes shader-module
+/// construction only has to be audited here.
+///
+/// `source` accepts a baked `&'static str` (via [`wgsl_source!`]) or an owned
+/// `String` (a shader composed at runtime, e.g. by the deform registry).
+pub(crate) fn wgsl_module<'a>(
+    device: &wgpu::Device,
+    label: &str,
+    source: impl Into<std::borrow::Cow<'a, str>>,
+) -> wgpu::ShaderModule {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(label),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    })
+}
+
+/// Embed a WGSL file baked into `OUT_DIR` by `build.rs`, by base name (no
+/// extension). Expands to `include_str!(...)`, so the file is compiled into the
+/// binary. Pass the result to [`wgsl_module`].
+///
+/// `wgsl_source!("point_cloud")` -> the contents of `$OUT_DIR/point_cloud.wgsl`.
+macro_rules! wgsl_source {
+    ($name:literal) => {
+        include_str!(concat!(env!("OUT_DIR"), "/", $name, ".wgsl"))
+    };
+}
+pub(crate) use wgsl_source;
+
 /// A uniform-buffer bind group layout entry (non-dynamic, no min size).
 pub(crate) fn uniform_entry(binding: u32, visibility: ShaderStages) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {

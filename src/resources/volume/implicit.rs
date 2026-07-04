@@ -126,12 +126,11 @@ impl DeviceResources {
             return;
         }
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("implicit_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/implicit.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "implicit_shader",
+            crate::resources::builders::wgsl_source!("implicit"),
+        );
 
         // Group 1: single uniform buffer containing ImplicitUniformRaw.
         let implicit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -192,12 +191,11 @@ impl DeviceResources {
             "ensure_implicit_pipeline must be called before ensure_implicit_outline_mask_pipeline",
         );
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("implicit_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/implicit_outline_mask.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "implicit_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("implicit_outline_mask"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,

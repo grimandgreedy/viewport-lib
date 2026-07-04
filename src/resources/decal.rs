@@ -191,12 +191,11 @@ impl DeviceResources {
             return;
         }
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("decal_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/decal.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "decal_shader",
+            crate::resources::builders::wgsl_source!("decal"),
+        );
 
         let tex2d_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
@@ -462,12 +461,11 @@ impl DeviceResources {
             return;
         }
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("decal_exclude_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/decal_exclude.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "decal_exclude_shader",
+            crate::resources::builders::wgsl_source!("decal_exclude"),
+        );
 
         let obj_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("decal_exclude_obj_bgl"),

@@ -309,12 +309,11 @@ impl DeviceResources {
         // ----------------------------------------------------------------
         // Compute pipelines.
         // ----------------------------------------------------------------
-        let classify_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mc_classify_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mc_classify.wgsl")).into(),
-            ),
-        });
+        let classify_shader = crate::resources::builders::wgsl_module(
+            device,
+            "mc_classify_shader",
+            crate::resources::builders::wgsl_source!("mc_classify"),
+        );
         let classify_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_classify_layout"),
             bind_group_layouts: &[&classify_bgl],
@@ -329,12 +328,11 @@ impl DeviceResources {
             cache: None,
         });
 
-        let prefix_sum_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mc_prefix_sum_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mc_prefix_sum.wgsl")).into(),
-            ),
-        });
+        let prefix_sum_shader = crate::resources::builders::wgsl_module(
+            device,
+            "mc_prefix_sum_shader",
+            crate::resources::builders::wgsl_source!("mc_prefix_sum"),
+        );
         let prefix_sum_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_prefix_sum_layout"),
             bind_group_layouts: &[&prefix_sum_bgl],
@@ -350,12 +348,11 @@ impl DeviceResources {
                 cache: None,
             });
 
-        let generate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mc_generate_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mc_generate.wgsl")).into(),
-            ),
-        });
+        let generate_shader = crate::resources::builders::wgsl_module(
+            device,
+            "mc_generate_shader",
+            crate::resources::builders::wgsl_source!("mc_generate"),
+        );
         let generate_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_generate_layout"),
             bind_group_layouts: &[&generate_bgl],
@@ -373,12 +370,11 @@ impl DeviceResources {
         // ----------------------------------------------------------------
         // Surface render pipeline.
         // ----------------------------------------------------------------
-        let surface_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mc_surface_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mc_surface.wgsl")).into(),
-            ),
-        });
+        let surface_shader = crate::resources::builders::wgsl_module(
+            device,
+            "mc_surface_shader",
+            crate::resources::builders::wgsl_source!("mc_surface"),
+        );
         let surface_layout = crate::resources::builders::standard_scene_layout(
             device,
             "mc_surface_layout",
@@ -422,12 +418,11 @@ impl DeviceResources {
                 }],
             });
 
-        let wireframe_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mc_wireframe_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/mc_wireframe.wgsl")).into(),
-            ),
-        });
+        let wireframe_shader = crate::resources::builders::wgsl_module(
+            device,
+            "mc_wireframe_shader",
+            crate::resources::builders::wgsl_source!("mc_wireframe"),
+        );
         let wireframe_layout = crate::resources::builders::standard_scene_layout(
             device,
             "mc_wireframe_layout",
@@ -795,12 +790,11 @@ impl DeviceResources {
             return;
         }
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mc_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "mc_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("outline_mask"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mc_outline_mask_pipeline_layout"),

@@ -34,12 +34,11 @@ impl DeviceResources {
             wgpu::ShaderStages::VERTEX,
         );
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("polyline_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "polyline_shader",
+            crate::resources::builders::wgsl_source!("polyline"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -181,12 +180,11 @@ impl DeviceResources {
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("polyline_wireframe_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/polyline_wireframe.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "polyline_wireframe_shader",
+            crate::resources::builders::wgsl_source!("polyline_wireframe"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -613,12 +611,11 @@ impl DeviceResources {
         // The regular pipeline (and its BGL) must exist first.
         self.ensure_polyline_pipeline(device);
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("polyline_no_clip_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/polyline.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "polyline_no_clip_shader",
+            crate::resources::builders::wgsl_source!("polyline"),
+        );
 
         let pl_bgl = self
             .polyline
@@ -749,12 +746,11 @@ impl DeviceResources {
             pl_bgl,
         );
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("polyline_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/polyline_outline_mask.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "polyline_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("polyline_outline_mask"),
+        );
 
         let pl_instance_layout = wgpu::VertexBufferLayout {
             array_stride: 112,

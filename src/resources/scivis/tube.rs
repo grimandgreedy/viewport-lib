@@ -51,12 +51,11 @@ impl DeviceResources {
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("streamtube_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/streamtube.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "streamtube_shader",
+            crate::resources::builders::wgsl_source!("streamtube"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -82,12 +81,11 @@ impl DeviceResources {
         );
 
         // Ribbon pipeline: same layout, two-sided shader, cull_mode None.
-        let ribbon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ribbon_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/ribbon.wgsl")).into(),
-            ),
-        });
+        let ribbon_shader = crate::resources::builders::wgsl_module(
+            device,
+            "ribbon_shader",
+            crate::resources::builders::wgsl_source!("ribbon"),
+        );
         let additive_blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,

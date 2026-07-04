@@ -282,10 +282,7 @@ impl DeviceResources {
         });
 
         let shader_src = include_str!(concat!(env!("OUT_DIR"), "/volume.wgsl"));
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("volume_shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_src.into()),
-        });
+        let shader = crate::resources::builders::wgsl_module(device, "volume_shader", shader_src);
 
         let pipeline_layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -347,12 +344,11 @@ impl DeviceResources {
             "ensure_volume_pipeline must be called before ensure_volume_outline_mask_pipeline",
         );
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("volume_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/volume_outline_mask.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "volume_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("volume_outline_mask"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,

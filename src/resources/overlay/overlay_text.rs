@@ -61,12 +61,11 @@ impl crate::resources::DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("overlay_text.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/overlay_text.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "overlay_text.wgsl",
+            crate::resources::builders::wgsl_source!("overlay_text"),
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("overlay_text_pipeline"),

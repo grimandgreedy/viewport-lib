@@ -155,10 +155,7 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_instanced_shader"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            })
+            crate::resources::builders::wgsl_module(device, "mesh_instanced_shader", composed)
         };
 
         let instanced_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
@@ -182,12 +179,11 @@ impl DeviceResources {
         let transparent_instanced = ldr_inst.transparent;
 
         // Shadow instanced pipeline.
-        let shadow_instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow_instanced_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/shadow_instanced.wgsl")).into(),
-            ),
-        });
+        let shadow_instanced_shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_instanced_shader",
+            crate::resources::builders::wgsl_source!("shadow_instanced"),
+        );
 
         // Shadow instanced uses the shadow bind group layout (group 0) + instance_bgl (group 1).
         // Re-derive the shadow BGL from the existing shadow_bind_group.
@@ -307,10 +303,7 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_instanced_shader_hdr"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            })
+            crate::resources::builders::wgsl_module(device, "mesh_instanced_shader_hdr", composed)
         };
         let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
@@ -351,10 +344,7 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_instanced_oit_shader"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            })
+            crate::resources::builders::wgsl_module(device, "mesh_instanced_oit_shader", composed)
         };
         let instanced_oit_layout =
             crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
@@ -574,10 +564,7 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_instanced_shader_cull"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            })
+            crate::resources::builders::wgsl_module(device, "mesh_instanced_shader_cull", composed)
         };
         let inst_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
@@ -608,10 +595,11 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh_instanced_oit_shader_cull"),
-                source: wgpu::ShaderSource::Wgsl(composed.into()),
-            })
+            crate::resources::builders::wgsl_module(
+                device,
+                "mesh_instanced_oit_shader_cull",
+                composed,
+            )
         };
         let oit_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
@@ -683,12 +671,11 @@ impl DeviceResources {
             bind_group_layouts: &[&shadow_bgl_for_cull, &shadow_cull_bgl],
             push_constant_ranges: &[],
         });
-        let shadow_cull_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow_instanced_cull_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/shadow_instanced.wgsl")).into(),
-            ),
-        });
+        let shadow_cull_shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_instanced_cull_shader",
+            crate::resources::builders::wgsl_source!("shadow_instanced"),
+        );
         // Front-cull for closed solids; `cull_mode: None` + the two-sided bias for
         // two-sided (`Identical`) batches (see the direct-path shadow pipelines above).
         let make_shadow_cull =

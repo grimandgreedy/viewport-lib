@@ -47,12 +47,11 @@ impl crate::resources::DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("overlay_shape.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/overlay_shape.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "overlay_shape.wgsl",
+            crate::resources::builders::wgsl_source!("overlay_shape"),
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("overlay_shape_pipeline"),
@@ -150,12 +149,11 @@ impl crate::resources::DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("overlay_shape_tex.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/overlay_shape_tex.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "overlay_shape_tex.wgsl",
+            crate::resources::builders::wgsl_source!("overlay_shape_tex"),
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("overlay_shape_tex_pipeline"),
@@ -464,12 +462,11 @@ impl crate::resources::DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("backdrop_blur.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/backdrop_blur.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "backdrop_blur.wgsl",
+            crate::resources::builders::wgsl_source!("backdrop_blur"),
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("backdrop_blur_pipeline"),

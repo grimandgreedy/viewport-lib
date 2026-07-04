@@ -68,12 +68,11 @@ impl DeviceResources {
             ],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("image_slice_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/image_slice.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "image_slice_shader",
+            crate::resources::builders::wgsl_source!("image_slice"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -238,12 +237,11 @@ impl DeviceResources {
             return;
         }
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("screen_image_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/screen_image.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "screen_image_shader",
+            crate::resources::builders::wgsl_source!("screen_image"),
+        );
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("screen_image_bgl"),
@@ -341,12 +339,11 @@ impl DeviceResources {
             return;
         }
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("screen_image_dc_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/screen_image_dc.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "screen_image_dc_shader",
+            crate::resources::builders::wgsl_source!("screen_image_dc"),
+        );
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("screen_image_dc_bgl"),
@@ -938,12 +935,11 @@ impl DeviceResources {
             ],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("volume_surface_slice_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/volume_surface_slice.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "volume_surface_slice_shader",
+            crate::resources::builders::wgsl_source!("volume_surface_slice"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -1107,12 +1103,11 @@ impl DeviceResources {
             wgpu::ShaderStages::VERTEX,
         );
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("screen_rect_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/outline_mask_ndc.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "screen_rect_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("outline_mask_ndc"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("screen_rect_outline_mask_pipeline_layout"),

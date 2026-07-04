@@ -304,12 +304,11 @@ impl ClusteredResources {
             ],
         });
 
-        let clear_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cluster_clear_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/cluster_clear.wgsl")).into(),
-            ),
-        });
+        let clear_shader = crate::resources::builders::wgsl_module(
+            device,
+            "cluster_clear_shader",
+            crate::resources::builders::wgsl_source!("cluster_clear"),
+        );
         let clear_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("cluster_clear_pipeline_layout"),
             bind_group_layouts: &[&clear_bgl],
@@ -362,12 +361,11 @@ impl ClusteredResources {
                 },
             ],
         });
-        let build_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cluster_build_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/cluster_build.wgsl")).into(),
-            ),
-        });
+        let build_shader = crate::resources::builders::wgsl_module(
+            device,
+            "cluster_build_shader",
+            crate::resources::builders::wgsl_source!("cluster_build"),
+        );
         let build_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("cluster_build_pipeline_layout"),
             bind_group_layouts: &[&build_bgl],

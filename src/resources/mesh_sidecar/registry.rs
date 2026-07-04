@@ -394,10 +394,7 @@ pub(crate) fn validate_with_wgpu(
     source: &str,
 ) -> ViewportResult<wgpu::ShaderModule> {
     device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
+    let module = crate::resources::builders::wgsl_module(device, label, source);
     let captured = block_on_simple(device.pop_error_scope());
     if let Some(err) = captured {
         return Err(ViewportError::DeformShaderInvalid {

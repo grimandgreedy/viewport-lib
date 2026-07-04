@@ -184,10 +184,7 @@ impl HizState {
         };
 
         let wgsl = |label: &str, src: &'static str| {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(src.into()),
-            })
+            crate::resources::builders::wgsl_module(device, label, src)
         };
         let copy_shader = wgsl(
             "hiz_copy_shader",

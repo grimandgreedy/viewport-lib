@@ -78,10 +78,7 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
         };
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh_shader"),
-            source: wgpu::ShaderSource::Wgsl(mesh_src.into()),
-        });
+        let shader = crate::resources::builders::wgsl_module(device, "mesh_shader", mesh_src);
 
         // ------------------------------------------------------------------
         // Bind group layouts
@@ -866,10 +863,8 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/shadow_noop.wgsl"))
         };
-        let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow_shader"),
-            source: wgpu::ShaderSource::Wgsl(shadow_src.into()),
-        });
+        let shadow_shader =
+            crate::resources::builders::wgsl_module(device, "shadow_shader", shadow_src);
 
         // Shadow pass uses a simple bind group layout: just the light uniform.
         let shadow_camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -964,10 +959,11 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/shadow_point_noop.wgsl"))
         };
-        let shadow_point_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow_point_shader"),
-            source: wgpu::ShaderSource::Wgsl(shadow_point_src.into()),
-        });
+        let shadow_point_shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_point_shader",
+            shadow_point_src,
+        );
         let shadow_point_face_bgl =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_point_face_bgl"),
@@ -1031,12 +1027,11 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Gizmo shader module
         // ------------------------------------------------------------------
-        let gizmo_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("gizmo_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/gizmo.wgsl")).into(),
-            ),
-        });
+        let gizmo_shader = crate::resources::builders::wgsl_module(
+            device,
+            "gizmo_shader",
+            crate::resources::builders::wgsl_source!("gizmo"),
+        );
 
         // ------------------------------------------------------------------
         // Gizmo bind group layout (group 1: model matrix uniform)
@@ -1180,12 +1175,11 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Overlay shader module
         // ------------------------------------------------------------------
-        let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("overlay_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/overlay.wgsl")).into(),
-            ),
-        });
+        let overlay_shader = crate::resources::builders::wgsl_module(
+            device,
+            "overlay_shader",
+            crate::resources::builders::wgsl_source!("overlay"),
+        );
 
         // ------------------------------------------------------------------
         // Overlay bind group layout (group 1: model + colour uniform)
@@ -1325,12 +1319,11 @@ impl DeviceResources {
         // clip-space depth via @builtin(frag_depth) for correct occlusion.
         // Horizon fade eliminates clipping artefacts at shallow viewing angles.
         // ------------------------------------------------------------------
-        let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("grid_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/grid.wgsl")).into(),
-            ),
-        });
+        let grid_shader = crate::resources::builders::wgsl_module(
+            device,
+            "grid_shader",
+            crate::resources::builders::wgsl_source!("grid"),
+        );
         let grid_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("grid_bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -1419,12 +1412,11 @@ impl DeviceResources {
         // Z height, then renders one of four modes: None (skipped), ShadowOnly,
         // Tile, SolidColour.  Uses @builtin(frag_depth) for depth occlusion.
         // ------------------------------------------------------------------
-        let ground_plane_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ground_plane_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/ground_plane.wgsl")).into(),
-            ),
-        });
+        let ground_plane_shader = crate::resources::builders::wgsl_module(
+            device,
+            "ground_plane_shader",
+            crate::resources::builders::wgsl_source!("ground_plane"),
+        );
         let ground_plane_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ground_plane_bgl"),
             entries: &[
@@ -1548,12 +1540,11 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shadow atlas viewer pipeline (corner overlay, no vertex buffers)
         // ------------------------------------------------------------------
-        let atlas_blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow_atlas_blit"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/shadow_atlas_blit.wgsl")).into(),
-            ),
-        });
+        let atlas_blit_shader = crate::resources::builders::wgsl_module(
+            device,
+            "shadow_atlas_blit",
+            crate::resources::builders::wgsl_source!("shadow_atlas_blit"),
+        );
         let atlas_blit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("atlas_blit_bgl"),
             entries: &[
@@ -1658,12 +1649,11 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Axes indicator pipeline (screen-space, no camera, no depth)
         // ------------------------------------------------------------------
-        let axes_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("axes_overlay_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/axes_overlay.wgsl")).into(),
-            ),
-        });
+        let axes_shader = crate::resources::builders::wgsl_module(
+            device,
+            "axes_overlay_shader",
+            crate::resources::builders::wgsl_source!("axes_overlay"),
+        );
 
         let axes_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("axes_pipeline_layout"),
@@ -2026,12 +2016,11 @@ impl DeviceResources {
             }],
         });
 
-        let xray_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("xray_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/xray.wgsl")).into(),
-            ),
-        });
+        let xray_shader = crate::resources::builders::wgsl_module(
+            device,
+            "xray_shader",
+            crate::resources::builders::wgsl_source!("xray"),
+        );
 
         let outline_pl_bgls: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
             vec![&camera_bgl, &outline_bgl, d]
@@ -2052,10 +2041,11 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/outline_mask_noop.wgsl"))
         };
-        let outline_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(outline_mask_src.into()),
-        });
+        let outline_mask_shader = crate::resources::builders::wgsl_module(
+            device,
+            "outline_mask_shader",
+            outline_mask_src,
+        );
         let outline_masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
             device,
             &outline_pipeline_layout,
@@ -2069,12 +2059,11 @@ impl DeviceResources {
         // Billboard disc pipeline for the Gaussian splat outline mask pass.
         // Reuses the same pipeline layout as the mesh mask pipelines (camera_bgl + outline_bgl).
         // Positions are instance-stepped vec3; each instance expands to a 6-vertex quad.
-        let splat_outline_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("splat_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/splat_outline_mask.wgsl")).into(),
-            ),
-        });
+        let splat_outline_mask_shader = crate::resources::builders::wgsl_module(
+            device,
+            "splat_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("splat_outline_mask"),
+        );
         let splat_outline_pos_attrs = [wgpu::VertexAttribute {
             offset: 0,
             shader_location: 0,
@@ -2138,12 +2127,11 @@ impl DeviceResources {
 
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
         // outputs an anti-aliased outline ring to the outline colour texture.
-        let outline_edge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("outline_edge_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/outline_edge.wgsl")).into(),
-            ),
-        });
+        let outline_edge_shader = crate::resources::builders::wgsl_module(
+            device,
+            "outline_edge_shader",
+            crate::resources::builders::wgsl_source!("outline_edge"),
+        );
         let outline_edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("outline_edge_bgl"),
             entries: &[
@@ -2253,12 +2241,11 @@ impl DeviceResources {
         });
 
         // Skybox pipeline: fullscreen triangle that samples the equirect environment map.
-        let skybox_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("skybox_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/skybox.wgsl")).into(),
-            ),
-        });
+        let skybox_shader = crate::resources::builders::wgsl_module(
+            device,
+            "skybox_shader",
+            crate::resources::builders::wgsl_source!("skybox"),
+        );
         let skybox_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("skybox_pipeline_layout"),

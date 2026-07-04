@@ -174,12 +174,11 @@ impl DeviceResources {
             ],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sprite_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/sprite.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "sprite_shader",
+            crate::resources::builders::wgsl_source!("sprite"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sprite_pipeline_layout"),
@@ -398,12 +397,11 @@ impl DeviceResources {
             ..Default::default()
         });
 
-        let refraction_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sprite_refraction_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/sprite_refraction.wgsl")).into(),
-            ),
-        });
+        let refraction_shader = crate::resources::builders::wgsl_module(
+            device,
+            "sprite_refraction_shader",
+            crate::resources::builders::wgsl_source!("sprite_refraction"),
+        );
 
         let bgl_ref = self.sprite.bgl.as_ref().unwrap();
         let refraction_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -466,12 +464,11 @@ impl DeviceResources {
         //          honour the same per-instance soft-fade distance as the
         //          emissive path.
         // Group 3: new lit BGL (optional normal map + sampler).
-        let lit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sprite_lit_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/sprite_lit.wgsl")).into(),
-            ),
-        });
+        let lit_shader = crate::resources::builders::wgsl_module(
+            device,
+            "sprite_lit_shader",
+            crate::resources::builders::wgsl_source!("sprite_lit"),
+        );
 
         let sprite_bgl_ref = self.sprite.bgl.as_ref().unwrap();
         let soft_bgl_ref = self.sprite.soft_bgl.as_ref().unwrap();
@@ -859,12 +856,11 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_sprite_pipelines must be called first");
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sprite_outline_mask_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/sprite_outline_mask.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "sprite_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("sprite_outline_mask"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,

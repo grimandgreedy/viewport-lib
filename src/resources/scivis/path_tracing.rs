@@ -22,12 +22,11 @@ impl DeviceResources {
             .as_ref()
             .expect("pt_lut_bind_group_layout must exist after ensure_pt_bind_group_layout");
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("projected_tet_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/projected_tet.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "projected_tet_shader",
+            crate::resources::builders::wgsl_source!("projected_tet"),
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pt_pipeline_layout"),

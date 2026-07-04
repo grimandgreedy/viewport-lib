@@ -81,12 +81,11 @@ impl DeviceResources {
             ],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("point_cloud_shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!(concat!(env!("OUT_DIR"), "/point_cloud.wgsl")).into(),
-            ),
-        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "point_cloud_shader",
+            crate::resources::builders::wgsl_source!("point_cloud"),
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,
