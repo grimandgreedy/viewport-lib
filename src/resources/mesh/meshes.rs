@@ -60,13 +60,13 @@ impl DeviceResources {
             &self.fallback_ao_map_view,
             &self.material_sampler,
             &self.lut_sampler,
-            &self.fallback_lut_view,
-            &self.fallback_scalar_buf,
+            &self.content.fallback_lut_view,
+            &self.content.fallback_scalar_buf,
             &self.fallback_texture.view,
-            &self.fallback_face_colour_buf,
-            &self.fallback_warp_buf,
-            &self.fallback_position_override_buf,
-            &self.fallback_normal_override_buf,
+            &self.content.fallback_face_colour_buf,
+            &self.content.fallback_warp_buf,
+            &self.content.fallback_position_override_buf,
+            &self.content.fallback_normal_override_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             vertices,
@@ -173,13 +173,13 @@ impl DeviceResources {
             &self.fallback_ao_map_view,
             &self.material_sampler,
             &self.lut_sampler,
-            &self.fallback_lut_view,
-            &self.fallback_scalar_buf,
+            &self.content.fallback_lut_view,
+            &self.content.fallback_scalar_buf,
             &self.fallback_texture.view,
-            &self.fallback_face_colour_buf,
-            &self.fallback_warp_buf,
-            &self.fallback_position_override_buf,
-            &self.fallback_normal_override_buf,
+            &self.content.fallback_face_colour_buf,
+            &self.content.fallback_warp_buf,
+            &self.content.fallback_position_override_buf,
+            &self.content.fallback_normal_override_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             &vertices,
@@ -721,13 +721,13 @@ impl DeviceResources {
             &self.fallback_ao_map_view,
             &self.material_sampler,
             &self.lut_sampler,
-            &self.fallback_lut_view,
-            &self.fallback_scalar_buf,
+            &self.content.fallback_lut_view,
+            &self.content.fallback_scalar_buf,
             &self.fallback_texture.view,
-            &self.fallback_face_colour_buf,
-            &self.fallback_warp_buf,
-            &self.fallback_position_override_buf,
-            &self.fallback_normal_override_buf,
+            &self.content.fallback_face_colour_buf,
+            &self.content.fallback_warp_buf,
+            &self.content.fallback_position_override_buf,
+            &self.content.fallback_normal_override_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             &vertices,
@@ -2173,10 +2173,10 @@ impl DeviceResources {
             .expect("pt_lut_bind_group_layout must exist");
         let sampler = &self.material_sampler;
 
-        match colourmap_id.and_then(|id| self.colourmap_views.get(id.0).map(|_| id.0)) {
+        match colourmap_id.and_then(|id| self.content.colourmap_views.get(id.0).map(|_| id.0)) {
             Some(slot) => {
                 if !self.pt.lut_bind_groups.contains_key(&slot) {
-                    let lut_view = &self.colourmap_views[slot];
+                    let lut_view = &self.content.colourmap_views[slot];
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("pt_lut_bind_group"),
                         layout: bgl,
@@ -2204,7 +2204,7 @@ impl DeviceResources {
                             wgpu::BindGroupEntry {
                                 binding: 0,
                                 resource: wgpu::BindingResource::TextureView(
-                                    &self.fallback_lut_view,
+                                    &self.content.fallback_lut_view,
                                 ),
                             },
                             wgpu::BindGroupEntry {
@@ -2276,8 +2276,8 @@ impl DeviceResources {
                 .collect::<Vec<_>>()
         };
 
-        let id = ProjectedTetId(self.projected_tet_store.len());
-        self.projected_tet_store.push(GpuProjectedTetMesh {
+        let id = ProjectedTetId(self.content.projected_tet_store.len());
+        self.content.projected_tet_store.push(GpuProjectedTetMesh {
             chunks,
             uniform_buffer,
             scalar_range,
@@ -2355,12 +2355,15 @@ impl DeviceResources {
                                 })
                                 .collect::<Vec<_>>()
                         };
-                        let pid = ProjectedTetId(resources.projected_tet_store.len());
-                        resources.projected_tet_store.push(GpuProjectedTetMesh {
-                            chunks,
-                            uniform_buffer,
-                            scalar_range,
-                        });
+                        let pid = ProjectedTetId(resources.content.projected_tet_store.len());
+                        resources
+                            .content
+                            .projected_tet_store
+                            .push(GpuProjectedTetMesh {
+                                chunks,
+                                uniform_buffer,
+                                scalar_range,
+                            });
                         slot_for_apply.set((pid, scalar_range.0, scalar_range.1));
                     }),
                 ))
@@ -2429,7 +2432,7 @@ impl DeviceResources {
                 .bind_group_layout
                 .as_ref()
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
-            let uniform_buf = &self.projected_tet_store[id.0].uniform_buffer;
+            let uniform_buf = &self.content.projected_tet_store[id.0].uniform_buffer;
             pending
                 .into_iter()
                 .map(|(tet_buffer, tet_count)| {
@@ -2456,7 +2459,7 @@ impl DeviceResources {
                 .collect::<Vec<_>>()
         };
 
-        let slot = &mut self.projected_tet_store[id.0];
+        let slot = &mut self.content.projected_tet_store[id.0];
         slot.chunks = chunks;
         slot.scalar_range = scalar_range;
 

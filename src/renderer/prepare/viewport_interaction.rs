@@ -425,7 +425,7 @@ impl ViewportRenderer {
             let view_proj = frame.camera.render_camera.view_proj();
             let [vp_w, vp_h] = frame.camera.viewport_size;
             for item in &frame.scene.gaussian_splats {
-                let Some(gpu_set) = resources.gaussian_splat_store.get(item.source) else {
+                let Some(gpu_set) = resources.content.gaussian_splat_store.get(item.source) else {
                     continue;
                 };
                 if item.settings.selected && !gpu_set.cpu_positions.is_empty() {

@@ -556,16 +556,19 @@ impl ViewportRenderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: wgpu::BindingResource::TextureView(&resources.fallback_lut_view),
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.content.fallback_lut_view,
+                        ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 6,
-                        resource: resources.fallback_scalar_buf.as_entire_binding(),
+                        resource: resources.content.fallback_scalar_buf.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 7,
                         resource: wgpu::BindingResource::TextureView(
                             resources
+                                .content
                                 .fallback_matcap_view
                                 .as_ref()
                                 .unwrap_or(&resources.fallback_texture.view),
@@ -573,11 +576,14 @@ impl ViewportRenderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 8,
-                        resource: resources.fallback_face_colour_buf.as_entire_binding(),
+                        resource: resources
+                            .content
+                            .fallback_face_colour_buf
+                            .as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 9,
-                        resource: resources.fallback_warp_buf.as_entire_binding(),
+                        resource: resources.content.fallback_warp_buf.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 10,
@@ -597,11 +603,17 @@ impl ViewportRenderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 13,
-                        resource: resources.fallback_position_override_buf.as_entire_binding(),
+                        resource: resources
+                            .content
+                            .fallback_position_override_buf
+                            .as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 14,
-                        resource: resources.fallback_normal_override_buf.as_entire_binding(),
+                        resource: resources
+                            .content
+                            .fallback_normal_override_buf
+                            .as_entire_binding(),
                     },
                 ],
             });

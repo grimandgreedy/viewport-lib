@@ -429,10 +429,10 @@ impl crate::resources::DeviceResources {
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
                 let texture_view = match texture_id {
-                    Some(id) if self.textures.get(id).is_some() => {
-                        &self.textures.get(id).unwrap().view
+                    Some(id) if self.content.textures.get(id).is_some() => {
+                        &self.content.textures.get(id).unwrap().view
                     }
-                    _ => &self.fallback_lut_view,
+                    _ => &self.content.fallback_lut_view,
                 };
                 let draw_bgl = self
                     .particle
@@ -468,8 +468,8 @@ impl crate::resources::DeviceResources {
                         .as_ref()
                         .expect("ensure_particle_pipelines failed to create lit BGL");
                     let normal_view = match normal_texture_id {
-                        Some(id) if self.textures.get(id).is_some() => {
-                            &self.textures.get(id).unwrap().view
+                        Some(id) if self.content.textures.get(id).is_some() => {
+                            &self.content.textures.get(id).unwrap().view
                         }
                         _ => &self.fallback_normal_map_view,
                     };
@@ -519,8 +519,8 @@ impl crate::resources::DeviceResources {
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
                 let texture_view = match texture_id {
-                    Some(id) if self.textures.get(id).is_some() => {
-                        &self.textures.get(id).unwrap().view
+                    Some(id) if self.content.textures.get(id).is_some() => {
+                        &self.content.textures.get(id).unwrap().view
                     }
                     _ => &self.fallback_texture.view,
                 };

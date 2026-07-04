@@ -161,7 +161,7 @@ impl ViewportRenderer {
                     let opacity = label.opacity.clamp(0.0, 1.0);
 
                     let layout = if let Some(max_w) = label.max_width {
-                        self.resources.glyph_atlas.layout_text_wrapped(
+                        self.resources.content.glyph_atlas.layout_text_wrapped(
                             &label.text,
                             label.font_size,
                             label.font,
@@ -169,7 +169,7 @@ impl ViewportRenderer {
                             device,
                         )
                     } else {
-                        self.resources.glyph_atlas.layout_text(
+                        self.resources.content.glyph_atlas.layout_text(
                             &label.text,
                             label.font_size,
                             label.font,
@@ -180,6 +180,7 @@ impl ViewportRenderer {
                     let font_index = label.font.map_or(0, |h| h.0);
                     let ascent = self
                         .resources
+                        .content
                         .glyph_atlas
                         .font_ascent(font_index, label.font_size);
 
@@ -259,7 +260,7 @@ impl ViewportRenderer {
                 }
 
                 // Upload atlas if new glyphs were rasterized.
-                self.resources.glyph_atlas.upload_if_dirty(queue);
+                self.resources.content.glyph_atlas.upload_if_dirty(queue);
 
                 // Stable sort preserves rect-before-label order for equal z_order values.
                 batches.sort_by_key(|(z, _)| *z);
@@ -278,7 +279,7 @@ impl ViewportRenderer {
                             wgpu::BindGroupEntry {
                                 binding: 0,
                                 resource: wgpu::BindingResource::TextureView(
-                                    &self.resources.glyph_atlas.view,
+                                    &self.resources.content.glyph_atlas.view,
                                 ),
                             },
                             wgpu::BindGroupEntry {
@@ -355,6 +356,7 @@ impl ViewportRenderer {
                         let text = format!("{value:.2}");
                         let layout = self
                             .resources
+                            .content
                             .glyph_atlas
                             .layout_text(&text, tick_fs, bar.font, device);
                         max_tick_w = max_tick_w.max(layout.total_width);
@@ -379,6 +381,7 @@ impl ViewportRenderer {
                     // be used to push the strip inward and prevent clipping.
                     let title_w = if let Some(ref t) = bar.title {
                         self.resources
+                            .content
                             .glyph_atlas
                             .layout_text(t, title_fs, bar.font, device)
                             .total_width
@@ -502,11 +505,16 @@ impl ViewportRenderer {
                     }
 
                     // Tick labels.
-                    let ascent = self.resources.glyph_atlas.font_ascent(font_index, tick_fs);
+                    let ascent = self
+                        .resources
+                        .content
+                        .glyph_atlas
+                        .font_ascent(font_index, tick_fs);
                     for (i, (text, tw, th)) in tick_data.iter().enumerate() {
                         let t = i as f32 / (tick_count - 1) as f32;
                         let layout = self
                             .resources
+                            .content
                             .glyph_atlas
                             .layout_text(text, tick_fs, bar.font, device);
 
@@ -550,10 +558,14 @@ impl ViewportRenderer {
                     if let Some(ref title_text) = bar.title {
                         let layout = self
                             .resources
+                            .content
                             .glyph_atlas
                             .layout_text(title_text, title_fs, bar.font, device);
-                        let title_ascent =
-                            self.resources.glyph_atlas.font_ascent(font_index, title_fs);
+                        let title_ascent = self
+                            .resources
+                            .content
+                            .glyph_atlas
+                            .font_ascent(font_index, title_fs);
                         // Centre the title over the gradient strip.
                         let tx = bar_x + (strip_w - layout.total_width) * 0.5;
                         let ty = bar_y - title_h;
@@ -577,7 +589,7 @@ impl ViewportRenderer {
                 }
 
                 // Upload any newly rasterized glyphs (may overlap with label upload above).
-                self.resources.glyph_atlas.upload_if_dirty(queue);
+                self.resources.content.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
                     let vertex_buf =
@@ -591,7 +603,7 @@ impl ViewportRenderer {
                             wgpu::BindGroupEntry {
                                 binding: 0,
                                 resource: wgpu::BindingResource::TextureView(
-                                    &self.resources.glyph_atlas.view,
+                                    &self.resources.content.glyph_atlas.view,
                                 ),
                             },
                             wgpu::BindGroupEntry {
@@ -713,7 +725,7 @@ impl ViewportRenderer {
                     let mid_x = (sx + ex) * 0.5;
                     let mid_y = (sy + ey) * 0.5;
 
-                    let layout = self.resources.glyph_atlas.layout_text(
+                    let layout = self.resources.content.glyph_atlas.layout_text(
                         &text,
                         ruler.font_size,
                         ruler.font,
@@ -722,6 +734,7 @@ impl ViewportRenderer {
                     let font_index = ruler.font.map_or(0, |h| h.0);
                     let ascent = self
                         .resources
+                        .content
                         .glyph_atlas
                         .font_ascent(font_index, ruler.font_size);
 
@@ -762,7 +775,7 @@ impl ViewportRenderer {
                 }
 
                 // Upload any newly rasterized glyphs.
-                self.resources.glyph_atlas.upload_if_dirty(queue);
+                self.resources.content.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
                     let vertex_buf =
@@ -776,7 +789,7 @@ impl ViewportRenderer {
                             wgpu::BindGroupEntry {
                                 binding: 0,
                                 resource: wgpu::BindingResource::TextureView(
-                                    &self.resources.glyph_atlas.view,
+                                    &self.resources.content.glyph_atlas.view,
                                 ),
                             },
                             wgpu::BindGroupEntry {
@@ -827,7 +840,7 @@ impl ViewportRenderer {
 
                     // Label above (TopCenter: below) the bar.
                     if let Some(ref text) = bar.label {
-                        let layout = self.resources.glyph_atlas.layout_text(
+                        let layout = self.resources.content.glyph_atlas.layout_text(
                             text,
                             bar.font_size,
                             bar.font,
@@ -836,6 +849,7 @@ impl ViewportRenderer {
                         let font_index = bar.font.map_or(0, |h| h.0);
                         let ascent = self
                             .resources
+                            .content
                             .glyph_atlas
                             .font_ascent(font_index, bar.font_size);
                         let label_gap = 5.0;
@@ -894,7 +908,7 @@ impl ViewportRenderer {
                     }
                 }
 
-                self.resources.glyph_atlas.upload_if_dirty(queue);
+                self.resources.content.glyph_atlas.upload_if_dirty(queue);
 
                 if !verts.is_empty() {
                     let vertex_buf = upload_overlay_vbuf(device, queue, "loading_bar_vbuf", &verts);
@@ -907,7 +921,7 @@ impl ViewportRenderer {
                             wgpu::BindGroupEntry {
                                 binding: 0,
                                 resource: wgpu::BindingResource::TextureView(
-                                    &self.resources.glyph_atlas.view,
+                                    &self.resources.content.glyph_atlas.view,
                                 ),
                             },
                             wgpu::BindGroupEntry {
@@ -1310,6 +1324,7 @@ impl ViewportRenderer {
                             if let Some(ns) = shape.nine_slice {
                                 let tex_size = self
                                     .resources
+                                    .content
                                     .overlay_textures
                                     .get(tid as usize)
                                     .map(|t| t._texture.size())
@@ -1523,10 +1538,10 @@ impl ViewportRenderer {
                                 continue;
                             }
                             let tidx = *tid as usize;
-                            if tidx >= self.resources.overlay_textures.len() {
+                            if tidx >= self.resources.content.overlay_textures.len() {
                                 continue;
                             }
-                            let view = &self.resources.overlay_textures[tidx].view;
+                            let view = &self.resources.content.overlay_textures[tidx].view;
                             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                                 label: Some("overlay_shape_tex_bg"),
                                 layout: bgl,

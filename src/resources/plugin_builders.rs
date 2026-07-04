@@ -103,7 +103,7 @@ impl DeviceResources {
     /// fetch the view each frame just before building / rebuilding the bind
     /// group.
     pub fn texture_view(&self, id: crate::resources::TextureId) -> Option<&wgpu::TextureView> {
-        self.textures.get(id).map(|t| &t.view)
+        self.content.textures.get(id).map(|t| &t.view)
     }
 
     /// Borrow the sampler the texture was uploaded with.
@@ -112,7 +112,7 @@ impl DeviceResources {
     /// prefer [`material_sampler`](Self::material_sampler) when you need
     /// the shared lib sampler rather than the per-texture instance.
     pub fn texture_sampler(&self, id: crate::resources::TextureId) -> Option<&wgpu::Sampler> {
-        self.textures.get(id).map(|t| &t.sampler)
+        self.content.textures.get(id).map(|t| &t.sampler)
     }
 
     /// Shared linear-repeat sampler used by the lib's material pipelines.
@@ -154,7 +154,7 @@ impl DeviceResources {
     /// [`texture_view`](Self::texture_view), with the caveat that promoted
     /// IDs from async uploads may sit at the high end.
     pub fn texture_count(&self) -> usize {
-        self.textures.len()
+        self.content.textures.len()
     }
 
     // ------------------------------------------------------------------

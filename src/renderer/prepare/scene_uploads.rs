@@ -177,7 +177,7 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.point_cloud_store.get(ref_item.source) {
+                let entry = match resources.content.point_cloud_store.get(ref_item.source) {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -208,7 +208,7 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.glyph_set_store.get(ref_item.source) {
+                let entry = match resources.content.glyph_set_store.get(ref_item.source) {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -242,7 +242,7 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.sprite_set_store.get(ref_item.source) {
+                let entry = match resources.content.sprite_set_store.get(ref_item.source) {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -259,7 +259,11 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.sprite_instance_set_store.get(ref_item.source) {
+                let entry = match resources
+                    .content
+                    .sprite_instance_set_store
+                    .get(ref_item.source)
+                {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -307,7 +311,11 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.tensor_glyph_set_store.get(ref_item.source) {
+                let entry = match resources
+                    .content
+                    .tensor_glyph_set_store
+                    .get(ref_item.source)
+                {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -386,7 +394,7 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.polyline_store.get(ref_item.source) {
+                let entry = match resources.content.polyline_store.get(ref_item.source) {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -703,7 +711,7 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.streamtube_store.get(ref_item.source) {
+                let entry = match resources.content.streamtube_store.get(ref_item.source) {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -753,7 +761,7 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.tube_store.get(ref_item.source) {
+                let entry = match resources.content.tube_store.get(ref_item.source) {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -803,7 +811,7 @@ impl ViewportRenderer {
                 if ref_item.settings.hidden {
                     continue;
                 }
-                let entry = match resources.ribbon_store.get(ref_item.source) {
+                let entry = match resources.content.ribbon_store.get(ref_item.source) {
                     Some(e) => e.clone(),
                     None => continue,
                 };

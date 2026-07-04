@@ -53,6 +53,7 @@ impl ViewportRenderer {
                     }
                     if let Some(set) = self
                         .resources
+                        .content
                         .gaussian_splat_store
                         .get_by_index(dd.store_index)
                     {

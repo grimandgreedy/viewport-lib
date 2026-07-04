@@ -142,7 +142,7 @@ impl DeviceResources {
         item: &crate::renderer::ImageSliceItem,
     ) -> Option<crate::resources::ImageSliceGpuData> {
         // Check volume exists before allocating anything.
-        if item.volume_id.0 >= self.volume_textures.len() {
+        if item.volume_id.0 >= self.content.volume_textures.len() {
             return None;
         }
 
@@ -196,11 +196,11 @@ impl DeviceResources {
         });
 
         // Resolve LUT view index before creating any bind group references.
-        let lut_view_idx: Option<usize> = self.builtin_colourmap_ids.and_then(|ids| {
+        let lut_view_idx: Option<usize> = self.content.builtin_colourmap_ids.and_then(|ids| {
             let preset_id = item
                 .colour_lut
                 .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-            if preset_id.0 < self.colourmap_views.len() {
+            if preset_id.0 < self.content.colourmap_views.len() {
                 Some(preset_id.0)
             } else {
                 None
@@ -214,10 +214,10 @@ impl DeviceResources {
             .expect("ensure_image_slice_pipeline not called");
 
         // Borrow vol_view and lut_view after all mutable references are resolved.
-        let vol_view = &self.volume_textures[item.volume_id.0].1;
+        let vol_view = &self.content.volume_textures[item.volume_id.0].1;
         let lut_view = lut_view_idx
-            .map(|i| &self.colourmap_views[i])
-            .unwrap_or(&self.fallback_lut_view);
+            .map(|i| &self.content.colourmap_views[i])
+            .unwrap_or(&self.content.fallback_lut_view);
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image_slice_bg"),
@@ -1038,7 +1038,7 @@ impl DeviceResources {
         queue: &wgpu::Queue,
         item: &crate::renderer::VolumeSurfaceSliceItem,
     ) -> Option<crate::resources::VolumeSurfaceSliceGpuData> {
-        if item.volume_id.0 >= self.volume_textures.len() {
+        if item.volume_id.0 >= self.content.volume_textures.len() {
             return None;
         }
         // Verify the mesh exists.
@@ -1089,11 +1089,11 @@ impl DeviceResources {
             ..Default::default()
         });
 
-        let lut_view_idx: Option<usize> = self.builtin_colourmap_ids.and_then(|ids| {
+        let lut_view_idx: Option<usize> = self.content.builtin_colourmap_ids.and_then(|ids| {
             let preset_id = item
                 .colour_lut
                 .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-            if preset_id.0 < self.colourmap_views.len() {
+            if preset_id.0 < self.content.colourmap_views.len() {
                 Some(preset_id.0)
             } else {
                 None
@@ -1106,10 +1106,10 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_volume_surface_slice_pipeline not called");
 
-        let vol_view = &self.volume_textures[item.volume_id.0].1;
+        let vol_view = &self.content.volume_textures[item.volume_id.0].1;
         let lut_view = lut_view_idx
-            .map(|i| &self.colourmap_views[i])
-            .unwrap_or(&self.fallback_lut_view);
+            .map(|i| &self.content.colourmap_views[i])
+            .unwrap_or(&self.content.fallback_lut_view);
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("volume_surface_slice_bg"),

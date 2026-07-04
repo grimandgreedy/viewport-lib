@@ -341,14 +341,15 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let lut_view = self
+            .content
             .builtin_colourmap_ids
             .and_then(|ids| {
                 let preset_id = item
                     .colourmap_id
                     .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                self.colourmap_views.get(preset_id.0)
+                self.content.colourmap_views.get(preset_id.0)
             })
-            .unwrap_or(&self.fallback_lut_view);
+            .unwrap_or(&self.content.fallback_lut_view);
 
         let lut_sampler = &self.material_sampler;
 
@@ -812,14 +813,15 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let lut_view = self
+            .content
             .builtin_colourmap_ids
             .and_then(|ids| {
                 let preset_id = item
                     .colourmap_id
                     .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                self.colourmap_views.get(preset_id.0)
+                self.content.colourmap_views.get(preset_id.0)
             })
-            .unwrap_or(&self.fallback_lut_view);
+            .unwrap_or(&self.content.fallback_lut_view);
 
         let lut_sampler = &self.material_sampler;
 
@@ -1041,12 +1043,12 @@ impl DeviceResources {
     ) -> crate::resources::GlyphSetId {
         self.ensure_glyph_pipeline(device);
         let gpu = self.upload_glyph_set_per_frame(device, queue, item, false);
-        self.glyph_set_store.insert(gpu)
+        self.content.glyph_set_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded glyph set.
     pub fn drop_glyph_set(&mut self, id: crate::resources::GlyphSetId) -> bool {
-        self.glyph_set_store.remove(id)
+        self.content.glyph_set_store.remove(id)
     }
 
     /// Replace the geometry of a pre-uploaded glyph set, keeping the same id.
@@ -1057,12 +1059,12 @@ impl DeviceResources {
         id: crate::resources::GlyphSetId,
         item: &crate::renderer::GlyphItem,
     ) -> bool {
-        if !self.glyph_set_store.contains(id) {
+        if !self.content.glyph_set_store.contains(id) {
             return false;
         }
         self.ensure_glyph_pipeline(device);
         let gpu = self.upload_glyph_set_per_frame(device, queue, item, false);
-        self.glyph_set_store.replace(id, gpu)
+        self.content.glyph_set_store.replace(id, gpu)
     }
 
     /// Start an asynchronous glyph set upload.
@@ -1134,12 +1136,12 @@ impl DeviceResources {
     ) -> crate::resources::TensorGlyphSetId {
         self.ensure_tensor_glyph_pipeline(device);
         let gpu = self.upload_tensor_glyph_set_per_frame(device, queue, item, false);
-        self.tensor_glyph_set_store.insert(gpu)
+        self.content.tensor_glyph_set_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded tensor glyph set.
     pub fn drop_tensor_glyph_set(&mut self, id: crate::resources::TensorGlyphSetId) -> bool {
-        self.tensor_glyph_set_store.remove(id)
+        self.content.tensor_glyph_set_store.remove(id)
     }
 
     /// Replace the geometry of a pre-uploaded tensor glyph set, keeping the same id.
@@ -1150,12 +1152,12 @@ impl DeviceResources {
         id: crate::resources::TensorGlyphSetId,
         item: &crate::renderer::TensorGlyphItem,
     ) -> bool {
-        if !self.tensor_glyph_set_store.contains(id) {
+        if !self.content.tensor_glyph_set_store.contains(id) {
             return false;
         }
         self.ensure_tensor_glyph_pipeline(device);
         let gpu = self.upload_tensor_glyph_set_per_frame(device, queue, item, false);
-        self.tensor_glyph_set_store.replace(id, gpu)
+        self.content.tensor_glyph_set_store.replace(id, gpu)
     }
 
     /// Start an asynchronous tensor glyph set upload.
@@ -1283,7 +1285,7 @@ mod tests {
         };
         let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_glyph_set(&device, &queue, &sample_glyph_set());
-        assert!(resources.glyph_set_store.contains(id));
+        assert!(resources.content.glyph_set_store.contains(id));
         assert!(resources.drop_glyph_set(id));
     }
 
@@ -1295,7 +1297,7 @@ mod tests {
         };
         let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_tensor_glyph_set(&device, &queue, &sample_tensor_glyph_set());
-        assert!(resources.tensor_glyph_set_store.contains(id));
+        assert!(resources.content.tensor_glyph_set_store.contains(id));
         assert!(resources.drop_tensor_glyph_set(id));
     }
 
@@ -1309,7 +1311,7 @@ mod tests {
         let job = resources.begin_upload_glyph_set(&device, &queue, sample_glyph_set());
         drive_until_ready(&mut resources, &device, &queue, job, "glyph_set");
         let id = resources.upload_result_glyph_set(job).expect("ready");
-        assert!(resources.glyph_set_store.contains(id));
+        assert!(resources.content.glyph_set_store.contains(id));
     }
 
     #[test]
@@ -1325,6 +1327,6 @@ mod tests {
         let id = resources
             .upload_result_tensor_glyph_set(job)
             .expect("ready");
-        assert!(resources.tensor_glyph_set_store.contains(id));
+        assert!(resources.content.tensor_glyph_set_store.contains(id));
     }
 }

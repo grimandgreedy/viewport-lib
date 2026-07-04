@@ -339,14 +339,15 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let lut_view = self
+            .content
             .builtin_colourmap_ids
             .and_then(|ids| {
                 let preset_id = item
                     .colourmap_id
                     .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                self.colourmap_views.get(preset_id.0)
+                self.content.colourmap_views.get(preset_id.0)
             })
-            .unwrap_or(&self.fallback_lut_view);
+            .unwrap_or(&self.content.fallback_lut_view);
 
         let lut_sampler = &self.material_sampler;
 
@@ -410,12 +411,12 @@ impl DeviceResources {
     ) -> crate::resources::PointCloudId {
         self.ensure_point_cloud_pipeline(device);
         let gpu = self.upload_point_cloud_per_frame(device, queue, item);
-        self.point_cloud_store.insert(gpu)
+        self.content.point_cloud_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded point cloud.
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
-        self.point_cloud_store.remove(id)
+        self.content.point_cloud_store.remove(id)
     }
 
     /// Replace the geometry of a pre-uploaded point cloud, keeping the same id.
@@ -426,12 +427,12 @@ impl DeviceResources {
         id: crate::resources::PointCloudId,
         item: &crate::renderer::PointCloudItem,
     ) -> bool {
-        if !self.point_cloud_store.contains(id) {
+        if !self.content.point_cloud_store.contains(id) {
             return false;
         }
         self.ensure_point_cloud_pipeline(device);
         let gpu = self.upload_point_cloud_per_frame(device, queue, item);
-        self.point_cloud_store.replace(id, gpu)
+        self.content.point_cloud_store.replace(id, gpu)
     }
 
     /// Start an asynchronous point cloud upload.
@@ -535,9 +536,9 @@ mod tests {
         };
         let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_point_cloud(&device, &queue, &sample_point_cloud());
-        assert!(resources.point_cloud_store.contains(id));
+        assert!(resources.content.point_cloud_store.contains(id));
         assert!(resources.drop_point_cloud(id));
-        assert!(!resources.point_cloud_store.contains(id));
+        assert!(!resources.content.point_cloud_store.contains(id));
     }
 
     #[test]
@@ -560,7 +561,7 @@ mod tests {
             }
         }
         let id = resources.upload_result_point_cloud(job).expect("ready");
-        assert!(resources.point_cloud_store.contains(id));
+        assert!(resources.content.point_cloud_store.contains(id));
         let err = resources.upload_result_point_cloud(job).unwrap_err();
         assert!(matches!(
             err,

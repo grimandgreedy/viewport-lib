@@ -716,13 +716,13 @@ impl DeviceResources {
 
         let (texture_view, has_texture): (&wgpu::TextureView, u32) =
             if let Some(id) = item.texture_id {
-                if let Some(tex) = self.textures.get(id) {
+                if let Some(tex) = self.content.textures.get(id) {
                     (&tex.view, 1)
                 } else {
-                    (&self.fallback_lut_view, 0)
+                    (&self.content.fallback_lut_view, 0)
                 }
             } else {
-                (&self.fallback_lut_view, 0)
+                (&self.content.fallback_lut_view, 0)
             };
 
         let orientation = match item.orientation {
@@ -739,7 +739,7 @@ impl DeviceResources {
 
         let (normal_view, has_normal_map): (&wgpu::TextureView, u32) =
             if let Some(id) = item.normal_texture_id {
-                if let Some(tex) = self.textures.get(id) {
+                if let Some(tex) = self.content.textures.get(id) {
                     (&tex.view, 1)
                 } else {
                     (&self.fallback_normal_map_view, 0)
@@ -940,12 +940,12 @@ impl DeviceResources {
     ) -> crate::resources::SpriteSetId {
         self.ensure_sprite_pipelines(device);
         let gpu = self.upload_sprite(device, queue, item);
-        self.sprite_set_store.insert(gpu)
+        self.content.sprite_set_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded sprite set.
     pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
-        self.sprite_set_store.remove(id)
+        self.content.sprite_set_store.remove(id)
     }
 
     /// Replace the contents of a pre-uploaded sprite set, keeping the same id.
@@ -956,12 +956,12 @@ impl DeviceResources {
         id: crate::resources::SpriteSetId,
         item: &crate::renderer::SpriteItem,
     ) -> bool {
-        if !self.sprite_set_store.contains(id) {
+        if !self.content.sprite_set_store.contains(id) {
             return false;
         }
         self.ensure_sprite_pipelines(device);
         let gpu = self.upload_sprite(device, queue, item);
-        self.sprite_set_store.replace(id, gpu)
+        self.content.sprite_set_store.replace(id, gpu)
     }
 
     /// Start an asynchronous sprite set upload.
@@ -1043,12 +1043,12 @@ impl DeviceResources {
     ) -> crate::resources::SpriteInstanceSetId {
         self.ensure_sprite_pipelines(device);
         let gpu = self.upload_sprite(device, queue, item);
-        self.sprite_instance_set_store.insert(gpu)
+        self.content.sprite_instance_set_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded sprite instance set.
     pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
-        self.sprite_instance_set_store.remove(id)
+        self.content.sprite_instance_set_store.remove(id)
     }
 
     /// Replace the contents of a pre-uploaded sprite instance set, keeping
@@ -1060,12 +1060,12 @@ impl DeviceResources {
         id: crate::resources::SpriteInstanceSetId,
         item: &crate::renderer::SpriteItem,
     ) -> bool {
-        if !self.sprite_instance_set_store.contains(id) {
+        if !self.content.sprite_instance_set_store.contains(id) {
             return false;
         }
         self.ensure_sprite_pipelines(device);
         let gpu = self.upload_sprite(device, queue, item);
-        self.sprite_instance_set_store.replace(id, gpu)
+        self.content.sprite_instance_set_store.replace(id, gpu)
     }
 
     /// Start an asynchronous sprite instance set upload.

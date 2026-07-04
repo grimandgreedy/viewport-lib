@@ -383,12 +383,13 @@ impl DeviceResources {
         });
 
         let resolve_tex = |id: Option<crate::resources::TextureId>| -> &wgpu::TextureView {
-            id.and_then(|i| self.textures.get(i))
+            id.and_then(|i| self.content.textures.get(i))
                 .map(|t| &t.view)
                 .unwrap_or(&self.fallback_texture.view)
         };
 
         let tex_view = self
+            .content
             .textures
             .get(item.texture_id)
             .map(|t| &t.view)

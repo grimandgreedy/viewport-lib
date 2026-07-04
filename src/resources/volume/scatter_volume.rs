@@ -791,17 +791,19 @@ impl crate::resources::DeviceResources {
         let lut_sampler = self.scatter.colourmap_sampler.as_ref().unwrap();
         let density_sampler = self.scatter.depth_sampler.as_ref().unwrap();
         let lut_view: &wgpu::TextureView = if lut_id == usize::MAX {
-            &self.fallback_lut_view
+            &self.content.fallback_lut_view
         } else {
-            self.colourmap_views
+            self.content
+                .colourmap_views
                 .get(lut_id)
-                .unwrap_or(&self.fallback_lut_view)
+                .unwrap_or(&self.content.fallback_lut_view)
         };
         let density_fallback = self.scatter.density_fallback_view.as_ref().unwrap();
         let density_view: &wgpu::TextureView = if density_id == usize::MAX {
             density_fallback
         } else {
-            self.volume_textures
+            self.content
+                .volume_textures
                 .get(density_id)
                 .map(|(_, v)| v)
                 .unwrap_or(density_fallback)

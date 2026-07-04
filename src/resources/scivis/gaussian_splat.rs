@@ -564,7 +564,7 @@ impl DeviceResources {
     ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
         validate_gaussian_splat_data(data)?;
         let gpu_set = build_gaussian_splat_set(device, queue, data);
-        Ok(self.gaussian_splat_store.insert(gpu_set))
+        Ok(self.content.gaussian_splat_store.insert(gpu_set))
     }
 
     /// Replace the contents of an uploaded Gaussian splat set in place, keeping
@@ -592,19 +592,19 @@ impl DeviceResources {
     ) -> crate::error::ViewportResult<()> {
         validate_gaussian_splat_data(data)?;
         let gpu_set = build_gaussian_splat_set(device, queue, data);
-        if self.gaussian_splat_store.replace(id, gpu_set) {
+        if self.content.gaussian_splat_store.replace(id, gpu_set) {
             Ok(())
         } else {
             Err(crate::error::ViewportError::StaleHandle {
                 index: id.index() as usize,
-                count: self.gaussian_splat_store.slots.len(),
+                count: self.content.gaussian_splat_store.slots.len(),
             })
         }
     }
 
     /// Remove an uploaded Gaussian splat set by handle.
     pub fn free_gaussian_splat(&mut self, id: crate::renderer::GaussianSplatId) {
-        self.gaussian_splat_store.remove(id);
+        self.content.gaussian_splat_store.remove(id);
     }
 
     /// Start an asynchronous Gaussian splat upload.
@@ -643,7 +643,7 @@ impl DeviceResources {
 
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
-                        let id = resources.gaussian_splat_store.insert(gpu_set);
+                        let id = resources.content.gaussian_splat_store.insert(gpu_set);
                         slot_for_apply.set(id);
                     }),
                 ))
@@ -696,7 +696,7 @@ impl DeviceResources {
         store_index: usize,
         viewport_index: usize,
     ) {
-        let set = match self.gaussian_splat_store.get_by_index(store_index) {
+        let set = match self.content.gaussian_splat_store.get_by_index(store_index) {
             Some(s) => s,
             None => return,
         };
@@ -707,6 +707,7 @@ impl DeviceResources {
         {
             // We need mutable access - re-borrow.
             let set_mut = self
+                .content
                 .gaussian_splat_store
                 .get_mut_by_index(store_index)
                 .unwrap();
@@ -771,7 +772,11 @@ impl DeviceResources {
                 // after 4 sort passes (even number of passes means result ends in ping).
                 let render_bg = {
                     let bgl = self.gaussian_splat.bgl.as_ref().unwrap();
-                    let set_ref = self.gaussian_splat_store.get_by_index(store_index).unwrap();
+                    let set_ref = self
+                        .content
+                        .gaussian_splat_store
+                        .get_by_index(store_index)
+                        .unwrap();
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("splat_render_bg"),
                         layout: bgl,
@@ -821,6 +826,7 @@ impl DeviceResources {
                 };
 
                 let set_mut2 = self
+                    .content
                     .gaussian_splat_store
                     .get_mut_by_index(store_index)
                     .unwrap();
@@ -848,7 +854,7 @@ impl DeviceResources {
         // Ensure sort buffers and render BG exist.
         self.ensure_gaussian_splat_sort_buffers(device, store_index, viewport_index);
 
-        let set = match self.gaussian_splat_store.get_by_index(store_index) {
+        let set = match self.content.gaussian_splat_store.get_by_index(store_index) {
             Some(s) => s,
             None => return,
         };
@@ -889,7 +895,11 @@ impl DeviceResources {
         // Build depth BG.
         let depth_bg = {
             let bgl = self.gaussian_splat.depth_bgl.as_ref().unwrap();
-            let set_ref = self.gaussian_splat_store.get_by_index(store_index).unwrap();
+            let set_ref = self
+                .content
+                .gaussian_splat_store
+                .get_by_index(store_index)
+                .unwrap();
             let vp_sort_ref = set_ref.viewport_sort[viewport_index].as_ref().unwrap();
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("splat_depth_bg"),
@@ -931,7 +941,11 @@ impl DeviceResources {
 
         // Copy depth keys into keys_ping (depth_buf -> keys_ping).
         {
-            let set_ref = self.gaussian_splat_store.get_by_index(store_index).unwrap();
+            let set_ref = self
+                .content
+                .gaussian_splat_store
+                .get_by_index(store_index)
+                .unwrap();
             let vp_sort_ref = set_ref.viewport_sort[viewport_index].as_ref().unwrap();
             encoder.copy_buffer_to_buffer(
                 &vp_sort_ref.depth_buf,
@@ -962,7 +976,11 @@ impl DeviceResources {
             });
             queue.write_buffer(&sort_uniform_buf, 0, bytemuck::bytes_of(&sort_uni));
 
-            let set_ref = self.gaussian_splat_store.get_by_index(store_index).unwrap();
+            let set_ref = self
+                .content
+                .gaussian_splat_store
+                .get_by_index(store_index)
+                .unwrap();
             let vp_sort_ref = set_ref.viewport_sort[viewport_index].as_ref().unwrap();
 
             let sort_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1064,7 +1082,11 @@ impl DeviceResources {
         queue.submit(std::iter::once(encoder.finish()));
 
         // Record eye so callers can skip re-sort if unchanged (optional optimisation).
-        if let Some(set_mut) = self.gaussian_splat_store.get_mut_by_index(store_index) {
+        if let Some(set_mut) = self
+            .content
+            .gaussian_splat_store
+            .get_mut_by_index(store_index)
+        {
             if let Some(Some(vp_sort_mut)) = set_mut.viewport_sort.get_mut(viewport_index) {
                 vp_sort_mut.last_eye = eye;
             }
@@ -1110,10 +1132,10 @@ mod async_tests {
         let id1 = resources
             .upload_gaussian_splat(&device, &queue, &sample_splats(8))
             .unwrap();
-        assert!(resources.gaussian_splat_store.get(id1).is_some());
+        assert!(resources.content.gaussian_splat_store.get(id1).is_some());
         resources.free_gaussian_splat(id1);
         assert!(
-            resources.gaussian_splat_store.get(id1).is_none(),
+            resources.content.gaussian_splat_store.get(id1).is_none(),
             "a removed handle must not resolve"
         );
 
@@ -1123,9 +1145,9 @@ mod async_tests {
             .unwrap();
         assert_eq!(id1.index(), id2.index(), "the freed slot should be reused");
         assert_ne!(id1, id2, "the reused slot must carry a new generation");
-        assert!(resources.gaussian_splat_store.get(id2).is_some());
+        assert!(resources.content.gaussian_splat_store.get(id2).is_some());
         assert!(
-            resources.gaussian_splat_store.get(id1).is_none(),
+            resources.content.gaussian_splat_store.get(id1).is_none(),
             "the stale handle must not alias the set now occupying its slot"
         );
     }
@@ -1191,7 +1213,7 @@ mod async_tests {
         resources
             .replace_gaussian_splat(&device, &queue, id, &sample_splats(2))
             .expect("replace on a live handle succeeds");
-        assert!(resources.gaussian_splat_store.get(id).is_some());
+        assert!(resources.content.gaussian_splat_store.get(id).is_some());
         let bytes_after = resources.resident_bytes().gaussian_splat_bytes;
         assert!(
             bytes_after < bytes_before,

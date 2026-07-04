@@ -85,8 +85,8 @@ impl DeviceResources {
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let id = VolumeId(self.volume_textures.len());
-        self.volume_textures.push((texture, view));
+        let id = VolumeId(self.content.volume_textures.len());
+        self.content.volume_textures.push((texture, view));
         id
     }
 
@@ -169,8 +169,8 @@ impl DeviceResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
-                        let id = VolumeId(resources.volume_textures.len());
-                        resources.volume_textures.push((texture, view));
+                        let id = VolumeId(resources.content.volume_textures.len());
+                        resources.content.volume_textures.push((texture, view));
                         slot_for_apply.set(id);
                     }),
                 ))
@@ -565,14 +565,14 @@ impl DeviceResources {
 
         let vol_id = item.volume_id.0;
         assert!(
-            vol_id < self.volume_textures.len(),
+            vol_id < self.content.volume_textures.len(),
             "invalid VolumeId: {} (only {} volumes uploaded)",
             vol_id,
-            self.volume_textures.len()
+            self.content.volume_textures.len()
         );
 
         let dims = {
-            let tex = &self.volume_textures[vol_id].0;
+            let tex = &self.content.volume_textures[vol_id].0;
             let size = tex.size();
             [size.width, size.height, size.depth_or_array_layers]
         };
@@ -674,22 +674,25 @@ impl DeviceResources {
         }
         uniform_buf.unmap();
 
-        let volume_view = &self.volume_textures[vol_id].1;
+        let volume_view = &self.content.volume_textures[vol_id].1;
 
         let colour_lut_view = if let Some(cmap_id) = item.colour_lut {
-            self.colourmap_views
+            self.content
+                .colourmap_views
                 .get(cmap_id.0)
-                .unwrap_or(&self.fallback_lut_view)
-        } else if let Some(ids) = &self.builtin_colourmap_ids {
-            self.colourmap_views
+                .unwrap_or(&self.content.fallback_lut_view)
+        } else if let Some(ids) = &self.content.builtin_colourmap_ids {
+            self.content
+                .colourmap_views
                 .get(ids[0].0)
-                .unwrap_or(&self.fallback_lut_view)
+                .unwrap_or(&self.content.fallback_lut_view)
         } else {
-            &self.fallback_lut_view
+            &self.content.fallback_lut_view
         };
 
         let opacity_lut_view = if let Some(cmap_id) = item.opacity_lut {
-            self.colourmap_views
+            self.content
+                .colourmap_views
                 .get(cmap_id.0)
                 .unwrap_or(self.volume.default_opacity_lut_view.as_ref().unwrap())
         } else {

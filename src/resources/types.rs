@@ -2811,6 +2811,96 @@ pub(crate) struct ImageSliceResources {
 #[deprecated(note = "renamed to DeviceResources")]
 pub type ViewportGpuResources = DeviceResources;
 
+/// Uploaded GPU assets and their handle registries: user textures, geometry /
+/// scivis stores, colourmap and matcap tables, plus the fallback LUT and the
+/// zero-fill attribute buffers bound when an optional attribute is absent.
+///
+/// This is the content-residency set: everything addressed by a handle
+/// (`TextureId`, `PolylineId`, `ColourmapId`, ...) or provided as a default when
+/// a handle is missing. It carries no pipelines; the upload / registry methods
+/// stay on `DeviceResources` and reach these through `self.content`. The shared
+/// material and LUT samplers and the fallback material textures stay on the core
+/// because the lit pass samples them on every draw.
+pub struct ContentResources {
+    /// Cache of material bind groups keyed by (albedo_id, normal_map_id, ao_map_id).
+    /// u64::MAX sentinel = use fallback texture for that slot.
+    #[allow(dead_code)]
+    pub(crate) material_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
+    /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
+    /// with generational ids so a freed slot cannot alias a later upload.
+    pub(crate) textures: crate::resources::material::texture_store::TextureStore,
+    /// Pre-uploaded polyline storage; entries are referenced from per-frame
+    /// `PolylineRefItem`s.
+    pub(crate) polyline_store: super::PolylineStore,
+    /// Pre-uploaded streamtube storage.
+    pub(crate) streamtube_store: super::StreamtubeStore,
+    /// Pre-uploaded tube storage.
+    pub(crate) tube_store: super::TubeStore,
+    /// Pre-uploaded ribbon storage.
+    pub(crate) ribbon_store: super::RibbonStore,
+    /// Pre-uploaded point cloud storage.
+    pub(crate) point_cloud_store: super::PointCloudStore,
+    /// Pre-uploaded glyph set storage.
+    pub(crate) glyph_set_store: super::GlyphSetStore,
+    /// Pre-uploaded tensor glyph set storage.
+    pub(crate) tensor_glyph_set_store: super::TensorGlyphSetStore,
+    /// Pre-uploaded sprite set storage.
+    pub(crate) sprite_set_store: super::SpriteSetStore,
+    /// Pre-uploaded sprite instance set storage.
+    pub(crate) sprite_instance_set_store: super::SpriteInstanceSetStore,
+    /// Slotted store of all uploaded Gaussian splat sets.
+    pub(crate) gaussian_splat_store: GaussianSplatStore,
+    /// Uploaded 3D volume textures. Index = VolumeId value.
+    pub(crate) volume_textures: Vec<(wgpu::Texture, wgpu::TextureView)>,
+    /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
+    pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
+    /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
+    pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
+    /// Persistent textures uploaded via `upload_overlay_texture`.
+    pub(crate) overlay_textures: Vec<OverlayShapeTextureEntry>,
+    /// Matcap textures (256x256 RGBA), indexed by `MatcapId::index`.
+    pub(crate) matcap_textures: Vec<wgpu::Texture>,
+    /// Texture views for each uploaded matcap.
+    pub(crate) matcap_views: Vec<wgpu::TextureView>,
+    /// Linear-clamp sampler shared by all matcap texture lookups.
+    pub(crate) matcap_sampler: Option<wgpu::Sampler>,
+    /// Fallback 1x1 white view bound to binding 7 when no matcap is active.
+    pub(crate) fallback_matcap_view: Option<wgpu::TextureView>,
+    /// Whether built-in matcaps have been uploaded to the GPU.
+    pub(crate) matcaps_initialized: bool,
+    /// `MatcapId` for each built-in preset, populated by `ensure_matcaps_initialized`.
+    pub(crate) builtin_matcap_ids: Option<[MatcapId; 8]>,
+    /// Uploaded colourmap GPU textures. Index = ColourmapId value.
+    pub(crate) colourmap_textures: Vec<wgpu::Texture>,
+    /// Views into colourmap_textures. Index = ColourmapId value.
+    pub(crate) colourmap_views: Vec<wgpu::TextureView>,
+    /// CPU-side copy of each colourmap for egui scalar bar rendering. Index = ColourmapId value.
+    pub(crate) colourmaps_cpu: Vec<[[u8; 4]; 256]>,
+    /// Fallback 1x1 LUT texture (bound when has_attribute=0; content irrelevant to the shader).
+    #[allow(dead_code)]
+    pub(crate) fallback_lut_texture: wgpu::Texture,
+    /// View of fallback_lut_texture.
+    pub(crate) fallback_lut_view: wgpu::TextureView,
+    /// Fallback 4-byte zero storage buffer (bound when no scalar attribute is active).
+    pub(crate) fallback_scalar_buf: wgpu::Buffer,
+    /// Fallback 16-byte zero storage buffer (bound to binding 8 when no face colour attribute is active).
+    pub(crate) fallback_face_colour_buf: wgpu::Buffer,
+    /// Fallback 12-byte zero storage buffer (bound to binding 9 when no warp attribute is active).
+    pub(crate) fallback_warp_buf: wgpu::Buffer,
+    /// Fallback 12-byte zero storage buffer (bound to binding 13 when no
+    /// position override is active). Single `vec3<f32>(0,0,0)` entry; the
+    /// shader bounds-checks `arrayLength` before reading.
+    pub(crate) fallback_position_override_buf: wgpu::Buffer,
+    /// Fallback 12-byte zero storage buffer (bound to binding 14 when no
+    /// normal override is active).
+    pub(crate) fallback_normal_override_buf: wgpu::Buffer,
+    /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
+    /// `None` until `ensure_colourmaps_initialized()` has been called.
+    pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,
+    /// Whether built-in colourmaps have been uploaded to the GPU.
+    pub(crate) colourmaps_initialized: bool,
+}
+
 /// Device-shared GPU resources: pipelines, layouts, samplers, fallbacks, LUTs,
 /// and the per-feature pipeline clusters (`decal`, `scatter`, `volume`, ...).
 /// Created once at init and shared across every viewport.
@@ -3009,13 +3099,9 @@ pub struct DeviceResources {
     pub(crate) material_sampler: wgpu::Sampler,
     /// Shared linear-clamp sampler for colourmap LUT lookups.
     pub(crate) lut_sampler: wgpu::Sampler,
-    /// Cache of material bind groups keyed by (albedo_id, normal_map_id, ao_map_id).
-    /// u64::MAX sentinel = use fallback texture for that slot.
-    #[allow(dead_code)]
-    pub(crate) material_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
-    /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
-    /// with generational ids so a freed slot cannot alias a later upload.
-    pub(crate) textures: crate::resources::material::texture_store::TextureStore,
+    /// Uploaded GPU assets and their handle registries (textures, geometry /
+    /// scivis stores, colourmap and matcap tables, fallback LUT and attribute buffers).
+    pub(crate) content: ContentResources,
     /// Background runner used by async upload entry points. Drained once per
     /// frame during `prepare_scene` so completion is visible to the caller.
     /// Wrapped in a mutex because mpsc receivers and boxed `FnOnce`
@@ -3026,39 +3112,6 @@ pub struct DeviceResources {
     /// Grouped into one struct so the async bookkeeping is a single field
     /// rather than a score of flat ones; see `upload_jobs::JobResults`.
     pub(crate) job_results: super::upload_jobs::JobResults,
-    /// Pre-uploaded polyline storage; entries are referenced from per-frame
-    /// `PolylineRefItem`s.
-    pub(crate) polyline_store: super::PolylineStore,
-    /// Pre-uploaded streamtube storage.
-    pub(crate) streamtube_store: super::StreamtubeStore,
-    /// Pre-uploaded tube storage.
-    pub(crate) tube_store: super::TubeStore,
-    /// Pre-uploaded ribbon storage.
-    pub(crate) ribbon_store: super::RibbonStore,
-    /// Pre-uploaded point cloud storage.
-    pub(crate) point_cloud_store: super::PointCloudStore,
-    /// Pre-uploaded glyph set storage.
-    pub(crate) glyph_set_store: super::GlyphSetStore,
-    /// Pre-uploaded tensor glyph set storage.
-    pub(crate) tensor_glyph_set_store: super::TensorGlyphSetStore,
-    /// Pre-uploaded sprite set storage.
-    pub(crate) sprite_set_store: super::SpriteSetStore,
-    /// Pre-uploaded sprite instance set storage.
-    pub(crate) sprite_instance_set_store: super::SpriteInstanceSetStore,
-
-    // --- Matcap texture system ---
-    /// Matcap textures (256x256 RGBA), indexed by `MatcapId::index`.
-    pub(crate) matcap_textures: Vec<wgpu::Texture>,
-    /// Texture views for each uploaded matcap.
-    pub(crate) matcap_views: Vec<wgpu::TextureView>,
-    /// Linear-clamp sampler shared by all matcap texture lookups.
-    pub(crate) matcap_sampler: Option<wgpu::Sampler>,
-    /// Fallback 1x1 white view bound to binding 7 when no matcap is active.
-    pub(crate) fallback_matcap_view: Option<wgpu::TextureView>,
-    /// Whether built-in matcaps have been uploaded to the GPU.
-    pub(crate) matcaps_initialized: bool,
-    /// `MatcapId` for each built-in preset, populated by `ensure_matcaps_initialized`.
-    pub(crate) builtin_matcap_ids: Option<[MatcapId; 8]>,
 
     /// Whether fallback normal map / AO map pixels have been uploaded.
     pub(crate) fallback_textures_uploaded: bool,
@@ -3103,42 +3156,9 @@ pub struct DeviceResources {
     /// HDR overlay pipeline (TriangleList, Rgba16Float, alpha blending) for cap fill in HDR path.
     pub(crate) hdr_overlay_pipeline: Option<wgpu::RenderPipeline>,
 
-    // --- Colourmap / LUT resources ---
-    /// Uploaded colourmap GPU textures. Index = ColourmapId value.
-    pub(crate) colourmap_textures: Vec<wgpu::Texture>,
-    /// Views into colourmap_textures. Index = ColourmapId value.
-    pub(crate) colourmap_views: Vec<wgpu::TextureView>,
-    /// CPU-side copy of each colourmap for egui scalar bar rendering. Index = ColourmapId value.
-    pub(crate) colourmaps_cpu: Vec<[[u8; 4]; 256]>,
-    /// Fallback 1x1 LUT texture (bound when has_attribute=0; content irrelevant to the shader).
-    #[allow(dead_code)]
-    pub(crate) fallback_lut_texture: wgpu::Texture,
-    /// View of fallback_lut_texture.
-    pub(crate) fallback_lut_view: wgpu::TextureView,
-    /// Fallback 4-byte zero storage buffer (bound when no scalar attribute is active).
-    pub(crate) fallback_scalar_buf: wgpu::Buffer,
-    /// Fallback 16-byte zero storage buffer (bound to binding 8 when no face colour attribute is active).
-    pub(crate) fallback_face_colour_buf: wgpu::Buffer,
-    /// Fallback 12-byte zero storage buffer (bound to binding 9 when no warp attribute is active).
-    pub(crate) fallback_warp_buf: wgpu::Buffer,
-    /// Fallback 12-byte zero storage buffer (bound to binding 13 when no
-    /// position override is active). Single `vec3<f32>(0,0,0)` entry; the
-    /// shader bounds-checks `arrayLength` before reading.
-    pub(crate) fallback_position_override_buf: wgpu::Buffer,
-    /// Fallback 12-byte zero storage buffer (bound to binding 14 when no
-    /// normal override is active).
-    pub(crate) fallback_normal_override_buf: wgpu::Buffer,
-    /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
-    /// `None` until `ensure_colourmaps_initialized()` has been called.
-    pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,
-    /// Whether built-in colourmaps have been uploaded to the GPU.
-    pub(crate) colourmaps_initialized: bool,
-
     // --- Gaussian splat pipelines (lazily created) ---
     /// Gaussian splat render/sort pipelines and their bind group layouts.
     pub(crate) gaussian_splat: crate::resources::scivis::gaussian_splat::GaussianSplatResources,
-    /// Slotted store of all uploaded Gaussian splat sets.
-    pub(crate) gaussian_splat_store: GaussianSplatStore,
 
     // --- Sprite billboard pipelines (lazily created) ---
     /// Sprite (emissive + lit) pipelines, layouts, refraction, and soft-particle fallbacks.
@@ -3170,8 +3190,6 @@ pub struct DeviceResources {
     pub(crate) image_slice: ImageSliceResources,
 
     // --- volume rendering (lazily created) ---
-    /// Uploaded 3D volume textures. Index = VolumeId value.
-    pub(crate) volume_textures: Vec<(wgpu::Texture, wgpu::TextureView)>,
     /// Volume render/surface-slice/outline pipelines, layouts, cube geometry, and default LUT.
     pub(crate) volume: crate::resources::volume::volumes::VolumeResources,
 
@@ -3190,8 +3208,6 @@ pub struct DeviceResources {
     // --- Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Projected-tetrahedra pipeline, layouts, and LUT bind group cache.
     pub(crate) pt: ProjectedTetResources,
-    /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
-    pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
 
     // --- Scatter-volume (participating media) rendering (lazily created) ---
     /// Scatter-volume pipelines, layouts, and per-frame upload buffers.
@@ -3270,17 +3286,11 @@ pub struct DeviceResources {
     /// Sub-object highlight pipelines (fill / edge / sprite, HDR + LDR) and layout.
     pub(crate) sub_highlight: SubHighlightResources,
 
-    // --- Font atlas (overlay text rendering) ---
-    /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
-    pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
-
     // --- Overlay text / SDF shape / backdrop-blur pipelines (lazily created) ---
     /// Overlay text pipeline, layout, and sampler.
     pub(crate) overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources,
     /// SDF overlay shape pipelines (solid + textured) and sampler.
     pub(crate) overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources,
-    /// Persistent textures uploaded via `upload_overlay_texture`.
-    pub(crate) overlay_textures: Vec<OverlayShapeTextureEntry>,
     /// Backdrop blur pipeline, layout, and sampler.
     pub(crate) backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources,
 

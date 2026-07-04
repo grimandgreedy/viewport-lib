@@ -330,7 +330,7 @@ impl DeviceResources {
                     crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
                         submission,
                         Box::new(move |resources: &mut DeviceResources| {
-                            let tex_id = resources.textures.insert(gpu_texture, data_bytes);
+                            let tex_id = resources.content.textures.insert(gpu_texture, data_bytes);
                             slot_for_apply.set(tex_id);
                         }),
                     ),
@@ -357,8 +357,8 @@ impl DeviceResources {
     /// IBL, post-processing targets) are not included.
     pub fn texture_memory_stats(&self) -> TextureMemoryStats {
         TextureMemoryStats {
-            used_bytes: self.textures.allocated_bytes(),
-            texture_count: self.textures.len() as u32,
+            used_bytes: self.content.textures.allocated_bytes(),
+            texture_count: self.content.textures.len() as u32,
         }
     }
 
@@ -373,19 +373,19 @@ impl DeviceResources {
     /// it. Built-in LUTs, IBL maps, and render targets are not counted; see
     /// [`ResidentBytes`].
     pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
-        let scivis_bytes = self.polyline_store.allocated_bytes()
-            + self.streamtube_store.allocated_bytes()
-            + self.tube_store.allocated_bytes()
-            + self.ribbon_store.allocated_bytes()
-            + self.point_cloud_store.allocated_bytes()
-            + self.glyph_set_store.allocated_bytes()
-            + self.tensor_glyph_set_store.allocated_bytes()
-            + self.sprite_set_store.allocated_bytes()
-            + self.sprite_instance_set_store.allocated_bytes();
+        let scivis_bytes = self.content.polyline_store.allocated_bytes()
+            + self.content.streamtube_store.allocated_bytes()
+            + self.content.tube_store.allocated_bytes()
+            + self.content.ribbon_store.allocated_bytes()
+            + self.content.point_cloud_store.allocated_bytes()
+            + self.content.glyph_set_store.allocated_bytes()
+            + self.content.tensor_glyph_set_store.allocated_bytes()
+            + self.content.sprite_set_store.allocated_bytes()
+            + self.content.sprite_instance_set_store.allocated_bytes();
         crate::resources::types::ResidentBytes {
             mesh_bytes: self.mesh_store.allocated_bytes(),
-            texture_bytes: self.textures.allocated_bytes(),
-            gaussian_splat_bytes: self.gaussian_splat_store.allocated_bytes(),
+            texture_bytes: self.content.textures.allocated_bytes(),
+            gaussian_splat_bytes: self.content.gaussian_splat_store.allocated_bytes(),
             mc_volume_bytes: self.mc_volume_resident_bytes(),
             scivis_bytes,
         }
@@ -405,7 +405,7 @@ impl DeviceResources {
     /// Materials still holding `id` are not rewritten; they fall back to the
     /// fallback texture until reassigned.
     pub fn free_texture(&mut self, id: crate::resources::TextureId) -> bool {
-        if !self.textures.remove(id) {
+        if !self.content.textures.remove(id) {
             return false;
         }
         self.evict_texture_bind_group_caches(id.raw());
@@ -463,8 +463,13 @@ impl DeviceResources {
             &self.fallback_ao_map_view,
         );
         let bytes = rgba_data.len() as u64;
-        if self.textures.replace(id, gpu_texture, bytes).is_none() {
-            let (index, count) = (id.index(), self.textures.len());
+        if self
+            .content
+            .textures
+            .replace(id, gpu_texture, bytes)
+            .is_none()
+        {
+            let (index, count) = (id.index(), self.content.textures.len());
             return Err(crate::error::ViewportError::StaleHandle { index, count });
         }
         // The slot's view changed, so bind groups cached against this id now
@@ -478,7 +483,8 @@ impl DeviceResources {
     /// against the current occupant (or the fallback). Shared by `free_texture`
     /// (slot now empty) and `replace_texture` (slot holds a new view).
     fn evict_texture_bind_group_caches(&mut self, raw: u64) {
-        self.material_bind_groups
+        self.content
+            .material_bind_groups
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
         self.instancing
             .bind_groups
@@ -723,17 +729,23 @@ impl DeviceResources {
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
         );
 
-        if !self.material_bind_groups.contains_key(&key) {
+        if !self.content.material_bind_groups.contains_key(&key) {
             let albedo_view = match albedo_id {
-                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
                 _ => &self.fallback_texture.view,
             };
             let normal_view = match normal_map_id {
-                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
                 _ => &self.fallback_normal_map_view,
             };
             let ao_view = match ao_map_id {
-                Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
                 _ => &self.fallback_ao_map_view,
             };
 
@@ -759,10 +771,10 @@ impl DeviceResources {
                     },
                 ],
             });
-            self.material_bind_groups.insert(key, bg);
+            self.content.material_bind_groups.insert(key, bg);
         }
 
-        self.material_bind_groups.get(&key).unwrap()
+        self.content.material_bind_groups.get(&key).unwrap()
     }
 
     /// Rebuild `mesh.object_bind_group` so it includes the texture views, LUT, and scalar
@@ -834,20 +846,28 @@ impl DeviceResources {
         }
 
         let albedo_view = match albedo_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_texture.view,
         };
         let normal_view = match normal_map_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_normal_map_view,
         };
         let ao_view = match ao_map_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_ao_map_view,
         };
         let lut_view = match lut_id {
-            Some(id) if id.0 < self.colourmap_views.len() => &self.colourmap_views[id.0],
-            _ => &self.fallback_lut_view,
+            Some(id) if id.0 < self.content.colourmap_views.len() => {
+                &self.content.colourmap_views[id.0]
+            }
+            _ => &self.content.fallback_lut_view,
         };
 
         let Some(mesh) = self.mesh_store.get_mut(mesh_id) else {
@@ -860,23 +880,26 @@ impl DeviceResources {
                 let found_face = mesh.face_attribute_buffers.get(name);
                 found_vertex
                     .or(found_face)
-                    .unwrap_or(&self.fallback_scalar_buf)
+                    .unwrap_or(&self.content.fallback_scalar_buf)
             }
-            None => &self.fallback_scalar_buf,
+            None => &self.content.fallback_scalar_buf,
         };
 
         let face_colour_buf: &wgpu::Buffer = match active_attr {
             Some(name) => mesh
                 .face_colour_buffers
                 .get(name)
-                .unwrap_or(&self.fallback_face_colour_buf),
-            None => &self.fallback_face_colour_buf,
+                .unwrap_or(&self.content.fallback_face_colour_buf),
+            None => &self.content.fallback_face_colour_buf,
         };
 
         // Resolve matcap texture view : fallback to 1x1 white when no matcap active.
         let matcap_view: &wgpu::TextureView = match matcap_id {
-            Some(id) if id.index < self.matcap_views.len() => &self.matcap_views[id.index],
+            Some(id) if id.index < self.content.matcap_views.len() => {
+                &self.content.matcap_views[id.index]
+            }
             _ => self
+                .content
                 .fallback_matcap_view
                 .as_ref()
                 .unwrap_or(&self.fallback_texture.view),
@@ -886,25 +909,29 @@ impl DeviceResources {
             Some(name) => mesh
                 .vector_attribute_buffers
                 .get(name)
-                .unwrap_or(&self.fallback_warp_buf),
-            None => &self.fallback_warp_buf,
+                .unwrap_or(&self.content.fallback_warp_buf),
+            None => &self.content.fallback_warp_buf,
         };
 
         let position_override_buf: &wgpu::Buffer = mesh
             .position_override_buffer
             .as_ref()
-            .unwrap_or(&self.fallback_position_override_buf);
+            .unwrap_or(&self.content.fallback_position_override_buf);
         let normal_override_buf: &wgpu::Buffer = mesh
             .normal_override_buffer
             .as_ref()
-            .unwrap_or(&self.fallback_normal_override_buf);
+            .unwrap_or(&self.content.fallback_normal_override_buf);
 
         let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_metallic_roughness_texture_view,
         };
         let emissive_view: &wgpu::TextureView = match emissive_texture_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_emissive_texture_view,
         };
 
@@ -1056,20 +1083,28 @@ impl DeviceResources {
         }
 
         let albedo_view = match albedo_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_texture.view,
         };
         let normal_view = match normal_map_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_normal_map_view,
         };
         let ao_view = match ao_map_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_ao_map_view,
         };
         let lut_view = match lut_id {
-            Some(id) if id.0 < self.colourmap_views.len() => &self.colourmap_views[id.0],
-            _ => &self.fallback_lut_view,
+            Some(id) if id.0 < self.content.colourmap_views.len() => {
+                &self.content.colourmap_views[id.0]
+            }
+            _ => &self.content.fallback_lut_view,
         };
 
         let scalar_buf: &wgpu::Buffer = match active_attr {
@@ -1078,22 +1113,25 @@ impl DeviceResources {
                 let found_face = mesh.face_attribute_buffers.get(name);
                 found_vertex
                     .or(found_face)
-                    .unwrap_or(&self.fallback_scalar_buf)
+                    .unwrap_or(&self.content.fallback_scalar_buf)
             }
-            None => &self.fallback_scalar_buf,
+            None => &self.content.fallback_scalar_buf,
         };
 
         let face_colour_buf: &wgpu::Buffer = match active_attr {
             Some(name) => mesh
                 .face_colour_buffers
                 .get(name)
-                .unwrap_or(&self.fallback_face_colour_buf),
-            None => &self.fallback_face_colour_buf,
+                .unwrap_or(&self.content.fallback_face_colour_buf),
+            None => &self.content.fallback_face_colour_buf,
         };
 
         let matcap_view: &wgpu::TextureView = match matcap_id {
-            Some(id) if id.index < self.matcap_views.len() => &self.matcap_views[id.index],
+            Some(id) if id.index < self.content.matcap_views.len() => {
+                &self.content.matcap_views[id.index]
+            }
             _ => self
+                .content
                 .fallback_matcap_view
                 .as_ref()
                 .unwrap_or(&self.fallback_texture.view),
@@ -1103,25 +1141,29 @@ impl DeviceResources {
             Some(name) => mesh
                 .vector_attribute_buffers
                 .get(name)
-                .unwrap_or(&self.fallback_warp_buf),
-            None => &self.fallback_warp_buf,
+                .unwrap_or(&self.content.fallback_warp_buf),
+            None => &self.content.fallback_warp_buf,
         };
 
         let position_override_buf: &wgpu::Buffer = mesh
             .position_override_buffer
             .as_ref()
-            .unwrap_or(&self.fallback_position_override_buf);
+            .unwrap_or(&self.content.fallback_position_override_buf);
         let normal_override_buf: &wgpu::Buffer = mesh
             .normal_override_buffer
             .as_ref()
-            .unwrap_or(&self.fallback_normal_override_buf);
+            .unwrap_or(&self.content.fallback_normal_override_buf);
 
         let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_metallic_roughness_texture_view,
         };
         let emissive_view: &wgpu::TextureView = match emissive_texture_id {
-            Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
             _ => &self.fallback_emissive_texture_view,
         };
 
@@ -1239,10 +1281,10 @@ impl DeviceResources {
             },
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let id = ColourmapId(self.colourmap_textures.len());
-        self.colourmap_textures.push(texture);
-        self.colourmap_views.push(view);
-        self.colourmaps_cpu.push(*rgba_data);
+        let id = ColourmapId(self.content.colourmap_textures.len());
+        self.content.colourmap_textures.push(texture);
+        self.content.colourmap_views.push(view);
+        self.content.colourmaps_cpu.push(*rgba_data);
         id
     }
 
@@ -1252,7 +1294,7 @@ impl DeviceResources {
     /// widgets, or sampling a colour at a specific scalar value. The data is always in memory
     /// (kept for GPU upload) so this accessor is free.
     pub fn get_colourmap_rgba(&self, id: ColourmapId) -> Option<&[[u8; 4]; 256]> {
-        self.colourmaps_cpu.get(id.0)
+        self.content.colourmaps_cpu.get(id.0)
     }
 
     /// Return the `ColourmapId` for a built-in preset.
@@ -1260,7 +1302,8 @@ impl DeviceResources {
     /// Call [`Self::ensure_colourmaps_initialized`] first (done automatically by
     /// `ViewportRenderer::prepare`).  Panics if colourmaps have not been initialized yet.
     pub fn builtin_colourmap_id(&self, preset: BuiltinColourmap) -> ColourmapId {
-        self.builtin_colourmap_ids
+        self.content
+            .builtin_colourmap_ids
             .expect("call ensure_colourmaps_initialized before using built-in colourmaps")
             [preset as usize]
     }
@@ -1270,7 +1313,7 @@ impl DeviceResources {
     /// Called automatically by `ViewportRenderer::prepare()` on the first frame.
     /// Safe to call multiple times : no-op after first invocation.
     pub fn ensure_colourmaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.colourmaps_initialized {
+        if self.content.colourmaps_initialized {
             return;
         }
         let viridis = self.upload_colourmap(
@@ -1323,10 +1366,10 @@ impl DeviceResources {
             queue,
             &crate::resources::material::colourmap_data::rdbu_r_rgba(),
         );
-        self.builtin_colourmap_ids = Some([
+        self.content.builtin_colourmap_ids = Some([
             viridis, plasma, greyscale, coolwarm, rainbow, magma, inferno, turbo, jet, rdbu,
         ]);
-        self.colourmaps_initialized = true;
+        self.content.colourmaps_initialized = true;
     }
 
     // -----------------------------------------------------------------------
@@ -1394,8 +1437,8 @@ impl DeviceResources {
         );
 
         // Ensure the shared clamp sampler is created.
-        if self.matcap_sampler.is_none() {
-            self.matcap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
+        if self.content.matcap_sampler.is_none() {
+            self.content.matcap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("matcap_sampler"),
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
                 address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -1407,14 +1450,14 @@ impl DeviceResources {
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let index = self.matcap_textures.len();
-        self.matcap_textures.push(texture);
-        self.matcap_views.push(view);
+        let index = self.content.matcap_textures.len();
+        self.content.matcap_textures.push(texture);
+        self.content.matcap_views.push(view);
 
         // Lazily initialise the fallback matcap view to binding 7 of the
         // first uploaded texture (a plain white 1x1 is fine as fallback).
-        if self.fallback_matcap_view.is_none() {
-            self.fallback_matcap_view = Some(
+        if self.content.fallback_matcap_view.is_none() {
+            self.content.fallback_matcap_view = Some(
                 self.fallback_texture
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default()),
@@ -1433,7 +1476,7 @@ impl DeviceResources {
         &self,
         preset: crate::resources::BuiltinMatcap,
     ) -> crate::resources::MatcapId {
-        self.builtin_matcap_ids
+        self.content.builtin_matcap_ids
             .expect("call ensure_matcaps_initialized (or run one prepare frame) before using built-in matcaps")
             [preset as usize]
     }
@@ -1443,7 +1486,7 @@ impl DeviceResources {
     /// Called automatically by `ViewportRenderer::prepare()`. Safe to call
     /// multiple times : no-op after first invocation.
     pub fn ensure_matcaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.matcaps_initialized {
+        if self.content.matcaps_initialized {
             return;
         }
         use crate::resources::material::matcap_data;
@@ -1471,8 +1514,9 @@ impl DeviceResources {
         let normal = self
             .upload_matcap(device, queue, &matcap_data::normal(), false)
             .unwrap();
-        self.builtin_matcap_ids = Some([clay, wax, candy, flat, ceramic, jade, mud, normal]);
-        self.matcaps_initialized = true;
+        self.content.builtin_matcap_ids =
+            Some([clay, wax, candy, flat, ceramic, jade, mud, normal]);
+        self.content.matcaps_initialized = true;
     }
 }
 

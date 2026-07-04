@@ -376,7 +376,8 @@ impl ViewportRenderer {
                 if item.settings.pick_id == PickId::NONE {
                     continue;
                 }
-                let Some(gpu_set) = self.resources.gaussian_splat_store.get(item.source) else {
+                let Some(gpu_set) = self.resources.content.gaussian_splat_store.get(item.source)
+                else {
                     continue;
                 };
                 if gpu_set.cpu_positions.is_empty() {

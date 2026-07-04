@@ -269,7 +269,7 @@ impl ViewportRenderer {
         // are dropped if the per-frame cap is hit.
         let virtual_scatter_lights = derive_scatter_volume_virtual_lights(
             &frame.scene.scatter_volumes,
-            &resources.colourmaps_cpu,
+            &resources.content.colourmaps_cpu,
         );
         let raw_lights_unculled: Vec<&LightSource> = lighting
             .lights

@@ -557,6 +557,6 @@ impl crate::resources::DeviceResources {
     ///
     /// The font bytes must be a valid TrueType (`.ttf`) file.
     pub fn upload_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle, FontError> {
-        self.glyph_atlas.upload_font(ttf_bytes)
+        self.content.glyph_atlas.upload_font(ttf_bytes)
     }
 }

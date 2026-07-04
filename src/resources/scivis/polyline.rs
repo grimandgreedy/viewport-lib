@@ -503,14 +503,15 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let lut_view = self
+            .content
             .builtin_colourmap_ids
             .and_then(|ids| {
                 let preset_id = item
                     .colourmap_id
                     .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                self.colourmap_views.get(preset_id.0)
+                self.content.colourmap_views.get(preset_id.0)
             })
-            .unwrap_or(&self.fallback_lut_view);
+            .unwrap_or(&self.content.fallback_lut_view);
 
         let lut_sampler = &self.lut_sampler;
 
@@ -579,13 +580,13 @@ impl DeviceResources {
     ) -> crate::resources::PolylineId {
         self.ensure_polyline_pipeline(device);
         let gpu = self.upload_polyline_per_frame(device, queue, item, [1.0, 1.0]);
-        self.polyline_store.insert(gpu)
+        self.content.polyline_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded polyline. Returns `true` if a polyline was
     /// actually removed, `false` if the id was already invalid.
     pub fn drop_polyline(&mut self, id: crate::resources::PolylineId) -> bool {
-        self.polyline_store.remove(id)
+        self.content.polyline_store.remove(id)
     }
 
     /// Replace the geometry of a pre-uploaded polyline, keeping the same
@@ -600,12 +601,12 @@ impl DeviceResources {
         id: crate::resources::PolylineId,
         item: &crate::renderer::PolylineItem,
     ) -> bool {
-        if !self.polyline_store.contains(id) {
+        if !self.content.polyline_store.contains(id) {
             return false;
         }
         self.ensure_polyline_pipeline(device);
         let gpu = self.upload_polyline_per_frame(device, queue, item, [1.0, 1.0]);
-        self.polyline_store.replace(id, gpu)
+        self.content.polyline_store.replace(id, gpu)
     }
 
     /// Start an asynchronous polyline upload.
@@ -1019,10 +1020,10 @@ mod tests {
         };
         let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_polyline(&device, &queue, &sample_polyline());
-        assert!(resources.polyline_store.contains(id));
+        assert!(resources.content.polyline_store.contains(id));
         // drop + reupload cycles the slot.
         assert!(resources.drop_polyline(id));
-        assert!(!resources.polyline_store.contains(id));
+        assert!(!resources.content.polyline_store.contains(id));
     }
 
     #[test]
@@ -1036,19 +1037,19 @@ mod tests {
         let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id1 = resources.upload_polyline(&device, &queue, &sample_polyline());
-        assert!(resources.polyline_store.get(id1).is_some());
+        assert!(resources.content.polyline_store.get(id1).is_some());
         assert!(resources.drop_polyline(id1));
         assert!(
-            resources.polyline_store.get(id1).is_none(),
+            resources.content.polyline_store.get(id1).is_none(),
             "a dropped handle must not resolve"
         );
 
         let id2 = resources.upload_polyline(&device, &queue, &sample_polyline());
         assert_eq!(id1.index(), id2.index(), "the freed slot should be reused");
         assert_ne!(id1, id2, "the reused slot must carry a new generation");
-        assert!(resources.polyline_store.get(id2).is_some());
+        assert!(resources.content.polyline_store.get(id2).is_some());
         assert!(
-            resources.polyline_store.get(id1).is_none(),
+            resources.content.polyline_store.get(id1).is_none(),
             "the stale handle must not alias the polyline now in its slot"
         );
     }
@@ -1064,7 +1065,7 @@ mod tests {
         let mut updated = sample_polyline();
         updated.line_width = 5.0;
         assert!(resources.replace_polyline(&device, &queue, id, &updated));
-        assert!(resources.polyline_store.contains(id));
+        assert!(resources.content.polyline_store.contains(id));
     }
 
     #[test]
@@ -1093,7 +1094,7 @@ mod tests {
         }
 
         let id = resources.upload_result_polyline(job).expect("ready result");
-        assert!(resources.polyline_store.contains(id));
+        assert!(resources.content.polyline_store.contains(id));
 
         // Second take of the same id should now report missing.
         let err = resources.upload_result_polyline(job).unwrap_err();

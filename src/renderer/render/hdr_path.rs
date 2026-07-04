@@ -936,6 +936,7 @@ impl ViewportRenderer {
                         }
                         if let Some(set) = self
                             .resources
+                            .content
                             .gaussian_splat_store
                             .get_by_index(dd.store_index)
                         {
@@ -2086,7 +2087,8 @@ impl ViewportRenderer {
                             let Some(pt_id) = item.projected_tet_id else {
                                 continue;
                             };
-                            let Some(gpu) = resources.projected_tet_store.get(pt_id.0) else {
+                            let Some(gpu) = resources.content.projected_tet_store.get(pt_id.0)
+                            else {
                                 continue;
                             };
                             let (scalar_min, scalar_max) =
@@ -2112,6 +2114,7 @@ impl ViewportRenderer {
                                 .colourmap_id
                                 .and_then(|id| {
                                     resources
+                                        .content
                                         .colourmap_views
                                         .get(id.0)
                                         .and(resources.pt.lut_bind_groups.get(&id.0))

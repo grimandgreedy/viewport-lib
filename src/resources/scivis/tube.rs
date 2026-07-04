@@ -616,12 +616,12 @@ impl DeviceResources {
     ) -> crate::resources::StreamtubeId {
         self.ensure_streamtube_pipeline(device);
         let gpu = self.upload_streamtube_per_frame(device, queue, item, false);
-        self.streamtube_store.insert(gpu)
+        self.content.streamtube_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded streamtube.
     pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
-        self.streamtube_store.remove(id)
+        self.content.streamtube_store.remove(id)
     }
 
     /// Replace the geometry of a pre-uploaded streamtube, keeping the same id.
@@ -632,12 +632,12 @@ impl DeviceResources {
         id: crate::resources::StreamtubeId,
         item: &crate::renderer::StreamtubeItem,
     ) -> bool {
-        if !self.streamtube_store.contains(id) {
+        if !self.content.streamtube_store.contains(id) {
             return false;
         }
         self.ensure_streamtube_pipeline(device);
         let gpu = self.upload_streamtube_per_frame(device, queue, item, false);
-        self.streamtube_store.replace(id, gpu)
+        self.content.streamtube_store.replace(id, gpu)
     }
 
     // -------------------------------------------------------------------------
@@ -662,12 +662,13 @@ impl DeviceResources {
         let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
             if !item.scalars.is_empty() {
                 let lut = self
+                    .content
                     .builtin_colourmap_ids
                     .and_then(|ids| {
                         let preset_id = item
                             .colourmap_id
                             .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                        self.colourmaps_cpu.get(preset_id.0).copied()
+                        self.content.colourmaps_cpu.get(preset_id.0).copied()
                     })
                     .unwrap_or([[128u8; 4]; 256]);
                 (1, Some(lut))
@@ -950,12 +951,12 @@ impl DeviceResources {
     ) -> crate::resources::TubeId {
         self.ensure_streamtube_pipeline(device);
         let gpu = self.upload_tube_per_frame(device, queue, item, false);
-        self.tube_store.insert(gpu)
+        self.content.tube_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded tube.
     pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
-        self.tube_store.remove(id)
+        self.content.tube_store.remove(id)
     }
 
     /// Replace the geometry of a pre-uploaded tube, keeping the same id.
@@ -966,12 +967,12 @@ impl DeviceResources {
         id: crate::resources::TubeId,
         item: &crate::renderer::TubeItem,
     ) -> bool {
-        if !self.tube_store.contains(id) {
+        if !self.content.tube_store.contains(id) {
             return false;
         }
         self.ensure_streamtube_pipeline(device);
         let gpu = self.upload_tube_per_frame(device, queue, item, false);
-        self.tube_store.replace(id, gpu)
+        self.content.tube_store.replace(id, gpu)
     }
 
     // -------------------------------------------------------------------------
@@ -1000,12 +1001,13 @@ impl DeviceResources {
             (1, None)
         } else if !item.scalars.is_empty() {
             let lut = self
+                .content
                 .builtin_colourmap_ids
                 .and_then(|ids| {
                     let preset_id = item
                         .colourmap_id
                         .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                    self.colourmaps_cpu.get(preset_id.0).copied()
+                    self.content.colourmaps_cpu.get(preset_id.0).copied()
                 })
                 .unwrap_or([[128u8; 4]; 256]);
             (1, Some(lut))
@@ -1234,13 +1236,13 @@ impl DeviceResources {
         }
         let (texture_view, has_texture): (&wgpu::TextureView, u32) =
             if let Some(id) = item.texture_id {
-                if let Some(tex) = self.textures.get(id) {
+                if let Some(tex) = self.content.textures.get(id) {
                     (&tex.view, 1)
                 } else {
-                    (&self.fallback_lut_view, 0)
+                    (&self.content.fallback_lut_view, 0)
                 }
             } else {
-                (&self.fallback_lut_view, 0)
+                (&self.content.fallback_lut_view, 0)
             };
         let uniform_data = RibbonUniform {
             model: item.model,
@@ -1307,12 +1309,12 @@ impl DeviceResources {
     ) -> crate::resources::RibbonId {
         self.ensure_streamtube_pipeline(device);
         let gpu = self.upload_ribbon_per_frame(device, queue, item, false);
-        self.ribbon_store.insert(gpu)
+        self.content.ribbon_store.insert(gpu)
     }
 
     /// Remove a pre-uploaded ribbon.
     pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
-        self.ribbon_store.remove(id)
+        self.content.ribbon_store.remove(id)
     }
 
     /// Replace the geometry of a pre-uploaded ribbon, keeping the same id.
@@ -1323,12 +1325,12 @@ impl DeviceResources {
         id: crate::resources::RibbonId,
         item: &crate::renderer::RibbonItem,
     ) -> bool {
-        if !self.ribbon_store.contains(id) {
+        if !self.content.ribbon_store.contains(id) {
             return false;
         }
         self.ensure_streamtube_pipeline(device);
         let gpu = self.upload_ribbon_per_frame(device, queue, item, false);
-        self.ribbon_store.replace(id, gpu)
+        self.content.ribbon_store.replace(id, gpu)
     }
 
     /// Start an asynchronous streamtube upload.
@@ -1639,9 +1641,9 @@ mod tests {
         };
         let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_streamtube(&device, &queue, &sample_streamtube());
-        assert!(resources.streamtube_store.contains(id));
+        assert!(resources.content.streamtube_store.contains(id));
         assert!(resources.drop_streamtube(id));
-        assert!(!resources.streamtube_store.contains(id));
+        assert!(!resources.content.streamtube_store.contains(id));
     }
 
     #[test]
@@ -1653,7 +1655,7 @@ mod tests {
         let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let start = resources.resident_bytes().scivis_bytes;
         let id = resources.upload_tube(&device, &queue, &sample_tube());
-        assert!(resources.tube_store.contains(id));
+        assert!(resources.content.tube_store.contains(id));
         let after_upload = resources.resident_bytes().scivis_bytes;
         assert!(
             after_upload > start,
@@ -1675,7 +1677,7 @@ mod tests {
         };
         let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_ribbon(&device, &queue, &sample_ribbon());
-        assert!(resources.ribbon_store.contains(id));
+        assert!(resources.content.ribbon_store.contains(id));
         assert!(resources.drop_ribbon(id));
     }
 
@@ -1689,7 +1691,7 @@ mod tests {
         let job = resources.begin_upload_streamtube(&device, &queue, sample_streamtube());
         drive_until_ready(&mut resources, &device, &queue, job, "streamtube");
         let id = resources.upload_result_streamtube(job).expect("ready");
-        assert!(resources.streamtube_store.contains(id));
+        assert!(resources.content.streamtube_store.contains(id));
         let err = resources.upload_result_streamtube(job).unwrap_err();
         assert!(matches!(
             err,
@@ -1707,7 +1709,7 @@ mod tests {
         let job = resources.begin_upload_tube(&device, &queue, sample_tube());
         drive_until_ready(&mut resources, &device, &queue, job, "tube");
         let id = resources.upload_result_tube(job).expect("ready");
-        assert!(resources.tube_store.contains(id));
+        assert!(resources.content.tube_store.contains(id));
     }
 
     #[test]
@@ -1720,6 +1722,6 @@ mod tests {
         let job = resources.begin_upload_ribbon(&device, &queue, sample_ribbon());
         drive_until_ready(&mut resources, &device, &queue, job, "ribbon");
         let id = resources.upload_result_ribbon(job).expect("ready");
-        assert!(resources.ribbon_store.contains(id));
+        assert!(resources.content.ribbon_store.contains(id));
     }
 }
