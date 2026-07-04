@@ -144,7 +144,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         let mut map = self
-            .job_texture_results
+            .job_results
+            .texture
             .lock()
             .expect("texture result map poisoned");
         let slot = match map.get(&id) {
@@ -337,7 +338,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_texture_results
+        self.job_results
+            .texture
             .lock()
             .expect("texture result map poisoned")
             .insert(id, slot);

@@ -25,6 +25,86 @@ use crate::error::ViewportError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct JobId(u64);
 
+/// Typed result slots for every async upload path, keyed by job id.
+///
+/// Each `begin_upload_*` fills the matching map from its apply closure; the
+/// paired `upload_result_*` drains it. Grouping these here keeps the async
+/// bookkeeping off `ViewportGpuResources` as one field rather than a score of
+/// flat ones. All maps start empty, so the whole struct is `Default`.
+#[derive(Default)]
+pub(crate) struct JobResults {
+    /// Async mesh uploads (`begin_upload_mesh_data` / `upload_result_mesh`).
+    pub mesh: std::sync::Mutex<
+        std::collections::HashMap<JobId, ResultSlot<crate::resources::mesh::mesh_store::MeshId>>,
+    >,
+    /// Async texture uploads (albedo + normal map).
+    pub texture:
+        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<crate::resources::TextureId>>>,
+    /// Jobs submitted through the plugin facade; drained by `Jobs::take<T>`.
+    pub plugin: std::sync::Mutex<
+        std::collections::HashMap<JobId, ResultSlot<Box<dyn std::any::Any + Send>>>,
+    >,
+    /// Async polyline uploads.
+    pub polyline: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::PolylineId>>>,
+    /// Async streamtube uploads.
+    pub streamtube:
+        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::StreamtubeId>>>,
+    /// Async tube uploads.
+    pub tube: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::TubeId>>>,
+    /// Async ribbon uploads.
+    pub ribbon: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::RibbonId>>>,
+    /// Async point cloud uploads.
+    pub point_cloud:
+        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::PointCloudId>>>,
+    /// Async glyph set uploads.
+    pub glyph_set:
+        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::GlyphSetId>>>,
+    /// Async tensor glyph set uploads.
+    pub tensor_glyph_set:
+        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::TensorGlyphSetId>>>,
+    /// Async volume texture uploads.
+    pub volume: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::VolumeId>>>,
+    /// Async marching-cubes-ready volume uploads.
+    pub volume_mc:
+        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::McVolumeId>>>,
+    /// Async volume-mesh uploads: mesh id plus face-to-cell map.
+    pub volume_mesh: std::sync::Mutex<
+        std::collections::HashMap<
+            JobId,
+            ResultSlot<(crate::resources::mesh::mesh_store::MeshId, Vec<u32>)>,
+        >,
+    >,
+    /// Async clipped-volume-mesh uploads.
+    pub clipped_volume_mesh: std::sync::Mutex<
+        std::collections::HashMap<
+            JobId,
+            ResultSlot<(crate::resources::mesh::mesh_store::MeshId, Vec<u32>)>,
+        >,
+    >,
+    /// Async sparse-volume-grid uploads.
+    pub sparse_volume_grid: std::sync::Mutex<
+        std::collections::HashMap<JobId, ResultSlot<crate::resources::mesh::mesh_store::MeshId>>,
+    >,
+    /// Async projected-tet-mesh uploads: tet id plus packed scalar range.
+    pub projected_tet: std::sync::Mutex<
+        std::collections::HashMap<JobId, ResultSlot<(super::ProjectedTetId, f32, f32)>>,
+    >,
+    /// Async gaussian splat uploads.
+    pub gaussian_splat: std::sync::Mutex<
+        std::collections::HashMap<JobId, ResultSlot<crate::renderer::GaussianSplatId>>,
+    >,
+    /// Async overlay texture uploads.
+    pub overlay_texture: std::sync::Mutex<
+        std::collections::HashMap<JobId, ResultSlot<crate::renderer::OverlayTextureId>>,
+    >,
+    /// Async sprite set uploads.
+    pub sprite_set:
+        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::SpriteSetId>>>,
+    /// Async sprite instance set uploads.
+    pub sprite_instance_set:
+        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::SpriteInstanceSetId>>>,
+}
+
 /// Current state of a submitted job.
 #[derive(Debug, Clone)]
 pub enum UploadStatus {
@@ -1062,7 +1142,8 @@ impl<'a> Jobs<'a> {
         };
 
         self.resources
-            .plugin_job_results
+            .job_results
+            .plugin
             .lock()
             .expect("plugin job result map poisoned")
             .insert(id, slot);
@@ -1084,7 +1165,8 @@ impl<'a> Jobs<'a> {
     pub fn take<T: Any + Send + 'static>(&self, id: JobId) -> Option<T> {
         let mut map = self
             .resources
-            .plugin_job_results
+            .job_results
+            .plugin
             .lock()
             .expect("plugin job result map poisoned");
         let slot = map.get(&id)?.clone();

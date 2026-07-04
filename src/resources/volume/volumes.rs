@@ -153,7 +153,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_volume_results
+        self.job_results
+            .volume
             .lock()
             .expect("volume result map poisoned")
             .insert(id, slot);
@@ -171,7 +172,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<VolumeId> {
         let mut map = self
-            .job_volume_results
+            .job_results
+            .volume
             .lock()
             .expect("volume result map poisoned");
         let slot = match map.get(&id) {

@@ -623,7 +623,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_polyline_results
+        self.job_results
+            .polyline
             .lock()
             .expect("polyline result map poisoned")
             .insert(id, slot);
@@ -637,7 +638,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::PolylineId> {
         let mut map = self
-            .job_polyline_results
+            .job_results
+            .polyline
             .lock()
             .expect("polyline result map poisoned");
         let slot = match map.get(&id) {

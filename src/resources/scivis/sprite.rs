@@ -941,7 +941,8 @@ impl ViewportGpuResources {
                 ))
             })
         };
-        self.job_sprite_set_results
+        self.job_results
+            .sprite_set
             .lock()
             .expect("sprite set result map poisoned")
             .insert(id, slot);
@@ -955,7 +956,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::SpriteSetId> {
         let mut map = self
-            .job_sprite_set_results
+            .job_results
+            .sprite_set
             .lock()
             .expect("sprite set result map poisoned");
         let slot = match map.get(&id) {
@@ -1046,7 +1048,8 @@ impl ViewportGpuResources {
                 ))
             })
         };
-        self.job_sprite_instance_set_results
+        self.job_results
+            .sprite_instance_set
             .lock()
             .expect("sprite instance set result map poisoned")
             .insert(id, slot);
@@ -1060,7 +1063,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::SpriteInstanceSetId> {
         let mut map = self
-            .job_sprite_instance_set_results
+            .job_results
+            .sprite_instance_set
             .lock()
             .expect("sprite instance set result map poisoned");
         let slot = match map.get(&id) {

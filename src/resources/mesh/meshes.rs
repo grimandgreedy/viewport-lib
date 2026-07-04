@@ -261,7 +261,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_mesh_results
+        self.job_results
+            .mesh
             .lock()
             .expect("mesh result map poisoned")
             .insert(id, slot);
@@ -279,7 +280,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         let mut map = self
-            .job_mesh_results
+            .job_results
+            .mesh
             .lock()
             .expect("mesh result map poisoned");
         let slot = match map.get(&id) {
@@ -976,7 +978,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_volume_mesh_results
+        self.job_results
+            .volume_mesh
             .lock()
             .expect("volume mesh result map poisoned")
             .insert(id, slot);
@@ -991,7 +994,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let mut map = self
-            .job_volume_mesh_results
+            .job_results
+            .volume_mesh
             .lock()
             .expect("volume mesh result map poisoned");
         let slot = match map.get(&id) {
@@ -1050,7 +1054,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_clipped_volume_mesh_results
+        self.job_results
+            .clipped_volume_mesh
             .lock()
             .expect("clipped volume mesh result map poisoned")
             .insert(id, slot);
@@ -1065,7 +1070,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let mut map = self
-            .job_clipped_volume_mesh_results
+            .job_results
+            .clipped_volume_mesh
             .lock()
             .expect("clipped volume mesh result map poisoned");
         let slot = match map.get(&id) {
@@ -1116,7 +1122,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_sparse_volume_grid_results
+        self.job_results
+            .sparse_volume_grid
             .lock()
             .expect("sparse volume grid result map poisoned")
             .insert(id, slot);
@@ -1131,7 +1138,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         let mut map = self
-            .job_sparse_volume_grid_results
+            .job_results
+            .sparse_volume_grid
             .lock()
             .expect("sparse volume grid result map poisoned");
         let slot = match map.get(&id) {
@@ -2356,7 +2364,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_projected_tet_results
+        self.job_results
+            .projected_tet
             .lock()
             .expect("projected tet result map poisoned")
             .insert(id, slot);
@@ -2371,7 +2380,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
         let mut map = self
-            .job_projected_tet_results
+            .job_results
+            .projected_tet
             .lock()
             .expect("projected tet result map poisoned");
         let slot = match map.get(&id) {

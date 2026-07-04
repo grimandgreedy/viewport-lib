@@ -1043,7 +1043,8 @@ impl ViewportGpuResources {
                 ))
             })
         };
-        self.job_glyph_set_results
+        self.job_results
+            .glyph_set
             .lock()
             .expect("glyph set result map poisoned")
             .insert(id, slot);
@@ -1057,7 +1058,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::GlyphSetId> {
         let mut map = self
-            .job_glyph_set_results
+            .job_results
+            .glyph_set
             .lock()
             .expect("glyph set result map poisoned");
         let slot = match map.get(&id) {
@@ -1137,7 +1139,8 @@ impl ViewportGpuResources {
                 ))
             })
         };
-        self.job_tensor_glyph_set_results
+        self.job_results
+            .tensor_glyph_set
             .lock()
             .expect("tensor glyph set result map poisoned")
             .insert(id, slot);
@@ -1151,7 +1154,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::TensorGlyphSetId> {
         let mut map = self
-            .job_tensor_glyph_set_results
+            .job_results
+            .tensor_glyph_set
             .lock()
             .expect("tensor glyph set result map poisoned");
         let slot = match map.get(&id) {

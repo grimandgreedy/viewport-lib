@@ -339,7 +339,8 @@ impl crate::resources::ViewportGpuResources {
             })
         };
 
-        self.job_overlay_texture_results
+        self.job_results
+            .overlay_texture
             .lock()
             .expect("overlay texture result map poisoned")
             .insert(id, slot);
@@ -353,7 +354,8 @@ impl crate::resources::ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<OverlayTextureId> {
         let mut map = self
-            .job_overlay_texture_results
+            .job_results
+            .overlay_texture
             .lock()
             .expect("overlay texture result map poisoned");
         let slot = match map.get(&id) {

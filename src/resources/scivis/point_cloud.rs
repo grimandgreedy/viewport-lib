@@ -461,7 +461,8 @@ impl ViewportGpuResources {
                 ))
             })
         };
-        self.job_point_cloud_results
+        self.job_results
+            .point_cloud
             .lock()
             .expect("point cloud result map poisoned")
             .insert(id, slot);
@@ -475,7 +476,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::PointCloudId> {
         let mut map = self
-            .job_point_cloud_results
+            .job_results
+            .point_cloud
             .lock()
             .expect("point cloud result map poisoned");
         let slot = match map.get(&id) {

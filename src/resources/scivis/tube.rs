@@ -1325,7 +1325,8 @@ impl ViewportGpuResources {
                 ))
             })
         };
-        self.job_streamtube_results
+        self.job_results
+            .streamtube
             .lock()
             .expect("streamtube result map poisoned")
             .insert(id, slot);
@@ -1339,7 +1340,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::StreamtubeId> {
         let mut map = self
-            .job_streamtube_results
+            .job_results
+            .streamtube
             .lock()
             .expect("streamtube result map poisoned");
         let slot = match map.get(&id) {
@@ -1382,7 +1384,8 @@ impl ViewportGpuResources {
                 ))
             })
         };
-        self.job_tube_results
+        self.job_results
+            .tube
             .lock()
             .expect("tube result map poisoned")
             .insert(id, slot);
@@ -1396,7 +1399,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::TubeId> {
         let mut map = self
-            .job_tube_results
+            .job_results
+            .tube
             .lock()
             .expect("tube result map poisoned");
         let slot = match map.get(&id) {
@@ -1440,7 +1444,8 @@ impl ViewportGpuResources {
                 ))
             })
         };
-        self.job_ribbon_results
+        self.job_results
+            .ribbon
             .lock()
             .expect("ribbon result map poisoned")
             .insert(id, slot);
@@ -1454,7 +1459,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::RibbonId> {
         let mut map = self
-            .job_ribbon_results
+            .job_results
+            .ribbon
             .lock()
             .expect("ribbon result map poisoned");
         let slot = match map.get(&id) {

@@ -607,7 +607,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.job_gaussian_splat_results
+        self.job_results
+            .gaussian_splat
             .lock()
             .expect("gaussian splat result map poisoned")
             .insert(id, slot);
@@ -621,7 +622,8 @@ impl ViewportGpuResources {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
         let mut map = self
-            .job_gaussian_splat_results
+            .job_results
+            .gaussian_splat
             .lock()
             .expect("gaussian splat result map poisoned");
         let slot = match map.get(&id) {

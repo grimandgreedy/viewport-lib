@@ -2894,35 +2894,10 @@ pub struct ViewportGpuResources {
     /// callbacks are `Send` but not `Sync`, and several host frameworks
     /// require this struct to be `Sync`.
     pub(crate) jobs: std::sync::Mutex<super::upload_jobs::JobRunner>,
-    /// Typed result slots for async mesh uploads, keyed by job id. The
-    /// apply closure of `begin_upload_mesh_data` fills the matching slot;
-    /// `upload_result_mesh` drains it.
-    pub(crate) job_mesh_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<crate::resources::mesh::mesh_store::MeshId>,
-        >,
-    >,
-    /// Typed result slots for async texture uploads (albedo + normal map),
-    /// keyed by job id. Filled by the apply closure of
-    /// `begin_upload_texture` / `begin_upload_normal_map`; drained by
-    /// `upload_result_texture`.
-    pub(crate) job_texture_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<crate::resources::TextureId>,
-        >,
-    >,
-    /// Boxed result slots for jobs submitted through the plugin facade.
-    /// Filled by the apply closure of `Jobs::submit_cpu` with a
-    /// `Box<dyn Any + Send>`; drained by `Jobs::take<T>` once the value
-    /// downcasts cleanly.
-    pub(crate) plugin_job_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<Box<dyn std::any::Any + Send>>,
-        >,
-    >,
+    /// Typed result slots for every async upload path, keyed by job id.
+    /// Grouped into one struct so the async bookkeeping is a single field
+    /// rather than a score of flat ones; see `upload_jobs::JobResults`.
+    pub(crate) job_results: super::upload_jobs::JobResults,
     /// Pre-uploaded polyline storage; entries are referenced from per-frame
     /// `PolylineRefItem`s.
     pub(crate) polyline_store: super::PolylineStore,
@@ -2938,129 +2913,6 @@ pub struct ViewportGpuResources {
     pub(crate) glyph_set_store: super::GlyphSetStore,
     /// Pre-uploaded tensor glyph set storage.
     pub(crate) tensor_glyph_set_store: super::TensorGlyphSetStore,
-    /// Typed result slots for async polyline uploads, keyed by job id.
-    pub(crate) job_polyline_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::PolylineId>,
-        >,
-    >,
-    /// Typed result slots for async streamtube uploads, keyed by job id.
-    pub(crate) job_streamtube_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::StreamtubeId>,
-        >,
-    >,
-    /// Typed result slots for async tube uploads, keyed by job id.
-    pub(crate) job_tube_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::TubeId>,
-        >,
-    >,
-    /// Typed result slots for async ribbon uploads, keyed by job id.
-    pub(crate) job_ribbon_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::RibbonId>,
-        >,
-    >,
-    /// Typed result slots for async point cloud uploads, keyed by job id.
-    pub(crate) job_point_cloud_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::PointCloudId>,
-        >,
-    >,
-    /// Typed result slots for async glyph set uploads, keyed by job id.
-    pub(crate) job_glyph_set_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::GlyphSetId>,
-        >,
-    >,
-    /// Typed result slots for async tensor glyph set uploads, keyed by job id.
-    pub(crate) job_tensor_glyph_set_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::TensorGlyphSetId>,
-        >,
-    >,
-    /// Typed result slots for async volume texture uploads, keyed by job id.
-    pub(crate) job_volume_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::VolumeId>,
-        >,
-    >,
-    /// Typed result slots for async marching-cubes-ready volume uploads,
-    /// keyed by job id.
-    pub(crate) job_volume_mc_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::McVolumeId>,
-        >,
-    >,
-    /// Typed result slots for async volume-mesh uploads. Holds the mesh id
-    /// plus the face-to-cell map produced by boundary extraction.
-    pub(crate) job_volume_mesh_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<(crate::resources::mesh::mesh_store::MeshId, Vec<u32>)>,
-        >,
-    >,
-    /// Typed result slots for async clipped-volume-mesh uploads.
-    pub(crate) job_clipped_volume_mesh_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<(crate::resources::mesh::mesh_store::MeshId, Vec<u32>)>,
-        >,
-    >,
-    /// Typed result slots for async sparse-volume-grid uploads.
-    pub(crate) job_sparse_volume_grid_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<crate::resources::mesh::mesh_store::MeshId>,
-        >,
-    >,
-    /// Typed result slots for async projected-tet-mesh uploads. Holds the
-    /// projected tet id plus the scalar range packed into the GPU uniform.
-    pub(crate) job_projected_tet_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<(super::ProjectedTetId, f32, f32)>,
-        >,
-    >,
-    /// Typed result slots for async gaussian splat uploads, keyed by job id.
-    pub(crate) job_gaussian_splat_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<crate::renderer::GaussianSplatId>,
-        >,
-    >,
-    /// Typed result slots for async overlay texture uploads, keyed by job id.
-    pub(crate) job_overlay_texture_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<crate::renderer::OverlayTextureId>,
-        >,
-    >,
-    /// Typed result slots for async sprite set uploads, keyed by job id.
-    pub(crate) job_sprite_set_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::SpriteSetId>,
-        >,
-    >,
-    /// Typed result slots for async sprite instance set uploads, keyed by
-    /// job id.
-    pub(crate) job_sprite_instance_set_results: std::sync::Mutex<
-        std::collections::HashMap<
-            super::upload_jobs::JobId,
-            super::upload_jobs::ResultSlot<super::SpriteInstanceSetId>,
-        >,
-    >,
     /// Pre-uploaded sprite set storage.
     pub(crate) sprite_set_store: super::SpriteSetStore,
     /// Pre-uploaded sprite instance set storage.
