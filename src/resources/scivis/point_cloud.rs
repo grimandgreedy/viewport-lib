@@ -88,11 +88,12 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("point_cloud_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &pc_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "point_cloud_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &pc_bgl,
+        );
 
         let pc_vertex_layout = wgpu::VertexBufferLayout {
             array_stride: 12,
@@ -104,52 +105,25 @@ impl DeviceResources {
             }],
         };
 
-        let sample_count = self.sample_count;
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("point_cloud_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[pc_vertex_layout.clone()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
+        self.point_cloud_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "point_cloud_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[pc_vertex_layout.clone()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
         self.point_cloud_bgl = Some(pc_bgl);
-        self.point_cloud_pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
     }
 
     /// Upload one [`PointCloudItem`] to the GPU and return draw data.

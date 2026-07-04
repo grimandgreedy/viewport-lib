@@ -75,59 +75,32 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("image_slice_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl],
-            push_constant_ranges: &[],
-        });
-
-        let sample_count = self.sample_count;
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("image_slice_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[], // no vertex buffer: generates quad from vertex_index
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "image_slice_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &bgl,
+        );
 
         self.image_slice.bgl = Some(bgl);
-        self.image_slice.pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.image_slice.pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "image_slice_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[], // no vertex buffer: generates quad from vertex_index
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
     }
 
     /// Upload one [`ImageSliceItem`] to the GPU and return draw data.
@@ -972,59 +945,32 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("volume_surface_slice_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl],
-            push_constant_ranges: &[],
-        });
-
-        let sample_count = self.sample_count;
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("volume_surface_slice_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "volume_surface_slice_layout",
+            &self.camera_bind_group_layout,
+            &bgl,
+        );
 
         self.volume.surface_slice_bgl = Some(bgl);
-        self.volume.surface_slice_pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.volume.surface_slice_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "volume_surface_slice_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
     }
 
     /// Upload one [`VolumeSurfaceSliceItem`] and return per-frame GPU data.
@@ -1155,19 +1101,11 @@ impl DeviceResources {
             return;
         }
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("screen_rect_outline_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "screen_rect_outline_bgl",
+            wgpu::ShaderStages::VERTEX,
+        );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen_rect_outline_mask_shader"),

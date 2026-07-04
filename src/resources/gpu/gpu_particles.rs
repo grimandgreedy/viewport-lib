@@ -751,11 +751,12 @@ impl crate::resources::DeviceResources {
             ),
         });
 
-        let draw_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("particle_draw_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &draw_bgl],
-            push_constant_ranges: &[],
-        });
+        let draw_layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "particle_draw_layout",
+            &self.camera_bind_group_layout,
+            &draw_bgl,
+        );
 
         let sample_count = self.sample_count;
         let additive = wgpu::BlendState {
@@ -1003,11 +1004,12 @@ impl crate::resources::DeviceResources {
             ),
         });
 
-        let mesh_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("particle_mesh_draw_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &mesh_draw_bgl],
-            push_constant_ranges: &[],
-        });
+        let mesh_layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "particle_mesh_draw_layout",
+            &self.camera_bind_group_layout,
+            &mesh_draw_bgl,
+        );
 
         let make_mesh_draw = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, label: &str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

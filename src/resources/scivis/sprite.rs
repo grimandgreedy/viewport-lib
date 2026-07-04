@@ -866,11 +866,12 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sprite_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "sprite_outline_mask_pipeline_layout",
+            &self.camera_bind_group_layout,
+            bgl,
+        );
 
         let vert_attrs = [wgpu::VertexAttribute {
             offset: 0,

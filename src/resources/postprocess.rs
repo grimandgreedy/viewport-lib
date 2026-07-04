@@ -135,35 +135,15 @@ impl DeviceResources {
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Sampler (linear, clamp-to-edge).
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("outline_composite_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "outline_composite_sampler");
 
         // Bind group layout: texture + sampler.
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("outline_composite_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "outline_composite_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("outline_composite_bg"),
@@ -518,50 +498,15 @@ impl DeviceResources {
         }
 
         // --- Shared samplers ---
-        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("pp_linear_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("pp_nearest_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let fxaa_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("fxaa_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let oit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("oit_composite_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        let outline_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("outline_composite_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let linear_sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "pp_linear_sampler");
+        let nearest_sampler =
+            crate::resources::builders::clamp_nearest_sampler(device, "pp_nearest_sampler");
+        let fxaa_sampler = crate::resources::builders::clamp_linear_sampler(device, "fxaa_sampler");
+        let oit_sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "oit_composite_sampler");
+        let outline_sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "outline_composite_sampler");
 
         // --- Bind group layouts ---
         let tone_map_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1475,15 +1420,8 @@ impl DeviceResources {
         // --- Surface LIC shared resources ---
         if self.lic.noise_sampler.is_none() {
             // Bilinear sampler used for lic_vector_texture in the advect pass.
-            let samp = device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("lic_linear_sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            });
+            let samp =
+                crate::resources::builders::clamp_linear_sampler(device, "lic_linear_sampler");
             self.lic.noise_sampler = Some(samp);
         }
 
@@ -1759,15 +1697,8 @@ impl DeviceResources {
         }
         if self.decal.sampler.is_none() {
             // Repeat address mode so UV scroll animation tiles correctly.
-            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("decal_sampler"),
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::Repeat,
-                address_mode_w: wgpu::AddressMode::Repeat,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            });
+            let sampler =
+                crate::resources::builders::repeat_linear_sampler(device, "decal_sampler");
             self.decal.sampler = Some(sampler);
         }
     }

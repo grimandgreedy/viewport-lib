@@ -46,37 +46,12 @@ impl DeviceResources {
             return;
         }
 
-        let glyph_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("glyph_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let glyph_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
+            device,
+            "glyph_bgl",
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX,
+        );
 
         let glyph_instance_bgl =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -110,100 +85,46 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let sample_count = self.sample_count;
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("glyph_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
         self.glyph.bgl = Some(glyph_bgl);
         self.glyph.instance_bgl = Some(glyph_instance_bgl);
-        self.glyph.pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.glyph.pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "glyph_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
 
         // Wireframe variant: same bind groups, LineList topology, no culling.
-        let make_wf = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("glyph_wireframe_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-        self.glyph.wireframe_pipeline = Some(DualPipeline {
-            ldr: make_wf(self.target_format),
-            hdr: make_wf(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.glyph.wireframe_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "glyph_wireframe_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: None,
+                topology: wgpu::PrimitiveTopology::LineList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
     }
 
     /// Upload one [`GlyphItem`] to the GPU and return draw data.
@@ -546,100 +467,47 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let sample_count = self.sample_count;
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("tensor_glyph_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
         self.tensor_glyph.bgl = Some(tg_bgl);
         self.tensor_glyph.instance_bgl = Some(tg_instance_bgl);
-        self.tensor_glyph.pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.tensor_glyph.pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "tensor_glyph_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
 
         // Wireframe variant: same bind groups, LineList topology, no culling.
-        let make_wf = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("tensor_glyph_wireframe_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
+        self.tensor_glyph.wireframe_pipeline =
+            Some(crate::resources::builders::build_dual_pipeline(
+                device,
+                &crate::resources::builders::DualPipelineDesc {
+                    label: "tensor_glyph_wireframe_pipeline",
+                    layout: &layout,
+                    shader: &shader,
+                    vertex_entry: "vs_main",
+                    fragment_entry: "fs_main",
+                    vertex_buffers: &[Vertex::buffer_layout()],
+                    blend: None,
                     topology: wgpu::PrimitiveTopology::LineList,
                     cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
+                    depth_write: true,
                     depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
+                    sample_count: self.sample_count,
+                    ldr_format: self.target_format,
                 },
-                multiview: None,
-                cache: None,
-            })
-        };
-        self.tensor_glyph.wireframe_pipeline = Some(DualPipeline {
-            ldr: make_wf(self.target_format),
-            hdr: make_wf(wgpu::TextureFormat::Rgba16Float),
-        });
+            ));
     }
 
     /// Upload one [`TensorGlyphItem`] to the GPU and return draw data.

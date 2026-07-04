@@ -58,93 +58,28 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("streamtube_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &streamtube_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let sample_count = self.sample_count;
-        let make_tube = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("streamtube_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "streamtube_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &streamtube_bgl,
+        );
 
         // Ribbon BGL adds an optional streak texture + sampler alongside the
         // shared uniform binding. The fragment shader keys off `has_texture`
         // and falls back to the resolved colour when no texture is bound.
-        let ribbon_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ribbon_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-        let ribbon_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ribbon_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &ribbon_bgl],
-            push_constant_ranges: &[],
-        });
+        let ribbon_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
+            device,
+            "ribbon_bgl",
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+        let ribbon_layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "ribbon_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &ribbon_bgl,
+        );
 
         // Ribbon pipeline: same layout, two-sided shader, cull_mode None.
         let ribbon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -177,175 +112,123 @@ impl DeviceResources {
                 operation: wgpu::BlendOperation::Add,
             },
         };
+        use crate::resources::builders::{DualPipelineDesc, build_dual_pipeline};
+        self.streamtube.bgl = Some(streamtube_bgl);
+        self.ribbon.bgl = Some(ribbon_bgl);
+        self.streamtube.pipeline = Some(build_dual_pipeline(
+            device,
+            &DualPipelineDesc {
+                label: "streamtube_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
+        // Wireframe: same shader and bind groups as the solid tube, but LineList
+        // topology and no back-face culling so edges on both sides are visible.
+        self.streamtube.wireframe_pipeline = Some(build_dual_pipeline(
+            device,
+            &DualPipelineDesc {
+                label: "streamtube_wireframe_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::LineList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
         // Additive and premultiplied ribbons are typically used for emissive
         // trails; depth write is disabled so successive segments accumulate
         // rather than clipping each other when they overlap.
-        let make_ribbon =
-            |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, depth_write: bool, label: &str| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&ribbon_layout),
-                    vertex: wgpu::VertexState {
-                        module: &ribbon_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &ribbon_shader,
-                        entry_point: Some("fs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: fmt,
-                            blend: Some(blend),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth24PlusStencil8,
-                        depth_write_enabled: depth_write,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: sample_count,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                })
-            };
-
-        // Wireframe pipeline: same shader and bind groups as the solid tube, but LineList
-        // topology and no back-face culling so edges on both sides are visible.
-        let make_tube_wireframe = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("streamtube_wireframe_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
-        // Ribbon wireframe pipeline: same as tube wireframe but using the ribbon shader.
-        let make_ribbon_wireframe = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ribbon_wireframe_pipeline"),
-                layout: Some(&ribbon_layout),
-                vertex: wgpu::VertexState {
-                    module: &ribbon_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &ribbon_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
-        let ldr = self.target_format;
-        let hdr = wgpu::TextureFormat::Rgba16Float;
-        self.streamtube.bgl = Some(streamtube_bgl);
-        self.ribbon.bgl = Some(ribbon_bgl);
-        self.streamtube.pipeline = Some(DualPipeline {
-            ldr: make_tube(ldr),
-            hdr: make_tube(hdr),
-        });
-        self.streamtube.wireframe_pipeline = Some(DualPipeline {
-            ldr: make_tube_wireframe(ldr),
-            hdr: make_tube_wireframe(hdr),
-        });
-        let alpha_blend = wgpu::BlendState::ALPHA_BLENDING;
-        self.ribbon.pipeline = Some(DualPipeline {
-            ldr: make_ribbon(ldr, alpha_blend, true, "ribbon_pipeline"),
-            hdr: make_ribbon(hdr, alpha_blend, true, "ribbon_pipeline"),
-        });
-        self.ribbon.pipeline_additive = Some(DualPipeline {
-            ldr: make_ribbon(ldr, additive_blend, false, "ribbon_pipeline_additive"),
-            hdr: make_ribbon(hdr, additive_blend, false, "ribbon_pipeline_additive"),
-        });
-        self.ribbon.pipeline_premultiplied = Some(DualPipeline {
-            ldr: make_ribbon(
-                ldr,
-                premultiplied_blend,
-                false,
-                "ribbon_pipeline_premultiplied",
-            ),
-            hdr: make_ribbon(
-                hdr,
-                premultiplied_blend,
-                false,
-                "ribbon_pipeline_premultiplied",
-            ),
-        });
-        self.ribbon.wireframe_pipeline = Some(DualPipeline {
-            ldr: make_ribbon_wireframe(ldr),
-            hdr: make_ribbon_wireframe(hdr),
-        });
+        self.ribbon.pipeline = Some(build_dual_pipeline(
+            device,
+            &DualPipelineDesc {
+                label: "ribbon_pipeline",
+                layout: &ribbon_layout,
+                shader: &ribbon_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
+        self.ribbon.pipeline_additive = Some(build_dual_pipeline(
+            device,
+            &DualPipelineDesc {
+                label: "ribbon_pipeline_additive",
+                layout: &ribbon_layout,
+                shader: &ribbon_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(additive_blend),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
+        self.ribbon.pipeline_premultiplied = Some(build_dual_pipeline(
+            device,
+            &DualPipelineDesc {
+                label: "ribbon_pipeline_premultiplied",
+                layout: &ribbon_layout,
+                shader: &ribbon_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(premultiplied_blend),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
+        // Ribbon wireframe: same as tube wireframe but using the ribbon shader.
+        self.ribbon.wireframe_pipeline = Some(build_dual_pipeline(
+            device,
+            &DualPipelineDesc {
+                label: "ribbon_wireframe_pipeline",
+                layout: &ribbon_layout,
+                shader: &ribbon_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::LineList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
     }
 
     /// Upload one [`StreamtubeItem`] to the GPU and return draw data.

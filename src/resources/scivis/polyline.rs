@@ -27,37 +27,12 @@ impl DeviceResources {
             return;
         }
 
-        let pl_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("polyline_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let pl_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
+            device,
+            "polyline_bgl",
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX,
+        );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("polyline_shader"),
@@ -66,11 +41,12 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("polyline_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &pl_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "polyline_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &pl_bgl,
+        );
 
         // Instance buffer layout (112 bytes per segment):
         //   offset   0: pos_a             vec3  : segment start (world space)
@@ -159,52 +135,25 @@ impl DeviceResources {
             ],
         };
 
-        let sample_count = self.sample_count;
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("polyline_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[pl_instance_layout.clone()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
+        self.polyline.pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "polyline_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[pl_instance_layout.clone()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
         self.polyline.bgl = Some(pl_bgl);
-        self.polyline.pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
 
         self.ensure_polyline_wireframe_pipeline(device);
     }
@@ -239,59 +188,32 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("polyline_wireframe_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &wf_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let sample_count = self.sample_count;
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("polyline_wireframe_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "polyline_wireframe_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &wf_bgl,
+        );
 
         self.polyline.wireframe_bgl = Some(wf_bgl);
-        self.polyline.wireframe_pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.polyline.wireframe_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "polyline_wireframe_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::LineList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
     }
 
     /// Upload one [`PolylineItem`] to the GPU and return draw data.
@@ -703,11 +625,12 @@ impl DeviceResources {
             .bgl
             .as_ref()
             .expect("polyline_bgl must exist after ensure_polyline_pipeline");
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("polyline_no_clip_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, pl_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "polyline_no_clip_pipeline_layout",
+            &self.camera_bind_group_layout,
+            pl_bgl,
+        );
 
         // Vertex buffer layout is identical to the regular polyline pipeline (112 bytes/segment).
         let pl_instance_layout = wgpu::VertexBufferLayout {
@@ -782,51 +705,24 @@ impl DeviceResources {
             ],
         };
 
-        let sample_count = self.sample_count;
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("polyline_no_clip_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[pl_instance_layout.clone()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main_no_clip"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
-        self.polyline.no_clip_pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.polyline.no_clip_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "polyline_no_clip_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main_no_clip",
+                vertex_buffers: &[pl_instance_layout.clone()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
     }
 
     /// Lazily create the polyline outline mask pipeline.
@@ -846,11 +742,12 @@ impl DeviceResources {
             .as_ref()
             .expect("polyline_bgl must exist after ensure_polyline_pipeline");
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("polyline_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, pl_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "polyline_outline_mask_pipeline_layout",
+            &self.camera_bind_group_layout,
+            pl_bgl,
+        );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("polyline_outline_mask_shader"),

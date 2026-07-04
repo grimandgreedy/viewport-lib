@@ -483,11 +483,12 @@ impl DeviceResources {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("decal_exclude_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &obj_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "decal_exclude_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &obj_bgl,
+        );
 
         // Vertex layout: position only (location 0, Float32x3).
         // Stride matches the full Vertex struct (64 bytes) but we only read pos.

@@ -283,57 +283,32 @@ impl DeviceResources {
             ),
         });
 
-        let render_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("gaussian_splat_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &splat_bgl],
-            push_constant_ranges: &[],
-        });
+        let render_layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "gaussian_splat_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &splat_bgl,
+        );
 
-        let make_splat_pipeline = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("gaussian_splat_pipeline"),
-                layout: Some(&render_layout),
-                vertex: wgpu::VertexState {
-                    module: &render_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &render_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                // No MSAA for Gaussian splats (alpha blending requires single-sample).
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-        let gaussian_splat_pipeline = DualPipeline {
-            ldr: make_splat_pipeline(self.target_format),
-            hdr: make_splat_pipeline(wgpu::TextureFormat::Rgba16Float),
-        };
+        // No MSAA for Gaussian splats (alpha blending requires single-sample).
+        let gaussian_splat_pipeline = crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "gaussian_splat_pipeline",
+                layout: &render_layout,
+                shader: &render_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: 1,
+                ldr_format: self.target_format,
+            },
+        );
 
         // ---------------------------------------------------------------
         // Sort compute pipelines

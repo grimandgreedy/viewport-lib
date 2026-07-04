@@ -379,11 +379,12 @@ impl DeviceResources {
                 include_str!(concat!(env!("OUT_DIR"), "/mc_surface.wgsl")).into(),
             ),
         });
-        let surface_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mc_surface_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &render_bgl],
-            push_constant_ranges: &[],
-        });
+        let surface_layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "mc_surface_layout",
+            &self.camera_bind_group_layout,
+            &render_bgl,
+        );
 
         let vertex_attrs = [
             wgpu::VertexAttribute {
@@ -401,48 +402,6 @@ impl DeviceResources {
             array_stride: 24,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &vertex_attrs,
-        };
-
-        let make_surface = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mc_surface_pipeline"),
-                layout: Some(&surface_layout),
-                vertex: wgpu::VertexState {
-                    module: &surface_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[vertex_layout.clone()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &surface_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            })
         };
 
         // ----------------------------------------------------------------
@@ -469,53 +428,12 @@ impl DeviceResources {
                 include_str!(concat!(env!("OUT_DIR"), "/mc_wireframe.wgsl")).into(),
             ),
         });
-        let wireframe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mc_wireframe_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &wireframe_render_bgl],
-            push_constant_ranges: &[],
-        });
-        let make_wireframe = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mc_wireframe_pipeline"),
-                layout: Some(&wireframe_layout),
-                vertex: wgpu::VertexState {
-                    module: &wireframe_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[], // positions read from storage buffer
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &wireframe_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
+        let wireframe_layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "mc_wireframe_layout",
+            &self.camera_bind_group_layout,
+            &wireframe_render_bgl,
+        );
         // ----------------------------------------------------------------
         // Commit all resources.
         // ----------------------------------------------------------------
@@ -528,15 +446,43 @@ impl DeviceResources {
         self.mc.classify_pipeline = Some(classify_pipeline);
         self.mc.prefix_sum_pipeline = Some(prefix_sum_pipeline);
         self.mc.generate_pipeline = Some(generate_pipeline);
-        self.mc.surface_pipeline = Some(DualPipeline {
-            ldr: make_surface(self.target_format),
-            hdr: make_surface(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.mc.surface_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "mc_surface_pipeline",
+                layout: &surface_layout,
+                shader: &surface_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[vertex_layout.clone()],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                sample_count: 1,
+                ldr_format: self.target_format,
+            },
+        ));
         self.mc.wireframe_render_bgl = Some(wireframe_render_bgl);
-        self.mc.wireframe_pipeline = Some(DualPipeline {
-            ldr: make_wireframe(self.target_format),
-            hdr: make_wireframe(wgpu::TextureFormat::Rgba16Float),
-        });
+        self.mc.wireframe_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "mc_wireframe_pipeline",
+                layout: &wireframe_layout,
+                shader: &wireframe_shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[], // positions read from storage buffer
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::LineList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                sample_count: 1,
+                ldr_format: self.target_format,
+            },
+        ));
     }
 
     /// Upload a [`VolumeData`] to GPU, pre-allocating all intermediate and output

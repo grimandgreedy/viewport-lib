@@ -287,13 +287,13 @@ impl DeviceResources {
             source: wgpu::ShaderSource::Wgsl(shader_src.into()),
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("volume_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "volume_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &bgl,
+        );
 
-        let sample_count = self.sample_count;
         let vol_vert_layout = wgpu::VertexBufferLayout {
             array_stride: 12,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -303,64 +303,35 @@ impl DeviceResources {
                 shader_location: 0,
             }],
         };
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("volume_pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[vol_vert_layout.clone()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::SrcAlpha,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
+        self.volume.pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "volume_pipeline",
+                layout: &pipeline_layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[vol_vert_layout.clone()],
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::SrcAlpha,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
-
-        self.volume.pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                sample_count: self.sample_count,
+                ldr_format: self.target_format,
+            },
+        ));
         self.volume.bgl = Some(bgl);
     }
 
@@ -383,11 +354,12 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("volume_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "volume_outline_mask_pipeline_layout",
+            &self.camera_bind_group_layout,
+            bgl,
+        );
 
         let vert_attrs = [wgpu::VertexAttribute {
             offset: 0,

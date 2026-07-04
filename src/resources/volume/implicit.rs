@@ -4,7 +4,7 @@
 //! [`GpuImplicitOptions`].
 
 use crate::renderer::GpuImplicitItem;
-use crate::resources::{DeviceResources, DualPipeline};
+use crate::resources::DeviceResources;
 use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
@@ -149,60 +149,33 @@ impl DeviceResources {
         });
 
         // Group 0 reuses camera_bind_group_layout (provides CameraUniform + LightsUniform).
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("implicit_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &implicit_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let make = |fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("implicit_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                // Write depth so subsequent screen-image depth-composite items test against it.
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            })
-        };
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "implicit_pipeline_layout",
+            &self.camera_bind_group_layout,
+            &implicit_bgl,
+        );
 
         self.implicit.bgl = Some(implicit_bgl);
-        self.implicit.pipeline = Some(DualPipeline {
-            ldr: make(self.target_format),
-            hdr: make(wgpu::TextureFormat::Rgba16Float),
-        });
+        // depth_write is on so subsequent screen-image depth-composite items test against it.
+        self.implicit.pipeline = Some(crate::resources::builders::build_dual_pipeline(
+            device,
+            &crate::resources::builders::DualPipelineDesc {
+                label: "implicit_pipeline",
+                layout: &layout,
+                shader: &shader,
+                vertex_entry: "vs_main",
+                fragment_entry: "fs_main",
+                vertex_buffers: &[],
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                sample_count: 1,
+                ldr_format: self.target_format,
+            },
+        ));
     }
 
     /// Lazily create the implicit surface outline mask pipeline.
@@ -226,11 +199,12 @@ impl DeviceResources {
             ),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("implicit_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, implicit_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::standard_scene_layout(
+            device,
+            "implicit_outline_mask_pipeline_layout",
+            &self.camera_bind_group_layout,
+            implicit_bgl,
+        );
 
         self.implicit.outline_mask_pipeline = Some(device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
