@@ -201,14 +201,13 @@ fn build_irradiance_pipeline(
         bind_group_layouts: &[bgl],
         push_constant_ranges: &[],
     });
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("ibl_irradiance_pipeline"),
-        layout: Some(&layout),
-        module: &shader,
-        entry_point: Some("cs_main"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    })
+    crate::resources::builders::compute_pipeline(
+        device,
+        "ibl_irradiance_pipeline",
+        &layout,
+        &shader,
+        "cs_main",
+    )
 }
 
 fn build_prefilter_pipeline(
@@ -225,14 +224,13 @@ fn build_prefilter_pipeline(
         bind_group_layouts: &[bgl],
         push_constant_ranges: &[],
     });
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("ibl_prefilter_pipeline"),
-        layout: Some(&layout),
-        module: &shader,
-        entry_point: Some("cs_main"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    })
+    crate::resources::builders::compute_pipeline(
+        device,
+        "ibl_prefilter_pipeline",
+        &layout,
+        &shader,
+        "cs_main",
+    )
 }
 
 fn build_brdf_pipeline(
@@ -249,14 +247,13 @@ fn build_brdf_pipeline(
         bind_group_layouts: &[bgl],
         push_constant_ranges: &[],
     });
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("ibl_brdf_lut_pipeline"),
-        layout: Some(&layout),
-        module: &shader,
-        entry_point: Some("cs_main"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    })
+    crate::resources::builders::compute_pipeline(
+        device,
+        "ibl_brdf_lut_pipeline",
+        &layout,
+        &shader,
+        "cs_main",
+    )
 }
 
 /// Result of a GPU IBL precomputation.

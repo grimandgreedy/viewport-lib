@@ -36,27 +36,11 @@ impl DeviceResources {
             return;
         }
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("dyn_res_upscale_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "dyn_res_upscale_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let sampler =
             crate::resources::builders::clamp_linear_sampler(device, "dyn_res_linear_sampler");

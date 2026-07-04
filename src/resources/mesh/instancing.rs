@@ -187,19 +187,11 @@ impl DeviceResources {
 
         // Shadow instanced uses the shadow bind group layout (group 0) + instance_bgl (group 1).
         // Re-derive the shadow BGL from the existing shadow_bind_group.
-        let shadow_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow_bgl_for_instanced"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let shadow_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "shadow_bgl_for_instanced",
+            wgpu::ShaderStages::VERTEX,
+        );
 
         let shadow_instanced_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -652,20 +644,11 @@ impl DeviceResources {
             ],
         });
         // Recreate the shadow cascade BGL (same definition as in ensure_instanced_pipelines).
-        let shadow_bgl_for_cull =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("shadow_bgl_for_cull"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let shadow_bgl_for_cull = crate::resources::builders::uniform_bgl(
+            device,
+            "shadow_bgl_for_cull",
+            wgpu::ShaderStages::VERTEX,
+        );
         let shadow_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("shadow_instanced_cull_pipeline_layout"),
             bind_group_layouts: &[&shadow_bgl_for_cull, &shadow_cull_bgl],

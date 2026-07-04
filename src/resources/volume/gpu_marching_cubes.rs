@@ -292,19 +292,11 @@ impl DeviceResources {
         });
 
         // Surface render: one per-draw material uniform.
-        let render_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("mc_render_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let render_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "mc_render_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         // ----------------------------------------------------------------
         // Compute pipelines.
@@ -319,14 +311,13 @@ impl DeviceResources {
             bind_group_layouts: &[&classify_bgl],
             push_constant_ranges: &[],
         });
-        let classify_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("mc_classify_pipeline"),
-            layout: Some(&classify_layout),
-            module: &classify_shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let classify_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "mc_classify_pipeline",
+            &classify_layout,
+            &classify_shader,
+            "main",
+        );
 
         let prefix_sum_shader = crate::resources::builders::wgsl_module(
             device,
@@ -338,15 +329,13 @@ impl DeviceResources {
             bind_group_layouts: &[&prefix_sum_bgl],
             push_constant_ranges: &[],
         });
-        let prefix_sum_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("mc_prefix_sum_pipeline"),
-                layout: Some(&prefix_sum_layout),
-                module: &prefix_sum_shader,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let prefix_sum_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "mc_prefix_sum_pipeline",
+            &prefix_sum_layout,
+            &prefix_sum_shader,
+            "main",
+        );
 
         let generate_shader = crate::resources::builders::wgsl_module(
             device,
@@ -358,14 +347,13 @@ impl DeviceResources {
             bind_group_layouts: &[&generate_bgl],
             push_constant_ranges: &[],
         });
-        let generate_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("mc_generate_pipeline"),
-            layout: Some(&generate_layout),
-            module: &generate_shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let generate_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "mc_generate_pipeline",
+            &generate_layout,
+            &generate_shader,
+            "main",
+        );
 
         // ----------------------------------------------------------------
         // Surface render pipeline.

@@ -1023,19 +1023,11 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Gizmo bind group layout (group 1: model matrix uniform)
         // ------------------------------------------------------------------
-        let gizmo_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("gizmo_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let gizmo_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "gizmo_bgl",
+            wgpu::ShaderStages::VERTEX,
+        );
 
         // ------------------------------------------------------------------
         // Gizmo pipeline layout
@@ -1171,19 +1163,11 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Overlay bind group layout (group 1: model + colour uniform)
         // ------------------------------------------------------------------
-        let overlay_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("overlay_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let overlay_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "overlay_bgl",
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+        );
 
         // ------------------------------------------------------------------
         // Overlay pipeline layout (group 0: camera, group 1: overlay uniform)
@@ -1311,19 +1295,11 @@ impl DeviceResources {
             "grid_shader",
             crate::resources::builders::wgsl_source!("grid"),
         );
-        let grid_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("grid_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let grid_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "grid_bgl",
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+        );
         let grid_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("grid_pipeline_layout"),
             bind_group_layouts: &[&grid_bgl],
@@ -1970,19 +1946,11 @@ impl DeviceResources {
         // ------------------------------------------------------------------
 
         // Bind group layout for OutlineUniform (group 1).
-        let outline_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("outline_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let outline_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "outline_bgl",
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+        );
 
         let xray_shader = crate::resources::builders::wgsl_module(
             device,

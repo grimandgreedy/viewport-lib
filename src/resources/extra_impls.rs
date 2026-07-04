@@ -702,14 +702,13 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("compute_filter"),
         );
 
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("compute_filter_pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "compute_filter_pipeline",
+            &pipeline_layout,
+            &shader,
+            "main",
+        );
 
         self.compute_filter_bgl = Some(bgl);
         self.compute_filter_pipeline = Some(pipeline);

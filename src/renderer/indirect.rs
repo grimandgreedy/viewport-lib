@@ -88,25 +88,21 @@ impl CullResources {
             push_constant_ranges: &[],
         });
 
-        let cull_instances_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("cull_instances_pipeline"),
-                layout: Some(&layout),
-                module: &shader,
-                entry_point: Some("cull_instances"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let cull_instances_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "cull_instances_pipeline",
+            &layout,
+            &shader,
+            "cull_instances",
+        );
 
-        let write_indirect_args_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("write_indirect_args_pipeline"),
-                layout: Some(&layout),
-                module: &shader,
-                entry_point: Some("write_indirect_args"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let write_indirect_args_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "write_indirect_args_pipeline",
+            &layout,
+            &shader,
+            "write_indirect_args",
+        );
 
         let frustum_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cull_frustum_buf"),

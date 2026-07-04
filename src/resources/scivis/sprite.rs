@@ -192,159 +192,67 @@ impl DeviceResources {
         }];
 
         let sample_count = self.sample_count;
-        let additive_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
+        let ldr_format = self.target_format;
+        // Sprites are billboards drawn with `Less` depth test, no culling. Each
+        // variant differs only in blend mode and whether it writes depth.
+        let make_sprite = |depth_write: bool, blend: wgpu::BlendState, label: &str| {
+            crate::resources::builders::build_dual_pipeline(
+                device,
+                &crate::resources::builders::DualPipelineDesc {
+                    label,
+                    layout: &layout,
+                    shader: &shader,
+                    vertex_entry: "vs_main",
+                    fragment_entry: "fs_main",
+                    vertex_buffers: &vertex_buffers,
+                    blend: Some(blend),
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    depth_write,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    sample_count,
+                    ldr_format,
+                },
+            )
         };
-        let premultiplied_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-        };
-        let make_sprite =
-            |fmt: wgpu::TextureFormat, depth_write: bool, blend: wgpu::BlendState, label: &str| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &vertex_buffers,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: fmt,
-                            blend: Some(blend),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth24PlusStencil8,
-                        depth_write_enabled: depth_write,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: sample_count,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                })
-            };
 
         // Group 3 BGL for the lit sprite path: optional tangent-space normal
         // map + filtering sampler. Bound by every lit batch; a 1x1 default
         // backs the binding when no map is supplied.
-        let lit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("sprite_lit_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let lit_bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "sprite_lit_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
-        let ldr = self.target_format;
-        let hdr = wgpu::TextureFormat::Rgba16Float;
         let alpha = wgpu::BlendState::ALPHA_BLENDING;
+        let additive = crate::resources::builders::ADDITIVE_BLEND;
+        let premultiplied = crate::resources::builders::PREMULTIPLIED_BLEND;
         self.sprite.bgl = Some(bgl);
         self.sprite.soft_bgl = Some(soft_bgl);
         self.sprite.soft_sampler = Some(soft_sampler);
         self.sprite.soft_fallback_tex = Some(fallback_tex);
         self.sprite.soft_fallback_bg = Some(fallback_bg);
-        self.sprite.pipeline = Some(DualPipeline {
-            ldr: make_sprite(ldr, false, alpha, "sprite_pipeline"),
-            hdr: make_sprite(hdr, false, alpha, "sprite_pipeline"),
-        });
-        self.sprite.pipeline_depth_write = Some(DualPipeline {
-            ldr: make_sprite(ldr, true, alpha, "sprite_pipeline_depth_write"),
-            hdr: make_sprite(hdr, true, alpha, "sprite_pipeline_depth_write"),
-        });
-        self.sprite.pipeline_additive = Some(DualPipeline {
-            ldr: make_sprite(ldr, false, additive_blend, "sprite_pipeline_additive"),
-            hdr: make_sprite(hdr, false, additive_blend, "sprite_pipeline_additive"),
-        });
-        self.sprite.pipeline_additive_depth_write = Some(DualPipeline {
-            ldr: make_sprite(
-                ldr,
-                true,
-                additive_blend,
-                "sprite_pipeline_additive_depth_write",
-            ),
-            hdr: make_sprite(
-                hdr,
-                true,
-                additive_blend,
-                "sprite_pipeline_additive_depth_write",
-            ),
-        });
-        self.sprite.pipeline_premultiplied = Some(DualPipeline {
-            ldr: make_sprite(
-                ldr,
-                false,
-                premultiplied_blend,
-                "sprite_pipeline_premultiplied",
-            ),
-            hdr: make_sprite(
-                hdr,
-                false,
-                premultiplied_blend,
-                "sprite_pipeline_premultiplied",
-            ),
-        });
-        self.sprite.pipeline_premultiplied_depth_write = Some(DualPipeline {
-            ldr: make_sprite(
-                ldr,
-                true,
-                premultiplied_blend,
-                "sprite_pipeline_premultiplied_depth_write",
-            ),
-            hdr: make_sprite(
-                hdr,
-                true,
-                premultiplied_blend,
-                "sprite_pipeline_premultiplied_depth_write",
-            ),
-        });
+        self.sprite.pipeline = Some(make_sprite(false, alpha, "sprite_pipeline"));
+        self.sprite.pipeline_depth_write =
+            Some(make_sprite(true, alpha, "sprite_pipeline_depth_write"));
+        self.sprite.pipeline_additive =
+            Some(make_sprite(false, additive, "sprite_pipeline_additive"));
+        self.sprite.pipeline_additive_depth_write = Some(make_sprite(
+            true,
+            additive,
+            "sprite_pipeline_additive_depth_write",
+        ));
+        self.sprite.pipeline_premultiplied = Some(make_sprite(
+            false,
+            premultiplied,
+            "sprite_pipeline_premultiplied",
+        ));
+        self.sprite.pipeline_premultiplied_depth_write = Some(make_sprite(
+            true,
+            premultiplied,
+            "sprite_pipeline_premultiplied_depth_write",
+        ));
 
         // -----------------------------------------------------------------
         // Refractive sprite pipeline.
@@ -356,27 +264,11 @@ impl DeviceResources {
         // Available only on the HDR path. The LDR `paint_to` route has no
         // resolvable scene-colour texture to sample, mirroring the
         // soft-particle constraint.
-        let refraction_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("sprite_refraction_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let refraction_bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "sprite_refraction_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let refraction_sampler =
             crate::resources::builders::clamp_linear_sampler(device, "sprite_refraction_sampler");
@@ -407,7 +299,7 @@ impl DeviceResources {
                 module: &refraction_shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: hdr,
+                    format: wgpu::TextureFormat::Rgba16Float,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -467,102 +359,47 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let make_lit =
-            |fmt: wgpu::TextureFormat, depth_write: bool, blend: wgpu::BlendState, label: &str| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&lit_layout),
-                    vertex: wgpu::VertexState {
-                        module: &lit_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &vertex_buffers,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &lit_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: fmt,
-                            blend: Some(blend),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth24PlusStencil8,
-                        depth_write_enabled: depth_write,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: sample_count,
-                        ..Default::default()
-                    },
-                    multiview: None,
-                    cache: None,
-                })
-            };
+        let make_lit = |depth_write: bool, blend: wgpu::BlendState, label: &str| {
+            crate::resources::builders::build_dual_pipeline(
+                device,
+                &crate::resources::builders::DualPipelineDesc {
+                    label,
+                    layout: &lit_layout,
+                    shader: &lit_shader,
+                    vertex_entry: "vs_main",
+                    fragment_entry: "fs_main",
+                    vertex_buffers: &vertex_buffers,
+                    blend: Some(blend),
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    depth_write,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    sample_count,
+                    ldr_format,
+                },
+            )
+        };
 
-        self.sprite.lit_pipeline = Some(DualPipeline {
-            ldr: make_lit(ldr, false, alpha, "sprite_lit_pipeline"),
-            hdr: make_lit(hdr, false, alpha, "sprite_lit_pipeline"),
-        });
-        self.sprite.lit_pipeline_depth_write = Some(DualPipeline {
-            ldr: make_lit(ldr, true, alpha, "sprite_lit_pipeline_depth_write"),
-            hdr: make_lit(hdr, true, alpha, "sprite_lit_pipeline_depth_write"),
-        });
-        self.sprite.lit_pipeline_additive = Some(DualPipeline {
-            ldr: make_lit(ldr, false, additive_blend, "sprite_lit_pipeline_additive"),
-            hdr: make_lit(hdr, false, additive_blend, "sprite_lit_pipeline_additive"),
-        });
-        self.sprite.lit_pipeline_additive_depth_write = Some(DualPipeline {
-            ldr: make_lit(
-                ldr,
-                true,
-                additive_blend,
-                "sprite_lit_pipeline_additive_depth_write",
-            ),
-            hdr: make_lit(
-                hdr,
-                true,
-                additive_blend,
-                "sprite_lit_pipeline_additive_depth_write",
-            ),
-        });
-        self.sprite.lit_pipeline_premultiplied = Some(DualPipeline {
-            ldr: make_lit(
-                ldr,
-                false,
-                premultiplied_blend,
-                "sprite_lit_pipeline_premultiplied",
-            ),
-            hdr: make_lit(
-                hdr,
-                false,
-                premultiplied_blend,
-                "sprite_lit_pipeline_premultiplied",
-            ),
-        });
-        self.sprite.lit_pipeline_premultiplied_depth_write = Some(DualPipeline {
-            ldr: make_lit(
-                ldr,
-                true,
-                premultiplied_blend,
-                "sprite_lit_pipeline_premultiplied_depth_write",
-            ),
-            hdr: make_lit(
-                hdr,
-                true,
-                premultiplied_blend,
-                "sprite_lit_pipeline_premultiplied_depth_write",
-            ),
-        });
+        self.sprite.lit_pipeline = Some(make_lit(false, alpha, "sprite_lit_pipeline"));
+        self.sprite.lit_pipeline_depth_write =
+            Some(make_lit(true, alpha, "sprite_lit_pipeline_depth_write"));
+        self.sprite.lit_pipeline_additive =
+            Some(make_lit(false, additive, "sprite_lit_pipeline_additive"));
+        self.sprite.lit_pipeline_additive_depth_write = Some(make_lit(
+            true,
+            additive,
+            "sprite_lit_pipeline_additive_depth_write",
+        ));
+        self.sprite.lit_pipeline_premultiplied = Some(make_lit(
+            false,
+            premultiplied,
+            "sprite_lit_pipeline_premultiplied",
+        ));
+        self.sprite.lit_pipeline_premultiplied_depth_write = Some(make_lit(
+            true,
+            premultiplied,
+            "sprite_lit_pipeline_premultiplied_depth_write",
+        ));
 
         // The fallback bind group reuses the crate-wide `fallback_normal_map`,
         // already populated with `(128, 128, 255, 255)` for tangent-space `(0, 0, 1)`.

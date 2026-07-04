@@ -446,19 +446,11 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("decal_exclude"),
         );
 
-        let obj_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("decal_exclude_obj_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let obj_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "decal_exclude_obj_bgl",
+            wgpu::ShaderStages::VERTEX,
+        );
 
         let layout = crate::resources::builders::standard_scene_layout(
             device,

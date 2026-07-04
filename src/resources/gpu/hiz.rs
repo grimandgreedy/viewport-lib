@@ -246,14 +246,7 @@ impl HizState {
                     bind_group_layouts: &[bgl],
                     push_constant_ranges: &[],
                 });
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&layout),
-                    module,
-                    entry_point: Some(ep),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    cache: None,
-                })
+                crate::resources::builders::compute_pipeline(device, label, &layout, module, ep)
             };
         let copy_pipeline = pipeline("hiz_copy_pipeline", &copy_bgl, &copy_shader, "copy_depth");
         let init_pipeline = pipeline("hiz_init_pipeline", &reproj_bgl, &reproject_shader, "init");

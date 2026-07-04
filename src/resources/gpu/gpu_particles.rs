@@ -621,19 +621,11 @@ impl crate::resources::DeviceResources {
         }
 
         // Group 0: emit/sim params (uniform).
-        let params_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("gpu_particle_params_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let params_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "gpu_particle_params_bgl",
+            wgpu::ShaderStages::COMPUTE,
+        );
 
         // Group 1 (sim/emit): particle buffer + atomic emit counter.
         let sim_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -723,23 +715,21 @@ impl crate::resources::DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let emit_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("particle_emit_pipeline"),
-            layout: Some(&compute_layout),
-            module: &emit_shader,
-            entry_point: Some("emit_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let emit_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "particle_emit_pipeline",
+            &compute_layout,
+            &emit_shader,
+            "emit_main",
+        );
 
-        let sim_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("particle_sim_pipeline"),
-            layout: Some(&compute_layout),
-            module: &sim_shader,
-            entry_point: Some("sim_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let sim_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "particle_sim_pipeline",
+            &compute_layout,
+            &sim_shader,
+            "sim_main",
+        );
 
         // Draw pipelines: three blend variants of the same shader.
         let sprite_shader = crate::resources::builders::wgsl_module(
@@ -756,112 +746,48 @@ impl crate::resources::DeviceResources {
         );
 
         let sample_count = self.sample_count;
-        let additive = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-        };
-        let premul = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-        };
+        let ldr_format = self.target_format;
+        let alpha = wgpu::BlendState::ALPHA_BLENDING;
+        let additive = crate::resources::builders::ADDITIVE_BLEND;
+        let premul = crate::resources::builders::PREMULTIPLIED_BLEND;
 
-        let make_draw = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, label: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&draw_layout),
-                vertex: wgpu::VertexState {
-                    module: &sprite_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &sprite_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
+        // Particle sprites are billboards: `Less` depth test, no depth write, no
+        // culling. Only the blend mode varies across the three variants.
+        let make_draw = |blend: wgpu::BlendState, label: &str| {
+            crate::resources::builders::build_dual_pipeline(
+                device,
+                &crate::resources::builders::DualPipelineDesc {
+                    label,
+                    layout: &draw_layout,
+                    shader: &sprite_shader,
+                    vertex_entry: "vs_main",
+                    fragment_entry: "fs_main",
+                    vertex_buffers: &[],
+                    blend: Some(blend),
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
+                    depth_write: false,
                     depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
+                    sample_count,
+                    ldr_format,
                 },
-                multiview: None,
-                cache: None,
-            })
+            )
         };
 
-        let ldr = self.target_format;
-        let hdr = wgpu::TextureFormat::Rgba16Float;
-        let alpha = wgpu::BlendState::ALPHA_BLENDING;
-        self.particle.sprite_pipeline_alpha = Some(crate::resources::DualPipeline {
-            ldr: make_draw(ldr, alpha, "particle_sprite_alpha"),
-            hdr: make_draw(hdr, alpha, "particle_sprite_alpha"),
-        });
-        self.particle.sprite_pipeline_additive = Some(crate::resources::DualPipeline {
-            ldr: make_draw(ldr, additive, "particle_sprite_additive"),
-            hdr: make_draw(hdr, additive, "particle_sprite_additive"),
-        });
-        self.particle.sprite_pipeline_premultiplied = Some(crate::resources::DualPipeline {
-            ldr: make_draw(ldr, premul, "particle_sprite_premultiplied"),
-            hdr: make_draw(hdr, premul, "particle_sprite_premultiplied"),
-        });
+        self.particle.sprite_pipeline_alpha = Some(make_draw(alpha, "particle_sprite_alpha"));
+        self.particle.sprite_pipeline_additive =
+            Some(make_draw(additive, "particle_sprite_additive"));
+        self.particle.sprite_pipeline_premultiplied =
+            Some(make_draw(premul, "particle_sprite_premultiplied"));
 
         // Lit GPU particle sprite pipelines. Same vertex inputs and draw BGL
         // as the emissive path; group 2 adds the optional normal-map binding
         // and the shader pulls scene lighting via the camera bind group.
-        let lit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("gpu_particle_lit_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let lit_bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "gpu_particle_lit_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let lit_shader = crate::resources::builders::wgsl_module(
             device,
@@ -875,59 +801,33 @@ impl crate::resources::DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let make_lit_draw = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, label: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&lit_layout),
-                vertex: wgpu::VertexState {
-                    module: &lit_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &lit_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
+        let make_lit_draw = |blend: wgpu::BlendState, label: &str| {
+            crate::resources::builders::build_dual_pipeline(
+                device,
+                &crate::resources::builders::DualPipelineDesc {
+                    label,
+                    layout: &lit_layout,
+                    shader: &lit_shader,
+                    vertex_entry: "vs_main",
+                    fragment_entry: "fs_main",
+                    vertex_buffers: &[],
+                    blend: Some(blend),
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
+                    depth_write: false,
                     depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
+                    sample_count,
+                    ldr_format,
                 },
-                multiview: None,
-                cache: None,
-            })
+            )
         };
 
-        self.particle.sprite_lit_pipeline_alpha = Some(crate::resources::DualPipeline {
-            ldr: make_lit_draw(ldr, alpha, "particle_sprite_lit_alpha"),
-            hdr: make_lit_draw(hdr, alpha, "particle_sprite_lit_alpha"),
-        });
-        self.particle.sprite_lit_pipeline_additive = Some(crate::resources::DualPipeline {
-            ldr: make_lit_draw(ldr, additive, "particle_sprite_lit_additive"),
-            hdr: make_lit_draw(hdr, additive, "particle_sprite_lit_additive"),
-        });
-        self.particle.sprite_lit_pipeline_premultiplied = Some(crate::resources::DualPipeline {
-            ldr: make_lit_draw(ldr, premul, "particle_sprite_lit_premultiplied"),
-            hdr: make_lit_draw(hdr, premul, "particle_sprite_lit_premultiplied"),
-        });
+        self.particle.sprite_lit_pipeline_alpha =
+            Some(make_lit_draw(alpha, "particle_sprite_lit_alpha"));
+        self.particle.sprite_lit_pipeline_additive =
+            Some(make_lit_draw(additive, "particle_sprite_lit_additive"));
+        self.particle.sprite_lit_pipeline_premultiplied =
+            Some(make_lit_draw(premul, "particle_sprite_lit_premultiplied"));
 
         let lit_fallback_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gpu_particle_lit_fallback_bg"),
@@ -1006,59 +906,34 @@ impl crate::resources::DeviceResources {
             &mesh_draw_bgl,
         );
 
-        let make_mesh_draw = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState, label: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&mesh_layout),
-                vertex: wgpu::VertexState {
-                    module: &mesh_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[crate::resources::types::Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &mesh_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
+        // Particle meshes are closed solids, so back-face culled; still no depth
+        // write since particles draw transparently after the opaque pass.
+        let make_mesh_draw = |blend: wgpu::BlendState, label: &str| {
+            crate::resources::builders::build_dual_pipeline(
+                device,
+                &crate::resources::builders::DualPipelineDesc {
+                    label,
+                    layout: &mesh_layout,
+                    shader: &mesh_shader,
+                    vertex_entry: "vs_main",
+                    fragment_entry: "fs_main",
+                    vertex_buffers: &[crate::resources::types::Vertex::buffer_layout()],
+                    blend: Some(blend),
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
+                    depth_write: false,
                     depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
+                    sample_count,
+                    ldr_format,
                 },
-                multiview: None,
-                cache: None,
-            })
+            )
         };
 
-        self.particle.mesh_pipeline_alpha = Some(crate::resources::DualPipeline {
-            ldr: make_mesh_draw(ldr, alpha, "particle_mesh_alpha"),
-            hdr: make_mesh_draw(hdr, alpha, "particle_mesh_alpha"),
-        });
-        self.particle.mesh_pipeline_additive = Some(crate::resources::DualPipeline {
-            ldr: make_mesh_draw(ldr, additive, "particle_mesh_additive"),
-            hdr: make_mesh_draw(hdr, additive, "particle_mesh_additive"),
-        });
-        self.particle.mesh_pipeline_premultiplied = Some(crate::resources::DualPipeline {
-            ldr: make_mesh_draw(ldr, premul, "particle_mesh_premultiplied"),
-            hdr: make_mesh_draw(hdr, premul, "particle_mesh_premultiplied"),
-        });
+        self.particle.mesh_pipeline_alpha = Some(make_mesh_draw(alpha, "particle_mesh_alpha"));
+        self.particle.mesh_pipeline_additive =
+            Some(make_mesh_draw(additive, "particle_mesh_additive"));
+        self.particle.mesh_pipeline_premultiplied =
+            Some(make_mesh_draw(premul, "particle_mesh_premultiplied"));
         self.particle.mesh_draw_bgl = Some(mesh_draw_bgl);
 
         self.particle.params_bgl = Some(params_bgl);

@@ -187,6 +187,37 @@ pub(crate) fn env_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
     })
 }
 
+/// Additive blend: `dst.rgb + src.rgb`, alpha unchanged. Used by the sprite and
+/// particle draw paths for glowing / emissive accumulation.
+pub(crate) const ADDITIVE_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+/// Premultiplied-alpha blend: `src.rgb + dst.rgb * (1 - src.a)`. Used by the
+/// sprite and particle draw paths when the source colour already carries its
+/// alpha premultiplied.
+pub(crate) const PREMULTIPLIED_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
 /// The parts of a scene render pipeline that vary between features. The rest of
 /// the descriptor (depth format `Depth24PlusStencil8`, default stencil and
 /// bias, `ColorWrites::ALL`, default front face, no multiview or cache) is held
@@ -365,6 +396,27 @@ pub(crate) fn build_outline_mask_pipeline(
         }),
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
+        cache: None,
+    })
+}
+
+/// Create a compute pipeline. Every compute pipeline in the crate has the same
+/// shape: a shader, its layout, and an entry point, with default compilation
+/// options and no cache. This is the one place the crate calls
+/// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
+pub(crate) fn compute_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    entry: &str,
+) -> wgpu::ComputePipeline {
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        module: shader,
+        entry_point: Some(entry),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
         cache: None,
     })
 }

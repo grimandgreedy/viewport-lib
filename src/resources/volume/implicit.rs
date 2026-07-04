@@ -133,19 +133,11 @@ impl DeviceResources {
         );
 
         // Group 1: single uniform buffer containing ImplicitUniformRaw.
-        let implicit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("implicit_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let implicit_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "implicit_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         // Group 0 reuses camera_bind_group_layout (provides CameraUniform + LightsUniform).
         let layout = crate::resources::builders::standard_scene_layout(

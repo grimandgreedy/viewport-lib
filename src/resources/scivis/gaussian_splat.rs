@@ -362,15 +362,13 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let gaussian_splat_depth_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("gaussian_splat_depth_pipeline"),
-                layout: Some(&depth_layout),
-                module: &sort_shader,
-                entry_point: Some("compute_depths"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let gaussian_splat_depth_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "gaussian_splat_depth_pipeline",
+            &depth_layout,
+            &sort_shader,
+            "compute_depths",
+        );
 
         // Sort BGL: SortUniform (b0), keys_ping (b1), keys_pong (b2),
         //           vals_ping (b3), vals_pong (b4), histogram (b5).
@@ -446,55 +444,45 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let gaussian_splat_sort_init_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("gaussian_splat_sort_init_pipeline"),
-                layout: Some(&sort_layout),
-                module: &sort_shader,
-                entry_point: Some("init_indices"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let gaussian_splat_sort_init_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "gaussian_splat_sort_init_pipeline",
+            &sort_layout,
+            &sort_shader,
+            "init_indices",
+        );
 
-        let gaussian_splat_sort_clear_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("gaussian_splat_sort_clear_pipeline"),
-                layout: Some(&sort_layout),
-                module: &sort_shader,
-                entry_point: Some("clear_histogram"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let gaussian_splat_sort_clear_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "gaussian_splat_sort_clear_pipeline",
+            &sort_layout,
+            &sort_shader,
+            "clear_histogram",
+        );
 
-        let gaussian_splat_sort_histogram_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("gaussian_splat_sort_histogram_pipeline"),
-                layout: Some(&sort_layout),
-                module: &sort_shader,
-                entry_point: Some("histogram_pass"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let gaussian_splat_sort_histogram_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "gaussian_splat_sort_histogram_pipeline",
+            &sort_layout,
+            &sort_shader,
+            "histogram_pass",
+        );
 
-        let gaussian_splat_sort_prefix_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("gaussian_splat_sort_prefix_pipeline"),
-                layout: Some(&sort_layout),
-                module: &sort_shader,
-                entry_point: Some("prefix_sum_pass"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let gaussian_splat_sort_prefix_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "gaussian_splat_sort_prefix_pipeline",
+            &sort_layout,
+            &sort_shader,
+            "prefix_sum_pass",
+        );
 
-        let gaussian_splat_sort_scatter_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("gaussian_splat_sort_scatter_pipeline"),
-                layout: Some(&sort_layout),
-                module: &sort_shader,
-                entry_point: Some("scatter_pass"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
+        let gaussian_splat_sort_scatter_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "gaussian_splat_sort_scatter_pipeline",
+            &sort_layout,
+            &sort_shader,
+            "scatter_pass",
+        );
 
         self.gaussian_splat.bgl = Some(splat_bgl);
         self.gaussian_splat.pipeline = Some(gaussian_splat_pipeline);

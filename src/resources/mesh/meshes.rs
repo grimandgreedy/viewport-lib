@@ -2128,29 +2128,12 @@ impl DeviceResources {
             self.pt.bind_group_layout = Some(bgl);
         }
         if self.pt.lut_bind_group_layout.is_none() {
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("pt_lut_bgl"),
-                entries: &[
-                    // binding 0: colourmap texture (256x1 D2, same format as all other LUT textures)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 1: colourmap sampler (linear clamp)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+            // binding 0: colourmap texture (256x1 D2), binding 1: linear-clamp sampler.
+            let bgl = crate::resources::builders::texture_sampler_bgl(
+                device,
+                "pt_lut_bgl",
+                wgpu::ShaderStages::FRAGMENT,
+            );
             self.pt.lut_bind_group_layout = Some(bgl);
         }
     }

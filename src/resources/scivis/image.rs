@@ -236,40 +236,13 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("screen_image"),
         );
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("screen_image_bgl"),
-            entries: &[
-                // binding 0: ScreenImageUniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 1: texture_2d<f32>
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                // binding 2: sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        // binding 0: ScreenImageUniform, binding 1: texture_2d<f32>, binding 2: sampler.
+        let bgl = crate::resources::builders::uniform_texture_sampler_bgl(
+            device,
+            "screen_image_bgl",
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("screen_image_layout"),

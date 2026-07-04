@@ -314,14 +314,13 @@ impl ClusteredResources {
             bind_group_layouts: &[&clear_bgl],
             push_constant_ranges: &[],
         });
-        let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("cluster_clear_pipeline"),
-            layout: Some(&clear_layout),
-            module: &clear_shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let clear_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "cluster_clear_pipeline",
+            &clear_layout,
+            &clear_shader,
+            "main",
+        );
 
         // Build pass : intersects each cluster's view-space AABB with the
         // active-light set and writes the per-cluster light index ranges.
@@ -371,14 +370,13 @@ impl ClusteredResources {
             bind_group_layouts: &[&build_bgl],
             push_constant_ranges: &[],
         });
-        let build_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("cluster_build_pipeline"),
-            layout: Some(&build_layout),
-            module: &build_shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let build_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "cluster_build_pipeline",
+            &build_layout,
+            &build_shader,
+            "main",
+        );
 
         Self {
             grid_uniform_buf,

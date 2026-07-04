@@ -681,27 +681,11 @@ impl DeviceResources {
             ],
         });
 
-        let ssao_blur_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ssao_blur_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let ssao_blur_bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "ssao_blur_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let cs_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("contact_shadow_bgl"),
@@ -735,27 +719,11 @@ impl DeviceResources {
             ],
         });
 
-        let fxaa_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("fxaa_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let fxaa_bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "fxaa_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let oit_composite_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit_composite_bgl"),
@@ -789,28 +757,11 @@ impl DeviceResources {
             ],
         });
 
-        let outline_composite_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("outline_composite_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+        let outline_composite_bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "outline_composite_bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         // Fullscreen pass helper: build the single-bgl layout, then the pipeline.
         let make_fs_pipeline = |label: &str,
@@ -1309,19 +1260,11 @@ impl DeviceResources {
         // LIC surface BGL (group 1): object uniform only.
         // Flow vectors are passed as vertex buffer 1 (not a storage binding).
         if self.lic.surface_bgl.is_none() {
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("lic_surface_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+            let bgl = crate::resources::builders::uniform_bgl(
+                device,
+                "lic_surface_bgl",
+                wgpu::ShaderStages::VERTEX_FRAGMENT,
+            );
             self.lic.surface_bgl = Some(bgl);
         }
 
