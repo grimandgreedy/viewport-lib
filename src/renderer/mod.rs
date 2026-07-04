@@ -1383,7 +1383,7 @@ impl ViewportRenderer {
     /// Upload a Gaussian splat set to the GPU.
     ///
     /// Call once per splat set at startup or when it changes. The returned
-    /// [`GaussianSplatId`] is valid until [`free_gaussian_splats`](Self::free_gaussian_splats) is called.
+    /// [`GaussianSplatId`] is valid until [`free_gaussian_splat`](Self::free_gaussian_splat) is called.
     ///
     /// # Errors
     ///
@@ -1397,24 +1397,24 @@ impl ViewportRenderer {
     /// # use viewport_lib::error::ViewportError;
     /// # use viewport_lib::renderer::{GaussianSplatData, ViewportRenderer};
     /// # fn demo(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) {
-    /// let result = renderer.upload_gaussian_splats(device, queue, &GaussianSplatData::default());
+    /// let result = renderer.upload_gaussian_splat(device, queue, &GaussianSplatData::default());
     /// assert!(matches!(result, Err(ViewportError::InvalidGaussianSplatData { .. })));
     /// # }
     /// ```
-    pub fn upload_gaussian_splats(
+    pub fn upload_gaussian_splat(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         data: &GaussianSplatData,
     ) -> crate::error::ViewportResult<GaussianSplatId> {
-        self.resources.upload_gaussian_splats(device, queue, data)
+        self.resources.upload_gaussian_splat(device, queue, data)
     }
 
     /// Remove an uploaded Gaussian splat set by handle.
     ///
     /// After this call the `id` is invalid and must not be submitted in `SceneFrame`.
-    pub fn free_gaussian_splats(&mut self, id: GaussianSplatId) {
-        self.resources.free_gaussian_splats(id);
+    pub fn free_gaussian_splat(&mut self, id: GaussianSplatId) {
+        self.resources.free_gaussian_splat(id);
     }
 
     /// Upload an equirectangular HDR environment map and precompute IBL textures.
@@ -1587,24 +1587,24 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous Gaussian splat upload. See
-    /// [`ViewportGpuResources::begin_upload_gaussian_splats`].
-    pub fn begin_upload_gaussian_splats(
+    /// [`ViewportGpuResources::begin_upload_gaussian_splat`].
+    pub fn begin_upload_gaussian_splat(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         data: crate::renderer::GaussianSplatData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         self.resources
-            .begin_upload_gaussian_splats(device, queue, data)
+            .begin_upload_gaussian_splat(device, queue, data)
     }
 
     /// Take the [`GaussianSplatId`](crate::renderer::GaussianSplatId) produced by a
-    /// completed [`begin_upload_gaussian_splats`](Self::begin_upload_gaussian_splats) job.
-    pub fn upload_result_gaussian_splats(
+    /// completed [`begin_upload_gaussian_splat`](Self::begin_upload_gaussian_splat) job.
+    pub fn upload_result_gaussian_splat(
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
-        self.resources.upload_result_gaussian_splats(id)
+        self.resources.upload_result_gaussian_splat(id)
     }
 
     /// Start an asynchronous overlay texture upload. See

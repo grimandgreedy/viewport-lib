@@ -64,10 +64,10 @@ pub(crate) fn build_gaussian_splat_scene(app: &mut App, renderer: &mut ViewportR
     let dti = generate_dti();
     let tgv = generate_tgv();
     app.splat_state.id_dti = renderer
-        .upload_gaussian_splats(&app.device, &app.queue, &dti)
+        .upload_gaussian_splat(&app.device, &app.queue, &dti)
         .expect("example: splat data is validated at construction");
     app.splat_state.id_tgv = renderer
-        .upload_gaussian_splats(&app.device, &app.queue, &tgv)
+        .upload_gaussian_splat(&app.device, &app.queue, &tgv)
         .expect("example: splat data is validated at construction");
     app.splat_state.built = true;
 }

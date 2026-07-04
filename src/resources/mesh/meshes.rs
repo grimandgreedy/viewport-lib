@@ -849,7 +849,7 @@ impl ViewportGpuResources {
         let (mesh_data, face_to_cell) =
             crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
         let mesh_id = self.upload_mesh_data(device, &mesh_data)?;
-        let (pt_id, _, _) = self.upload_projected_tet_mesh(device, &data, scalar_attribute)?;
+        let (pt_id, _, _) = self.upload_projected_tet(device, &data, scalar_attribute)?;
         let mut item = crate::VolumeMeshItem::new(mesh_id, face_to_cell);
         item.projected_tet_id = Some(pt_id);
         item.volume_mesh_data = Some(std::sync::Arc::new(data));
@@ -2223,7 +2223,7 @@ impl ViewportGpuResources {
     /// range stored in the GPU buffer. Callers should use the returned scalar range for
     /// threshold computations so that brimcast and the GPU always agree on the data range
     /// (including the constant-data `scalar_min + 1.0` adjustment in `decompose_into_chunks`).
-    pub(crate) fn upload_projected_tet_mesh(
+    pub(crate) fn upload_projected_tet(
         &mut self,
         device: &wgpu::Device,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
@@ -2283,9 +2283,9 @@ impl ViewportGpuResources {
     /// renderer's existing `pt_bind_group_layout` and colourmap LUT, then
     /// inserts the mesh. Returns the [`JobId`](crate::resources::JobId);
     /// take the `(ProjectedTetId, scalar_min, scalar_max)` triple via
-    /// [`upload_result_projected_tet_mesh`](Self::upload_result_projected_tet_mesh).
+    /// [`upload_result_projected_tet`](Self::upload_result_projected_tet).
     #[allow(dead_code)]
-    pub(crate) fn begin_upload_projected_tet_mesh(
+    pub(crate) fn begin_upload_projected_tet(
         &mut self,
         device: &wgpu::Device,
         data: crate::resources::volume::volume_mesh::VolumeMeshData,
@@ -2364,9 +2364,9 @@ impl ViewportGpuResources {
     }
 
     /// Take the `(ProjectedTetId, scalar_min, scalar_max)` triple produced by a
-    /// completed [`begin_upload_projected_tet_mesh`](Self::begin_upload_projected_tet_mesh) job.
+    /// completed [`begin_upload_projected_tet`](Self::begin_upload_projected_tet) job.
     #[allow(dead_code)]
-    pub(crate) fn upload_result_projected_tet_mesh(
+    pub(crate) fn upload_result_projected_tet(
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
@@ -2398,7 +2398,7 @@ impl ViewportGpuResources {
     /// only the cached scalar range is refreshed. Changing the colourmap on the
     /// owning item is now free because the LUT is bound per-frame in render.rs,
     /// so this call no longer takes a `colourmap_id`.
-    pub fn replace_projected_tet_mesh(
+    pub fn replace_projected_tet(
         &mut self,
         device: &wgpu::Device,
         id: crate::resources::ProjectedTetId,
@@ -3008,22 +3008,17 @@ mod c4_volume_mesh_tests {
     }
 
     #[test]
-    fn begin_upload_projected_tet_mesh_drains_to_triple() {
+    fn begin_upload_projected_tet_drains_to_triple() {
         let Some((device, queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_projected_tet_mesh(
-            &device,
-            single_tet_volume(),
-            "density".into(),
-        );
-        drive_until_ready(&mut resources, &device, &queue, job, "projected_tet_mesh");
-        let (_id, smin, smax) = resources
-            .upload_result_projected_tet_mesh(job)
-            .expect("ready");
+        let job =
+            resources.begin_upload_projected_tet(&device, single_tet_volume(), "density".into());
+        drive_until_ready(&mut resources, &device, &queue, job, "projected_tet");
+        let (_id, smin, smax) = resources.upload_result_projected_tet(job).expect("ready");
         assert!(smin <= smax);
     }
 

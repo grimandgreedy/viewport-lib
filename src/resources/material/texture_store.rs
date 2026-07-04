@@ -148,6 +148,31 @@ impl TextureStore {
         false
     }
 
+    /// Swap the texture in `id`'s slot for `texture`, charging `bytes` in place
+    /// of the old size and keeping the slot generation (so `id` stays valid).
+    ///
+    /// The generation check is the in-flight guard: a stale `id` (its slot freed
+    /// and reused) does not resolve, so it cannot overwrite whatever now occupies
+    /// the slot. Returns the dropped `GpuTexture` on success (the caller drops it
+    /// after the frame that may still sample it), or `None` if `id` did not
+    /// resolve to a live texture.
+    pub fn replace(
+        &mut self,
+        id: TextureId,
+        texture: GpuTexture,
+        bytes: u64,
+    ) -> Option<GpuTexture> {
+        let (index, generation) = unpack_texture_id(id);
+        let slot = self.slots.get_mut(index as usize)?;
+        if slot.generation != generation || slot.texture.is_none() {
+            return None;
+        }
+        let old = slot.texture.replace(texture);
+        self.allocated_bytes = self.allocated_bytes.saturating_sub(slot.bytes) + bytes;
+        slot.bytes = bytes;
+        old
+    }
+
     /// Number of live (occupied) texture slots.
     pub fn len(&self) -> usize {
         self.live_count as usize

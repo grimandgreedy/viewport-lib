@@ -1617,9 +1617,20 @@ mod tests {
         };
         let mut resources =
             ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let start = resources.resident_bytes().scivis_bytes;
         let id = resources.upload_tube(&device, &queue, &sample_tube());
         assert!(resources.tube_store.contains(id));
+        let after_upload = resources.resident_bytes().scivis_bytes;
+        assert!(
+            after_upload > start,
+            "uploading a tube must increase resident scivis bytes"
+        );
         assert!(resources.drop_tube(id));
+        assert_eq!(
+            resources.resident_bytes().scivis_bytes,
+            start,
+            "dropping the tube must return resident scivis bytes to the start"
+        );
     }
 
     #[test]

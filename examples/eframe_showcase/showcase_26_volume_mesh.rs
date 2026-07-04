@@ -981,7 +981,7 @@ impl App {
             };
             if let Some(pt_id) = pt_id {
                 let data = pt_data_for_mode(mode);
-                let _ = renderer.resources_mut().replace_projected_tet_mesh(
+                let _ = renderer.resources_mut().replace_projected_tet(
                     &self.device,
                     pt_id,
                     &data,

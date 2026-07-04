@@ -70,7 +70,7 @@ crate::resources::handle::registry_handle! {
     /// Identifies a projected-tetrahedra mesh uploaded to the GPU for transparent
     /// volume rendering.
     ///
-    /// Obtained from [`ViewportGpuResources::upload_projected_tet_mesh`]. An
+    /// Obtained from [`ViewportGpuResources::upload_projected_tet`]. An
     /// append-only registry handle.
     pub struct ProjectedTetId;
 }
@@ -1762,9 +1762,9 @@ pub struct TextureMemoryStats {
 /// [`ViewportGpuResources::resident_bytes`].
 ///
 /// These are the classes a streaming or eviction policy frees and re-uploads:
-/// meshes (`upload_mesh_data` and friends) and user textures (`upload_texture`
-/// and friends). The totals are maintained counters, updated on every upload,
-/// replace, and free, so the query is cheap enough to poll each frame.
+/// meshes (`upload_mesh_data` and friends), user textures (`upload_texture` and
+/// friends), Gaussian splats, marching-cubes volumes, and the pre-uploaded
+/// scivis curves. The query is cheap enough to poll each frame.
 ///
 /// Built-in resources are not counted: colourmap and matcap LUTs, IBL maps, the
 /// shadow atlas, and post-process render targets. They are created once (or
@@ -1776,12 +1776,27 @@ pub struct ResidentBytes {
     pub mesh_bytes: u64,
     /// GPU bytes across every resident user-uploaded texture.
     pub texture_bytes: u64,
+    /// GPU buffer bytes across every resident Gaussian splat set (position,
+    /// scale, rotation, opacity, and SH source buffers; per-viewport sort
+    /// scratch is not counted).
+    pub gaussian_splat_bytes: u64,
+    /// GPU buffer bytes across every resident marching-cubes volume (all slab
+    /// buffers of every live volume).
+    pub mc_volume_bytes: u64,
+    /// GPU buffer bytes across every pre-uploaded scivis curve resource
+    /// (polylines, tubes, streamtubes, ribbons, point clouds, glyph sets,
+    /// tensor glyph sets, and sprite sets).
+    pub scivis_bytes: u64,
 }
 
 impl ResidentBytes {
-    /// Total resident bytes across meshes and user textures.
+    /// Total resident bytes across every counted class.
     pub fn total(&self) -> u64 {
-        self.mesh_bytes + self.texture_bytes
+        self.mesh_bytes
+            + self.texture_bytes
+            + self.gaussian_splat_bytes
+            + self.mc_volume_bytes
+            + self.scivis_bytes
     }
 }
 
@@ -2044,6 +2059,19 @@ pub(crate) struct GaussianSplatGpuSet {
     pub cpu_scales: Vec<[f32; 3]>,
 }
 
+impl GaussianSplatGpuSet {
+    /// Resident GPU bytes for the persistent source buffers (position, scale,
+    /// rotation, opacity, SH). Per-viewport sort scratch is derived and grows
+    /// lazily, so it is not counted here.
+    pub fn gpu_bytes(&self) -> u64 {
+        self.position_buf.size()
+            + self.scale_buf.size()
+            + self.rotation_buf.size()
+            + self.opacity_buf.size()
+            + self.sh_buf.size()
+    }
+}
+
 /// Per-frame draw data produced in prepare_viewport_internal.
 pub(crate) struct GaussianSplatDrawData {
     /// Index into gaussian_splat_store.
@@ -2074,6 +2102,7 @@ pub(crate) struct GaussianSplatSlot {
 pub(crate) struct GaussianSplatStore {
     pub slots: Vec<GaussianSplatSlot>,
     free_list: Vec<usize>,
+    allocated_bytes: u64,
 }
 
 impl GaussianSplatStore {
@@ -2081,10 +2110,12 @@ impl GaussianSplatStore {
         Self {
             slots: Vec::new(),
             free_list: Vec::new(),
+            allocated_bytes: 0,
         }
     }
 
     pub fn insert(&mut self, set: GaussianSplatGpuSet) -> crate::renderer::GaussianSplatId {
+        self.allocated_bytes += set.gpu_bytes();
         if let Some(idx) = self.free_list.pop() {
             let slot = &mut self.slots[idx];
             slot.set = Some(set);
@@ -2097,6 +2128,32 @@ impl GaussianSplatStore {
             });
             crate::renderer::GaussianSplatId::new(idx as u32, 0)
         }
+    }
+
+    /// Swap the set in `id`'s slot for `set`, keeping the slot generation so the
+    /// handle stays valid. Returns `true` on success, `false` for a stale handle
+    /// or an empty slot.
+    pub fn replace(
+        &mut self,
+        id: crate::renderer::GaussianSplatId,
+        set: GaussianSplatGpuSet,
+    ) -> bool {
+        if let Some(slot) = self.slots.get_mut(id.index as usize) {
+            if slot.generation == id.generation && slot.set.is_some() {
+                if let Some(old) = &slot.set {
+                    self.allocated_bytes = self.allocated_bytes.saturating_sub(old.gpu_bytes());
+                }
+                self.allocated_bytes += set.gpu_bytes();
+                slot.set = Some(set);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Total resident GPU bytes across every live splat set.
+    pub fn allocated_bytes(&self) -> u64 {
+        self.allocated_bytes
     }
 
     /// Look up a set by handle, validating the generation. Returns `None` for a
@@ -2127,6 +2184,9 @@ impl GaussianSplatStore {
     pub fn remove(&mut self, id: crate::renderer::GaussianSplatId) -> bool {
         if let Some(slot) = self.slots.get_mut(id.index as usize) {
             if slot.generation == id.generation && slot.set.is_some() {
+                if let Some(old) = &slot.set {
+                    self.allocated_bytes = self.allocated_bytes.saturating_sub(old.gpu_bytes());
+                }
                 slot.set = None;
                 slot.generation = slot.generation.wrapping_add(1);
                 self.free_list.push(id.index as usize);
@@ -2327,7 +2387,7 @@ pub(crate) struct ProjectedTetChunk {
 ///
 /// Large meshes are split into multiple chunks so each storage buffer
 /// stays within `max_storage_buffer_binding_size`.
-/// Created by [`ViewportGpuResources::upload_projected_tet_mesh`].
+/// Created by [`ViewportGpuResources::upload_projected_tet`].
 pub(crate) struct GpuProjectedTetMesh {
     /// One or more device-limit-bounded chunks.
     pub chunks: Vec<ProjectedTetChunk>,

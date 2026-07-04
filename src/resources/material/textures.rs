@@ -302,113 +302,19 @@ impl ViewportGpuResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_with_gpu(device, queue, move |dev, q, progress| {
                 progress.set(0.2);
-                let tex_label = if is_normal_map {
-                    "async_normal_map_texture"
-                } else {
-                    "async_user_texture"
-                };
-                let mip_level_count = mip_levels.len() as u32;
-                let texture = dev.create_texture(&wgpu::TextureDescriptor {
-                    label: Some(tex_label),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
+                let gpu_texture = build_gpu_texture(
+                    dev,
+                    q,
+                    width,
+                    height,
                     format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                // Upload each mip level. Row/size math is block-based so it is
-                // correct for both uncompressed (1x1 blocks) and block
-                // compressed formats.
-                for (level, data) in mip_levels.iter().enumerate() {
-                    let lw = (width >> level).max(1);
-                    let lh = (height >> level).max(1);
-                    let (bytes_per_row, blocks_high, _) = mip_block_layout(format, lw, lh);
-                    q.write_texture(
-                        wgpu::TexelCopyTextureInfo {
-                            texture: &texture,
-                            mip_level: level as u32,
-                            origin: wgpu::Origin3d::ZERO,
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        data,
-                        wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(bytes_per_row),
-                            rows_per_image: Some(blocks_high),
-                        },
-                        wgpu::Extent3d {
-                            width: lw,
-                            height: lh,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
-                progress.set(0.7);
-
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let sampler_label = if is_normal_map {
-                    "async_normal_map_sampler"
-                } else {
-                    "async_user_texture_sampler"
-                };
-                // A mip chain is only useful with trilinear sampling; a single
-                // level keeps the nearest-mip behavior of the RGBA8 path.
-                let mipmap_filter = if mip_level_count > 1 {
-                    wgpu::FilterMode::Linear
-                } else {
-                    wgpu::FilterMode::Nearest
-                };
-                let sampler = dev.create_sampler(&wgpu::SamplerDescriptor {
-                    label: Some(sampler_label),
-                    address_mode_u: wgpu::AddressMode::Repeat,
-                    address_mode_v: wgpu::AddressMode::Repeat,
-                    mag_filter: wgpu::FilterMode::Linear,
-                    min_filter: wgpu::FilterMode::Linear,
-                    mipmap_filter,
-                    ..Default::default()
-                });
-                // Bind-group entries differ between albedo and normal map:
-                // albedo binds the new view to slot 0 and the fallback
-                // normal to slot 2; normal map binds the fallback albedo
-                // to slot 0 and the new view to slot 2.
-                let bg_label = if is_normal_map {
-                    "async_normal_map_bg"
-                } else {
-                    "async_user_texture_bg"
-                };
-                let (slot0_view, slot2_view) = if is_normal_map {
-                    (&fallback_albedo_view, &view)
-                } else {
-                    (&view, &fallback_normal_view)
-                };
-                let bind_group = dev.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(bg_label),
-                    layout: &bgl,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(slot0_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(slot2_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(&fallback_ao_view),
-                        },
-                    ],
-                });
+                    is_normal_map,
+                    &mip_levels,
+                    &bgl,
+                    &fallback_albedo_view,
+                    &fallback_normal_view,
+                    &fallback_ao_view,
+                );
                 progress.set(0.9);
 
                 // Flush so the runner has a submission to gate on. Implicit
@@ -419,12 +325,6 @@ impl ViewportGpuResources {
                 let submission = q.submit(std::iter::once(encoder.finish()));
                 progress.set(1.0);
 
-                let gpu_texture = GpuTexture {
-                    texture,
-                    view,
-                    sampler,
-                    bind_group,
-                };
                 Ok(
                     crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
                         submission,
@@ -460,19 +360,32 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Resident GPU bytes for the user-uploaded working set: meshes plus user
-    /// textures.
+    /// Resident GPU bytes for the user-uploaded working set: meshes, user
+    /// textures, Gaussian splats, marching-cubes volumes, and pre-uploaded
+    /// scivis curves.
     ///
-    /// Maintained as running counters (updated on upload, replace, and free),
-    /// so this is cheap to poll per frame. A streaming or eviction policy
-    /// compares [`ResidentBytes::total`] against its own byte budget and calls
-    /// [`free_mesh`](Self::free_mesh) / [`free_texture`](Self::free_texture)
-    /// to stay under it. Built-in LUTs, IBL maps, and render targets are not
-    /// counted; see [`ResidentBytes`].
+    /// Cheap enough to poll per frame: mesh, texture, and splat totals are
+    /// running counters, and the volume / curve totals sum a handful of live
+    /// entries. A streaming or eviction policy compares [`ResidentBytes::total`]
+    /// against its own byte budget and calls the matching `free_*` to stay under
+    /// it. Built-in LUTs, IBL maps, and render targets are not counted; see
+    /// [`ResidentBytes`].
     pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
+        let scivis_bytes = self.polyline_store.allocated_bytes()
+            + self.streamtube_store.allocated_bytes()
+            + self.tube_store.allocated_bytes()
+            + self.ribbon_store.allocated_bytes()
+            + self.point_cloud_store.allocated_bytes()
+            + self.glyph_set_store.allocated_bytes()
+            + self.tensor_glyph_set_store.allocated_bytes()
+            + self.sprite_set_store.allocated_bytes()
+            + self.sprite_instance_set_store.allocated_bytes();
         crate::resources::types::ResidentBytes {
             mesh_bytes: self.mesh_store.allocated_bytes(),
             texture_bytes: self.textures.allocated_bytes(),
+            gaussian_splat_bytes: self.gaussian_splat_store.allocated_bytes(),
+            mc_volume_bytes: self.mc_volume_resident_bytes(),
+            scivis_bytes,
         }
     }
 
@@ -493,18 +406,85 @@ impl ViewportGpuResources {
         if !self.textures.remove(id) {
             return false;
         }
+        self.evict_texture_bind_group_caches(id.raw());
+        true
+    }
 
-        // Drop shared cache entries keyed on any texture slot equal to `id`.
-        let raw = id.raw();
+    /// Replace the pixels of an already-uploaded texture in place, keeping the
+    /// same `TextureId`.
+    ///
+    /// The handle stays valid: materials and items holding `id` pick up the new
+    /// pixels on the next frame with no reassignment. The generation check is the
+    /// in-flight guard, so a stale handle (its slot freed and reused) returns
+    /// `StaleHandle` instead of overwriting whatever now occupies the slot. Use
+    /// this for content that changes over time (a streamed or animated texture)
+    /// where re-uploading and reassigning a fresh id would be wasteful.
+    ///
+    /// The texture is recreated as an `Rgba8UnormSrgb` albedo texture, matching
+    /// [`upload_texture`](Self::upload_texture); `rgba_data` must be exactly
+    /// `width * height * 4` bytes. Dimensions and format need not match the
+    /// original upload.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// if the data length is wrong, or
+    /// [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `id` does not resolve to a live texture.
+    pub fn replace_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: crate::resources::TextureId,
+        width: u32,
+        height: u32,
+        rgba_data: &[u8],
+    ) -> crate::error::ViewportResult<()> {
+        let expected = (width * height * 4) as usize;
+        if rgba_data.len() != expected {
+            return Err(crate::error::ViewportError::InvalidTextureData {
+                expected,
+                actual: rgba_data.len(),
+            });
+        }
+        let gpu_texture = build_gpu_texture(
+            device,
+            queue,
+            width,
+            height,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            false,
+            std::slice::from_ref(&rgba_data.to_vec()),
+            &self.texture_bind_group_layout,
+            &self.fallback_texture.view,
+            &self.fallback_normal_map_view,
+            &self.fallback_ao_map_view,
+        );
+        let bytes = rgba_data.len() as u64;
+        if self.textures.replace(id, gpu_texture, bytes).is_none() {
+            let (index, count) = (id.index(), self.textures.len());
+            return Err(crate::error::ViewportError::StaleHandle { index, count });
+        }
+        // The slot's view changed, so bind groups cached against this id now
+        // sample the old texture. Evict them exactly as `free_texture` does; they
+        // rebuild against the new view on the next `prepare`.
+        self.evict_texture_bind_group_caches(id.raw());
+        Ok(())
+    }
+
+    /// Drop cached bind groups that named user texture slot `raw` so they rebuild
+    /// against the current occupant (or the fallback). Shared by `free_texture`
+    /// (slot now empty) and `replace_texture` (slot holds a new view).
+    fn evict_texture_bind_group_caches(&mut self, raw: u64) {
         self.material_bind_groups
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
         self.instance_bind_groups
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
 
-        // Invalidate per-mesh object bind groups that sampled the released
-        // texture so `update_mesh_texture_bind_group` rebuilds them against the
-        // fallback. `last_tex_key` positions holding user-texture ids are
-        // albedo, normal, ao, metallic-roughness, and emissive.
+        // Invalidate per-mesh object bind groups that sampled the texture so
+        // `update_mesh_texture_bind_group` rebuilds them. `last_tex_key`
+        // positions holding user-texture ids are albedo, normal, ao,
+        // metallic-roughness, and emissive.
         const INVALID_KEY: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) = (
             u64::MAX,
             u64::MAX,
@@ -524,8 +504,6 @@ impl ViewportGpuResources {
                 mesh.last_tex_key = INVALID_KEY;
             }
         }
-
-        true
     }
 }
 
@@ -559,6 +537,133 @@ fn mip_block_layout(
     let bytes_per_row = blocks_x * block_bytes;
     let total = (blocks_x * blocks_y * block_bytes) as usize;
     (bytes_per_row, blocks_y, total)
+}
+
+/// Build a `GpuTexture` (texture, view, sampler, bind group) from one or more
+/// mip levels. Shared by the async upload worker and the synchronous
+/// `replace_texture` path so both create identical resources.
+///
+/// `mip_levels` holds level 0 first; a single level keeps nearest-mip sampling,
+/// more than one enables trilinear. `is_normal_map` selects which bind-group
+/// slot the new view occupies (albedo slot 0 or normal slot 2), with the other
+/// colour slots filled by the fallback views.
+#[allow(clippy::too_many_arguments)]
+fn build_gpu_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    is_normal_map: bool,
+    mip_levels: &[Vec<u8>],
+    bgl: &wgpu::BindGroupLayout,
+    fallback_albedo_view: &wgpu::TextureView,
+    fallback_normal_view: &wgpu::TextureView,
+    fallback_ao_view: &wgpu::TextureView,
+) -> GpuTexture {
+    let tex_label = if is_normal_map {
+        "user_normal_map_texture"
+    } else {
+        "user_texture"
+    };
+    let mip_level_count = mip_levels.len() as u32;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(tex_label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    // Upload each mip level. Row/size math is block-based so it is correct for
+    // both uncompressed (1x1 blocks) and block-compressed formats.
+    for (level, data) in mip_levels.iter().enumerate() {
+        let lw = (width >> level).max(1);
+        let lh = (height >> level).max(1);
+        let (bytes_per_row, blocks_high, _) = mip_block_layout(format, lw, lh);
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(blocks_high),
+            },
+            wgpu::Extent3d {
+                width: lw,
+                height: lh,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let mipmap_filter = if mip_level_count > 1 {
+        wgpu::FilterMode::Linear
+    } else {
+        wgpu::FilterMode::Nearest
+    };
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(if is_normal_map {
+            "user_normal_map_sampler"
+        } else {
+            "user_texture_sampler"
+        }),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter,
+        ..Default::default()
+    });
+    let (slot0_view, slot2_view) = if is_normal_map {
+        (fallback_albedo_view, &view)
+    } else {
+        (&view, fallback_normal_view)
+    };
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(if is_normal_map {
+            "user_normal_map_bg"
+        } else {
+            "user_texture_bg"
+        }),
+        layout: bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(slot0_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(slot2_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(fallback_ao_view),
+            },
+        ],
+    });
+    GpuTexture {
+        texture,
+        view,
+        sampler,
+        bind_group,
+    }
 }
 
 /// True when `device` can sample `format`.
@@ -1518,6 +1623,51 @@ mod async_texture_tests {
             .upload_texture(&device, &queue, 4, 4, &rgba)
             .unwrap();
         assert_eq!(tex_id, crate::resources::TextureId(0));
+    }
+
+    #[test]
+    fn replace_texture_keeps_handle_and_updates_bytes() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let id = resources
+            .upload_texture(&device, &queue, 4, 4, &vec![200u8; 4 * 4 * 4])
+            .unwrap();
+        let bytes_4x4 = resources.resident_bytes().texture_bytes;
+
+        // Replace in place with a larger image: same handle, larger byte total.
+        resources
+            .replace_texture(&device, &queue, id, 8, 8, &vec![10u8; 8 * 8 * 4])
+            .expect("replace on a live handle succeeds");
+        assert!(resources.texture_view(id).is_some(), "handle stays valid");
+        let bytes_8x8 = resources.resident_bytes().texture_bytes;
+        assert!(
+            bytes_8x8 > bytes_4x4,
+            "replacing with a larger image must grow resident bytes"
+        );
+
+        // Wrong data length is rejected before touching the slot.
+        let err = resources
+            .replace_texture(&device, &queue, id, 8, 8, &[0u8; 3])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::InvalidTextureData { .. }
+        ));
+
+        // A stale handle is rejected.
+        assert!(resources.free_texture(id));
+        let err = resources
+            .replace_texture(&device, &queue, id, 4, 4, &vec![0u8; 4 * 4 * 4])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::StaleHandle { .. }
+        ));
     }
 
     #[test]

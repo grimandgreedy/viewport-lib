@@ -64,11 +64,31 @@ pub(crate) struct McSlabGpuData {
 /// regardless of volume size. The single-slab path is equivalent to the old layout.
 pub(crate) struct McVolumeGpuData {
     pub slabs: Vec<McSlabGpuData>,
-    /// False after `free_mc_volume` is called; the slot is reused lazily.
+    /// False after `free_mc_volume` is called; the emptied slot is reused lazily.
     pub alive: bool,
     /// Bumped each time the slot is freed, so a handle issued for an earlier
     /// occupant no longer resolves once the slot is reused.
     pub generation: u32,
+}
+
+impl McVolumeGpuData {
+    /// Resident GPU bytes across every slab buffer of this volume. Zero for a
+    /// freed slot (its slabs are dropped on free).
+    pub fn gpu_bytes(&self) -> u64 {
+        self.slabs
+            .iter()
+            .map(|s| {
+                s.scalar_buf.size()
+                    + s.counts_buf.size()
+                    + s.case_idx_buf.size()
+                    + s.offsets_buf.size()
+                    + s.block_sums_buf.size()
+                    + s.vertex_buf.size()
+                    + s.indirect_buf.size()
+                    + s.wire_indirect_buf.size()
+            })
+            .sum()
+    }
 }
 
 /// Per-frame data for one MC job, consumed by the render phase.
@@ -765,15 +785,29 @@ impl ViewportGpuResources {
         }
     }
 
-    /// Mark a MC volume slot as free and bump its generation. The GPU buffers
-    /// are dropped when the slot is reused. A stale handle no longer resolves.
+    /// Free a MC volume: drop its slab GPU buffers to reclaim the memory now,
+    /// mark the slot free, and bump its generation so a stale handle no longer
+    /// resolves. The emptied slot is reused by a later upload. Dropping the
+    /// buffers drops this volume out of [`resident_bytes`](Self::resident_bytes)
+    /// immediately (wgpu defers the real GPU free until in-flight commands that
+    /// reference the buffers complete).
     pub fn free_mc_volume(&mut self, id: McVolumeId) {
         if let Some(v) = self.mc_volumes.get_mut(id.index as usize) {
             if v.generation == id.generation && v.alive {
+                v.slabs.clear();
                 v.alive = false;
                 v.generation = v.generation.wrapping_add(1);
             }
         }
+    }
+
+    /// Total resident GPU bytes across every live MC volume.
+    pub(crate) fn mc_volume_resident_bytes(&self) -> u64 {
+        self.mc_volumes
+            .iter()
+            .filter(|v| v.alive)
+            .map(|v| v.gpu_bytes())
+            .sum()
     }
 
     /// Lazily create the MC surface outline mask pipeline.
@@ -1267,6 +1301,33 @@ mod residency_tests {
         assert!(
             resources.mc_volume(id1).is_none(),
             "the stale handle must not alias the volume now occupying its slot"
+        );
+    }
+
+    #[test]
+    fn free_mc_volume_reclaims_resident_bytes() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let start = resources.resident_bytes().mc_volume_bytes;
+        let id = resources
+            .upload_volume_for_mc(&device, &queue, &sample_volume())
+            .unwrap();
+        let after_upload = resources.resident_bytes().mc_volume_bytes;
+        assert!(
+            after_upload > start,
+            "uploading a volume must increase resident volume bytes"
+        );
+
+        resources.free_mc_volume(id);
+        assert_eq!(
+            resources.resident_bytes().mc_volume_bytes,
+            start,
+            "freeing a volume must drop its slab buffers out of the resident total"
         );
     }
 }

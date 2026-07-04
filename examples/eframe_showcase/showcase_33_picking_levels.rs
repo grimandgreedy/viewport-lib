@@ -609,7 +609,7 @@ impl App {
         }
         let splat_data = make_pl_splat_data(&splat_positions);
         let splat_id = renderer
-            .upload_gaussian_splats(&self.device, &self.queue, &splat_data)
+            .upload_gaussian_splat(&self.device, &self.queue, &splat_data)
             .expect("example: splat data is validated at construction");
         self.pl_state.splat_positions = splat_positions;
         self.pl_state.splat_id = Some(splat_id);

@@ -779,7 +779,7 @@ impl App {
             self.async_uploads_state.gaussian_splat_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_gaussian_splats(job) {
+                UploadStatus::Ready => match renderer.upload_result_gaussian_splat(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_gaussian_splat_id = Some(id);
@@ -1800,7 +1800,7 @@ impl App {
         if self.async_uploads_state.use_sync {
             match renderer
                 .resources_mut()
-                .upload_gaussian_splats(&self.device, &self.queue, &data)
+                .upload_gaussian_splat(&self.device, &self.queue, &data)
             {
                 Ok(id) => {
                     self.async_uploads_state.loaded_gaussian_splat_id = Some(id);
@@ -1816,7 +1816,7 @@ impl App {
                 }
             }
         } else {
-            match renderer.begin_upload_gaussian_splats(&self.device, &self.queue, data) {
+            match renderer.begin_upload_gaussian_splat(&self.device, &self.queue, data) {
                 Ok(job) => {
                     self.async_uploads_state.gaussian_splat_state = AssetState::InFlight {
                         job,
