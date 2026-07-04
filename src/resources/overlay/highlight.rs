@@ -33,7 +33,7 @@ impl DeviceResources {
     /// (`Rgba16Float` colour target) and the LDR path (swapchain `target_format`).
     /// Idempotent: returns immediately if already created.
     pub(crate) fn ensure_sub_highlight_pipelines(&mut self, device: &wgpu::Device) {
-        if self.sub_highlight_fill_pipeline.is_some() {
+        if self.sub_highlight.fill_pipeline.is_some() {
             return;
         }
 
@@ -220,23 +220,23 @@ impl DeviceResources {
         };
 
         let ldr_fmt = self.target_format;
-        self.sub_highlight_fill_pipeline = Some(make_fill(
+        self.sub_highlight.fill_pipeline = Some(make_fill(
             "sub_highlight_fill_hdr",
             wgpu::TextureFormat::Rgba16Float,
         ));
-        self.sub_highlight_edge_pipeline = Some(make_edge(
+        self.sub_highlight.edge_pipeline = Some(make_edge(
             "sub_highlight_edge_hdr",
             wgpu::TextureFormat::Rgba16Float,
         ));
-        self.sub_highlight_sprite_pipeline = Some(make_sprite(
+        self.sub_highlight.sprite_pipeline = Some(make_sprite(
             "sub_highlight_sprite_hdr",
             wgpu::TextureFormat::Rgba16Float,
         ));
-        self.sub_highlight_fill_ldr_pipeline = Some(make_fill("sub_highlight_fill_ldr", ldr_fmt));
-        self.sub_highlight_edge_ldr_pipeline = Some(make_edge("sub_highlight_edge_ldr", ldr_fmt));
-        self.sub_highlight_sprite_ldr_pipeline =
+        self.sub_highlight.fill_ldr_pipeline = Some(make_fill("sub_highlight_fill_ldr", ldr_fmt));
+        self.sub_highlight.edge_ldr_pipeline = Some(make_edge("sub_highlight_edge_ldr", ldr_fmt));
+        self.sub_highlight.sprite_ldr_pipeline =
             Some(make_sprite("sub_highlight_sprite_ldr", ldr_fmt));
-        self.sub_highlight_bgl = Some(bgl);
+        self.sub_highlight.bgl = Some(bgl);
     }
 
     /// Build or rebuild `SubHighlightGpuData` from an optional `SubSelectionRef` snapshot.
@@ -564,7 +564,7 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
 
         let (fill_bind_group, edge_bind_group, sprite_bind_group) = {
-            let bgl = self.sub_highlight_bgl.as_ref().unwrap();
+            let bgl = self.sub_highlight.bgl.as_ref().unwrap();
             let binding = uniform_buf.as_entire_binding();
             let fill_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("sub_hl_fill_bg"),

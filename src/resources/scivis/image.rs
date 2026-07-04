@@ -10,7 +10,7 @@ impl DeviceResources {
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.image_slices` is non-empty.
     pub(crate) fn ensure_image_slice_pipeline(&mut self, device: &wgpu::Device) {
-        if self.image_slice_pipeline.is_some() {
+        if self.image_slice.pipeline.is_some() {
             return;
         }
 
@@ -123,8 +123,8 @@ impl DeviceResources {
             })
         };
 
-        self.image_slice_bgl = Some(bgl);
-        self.image_slice_pipeline = Some(DualPipeline {
+        self.image_slice.bgl = Some(bgl);
+        self.image_slice.pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
@@ -208,7 +208,8 @@ impl DeviceResources {
         });
 
         let bgl = self
-            .image_slice_bgl
+            .image_slice
+            .bgl
             .as_ref()
             .expect("ensure_image_slice_pipeline not called");
 
@@ -260,7 +261,7 @@ impl DeviceResources {
     /// No-op if already created. Called from `prepare()` when
     /// `frame.scene.screen_images` is non-empty.
     pub(crate) fn ensure_screen_image_pipeline(&mut self, device: &wgpu::Device) {
-        if self.screen_image_pipeline.is_some() {
+        if self.screen_image.pipeline.is_some() {
             return;
         }
 
@@ -354,8 +355,8 @@ impl DeviceResources {
             cache: None,
         });
 
-        self.screen_image_bgl = Some(bgl);
-        self.screen_image_pipeline = Some(pipeline);
+        self.screen_image.bgl = Some(bgl);
+        self.screen_image.pipeline = Some(pipeline);
     }
 
     /// Lazily create the depth-composite screen-image render pipeline.
@@ -363,7 +364,7 @@ impl DeviceResources {
     /// No-op if already created. Called from `prepare()` when any submitted
     /// `ScreenImageItem` carries per-pixel depth data.
     pub(crate) fn ensure_screen_image_dc_pipeline(&mut self, device: &wgpu::Device) {
-        if self.screen_image_dc_pipeline.is_some() {
+        if self.screen_image.dc_pipeline.is_some() {
             return;
         }
 
@@ -468,8 +469,8 @@ impl DeviceResources {
             cache: None,
         });
 
-        self.screen_image_dc_bgl = Some(bgl);
-        self.screen_image_dc_pipeline = Some(pipeline);
+        self.screen_image.dc_bgl = Some(bgl);
+        self.screen_image.dc_pipeline = Some(pipeline);
     }
 
     /// Upload one [`ScreenImageItem`] to the GPU and return its per-frame GPU data.
@@ -612,7 +613,8 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let bgl = self
-            .screen_image_bgl
+            .screen_image
+            .bgl
             .as_ref()
             .expect("ensure_screen_image_pipeline not called");
 
@@ -638,10 +640,10 @@ impl DeviceResources {
         // If the item carries per-pixel depth data, upload a R32Float depth texture
         // and create a second bind group for the depth-composite pipeline.
         let (depth_texture_opt, depth_bind_group_opt) = if let Some(depth_values) = &item.depth {
-            let dc_bgl = self
-                .screen_image_dc_bgl
-                .as_ref()
-                .expect("ensure_screen_image_dc_pipeline not called before upload_screen_image");
+            let dc_bgl =
+                self.screen_image.dc_bgl.as_ref().expect(
+                    "ensure_screen_image_dc_pipeline not called before upload_screen_image",
+                );
 
             let dtex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("screen_image_depth_tex"),
@@ -864,7 +866,8 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let bgl = self
-            .screen_image_bgl
+            .screen_image
+            .bgl
             .as_ref()
             .expect("ensure_screen_image_pipeline not called before upload_overlay_image");
 
@@ -1148,7 +1151,7 @@ impl DeviceResources {
     /// bind group (group 0) with one uniform binding (NdcRectUniform, 16 bytes).
     /// No camera bind group needed. No-op if already created.
     pub(crate) fn ensure_screen_rect_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
-        if self.screen_rect_outline_mask_pipeline.is_some() {
+        if self.screen_image.rect_outline_mask_pipeline.is_some() {
             return;
         }
 
@@ -1219,7 +1222,7 @@ impl DeviceResources {
             cache: None,
         });
 
-        self.screen_rect_outline_bgl = Some(bgl);
-        self.screen_rect_outline_mask_pipeline = Some(pipeline);
+        self.screen_image.rect_outline_bgl = Some(bgl);
+        self.screen_image.rect_outline_mask_pipeline = Some(pipeline);
     }
 }

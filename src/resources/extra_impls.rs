@@ -1001,7 +1001,7 @@ impl DeviceResources {
     /// No-op if already created. Called from `ViewportRenderer::pick_scene_gpu`
     /// on first invocation : zero overhead when GPU picking is never used.
     pub(crate) fn ensure_pick_pipeline(&mut self, device: &wgpu::Device) {
-        if self.pick_pipeline.is_some() {
+        if self.pick.pipeline.is_some() {
             return;
         }
 
@@ -1123,9 +1123,9 @@ impl DeviceResources {
             cache: None,
         });
 
-        self.pick_camera_bgl = Some(pick_camera_bgl);
-        self.pick_bind_group_layout_1 = Some(pick_instance_bgl);
-        self.pick_pipeline = Some(pipeline);
+        self.pick.camera_bgl = Some(pick_camera_bgl);
+        self.pick.bind_group_layout_1 = Some(pick_instance_bgl);
+        self.pick.pipeline = Some(pipeline);
     }
 }
 

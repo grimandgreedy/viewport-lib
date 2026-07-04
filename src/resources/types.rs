@@ -2685,6 +2685,126 @@ impl DualPipeline {
     }
 }
 
+/// GPU object-ID picking pipeline and its bind group layouts. Lazily built.
+#[derive(Default)]
+pub(crate) struct PickResources {
+    /// Render pipeline that outputs flat u32 object IDs to R32Uint + R32Float targets.
+    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 1 layout (PickInstance storage buffer).
+    pub(crate) bind_group_layout_1: Option<wgpu::BindGroupLayout>,
+    /// Minimal camera-only bind group layout (group 0).
+    pub(crate) camera_bgl: Option<wgpu::BindGroupLayout>,
+}
+
+/// GPU implicit-surface ray-march pipeline and layout. Lazily built.
+#[derive(Default)]
+pub(crate) struct ImplicitResources {
+    /// Render pipeline for GPU-side implicit surface ray-marching.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Group 1 layout (ImplicitUniformRaw).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Outline mask pipeline for implicit surfaces. None until first selected item.
+    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+}
+
+/// Screen-space image quad pipelines (plain + depth-composite) and the rect
+/// outline mask pipeline. Lazily built.
+#[derive(Default)]
+pub(crate) struct ScreenImageResources {
+    /// Render pipeline for screen-space image quads.
+    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 0 layout (uniform + texture + sampler).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Depth-composite pipeline (LessEqual depth, per-pixel image depth).
+    pub(crate) dc_pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 0 layout for the dc pipeline (uniform + colour + sampler + depth).
+    pub(crate) dc_bgl: Option<wgpu::BindGroupLayout>,
+    /// Outline mask pipeline for screen-space rect images. None until first selected.
+    pub(crate) rect_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Layout for the rect outline mask pipeline (NdcRectUniform).
+    pub(crate) rect_outline_bgl: Option<wgpu::BindGroupLayout>,
+}
+
+/// Sub-object highlight pipelines (fill / edge / sprite, HDR + LDR) and layout.
+/// Lazily built the first frame a sub-selection is present.
+#[derive(Default)]
+pub(crate) struct SubHighlightResources {
+    /// Translucent face fill pipeline (HDR).
+    pub(crate) fill_pipeline: Option<wgpu::RenderPipeline>,
+    /// Depth-nudged billboard edge-line pipeline (HDR).
+    pub(crate) edge_pipeline: Option<wgpu::RenderPipeline>,
+    /// Billboard sprite pipeline for vertex/point highlights (HDR).
+    pub(crate) sprite_pipeline: Option<wgpu::RenderPipeline>,
+    /// Translucent face fill pipeline (LDR).
+    pub(crate) fill_ldr_pipeline: Option<wgpu::RenderPipeline>,
+    /// Depth-nudged billboard edge-line pipeline (LDR).
+    pub(crate) edge_ldr_pipeline: Option<wgpu::RenderPipeline>,
+    /// Billboard sprite pipeline for vertex/point highlights (LDR).
+    pub(crate) sprite_ldr_pipeline: Option<wgpu::RenderPipeline>,
+    /// Shared group 1 layout (SubHighlightUniform).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+}
+
+/// Projected-tetrahedra transparent volume pipeline, layouts, and LUT bind
+/// group cache. Lazily built.
+#[derive(Default)]
+pub(crate) struct ProjectedTetResources {
+    /// Render pipeline for the projected tetrahedra pass.
+    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 1 layout (per-volume uniform + tet storage buffer).
+    pub(crate) bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// Group 2 layout (per-frame colourmap LUT + sampler).
+    pub(crate) lut_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// Cache of LUT bind groups keyed by colourmap slot index.
+    pub(crate) lut_bind_groups: std::collections::HashMap<usize, wgpu::BindGroup>,
+    /// LUT bind group for the fallback colourmap.
+    pub(crate) fallback_lut_bind_group: Option<wgpu::BindGroup>,
+}
+
+/// Selection-outline and x-ray pipelines, the offscreen mask/composite targets,
+/// and their layouts. The mask/edge/xray/splat pipelines are built eagerly at
+/// init; the offscreen textures and composite pipelines are lazily created.
+pub(crate) struct OutlineResources {
+    /// Group 1 layout for OutlineUniform (mask/xray pipelines).
+    pub(crate) bind_group_layout: wgpu::BindGroupLayout,
+    /// Mask-write pipeline: selected objects as r=1.0 to an R8 mask.
+    pub(crate) mask_pipeline: wgpu::RenderPipeline,
+    /// Two-sided mask-write pipeline (no face culling).
+    pub(crate) mask_two_sided_pipeline: wgpu::RenderPipeline,
+    /// Fullscreen edge-detection pipeline: reads mask, outputs the outline ring.
+    pub(crate) edge_pipeline: wgpu::RenderPipeline,
+    /// Layout for the edge-detection pass (mask texture + sampler + uniform).
+    pub(crate) edge_bgl: wgpu::BindGroupLayout,
+    /// X-ray pipeline: draws selected objects through occluders (depth Always).
+    pub(crate) xray_pipeline: wgpu::RenderPipeline,
+    /// Billboard disc pipeline for the Gaussian splat outline mask pass.
+    pub(crate) splat_mask_pipeline: wgpu::RenderPipeline,
+    /// Offscreen RGBA texture the outline stencil pass renders into.
+    pub(crate) colour_texture: Option<wgpu::Texture>,
+    pub(crate) colour_view: Option<wgpu::TextureView>,
+    /// Depth+stencil texture for the offscreen outline pass.
+    pub(crate) depth_texture: Option<wgpu::Texture>,
+    pub(crate) depth_view: Option<wgpu::TextureView>,
+    /// Size of the current outline offscreen textures.
+    pub(crate) target_size: [u32; 2],
+    /// Fullscreen composite pipelines: single-sample LDR, MSAA, HDR.
+    pub(crate) composite_pipeline_single: Option<wgpu::RenderPipeline>,
+    pub(crate) composite_pipeline_msaa: Option<wgpu::RenderPipeline>,
+    pub(crate) composite_pipeline_hdr: Option<wgpu::RenderPipeline>,
+    pub(crate) composite_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) composite_bind_group: Option<wgpu::BindGroup>,
+    pub(crate) composite_sampler: Option<wgpu::Sampler>,
+}
+
+/// Image slice render pipeline and layout. Lazily built.
+#[derive(Default)]
+pub(crate) struct ImageSliceResources {
+    /// Image slice render pipeline. None until first slice item is submitted.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Group 1 layout for image slice uniforms.
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+}
+
 /// Former name of [`DeviceResources`]. Renamed to reflect that this holds the
 /// device-shared resources, not per-viewport state. Kept as an alias so existing
 /// code keeps compiling; prefer `DeviceResources` in new code.
@@ -2943,16 +3063,11 @@ pub struct DeviceResources {
     /// Whether fallback normal map / AO map pixels have been uploaded.
     pub(crate) fallback_textures_uploaded: bool,
 
-    // --- FXAA resources ---
-    pub(crate) fxaa_texture: Option<wgpu::Texture>,
-    pub(crate) fxaa_view: Option<wgpu::TextureView>,
-    pub(crate) fxaa_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) fxaa_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) ssaa_resolve_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) ssaa_resolve_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) fxaa_bind_group: Option<wgpu::BindGroup>,
-    /// Linear-clamp sampler shared by the FXAA pass (stored for recreating per-viewport bind groups).
-    pub(crate) fxaa_sampler: Option<wgpu::Sampler>,
+    // --- Shared post-processing pipelines / layouts / samplers ---
+    /// FXAA/SSAA, bloom, SSAO, tone-map, DoF, contact shadows, placeholders,
+    /// PP samplers, depth blit, and dyn-res upscale. Viewport-sized targets and
+    /// per-frame uniforms live on `ViewportHdrState`.
+    pub(crate) post: crate::resources::postprocess::PostProcessResources,
 
     // --- Clip planes ---
     /// Uniform buffer for clip planes (binding 4 of camera bind group).
@@ -2961,41 +3076,11 @@ pub struct DeviceResources {
     pub(crate) clip_volume_uniform_buf: wgpu::Buffer,
 
     // --- Outline & x-ray resources ---
-    /// Bind group layout for OutlineUniform (group 1 for outline mask/xray pipelines).
-    pub(crate) outline_bind_group_layout: wgpu::BindGroupLayout,
-    /// Mask-write pipeline: renders selected objects as r=1.0 to an R8 mask (backface culled).
-    pub(crate) outline_mask_pipeline: wgpu::RenderPipeline,
-    /// Two-sided mask-write pipeline for selected meshes rendered without face culling.
-    pub(crate) outline_mask_two_sided_pipeline: wgpu::RenderPipeline,
-    /// Fullscreen edge-detection pipeline: reads mask, outputs anti-aliased outline ring.
-    pub(crate) outline_edge_pipeline: wgpu::RenderPipeline,
-    /// Bind group layout for the edge-detection pass (mask texture + sampler + uniform).
-    pub(crate) outline_edge_bgl: wgpu::BindGroupLayout,
-    /// X-ray pipeline: draws selected objects through occluders (depth_compare Always).
-    pub(crate) xray_pipeline: wgpu::RenderPipeline,
-    /// Billboard disc pipeline for the Gaussian splat outline mask pass.
-    pub(crate) splat_outline_mask_pipeline: wgpu::RenderPipeline,
     // The volume outline mask pipeline lives on `volume.outline_mask_pipeline`;
     // the glyph / tensor-glyph ones on `glyph.outline_mask_pipeline` and
     // `tensor_glyph.outline_mask_pipeline`.
-    // --- Outline offscreen resources (lazily created) ---
-    /// Offscreen RGBA texture the outline stencil pass renders into.
-    pub(crate) outline_colour_texture: Option<wgpu::Texture>,
-    pub(crate) outline_colour_view: Option<wgpu::TextureView>,
-    /// Depth+stencil texture for the offscreen outline pass.
-    pub(crate) outline_depth_texture: Option<wgpu::Texture>,
-    pub(crate) outline_depth_view: Option<wgpu::TextureView>,
-    /// Size of the current outline offscreen textures.
-    pub(crate) outline_target_size: [u32; 2],
-    /// Fullscreen composite pipeline for single-sample LDR targets.
-    pub(crate) outline_composite_pipeline_single: Option<wgpu::RenderPipeline>,
-    /// Fullscreen composite pipeline for main render passes that use the renderer sample count.
-    pub(crate) outline_composite_pipeline_msaa: Option<wgpu::RenderPipeline>,
-    /// Fullscreen composite pipeline for HDR (Rgba16Float) targets.
-    pub(crate) outline_composite_pipeline_hdr: Option<wgpu::RenderPipeline>,
-    pub(crate) outline_composite_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) outline_composite_bind_group: Option<wgpu::BindGroup>,
-    pub(crate) outline_composite_sampler: Option<wgpu::Sampler>,
+    /// Outline / x-ray pipelines, offscreen mask/composite targets, and layouts.
+    pub(crate) outline: OutlineResources,
 
     // --- Instancing resources (lazily created) ---
     /// Bind group layout for the instanced storage buffer + textures (group 1).
@@ -3060,61 +3145,9 @@ pub struct DeviceResources {
     /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
     pub(crate) shadow_cull_instance_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Post-processing shared infrastructure (BGLs / pipelines / samplers / static textures) ---
-    // Viewport-sized textures, bind groups, and uniform buffers are stored in
-    // per-viewport ViewportHdrState (see renderer::ViewportSlot).
-    // The fields below are the shared resources created once by ensure_hdr_shared().
-    /// Bloom BGL: input_tex + sampler + uniform.
-    pub(crate) bloom_bgl: Option<wgpu::BindGroupLayout>,
-    /// SSAO BGL: depth + depth_sampler(non-filter) + noise + noise_sampler + kernel + uniform.
-    pub(crate) ssao_bgl: Option<wgpu::BindGroupLayout>,
-    /// SSAO blur BGL: ssao_tex + sampler.
-    pub(crate) ssao_blur_bgl: Option<wgpu::BindGroupLayout>,
-
-    // --- Post-processing shared pipelines / BGLs ---
-    // The viewport-sized textures, bind groups, and per-frame uniform buffers
-    // for these passes live in per-viewport ViewportHdrState. Only the shared,
-    // camera-independent pipelines and layouts sit here.
-    /// Tone mapping pipeline (renders fullscreen tri, hdr_texture -> output).
-    pub(crate) tone_map_pipeline: Option<wgpu::RenderPipeline>,
-    /// Tone map bind group layout.
-    pub(crate) tone_map_bgl: Option<wgpu::BindGroupLayout>,
-
-    /// Shared bloom pipelines (threshold + blur use the same BGL, different bind groups).
-    pub(crate) bloom_threshold_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) bloom_blur_pipeline: Option<wgpu::RenderPipeline>,
-
-    /// 4x4 random rotation noise texture (Rgba8Unorm, REPEAT). Shared across viewports.
-    pub(crate) ssao_noise_texture: Option<wgpu::Texture>,
-    pub(crate) ssao_noise_view: Option<wgpu::TextureView>,
-    /// 64-sample hemisphere kernel (storage buffer, `vec4<f32>` per sample).
-    pub(crate) ssao_kernel_buf: Option<wgpu::Buffer>,
-    pub(crate) ssao_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) ssao_blur_pipeline: Option<wgpu::RenderPipeline>,
-
-    // --- Depth of field shared resources ---
-    pub(crate) dof_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) dof_bgl: Option<wgpu::BindGroupLayout>,
-
-    // --- Contact shadow shared resources ---
-    pub(crate) contact_shadow_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) contact_shadow_bgl: Option<wgpu::BindGroupLayout>,
-
     // --- Surface LIC shared resources ---
     /// Surface LIC pipelines and layouts (surface + advect passes).
     pub(crate) lic: crate::resources::postprocess::LicResources,
-
-    /// 1x1 black Rgba16Float placeholder used when bloom is disabled.
-    pub(crate) bloom_placeholder_view: Option<wgpu::TextureView>,
-    /// 1x1 white R8Unorm placeholder used when SSAO is disabled.
-    pub(crate) ao_placeholder_view: Option<wgpu::TextureView>,
-    /// 1x1 white R8Unorm placeholder used when contact shadows are disabled.
-    pub(crate) cs_placeholder_view: Option<wgpu::TextureView>,
-
-    /// Shared post-process linear-clamp sampler.
-    pub(crate) pp_linear_sampler: Option<wgpu::Sampler>,
-    /// Shared post-process nearest-clamp sampler (for depth).
-    pub(crate) pp_nearest_sampler: Option<wgpu::Sampler>,
 
     /// HDR-format variants of core scene pipelines.
     pub(crate) hdr_solid_pipeline: Option<wgpu::RenderPipeline>,
@@ -3199,10 +3232,8 @@ pub struct DeviceResources {
     pub(crate) ribbon: crate::resources::scivis::tube::RibbonResources,
 
     // --- Image slice rendering (lazily created) ---
-    /// Image slice render pipeline. None until first slice item is submitted.
-    pub(crate) image_slice_pipeline: Option<DualPipeline>,
-    /// Bind group layout for image slice uniforms (group 1).
-    pub(crate) image_slice_bgl: Option<wgpu::BindGroupLayout>,
+    /// Image slice render pipeline and layout.
+    pub(crate) image_slice: ImageSliceResources,
 
     // --- volume rendering (lazily created) ---
     /// Uploaded 3D volume textures. Index = VolumeId value.
@@ -3223,19 +3254,8 @@ pub struct DeviceResources {
     pub(crate) oit: crate::resources::postprocess::OitResources,
 
     // --- Projected tetrahedra transparent volume rendering (lazily created) ---
-    /// Render pipeline for the projected tetrahedra pass. None until first item submitted.
-    pub(crate) pt_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for group 1 of the PT pipeline (per-volume uniform + tet storage buffer).
-    pub(crate) pt_bind_group_layout: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for group 2 of the PT pipeline (per-frame colourmap LUT + sampler).
-    pub(crate) pt_lut_bind_group_layout: Option<wgpu::BindGroupLayout>,
-    /// Cache of LUT bind groups keyed by colourmap slot index. Rebuilt lazily as
-    /// new colourmaps are seen on transparent volume meshes; reset to empty when
-    /// new colourmaps are uploaded.
-    pub(crate) pt_lut_bind_groups: std::collections::HashMap<usize, wgpu::BindGroup>,
-    /// LUT bind group for the fallback colourmap (used when an item has no
-    /// `colourmap_id`). Lazily built on first use.
-    pub(crate) pt_fallback_lut_bind_group: Option<wgpu::BindGroup>,
+    /// Projected-tetrahedra pipeline, layouts, and LUT bind group cache.
+    pub(crate) pt: ProjectedTetResources,
     /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
     pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
 
@@ -3293,12 +3313,8 @@ pub struct DeviceResources {
     pub(crate) ground_plane_bind_group: wgpu::BindGroup,
 
     // --- GPU implicit surface (lazily created) ---
-    /// Render pipeline for GPU-side implicit surface ray-marching. None until first item submitted.
-    pub(crate) implicit_pipeline: Option<DualPipeline>,
-    /// Bind group layout for group 1 of the implicit pipeline (ImplicitUniformRaw).
-    pub(crate) implicit_bgl: Option<wgpu::BindGroupLayout>,
-    /// Outline mask pipeline for implicit surfaces (ray-march to R8Unorm mask). None until first selected item.
-    pub(crate) implicit_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Implicit-surface ray-march pipeline, layout, and outline mask.
+    pub(crate) implicit: ImplicitResources,
 
     // --- GPU marching cubes (lazily created) ---
     /// Marching-cubes compute/render pipelines, layouts, case tables, and per-item volumes.
@@ -3309,46 +3325,16 @@ pub struct DeviceResources {
     pub(crate) particle: crate::resources::gpu::gpu_particles::ParticleResources,
 
     // --- Screen-space image overlays (lazily created) ---
-    /// Render pipeline for screen-space image quads. None until first screen image is submitted.
-    pub(crate) screen_image_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the screen image pipeline (group 0: uniform + texture + sampler).
-    pub(crate) screen_image_bgl: Option<wgpu::BindGroupLayout>,
-    /// Depth-composite pipeline. Uses depth_compare: LessEqual and outputs
-    /// frag_depth from a per-pixel image depth texture. None until first dc image is submitted.
-    pub(crate) screen_image_dc_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the dc pipeline (group 0: uniform + colour tex + sampler + depth tex).
-    pub(crate) screen_image_dc_bgl: Option<wgpu::BindGroupLayout>,
-    /// Outline mask pipeline for screen-space rect images (NDC quad, R8Unorm target). None until first selected item.
-    pub(crate) screen_rect_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for screen_rect_outline_mask_pipeline (binding 0: NdcRectUniform).
-    pub(crate) screen_rect_outline_bgl: Option<wgpu::BindGroupLayout>,
+    /// Screen-space image pipelines (plain + depth-composite) and rect outline mask.
+    pub(crate) screen_image: ScreenImageResources,
 
     // --- GPU object-ID picking (lazily created) ---
-    /// Render pipeline that outputs flat u32 object IDs to R32Uint + R32Float targets.
-    /// `None` until `ensure_pick_pipeline` is first called.
-    pub(crate) pick_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for group 1 of the pick pipeline (PickInstance storage buffer).
-    pub(crate) pick_bind_group_layout_1: Option<wgpu::BindGroupLayout>,
-    /// Minimal camera-only bind group layout for the pick pipeline (group 0, one uniform binding).
-    pub(crate) pick_camera_bgl: Option<wgpu::BindGroupLayout>,
+    /// Object-ID pick pipeline and its bind group layouts.
+    pub(crate) pick: PickResources,
 
     // --- Sub-object highlight (lazily created) ---
-    /// Translucent face fill pipeline. HDR path (Rgba16Float colour target).
-    /// `None` until the first frame that has `sub_selection.is_some()`.
-    pub(crate) sub_highlight_fill_pipeline: Option<wgpu::RenderPipeline>,
-    /// Depth-nudged billboard edge-line pipeline. HDR path (Rgba16Float colour target).
-    /// `None` until the first frame that has `sub_selection.is_some()`.
-    pub(crate) sub_highlight_edge_pipeline: Option<wgpu::RenderPipeline>,
-    /// Billboard sprite pipeline for vertex/point highlights. HDR path (Rgba16Float).
-    pub(crate) sub_highlight_sprite_pipeline: Option<wgpu::RenderPipeline>,
-    /// Translucent face fill pipeline. LDR path (swapchain `target_format`).
-    pub(crate) sub_highlight_fill_ldr_pipeline: Option<wgpu::RenderPipeline>,
-    /// Depth-nudged billboard edge-line pipeline. LDR path (swapchain `target_format`).
-    pub(crate) sub_highlight_edge_ldr_pipeline: Option<wgpu::RenderPipeline>,
-    /// Billboard sprite pipeline for vertex/point highlights. LDR path (swapchain `target_format`).
-    pub(crate) sub_highlight_sprite_ldr_pipeline: Option<wgpu::RenderPipeline>,
-    /// Shared bind group layout for all highlight pipelines (group 1: SubHighlightUniform).
-    pub(crate) sub_highlight_bgl: Option<wgpu::BindGroupLayout>,
+    /// Sub-object highlight pipelines (fill / edge / sprite, HDR + LDR) and layout.
+    pub(crate) sub_highlight: SubHighlightResources,
 
     // --- Font atlas (overlay text rendering) ---
     /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
@@ -3367,20 +3353,7 @@ pub struct DeviceResources {
     // --- Depth blit pipeline (lazily created, shared across all viewports) ---
     // Copies a scene-resolution depth texture to a native-resolution depth-only target.
     // Used by the HDR path when render_scale < 1.0.
-    pub(crate) depth_blit_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) depth_blit_bgl: Option<wgpu::BindGroupLayout>,
-
-    // --- Dynamic resolution render target (lazily created) ---
-    // Upscale pipeline: renders the scaled intermediate colour texture to the surface.
-    // No depth attachment; used by render_frame_internal which controls its own encoder.
-    pub(crate) dyn_res_upscale_pipeline: Option<wgpu::RenderPipeline>,
-    // Depth-stencil compatible variant for use inside eframe's paint render pass,
-    // which always provides a Depth24PlusStencil8 attachment. Depth writes disabled.
-    pub(crate) dyn_res_upscale_ds_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the upscale pass (texture + sampler).
-    pub(crate) dyn_res_upscale_bgl: Option<wgpu::BindGroupLayout>,
-    /// Linear-clamp sampler for the upscale blit.
-    pub(crate) dyn_res_linear_sampler: Option<wgpu::Sampler>,
+    // The depth-blit and dynamic-resolution upscale pipelines live on `post`.
 
     // --- Runtime performance tracking ---
     /// Cumulative bytes of geometry data uploaded since the last `prepare()` reset.

@@ -2097,7 +2097,7 @@ impl DeviceResources {
     /// colourmap LUT lives in group 2 and is bound per-frame from the renderer's
     /// colourmap registry: see [`ensure_pt_lut_bind_group`](Self::ensure_pt_lut_bind_group).
     pub(crate) fn ensure_pt_bind_group_layout(&mut self, device: &wgpu::Device) {
-        if self.pt_bind_group_layout.is_none() {
+        if self.pt.bind_group_layout.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("pt_bgl"),
                 entries: &[
@@ -2125,9 +2125,9 @@ impl DeviceResources {
                     },
                 ],
             });
-            self.pt_bind_group_layout = Some(bgl);
+            self.pt.bind_group_layout = Some(bgl);
         }
-        if self.pt_lut_bind_group_layout.is_none() {
+        if self.pt.lut_bind_group_layout.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("pt_lut_bgl"),
                 entries: &[
@@ -2151,7 +2151,7 @@ impl DeviceResources {
                     },
                 ],
             });
-            self.pt_lut_bind_group_layout = Some(bgl);
+            self.pt.lut_bind_group_layout = Some(bgl);
         }
     }
 
@@ -2167,14 +2167,15 @@ impl DeviceResources {
         colourmap_id: Option<crate::resources::ColourmapId>,
     ) -> &wgpu::BindGroup {
         let bgl = self
-            .pt_lut_bind_group_layout
+            .pt
+            .lut_bind_group_layout
             .as_ref()
             .expect("pt_lut_bind_group_layout must exist");
         let sampler = &self.material_sampler;
 
         match colourmap_id.and_then(|id| self.colourmap_views.get(id.0).map(|_| id.0)) {
             Some(slot) => {
-                if !self.pt_lut_bind_groups.contains_key(&slot) {
+                if !self.pt.lut_bind_groups.contains_key(&slot) {
                     let lut_view = &self.colourmap_views[slot];
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("pt_lut_bind_group"),
@@ -2190,12 +2191,12 @@ impl DeviceResources {
                             },
                         ],
                     });
-                    self.pt_lut_bind_groups.insert(slot, bg);
+                    self.pt.lut_bind_groups.insert(slot, bg);
                 }
-                self.pt_lut_bind_groups.get(&slot).unwrap()
+                self.pt.lut_bind_groups.get(&slot).unwrap()
             }
             None => {
-                if self.pt_fallback_lut_bind_group.is_none() {
+                if self.pt.fallback_lut_bind_group.is_none() {
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("pt_fallback_lut_bind_group"),
                         layout: bgl,
@@ -2212,9 +2213,9 @@ impl DeviceResources {
                             },
                         ],
                     });
-                    self.pt_fallback_lut_bind_group = Some(bg);
+                    self.pt.fallback_lut_bind_group = Some(bg);
                 }
-                self.pt_fallback_lut_bind_group.as_ref().unwrap()
+                self.pt.fallback_lut_bind_group.as_ref().unwrap()
             }
         }
     }
@@ -2245,7 +2246,8 @@ impl DeviceResources {
         // Build bind groups: one per chunk, all sharing the same uniform buffer.
         let chunks = {
             let bgl = self
-                .pt_bind_group_layout
+                .pt
+                .bind_group_layout
                 .as_ref()
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
             pending
@@ -2322,7 +2324,8 @@ impl DeviceResources {
                     Box::new(move |resources: &mut DeviceResources| {
                         let chunks = {
                             let bgl = resources
-                                .pt_bind_group_layout
+                                .pt
+                                .bind_group_layout
                                 .as_ref()
                                 .expect("pt_bind_group_layout must exist");
                             pending
@@ -2422,7 +2425,8 @@ impl DeviceResources {
 
         let chunks = {
             let bgl = self
-                .pt_bind_group_layout
+                .pt
+                .bind_group_layout
                 .as_ref()
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
             let uniform_buf = &self.projected_tet_store[id.0].uniform_buffer;

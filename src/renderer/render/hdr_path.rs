@@ -892,7 +892,7 @@ impl ViewportRenderer {
 
             // GPU implicit surface (HDR path, before skybox).
             if !self.implicit_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.implicit_pipeline {
+                if let Some(ref dual) = self.resources.implicit.pipeline {
                     render_pass.set_pipeline(dual.for_format(true));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for gpu in &self.implicit_gpu_data {
@@ -1580,7 +1580,7 @@ impl ViewportRenderer {
         if ssaa_factor > 1 {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             if let (Some(pipeline), Some(bg)) = (
-                &self.resources.ssaa_resolve_pipeline,
+                &self.resources.post.ssaa_resolve_pipeline,
                 &slot_hdr.ssaa_resolve_bind_group,
             ) {
                 let mut resolve_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1724,9 +1724,9 @@ impl ViewportRenderer {
         if let Some(sub_hl) = self.viewport_slots[vp_idx].sub_highlight.as_ref() {
             let resources = &self.resources;
             if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
-                &resources.sub_highlight_fill_pipeline,
-                &resources.sub_highlight_edge_pipeline,
-                &resources.sub_highlight_sprite_pipeline,
+                &resources.sub_highlight.fill_pipeline,
+                &resources.sub_highlight.edge_pipeline,
+                &resources.sub_highlight.sprite_pipeline,
             ) {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
@@ -2070,7 +2070,7 @@ impl ViewportRenderer {
                         self.resources
                             .ensure_pt_lut_bind_group(device, item.colourmap_id);
                     }
-                    if let Some(pipeline) = self.resources.pt_pipeline.as_ref() {
+                    if let Some(pipeline) = self.resources.pt.pipeline.as_ref() {
                         oit_pass.set_pipeline(pipeline);
                         oit_pass.set_bind_group(0, camera_bg, &[]);
                         let resources = &self.resources;
@@ -2115,9 +2115,9 @@ impl ViewportRenderer {
                                     resources
                                         .colourmap_views
                                         .get(id.0)
-                                        .and(resources.pt_lut_bind_groups.get(&id.0))
+                                        .and(resources.pt.lut_bind_groups.get(&id.0))
                                 })
-                                .or(resources.pt_fallback_lut_bind_group.as_ref());
+                                .or(resources.pt.fallback_lut_bind_group.as_ref());
                             let Some(lut_bg) = lut_bg else { continue };
                             oit_pass.set_bind_group(2, lut_bg, &[]);
                             for chunk in &gpu.chunks {
@@ -2683,9 +2683,10 @@ impl ViewportRenderer {
             // Prefer the HDR-format pipeline; fall back to LDR single-sample.
             let hdr_pipeline = self
                 .resources
-                .outline_composite_pipeline_hdr
+                .outline
+                .composite_pipeline_hdr
                 .as_ref()
-                .or(self.resources.outline_composite_pipeline_single.as_ref());
+                .or(self.resources.outline.composite_pipeline_single.as_ref());
             if let Some(pipeline) = hdr_pipeline {
                 let bg = &slot_hdr.outline_composite_bind_group;
                 let hdr_view = &slot_hdr.hdr_view;
@@ -2726,7 +2727,7 @@ impl ViewportRenderer {
         // SSAO pass.
         // -----------------------------------------------------------------------
         if pp.ssao && !throttle_effects {
-            if let Some(ssao_pipeline) = &self.resources.ssao_pipeline {
+            if let Some(ssao_pipeline) = &self.resources.post.ssao_pipeline {
                 {
                     let mut ssao_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("ssao_pass"),
@@ -2749,7 +2750,7 @@ impl ViewportRenderer {
                 }
 
                 // SSAO blur pass.
-                if let Some(ssao_blur_pipeline) = &self.resources.ssao_blur_pipeline {
+                if let Some(ssao_blur_pipeline) = &self.resources.post.ssao_blur_pipeline {
                     let mut ssao_blur_pass =
                         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("ssao_blur_pass"),
@@ -2777,7 +2778,7 @@ impl ViewportRenderer {
         // Contact shadow pass.
         // -----------------------------------------------------------------------
         if pp.contact_shadows && !throttle_effects {
-            if let Some(cs_pipeline) = &self.resources.contact_shadow_pipeline {
+            if let Some(cs_pipeline) = &self.resources.post.contact_shadow_pipeline {
                 let mut cs_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("contact_shadow_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2804,7 +2805,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         if pp.bloom && !throttle_effects {
             // Threshold pass: extract bright pixels into bloom_threshold_texture.
-            if let Some(bloom_threshold_pipeline) = &self.resources.bloom_threshold_pipeline {
+            if let Some(bloom_threshold_pipeline) = &self.resources.post.bloom_threshold_pipeline {
                 {
                     let mut threshold_pass =
                         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2829,7 +2830,7 @@ impl ViewportRenderer {
 
                 // 4 ping-pong H+V blur passes for a wide glow.
                 // Pass 1: threshold -> ping -> pong. Passes 2-4: pong -> ping -> pong.
-                if let Some(blur_pipeline) = &self.resources.bloom_blur_pipeline {
+                if let Some(blur_pipeline) = &self.resources.post.bloom_blur_pipeline {
                     let blur_h_bg = &slot_hdr.bloom_blur_h_bg;
                     let blur_h_pong_bg = &slot_hdr.bloom_blur_h_pong_bg;
                     let blur_v_bg = &slot_hdr.bloom_blur_v_bg;
@@ -2891,7 +2892,7 @@ impl ViewportRenderer {
         // Depth of field pass: HDR + depth -> dof_texture (when enabled).
         // -----------------------------------------------------------------------
         if pp.dof_enabled && !throttle_effects {
-            if let Some(dof_pipeline) = &self.resources.dof_pipeline {
+            if let Some(dof_pipeline) = &self.resources.post.dof_pipeline {
                 let mut dof_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("dof_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2930,7 +2931,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         let use_fxaa = pp.fxaa;
         let use_hdr_upscale = slot_hdr.upscale_bind_group.is_some();
-        if let Some(tone_map_pipeline) = &self.resources.tone_map_pipeline {
+        if let Some(tone_map_pipeline) = &self.resources.post.tone_map_pipeline {
             let tone_target: &wgpu::TextureView = if use_fxaa {
                 &slot_hdr.fxaa_view
             } else if use_hdr_upscale {
@@ -2973,7 +2974,7 @@ impl ViewportRenderer {
         // FXAA pass: fxaa_texture -> upscale_view (scaled) or output_view (1:1).
         // -----------------------------------------------------------------------
         if use_fxaa {
-            if let Some(fxaa_pipeline) = &self.resources.fxaa_pipeline {
+            if let Some(fxaa_pipeline) = &self.resources.post.fxaa_pipeline {
                 let fxaa_target: &wgpu::TextureView = if use_hdr_upscale {
                     slot_hdr.upscale_view.as_ref().unwrap()
                 } else {
@@ -3007,7 +3008,7 @@ impl ViewportRenderer {
         if use_hdr_upscale {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             if let Some(upscale_bg) = &slot_hdr.upscale_bind_group {
-                if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+                if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
                     let mut upscale_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("hdr_upscale_pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3038,7 +3039,7 @@ impl ViewportRenderer {
         {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             if let Some(blit_bg) = &slot_hdr.depth_blit_bind_group {
-                if let Some(blit_pipeline) = &self.resources.depth_blit_pipeline {
+                if let Some(blit_pipeline) = &self.resources.post.depth_blit_pipeline {
                     let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("depth_blit_pass"),
                         color_attachments: &[],
@@ -3142,9 +3143,9 @@ impl ViewportRenderer {
         // Plain overlay items (depth_compare: Always) are unaffected by depth,
         // but ordering them here keeps depth-composite correct.
         if !self.screen_image_gpu_data.is_empty() {
-            if let Some(overlay_pipeline) = &self.resources.screen_image_pipeline {
+            if let Some(overlay_pipeline) = &self.resources.screen_image.pipeline {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-                let dc_pipeline = self.resources.screen_image_dc_pipeline.as_ref();
+                let dc_pipeline = self.resources.screen_image.dc_pipeline.as_ref();
                 let mut img_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("screen_image_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3263,7 +3264,7 @@ impl ViewportRenderer {
                 }
 
                 if !slot.xray_object_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.xray_pipeline);
+                    overlay_pass.set_pipeline(&self.resources.outline.xray_pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {

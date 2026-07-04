@@ -32,7 +32,7 @@ impl DeviceResources {
     /// Ensure the shared upscale pipeline and sampler exist, creating them on
     /// first call. Idempotent.
     pub(crate) fn ensure_dyn_res_pipeline(&mut self, device: &wgpu::Device) {
-        if self.dyn_res_upscale_pipeline.is_some() {
+        if self.post.dyn_res_upscale_pipeline.is_some() {
             return;
         }
 
@@ -111,9 +111,9 @@ impl DeviceResources {
             cache: None,
         });
 
-        self.dyn_res_upscale_bgl = Some(bgl);
-        self.dyn_res_upscale_pipeline = Some(pipeline);
-        self.dyn_res_linear_sampler = Some(sampler);
+        self.post.dyn_res_upscale_bgl = Some(bgl);
+        self.post.dyn_res_upscale_pipeline = Some(pipeline);
+        self.post.dyn_res_linear_sampler = Some(sampler);
     }
 
     /// Ensure the depth-stencil compatible upscale pipeline exists for use inside
@@ -124,11 +124,12 @@ impl DeviceResources {
     /// compatible with any render pass that carries that depth attachment.
     /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) must be called first.
     pub(crate) fn ensure_dyn_res_ds_pipeline(&mut self, device: &wgpu::Device) {
-        if self.dyn_res_upscale_ds_pipeline.is_some() {
+        if self.post.dyn_res_upscale_ds_pipeline.is_some() {
             return;
         }
 
         let bgl = self
+            .post
             .dyn_res_upscale_bgl
             .as_ref()
             .expect("ensure_dyn_res_pipeline must be called before ensure_dyn_res_ds_pipeline");
@@ -177,7 +178,7 @@ impl DeviceResources {
             multiview: None,
             cache: None,
         });
-        self.dyn_res_upscale_ds_pipeline = Some(pipeline);
+        self.post.dyn_res_upscale_ds_pipeline = Some(pipeline);
     }
 
     /// Create a [`DynResTarget`] at `scaled_size`, bound for upscaling to
@@ -228,8 +229,8 @@ impl DeviceResources {
             ..Default::default()
         });
 
-        let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
-        let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
+        let bgl = self.post.dyn_res_upscale_bgl.as_ref().unwrap();
+        let sampler = self.post.dyn_res_linear_sampler.as_ref().unwrap();
         let upscale_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("dyn_res_upscale_bg"),
             layout: bgl,
@@ -284,8 +285,8 @@ impl DeviceResources {
 
         let blit_bind_group = {
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
-            let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
+            let bgl = self.post.dyn_res_upscale_bgl.as_ref().unwrap();
+            let sampler = self.post.dyn_res_linear_sampler.as_ref().unwrap();
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("hdr_callback_blit_bg"),
                 layout: bgl,

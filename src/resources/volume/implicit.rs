@@ -122,7 +122,7 @@ impl DeviceResources {
     /// No-op if already created.  Called from `prepare()` when any
     /// `GpuImplicitItem` is submitted via `SceneFrame::gpu_implicit`.
     pub(crate) fn ensure_implicit_pipeline(&mut self, device: &wgpu::Device) {
-        if self.implicit_pipeline.is_some() {
+        if self.implicit.pipeline.is_some() {
             return;
         }
 
@@ -198,8 +198,8 @@ impl DeviceResources {
             })
         };
 
-        self.implicit_bgl = Some(implicit_bgl);
-        self.implicit_pipeline = Some(DualPipeline {
+        self.implicit.bgl = Some(implicit_bgl);
+        self.implicit.pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
@@ -211,11 +211,11 @@ impl DeviceResources {
     /// called after `ensure_implicit_pipeline` so that `implicit_bgl` is set.
     /// No-op if already created.
     pub(crate) fn ensure_implicit_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
-        if self.implicit_outline_mask_pipeline.is_some() {
+        if self.implicit.outline_mask_pipeline.is_some() {
             return;
         }
 
-        let implicit_bgl = self.implicit_bgl.as_ref().expect(
+        let implicit_bgl = self.implicit.bgl.as_ref().expect(
             "ensure_implicit_pipeline must be called before ensure_implicit_outline_mask_pipeline",
         );
 
@@ -232,7 +232,7 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
-        self.implicit_outline_mask_pipeline = Some(device.create_render_pipeline(
+        self.implicit.outline_mask_pipeline = Some(device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
                 label: Some("implicit_outline_mask_pipeline"),
                 layout: Some(&layout),
@@ -313,7 +313,8 @@ impl DeviceResources {
         });
 
         let bgl = self
-            .implicit_bgl
+            .implicit
+            .bgl
             .as_ref()
             .expect("ensure_implicit_pipeline not called");
 

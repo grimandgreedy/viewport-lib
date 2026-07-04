@@ -1,5 +1,49 @@
 use super::*;
 
+/// Shared post-processing pipelines, layouts, samplers, and static textures:
+/// FXAA / SSAA resolve, bloom, SSAO, tone-map, DoF, contact shadows, the
+/// disabled-pass placeholders, the shared PP samplers, depth blit, and dynamic
+/// resolution upscale. All device-shared and lazily built. The viewport-sized
+/// intermediate textures and per-frame uniforms live on `ViewportHdrState`.
+#[derive(Default)]
+pub(crate) struct PostProcessResources {
+    pub(crate) fxaa_texture: Option<wgpu::Texture>,
+    pub(crate) fxaa_view: Option<wgpu::TextureView>,
+    pub(crate) fxaa_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) fxaa_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) ssaa_resolve_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) ssaa_resolve_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) fxaa_bind_group: Option<wgpu::BindGroup>,
+    pub(crate) fxaa_sampler: Option<wgpu::Sampler>,
+    pub(crate) bloom_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) ssao_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) ssao_blur_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) tone_map_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) tone_map_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bloom_threshold_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) bloom_blur_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) ssao_noise_texture: Option<wgpu::Texture>,
+    pub(crate) ssao_noise_view: Option<wgpu::TextureView>,
+    pub(crate) ssao_kernel_buf: Option<wgpu::Buffer>,
+    pub(crate) ssao_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) ssao_blur_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) dof_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) dof_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) contact_shadow_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) contact_shadow_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bloom_placeholder_view: Option<wgpu::TextureView>,
+    pub(crate) ao_placeholder_view: Option<wgpu::TextureView>,
+    pub(crate) cs_placeholder_view: Option<wgpu::TextureView>,
+    pub(crate) pp_linear_sampler: Option<wgpu::Sampler>,
+    pub(crate) pp_nearest_sampler: Option<wgpu::Sampler>,
+    pub(crate) depth_blit_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) depth_blit_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) dyn_res_upscale_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) dyn_res_upscale_ds_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) dyn_res_upscale_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) dyn_res_linear_sampler: Option<wgpu::Sampler>,
+}
+
 /// Surface line-integral-convolution pipelines and their layouts.
 ///
 /// Device-shared and lazily built by the LIC post-process setup. The
@@ -51,10 +95,10 @@ impl DeviceResources {
         let w = w.max(1);
         let h = h.max(1);
 
-        if self.outline_target_size == [w, h] && self.outline_colour_texture.is_some() {
+        if self.outline.target_size == [w, h] && self.outline.colour_texture.is_some() {
             return;
         }
-        self.outline_target_size = [w, h];
+        self.outline.target_size = [w, h];
 
         // Offscreen RGBA colour texture (transparent clear).
         let colour_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -246,15 +290,15 @@ impl DeviceResources {
             cache: None,
         });
 
-        self.outline_colour_texture = Some(colour_tex);
-        self.outline_colour_view = Some(colour_view);
-        self.outline_depth_texture = Some(depth_tex);
-        self.outline_depth_view = Some(depth_view);
-        self.outline_composite_pipeline_single = Some(pipeline_single);
-        self.outline_composite_pipeline_msaa = Some(pipeline_msaa);
-        self.outline_composite_bgl = Some(bgl);
-        self.outline_composite_bind_group = Some(bg);
-        self.outline_composite_sampler = Some(sampler);
+        self.outline.colour_texture = Some(colour_tex);
+        self.outline.colour_view = Some(colour_view);
+        self.outline.depth_texture = Some(depth_tex);
+        self.outline.depth_view = Some(depth_view);
+        self.outline.composite_pipeline_single = Some(pipeline_single);
+        self.outline.composite_pipeline_msaa = Some(pipeline_msaa);
+        self.outline.composite_bgl = Some(bgl);
+        self.outline.composite_bind_group = Some(bg);
+        self.outline.composite_sampler = Some(sampler);
     }
 
     // -----------------------------------------------------------------------
@@ -271,9 +315,9 @@ impl DeviceResources {
         output_format: wgpu::TextureFormat,
     ) {
         // Guard: if all three sentinel fields exist, everything is created.
-        if self.tone_map_pipeline.is_some()
-            && self.bloom_bgl.is_some()
-            && self.fxaa_sampler.is_some()
+        if self.post.tone_map_pipeline.is_some()
+            && self.post.bloom_bgl.is_some()
+            && self.post.fxaa_sampler.is_some()
         {
             return;
         }
@@ -311,7 +355,7 @@ impl DeviceResources {
         }
 
         // --- Placeholder textures (one-time) ---
-        if self.bloom_placeholder_view.is_none() {
+        if self.post.bloom_placeholder_view.is_none() {
             let make_placeholder = |device: &wgpu::Device,
                                     queue: &wgpu::Queue,
                                     label: &str,
@@ -364,7 +408,7 @@ impl DeviceResources {
                 &[0u8; 8],
                 8,
             );
-            self.bloom_placeholder_view = Some(bv);
+            self.post.bloom_placeholder_view = Some(bv);
 
             let (_at, av) = make_placeholder(
                 device,
@@ -374,7 +418,7 @@ impl DeviceResources {
                 &[255u8],
                 1,
             );
-            self.ao_placeholder_view = Some(av);
+            self.post.ao_placeholder_view = Some(av);
 
             let (_ct, cv) = make_placeholder(
                 device,
@@ -384,7 +428,7 @@ impl DeviceResources {
                 &[255u8],
                 1,
             );
-            self.cs_placeholder_view = Some(cv);
+            self.post.cs_placeholder_view = Some(cv);
 
             // LIC placeholder: 1x1 R8Unorm, 128 = 0.5 -> lic_factor = 1.0 (no modulation).
             let (_lt, lv) = make_placeholder(
@@ -399,7 +443,7 @@ impl DeviceResources {
         }
 
         // --- SSAO noise (one-time) ---
-        if self.ssao_noise_view.is_none() {
+        if self.post.ssao_noise_view.is_none() {
             let noise_data: Vec<u8> = (0..16)
                 .flat_map(|i| {
                     let angle = (i as f32 / 16.0) * std::f32::consts::TAU;
@@ -441,13 +485,13 @@ impl DeviceResources {
                     depth_or_array_layers: 1,
                 },
             );
-            self.ssao_noise_view =
+            self.post.ssao_noise_view =
                 Some(noise_tex.create_view(&wgpu::TextureViewDescriptor::default()));
-            self.ssao_noise_texture = Some(noise_tex);
+            self.post.ssao_noise_texture = Some(noise_tex);
         }
 
         // --- SSAO kernel (one-time) ---
-        if self.ssao_kernel_buf.is_none() {
+        if self.post.ssao_kernel_buf.is_none() {
             let kernel_data: Vec<[f32; 4]> = (0..64)
                 .map(|i| {
                     let t = i as f32 / 64.0;
@@ -470,7 +514,7 @@ impl DeviceResources {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, kernel_bytes);
-            self.ssao_kernel_buf = Some(buf);
+            self.post.ssao_kernel_buf = Some(buf);
         }
 
         // --- Shared samplers ---
@@ -1257,28 +1301,28 @@ impl DeviceResources {
         );
 
         // Store everything
-        self.pp_linear_sampler = Some(linear_sampler);
-        self.pp_nearest_sampler = Some(nearest_sampler);
-        self.fxaa_sampler = Some(fxaa_sampler);
+        self.post.pp_linear_sampler = Some(linear_sampler);
+        self.post.pp_nearest_sampler = Some(nearest_sampler);
+        self.post.fxaa_sampler = Some(fxaa_sampler);
         self.oit.composite_sampler = Some(oit_sampler);
-        self.outline_composite_sampler = Some(outline_sampler);
+        self.outline.composite_sampler = Some(outline_sampler);
 
-        self.tone_map_bgl = Some(tone_map_bgl);
-        self.bloom_bgl = Some(bloom_bgl);
-        self.ssao_bgl = Some(ssao_bgl);
-        self.ssao_blur_bgl = Some(ssao_blur_bgl);
-        self.contact_shadow_bgl = Some(cs_bgl);
-        self.fxaa_bgl = Some(fxaa_bgl);
+        self.post.tone_map_bgl = Some(tone_map_bgl);
+        self.post.bloom_bgl = Some(bloom_bgl);
+        self.post.ssao_bgl = Some(ssao_bgl);
+        self.post.ssao_blur_bgl = Some(ssao_blur_bgl);
+        self.post.contact_shadow_bgl = Some(cs_bgl);
+        self.post.fxaa_bgl = Some(fxaa_bgl);
         self.oit.composite_bgl = Some(oit_composite_bgl);
-        self.outline_composite_bgl = Some(outline_composite_bgl);
+        self.outline.composite_bgl = Some(outline_composite_bgl);
 
-        self.tone_map_pipeline = Some(tone_map_pipeline);
-        self.bloom_threshold_pipeline = Some(bloom_threshold_pipeline);
-        self.bloom_blur_pipeline = Some(bloom_blur_pipeline);
-        self.ssao_pipeline = Some(ssao_pipeline);
-        self.ssao_blur_pipeline = Some(ssao_blur_pipeline);
-        self.contact_shadow_pipeline = Some(cs_pipeline);
-        self.fxaa_pipeline = Some(fxaa_pipeline);
+        self.post.tone_map_pipeline = Some(tone_map_pipeline);
+        self.post.bloom_threshold_pipeline = Some(bloom_threshold_pipeline);
+        self.post.bloom_blur_pipeline = Some(bloom_blur_pipeline);
+        self.post.ssao_pipeline = Some(ssao_pipeline);
+        self.post.ssao_blur_pipeline = Some(ssao_blur_pipeline);
+        self.post.contact_shadow_pipeline = Some(cs_pipeline);
+        self.post.fxaa_pipeline = Some(fxaa_pipeline);
 
         // --- SSAA resolve pipeline ---
         let ssaa_resolve_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1352,8 +1396,8 @@ impl DeviceResources {
                 multiview: None,
                 cache: None,
             });
-        self.ssaa_resolve_bgl = Some(ssaa_resolve_bgl);
-        self.ssaa_resolve_pipeline = Some(ssaa_resolve_pipeline);
+        self.post.ssaa_resolve_bgl = Some(ssaa_resolve_bgl);
+        self.post.ssaa_resolve_pipeline = Some(ssaa_resolve_pipeline);
 
         // DoF pipeline
         let dof_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1412,8 +1456,8 @@ impl DeviceResources {
             wgpu::TextureFormat::Rgba16Float,
             None,
         );
-        self.dof_bgl = Some(dof_bgl);
-        self.dof_pipeline = Some(dof_pipeline);
+        self.post.dof_bgl = Some(dof_bgl);
+        self.post.dof_pipeline = Some(dof_pipeline);
 
         self.oit.pipeline = Some(oit_pipeline);
         self.oit.composite_pipeline = Some(oit_composite_pipeline);
@@ -1422,9 +1466,9 @@ impl DeviceResources {
         self.hdr_transparent_pipeline = Some(hdr_transparent_pipeline);
         self.hdr_wireframe_pipeline = Some(hdr_wireframe_pipeline);
         self.hdr_overlay_pipeline = Some(hdr_overlay_pipeline);
-        self.outline_composite_pipeline_single = Some(outline_composite_pipeline_single);
-        self.outline_composite_pipeline_msaa = Some(outline_composite_pipeline_msaa);
-        self.outline_composite_pipeline_hdr = Some(outline_composite_pipeline_hdr);
+        self.outline.composite_pipeline_single = Some(outline_composite_pipeline_single);
+        self.outline.composite_pipeline_msaa = Some(outline_composite_pipeline_msaa);
+        self.outline.composite_pipeline_hdr = Some(outline_composite_pipeline_hdr);
 
         let _ = hdr_depth_stencil; // used in make_hdr_mesh closure above
 
@@ -1625,7 +1669,7 @@ impl DeviceResources {
         // --- Depth blit pipeline (lazily created once) ---
         // Copies a scene-resolution depth texture to a native-resolution depth-only target.
         // Used when render_scale < 1.0 so post-tone-map passes can use a native-res depth buf.
-        if self.depth_blit_bgl.is_none() {
+        if self.post.depth_blit_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("depth_blit_bgl"),
                 entries: &[wgpu::BindGroupLayoutEntry {
@@ -1680,8 +1724,8 @@ impl DeviceResources {
                 multiview: None,
                 cache: None,
             });
-            self.depth_blit_bgl = Some(bgl);
-            self.depth_blit_pipeline = Some(pipeline);
+            self.post.depth_blit_bgl = Some(bgl);
+            self.post.depth_blit_pipeline = Some(pipeline);
         }
 
         // --- Decal shared resources (D1) ---
@@ -2020,14 +2064,17 @@ impl DeviceResources {
 
         // Shared references needed for bind groups
         let linear_sampler = self
+            .post
             .pp_linear_sampler
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let nearest_sampler = self
+            .post
             .pp_nearest_sampler
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let fxaa_sampler = self
+            .post
             .fxaa_sampler
             .as_ref()
             .expect("ensure_hdr_shared not called");
@@ -2037,50 +2084,62 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let outline_sampler = self
-            .outline_composite_sampler
+            .outline
+            .composite_sampler
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let bloom_placeholder_view = self
+            .post
             .bloom_placeholder_view
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ao_placeholder_view = self
+            .post
             .ao_placeholder_view
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let cs_placeholder_view = self
+            .post
             .cs_placeholder_view
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_noise_view = self
+            .post
             .ssao_noise_view
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_kernel_buf = self
+            .post
             .ssao_kernel_buf
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let tone_map_bgl = self
+            .post
             .tone_map_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let bloom_bgl = self
+            .post
             .bloom_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_bgl = self
+            .post
             .ssao_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_blur_bgl = self
+            .post
             .ssao_blur_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let cs_bgl = self
+            .post
             .contact_shadow_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let fxaa_bgl = self
+            .post
             .fxaa_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
@@ -2090,7 +2149,8 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let outline_composite_bgl = self
-            .outline_composite_bgl
+            .outline
+            .composite_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
 
@@ -2254,7 +2314,11 @@ impl DeviceResources {
                 },
             ],
         });
-        let dof_bgl = self.dof_bgl.as_ref().expect("ensure_hdr_shared not called");
+        let dof_bgl = self
+            .post
+            .dof_bgl
+            .as_ref()
+            .expect("ensure_hdr_shared not called");
         let dof_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("dof_bg"),
             layout: dof_bgl,
@@ -2356,7 +2420,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let outline_edge_bgl = &self.outline_edge_bgl;
+        let outline_edge_bgl = &self.outline.edge_bgl;
         let outline_edge_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("outline_edge_bg"),
             layout: outline_edge_bgl,
@@ -2438,7 +2502,7 @@ impl DeviceResources {
 
             // Build the resolve bind group if the pipeline is available.
             let (ssaa_resolve_bg, ssaa_ubuf) = if let (Some(bgl), Some(nearest)) =
-                (&self.ssaa_resolve_bgl, &self.pp_nearest_sampler)
+                (&self.post.ssaa_resolve_bgl, &self.post.pp_nearest_sampler)
             {
                 #[repr(C)]
                 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -2623,7 +2687,7 @@ impl DeviceResources {
                     view_formats: &[],
                 });
                 let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-                let bg = self.depth_blit_bgl.as_ref().map(|bgl| {
+                let bg = self.post.depth_blit_bgl.as_ref().map(|bgl| {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("depth_blit_bg"),
                         layout: bgl,
@@ -2659,8 +2723,8 @@ impl DeviceResources {
                 view_formats: &[],
             });
             let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-            let bgl = self.dyn_res_upscale_bgl.as_ref().unwrap();
-            let sampler = self.dyn_res_linear_sampler.as_ref().unwrap();
+            let bgl = self.post.dyn_res_upscale_bgl.as_ref().unwrap();
+            let sampler = self.post.dyn_res_linear_sampler.as_ref().unwrap();
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("hdr_upscale_bg"),
                 layout: bgl,
@@ -2780,23 +2844,23 @@ impl DeviceResources {
         use_lic: bool,
         use_dof: bool,
     ) {
-        let bgl = match &self.tone_map_bgl {
+        let bgl = match &self.post.tone_map_bgl {
             Some(b) => b,
             None => return,
         };
-        let sampler = match &self.pp_linear_sampler {
+        let sampler = match &self.post.pp_linear_sampler {
             Some(s) => s,
             None => return,
         };
-        let bloom_placeholder = match &self.bloom_placeholder_view {
+        let bloom_placeholder = match &self.post.bloom_placeholder_view {
             Some(v) => v,
             None => return,
         };
-        let ao_placeholder = match &self.ao_placeholder_view {
+        let ao_placeholder = match &self.post.ao_placeholder_view {
             Some(v) => v,
             None => return,
         };
-        let cs_placeholder = match &self.cs_placeholder_view {
+        let cs_placeholder = match &self.post.cs_placeholder_view {
             Some(v) => v,
             None => return,
         };

@@ -860,7 +860,7 @@ impl DeviceResources {
             label: Some("mc_outline_mask_pipeline_layout"),
             bind_group_layouts: &[
                 &self.camera_bind_group_layout,
-                &self.outline_bind_group_layout,
+                &self.outline.bind_group_layout,
             ],
             push_constant_ranges: &[],
         });

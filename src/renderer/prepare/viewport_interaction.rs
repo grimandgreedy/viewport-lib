@@ -315,7 +315,7 @@ impl ViewportRenderer {
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
-                    layout: &resources.outline_bind_group_layout,
+                    layout: &resources.outline.bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
@@ -354,7 +354,7 @@ impl ViewportRenderer {
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
-                    layout: &resources.outline_bind_group_layout,
+                    layout: &resources.outline.bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
@@ -390,7 +390,7 @@ impl ViewportRenderer {
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
-                    layout: &resources.outline_bind_group_layout,
+                    layout: &resources.outline.bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
@@ -491,7 +491,7 @@ impl ViewportRenderer {
                         });
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("splat_outline_bg"),
-                        layout: &resources.outline_bind_group_layout,
+                        layout: &resources.outline.bind_group_layout,
                         entries: &[wgpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
@@ -595,7 +595,7 @@ impl ViewportRenderer {
                         });
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("splat_sel_outline_bg"),
-                        layout: &resources.outline_bind_group_layout,
+                        layout: &resources.outline.bind_group_layout,
                         entries: &[wgpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
@@ -651,7 +651,7 @@ impl ViewportRenderer {
                         });
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("pc_outline_bg"),
-                        layout: &self.resources.outline_bind_group_layout,
+                        layout: &self.resources.outline.bind_group_layout,
                         entries: &[wgpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
@@ -708,7 +708,7 @@ impl ViewportRenderer {
                         });
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("pc_sel_outline_bg"),
-                        layout: &self.resources.outline_bind_group_layout,
+                        layout: &self.resources.outline.bind_group_layout,
                         entries: &[wgpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
@@ -835,7 +835,7 @@ impl ViewportRenderer {
                 });
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("curve_outline_mask_bg"),
-                    layout: &self.resources.outline_bind_group_layout,
+                    layout: &self.resources.outline.bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
@@ -982,7 +982,7 @@ impl ViewportRenderer {
                 queue.write_buffer(&uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
-                    layout: &resources.outline_bind_group_layout,
+                    layout: &resources.outline.bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: uniform_buf.as_entire_binding(),
@@ -1012,7 +1012,7 @@ impl ViewportRenderer {
             self.resources
                 .ensure_screen_rect_outline_mask_pipeline(device);
             let [vp_w, vp_h] = frame.camera.viewport_size;
-            if let Some(bgl) = self.resources.screen_rect_outline_bgl.as_ref() {
+            if let Some(bgl) = self.resources.screen_image.rect_outline_bgl.as_ref() {
                 for item in &frame.scene.screen_images {
                     if item.settings.hidden
                         || !item.settings.selected
@@ -1112,7 +1112,7 @@ impl ViewportRenderer {
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("mc_outline_bg"),
-                    layout: &self.resources.outline_bind_group_layout,
+                    layout: &self.resources.outline.bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
@@ -1157,7 +1157,7 @@ impl ViewportRenderer {
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("xray_object_bg"),
-                    layout: &resources.outline_bind_group_layout,
+                    layout: &resources.outline.bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
@@ -1689,9 +1689,9 @@ impl ViewportRenderer {
                         continue;
                     };
                     let pipeline: &wgpu::RenderPipeline = if outlined.two_sided {
-                        &self.resources.outline_mask_two_sided_pipeline
+                        &self.resources.outline.mask_two_sided_pipeline
                     } else {
-                        &self.resources.outline_mask_pipeline
+                        &self.resources.outline.mask_pipeline
                     };
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(1, &outlined.mask_bind_group, &[]);
@@ -1722,7 +1722,7 @@ impl ViewportRenderer {
                 // a screen-space disc in the vertex shader (6 vertices per instance).
                 // Depth is tested (splats behind selected meshes are culled) but not
                 // written, so all visible splats in a cloud contribute to the mask.
-                pass.set_pipeline(&self.resources.splat_outline_mask_pipeline);
+                pass.set_pipeline(&self.resources.outline.splat_mask_pipeline);
                 for splat in splat_outlines {
                     pass.set_bind_group(1, &splat.bind_group, &[]);
                     pass.set_vertex_buffer(0, splat.position_buf.slice(..));
@@ -1850,9 +1850,9 @@ impl ViewportRenderer {
                 // Draw inline-geometry quads for image slices.
                 for raw in raw_geom_outlines {
                     let pipeline = if raw.two_sided {
-                        &self.resources.outline_mask_two_sided_pipeline
+                        &self.resources.outline.mask_two_sided_pipeline
                     } else {
-                        &self.resources.outline_mask_pipeline
+                        &self.resources.outline.mask_pipeline
                     };
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(0, camera_bg, &[]);
@@ -1865,8 +1865,11 @@ impl ViewportRenderer {
 
                 // Draw screen-space rect outlines for screen images.
                 if !screen_rect_outlines.is_empty() {
-                    if let Some(pipeline) =
-                        self.resources.screen_rect_outline_mask_pipeline.as_ref()
+                    if let Some(pipeline) = self
+                        .resources
+                        .screen_image
+                        .rect_outline_mask_pipeline
+                        .as_ref()
                     {
                         pass.set_pipeline(pipeline);
                         for sr in screen_rect_outlines {
@@ -1878,7 +1881,7 @@ impl ViewportRenderer {
 
                 // Draw GPU implicit surface outlines via ray-march to mask.
                 if !implicit_outline_idxs.is_empty() {
-                    if let Some(pipeline) = self.resources.implicit_outline_mask_pipeline.as_ref() {
+                    if let Some(pipeline) = self.resources.implicit.outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
                         pass.set_bind_group(0, camera_bg, &[]);
                         for &idx in implicit_outline_idxs {
@@ -1925,9 +1928,9 @@ impl ViewportRenderer {
                 for (items, gpu_data_slice) in &curve_draw_groups {
                     for item in *items {
                         let pipeline = if item.two_sided {
-                            &self.resources.outline_mask_two_sided_pipeline
+                            &self.resources.outline.mask_two_sided_pipeline
                         } else {
-                            &self.resources.outline_mask_pipeline
+                            &self.resources.outline.mask_pipeline
                         };
                         pass.set_pipeline(pipeline);
                         if let Some(gpu) = gpu_data_slice.get(item.index) {
@@ -1980,7 +1983,7 @@ impl ViewportRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&self.resources.outline_edge_pipeline);
+                pass.set_pipeline(&self.resources.outline.edge_pipeline);
                 pass.set_bind_group(0, edge_bg, &[]);
                 pass.draw(0..3, 0..1);
             }

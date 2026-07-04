@@ -106,7 +106,8 @@ impl ViewportRenderer {
             label: Some("pick_instance_bg"),
             layout: self
                 .resources
-                .pick_bind_group_layout_1
+                .pick
+                .bind_group_layout_1
                 .as_ref()
                 .expect("ensure_pick_pipeline must be called first"),
             entries: &[wgpu::BindGroupEntry {
@@ -130,7 +131,8 @@ impl ViewportRenderer {
             label: Some("pick_camera_bg"),
             layout: self
                 .resources
-                .pick_camera_bgl
+                .pick
+                .camera_bgl
                 .as_ref()
                 .expect("ensure_pick_pipeline must be called first"),
             entries: &[
@@ -247,7 +249,8 @@ impl ViewportRenderer {
 
             pick_pass.set_pipeline(
                 self.resources
-                    .pick_pipeline
+                    .pick
+                    .pipeline
                     .as_ref()
                     .expect("ensure_pick_pipeline must be called first"),
             );

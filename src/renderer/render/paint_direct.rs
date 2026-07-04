@@ -85,7 +85,7 @@ impl ViewportRenderer {
         }
         // GPU implicit surface (depth-writes enabled, LessEqual compare).
         if !self.implicit_gpu_data.is_empty() {
-            if let Some(ref dual) = self.resources.implicit_pipeline {
+            if let Some(ref dual) = self.resources.implicit.pipeline {
                 render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for gpu in &self.implicit_gpu_data {
@@ -126,9 +126,9 @@ impl ViewportRenderer {
             .and_then(|s| s.sub_highlight.as_ref())
         {
             if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
-                &self.resources.sub_highlight_fill_ldr_pipeline,
-                &self.resources.sub_highlight_edge_ldr_pipeline,
-                &self.resources.sub_highlight_sprite_ldr_pipeline,
+                &self.resources.sub_highlight.fill_ldr_pipeline,
+                &self.resources.sub_highlight.edge_ldr_pipeline,
+                &self.resources.sub_highlight.sprite_ldr_pipeline,
             ) {
                 if sub_hl.fill_vertex_count > 0 {
                     render_pass.set_pipeline(fill_pl);
@@ -155,7 +155,7 @@ impl ViewportRenderer {
         }
         // Screen-space image overlays (always on top, no depth test).
         if !self.screen_image_gpu_data.is_empty() {
-            if let Some(pipeline) = &self.resources.screen_image_pipeline {
+            if let Some(pipeline) = &self.resources.screen_image.pipeline {
                 render_pass.set_pipeline(pipeline);
                 for gpu in &self.screen_image_gpu_data {
                     render_pass.set_bind_group(0, &gpu.bind_group, &[]);

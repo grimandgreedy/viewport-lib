@@ -6,17 +6,19 @@ impl DeviceResources {
     /// No-op if already created. Called from `render.rs` when transparent_volume_meshes
     /// is non-empty. Also ensures the bind group layout exists.
     pub(crate) fn ensure_pt_pipeline(&mut self, device: &wgpu::Device) {
-        if self.pt_pipeline.is_some() {
+        if self.pt.pipeline.is_some() {
             return;
         }
 
         self.ensure_pt_bind_group_layout(device);
         let bgl = self
-            .pt_bind_group_layout
+            .pt
+            .bind_group_layout
             .as_ref()
             .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
         let lut_bgl = self
-            .pt_lut_bind_group_layout
+            .pt
+            .lut_bind_group_layout
             .as_ref()
             .expect("pt_lut_bind_group_layout must exist after ensure_pt_bind_group_layout");
 
@@ -105,6 +107,6 @@ impl DeviceResources {
             cache: None,
         });
 
-        self.pt_pipeline = Some(pipeline);
+        self.pt.pipeline = Some(pipeline);
     }
 }

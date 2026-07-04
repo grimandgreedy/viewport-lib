@@ -1107,7 +1107,7 @@ impl DeviceResources {
                 label: Some("outline_pipeline_layout"),
                 bind_group_layouts: &[
                     &self.camera_bind_group_layout,
-                    &self.outline_bind_group_layout,
+                    &self.outline.bind_group_layout,
                     &self.deform.bind_group_layout,
                 ],
                 push_constant_ranges: &[],
@@ -1119,8 +1119,8 @@ impl DeviceResources {
                 wgpu::TextureFormat::R8Unorm,
                 None,
             );
-            self.outline_mask_pipeline = masks.mask;
-            self.outline_mask_two_sided_pipeline = masks.mask_two_sided;
+            self.outline.mask_pipeline = masks.mask;
+            self.outline.mask_two_sided_pipeline = masks.mask_two_sided;
         }
 
         // mesh_instanced.wgsl: LDR (solid + transparent), HDR (solid +

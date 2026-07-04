@@ -162,7 +162,7 @@ impl ViewportRenderer {
             }
             // GPU implicit surface.
             if !self.implicit_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.implicit_pipeline {
+                if let Some(ref dual) = self.resources.implicit.pipeline {
                     render_pass.set_pipeline(dual.for_format(false));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for gpu in &self.implicit_gpu_data {
@@ -193,8 +193,8 @@ impl ViewportRenderer {
             // Depth-composite items drawn with depth_compare: LessEqual (occluded by
             // scene geometry whose depth was already written to the depth attachment).
             if !self.screen_image_gpu_data.is_empty() {
-                if let Some(overlay_pipeline) = &self.resources.screen_image_pipeline {
-                    let dc_pipeline = self.resources.screen_image_dc_pipeline.as_ref();
+                if let Some(overlay_pipeline) = &self.resources.screen_image.pipeline {
+                    let dc_pipeline = self.resources.screen_image.dc_pipeline.as_ref();
                     for gpu in &self.screen_image_gpu_data {
                         if let (Some(dc_bg), Some(dc_pipe)) = (&gpu.depth_bind_group, dc_pipeline) {
                             render_pass.set_pipeline(dc_pipe);
@@ -362,7 +362,7 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
                 upscale_pass.set_pipeline(pipeline);
                 upscale_pass.set_bind_group(0, upscale_bg, &[]);
                 upscale_pass.draw(0..3, 0..1);
@@ -370,8 +370,8 @@ impl ViewportRenderer {
         } else if needs_blur {
             // Blit backdrop intermediate to the output surface.
             let bs = self.backdrop_blur_state.as_ref().unwrap();
-            let blit_bgl = self.resources.dyn_res_upscale_bgl.as_ref().unwrap();
-            let blit_sampler = self.resources.dyn_res_linear_sampler.as_ref().unwrap();
+            let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
+            let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
             let blit_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("backdrop_blit_bg"),
                 layout: blit_bgl,
@@ -401,7 +401,7 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
                 blit_pass.set_pipeline(pipeline);
                 blit_pass.set_bind_group(0, &blit_bg, &[]);
                 blit_pass.draw(0..3, 0..1);

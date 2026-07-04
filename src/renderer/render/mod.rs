@@ -78,7 +78,7 @@ macro_rules! emit_overlay_2d {
         }
         // Overlay images (drawn last, no depth test).
         if !$this.overlay_image_gpu_data.is_empty() {
-            if let Some(pipeline) = &$this.resources.screen_image_pipeline {
+            if let Some(pipeline) = &$this.resources.screen_image.pipeline {
                 $render_pass.set_pipeline(pipeline);
                 for gpu in &$this.overlay_image_gpu_data {
                     $render_pass.set_bind_group(0, &gpu.bind_group, &[]);
@@ -226,7 +226,7 @@ impl ViewportRenderer {
             }
             // Implicit surface.
             if !self.implicit_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.implicit_pipeline {
+                if let Some(ref dual) = self.resources.implicit.pipeline {
                     render_pass.set_pipeline(dual.for_format(false));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for gpu in &self.implicit_gpu_data {
@@ -255,9 +255,9 @@ impl ViewportRenderer {
             // Sub-object highlight (LDR path).
             if let Some(sub_hl) = slot.sub_highlight.as_ref() {
                 if let (Some(fill_pl), Some(edge_pl), Some(sprite_pl)) = (
-                    &self.resources.sub_highlight_fill_ldr_pipeline,
-                    &self.resources.sub_highlight_edge_ldr_pipeline,
-                    &self.resources.sub_highlight_sprite_ldr_pipeline,
+                    &self.resources.sub_highlight.fill_ldr_pipeline,
+                    &self.resources.sub_highlight.edge_ldr_pipeline,
+                    &self.resources.sub_highlight.sprite_ldr_pipeline,
                 ) {
                     if sub_hl.fill_vertex_count > 0 {
                         render_pass.set_pipeline(fill_pl);
@@ -284,7 +284,7 @@ impl ViewportRenderer {
             }
             // Screen-space image overlays.
             if !self.screen_image_gpu_data.is_empty() {
-                if let Some(pipeline) = &self.resources.screen_image_pipeline {
+                if let Some(pipeline) = &self.resources.screen_image.pipeline {
                     render_pass.set_pipeline(pipeline);
                     for gpu in &self.screen_image_gpu_data {
                         render_pass.set_bind_group(0, &gpu.bind_group, &[]);
@@ -314,7 +314,7 @@ impl ViewportRenderer {
             .get(vp_idx)
             .and_then(|s| s.dyn_res.as_ref())
         {
-            if let Some(pipeline) = &self.resources.dyn_res_upscale_ds_pipeline {
+            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_ds_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &dr.upscale_bind_group, &[]);
                 render_pass.draw(0..3, 0..1);
@@ -450,7 +450,7 @@ impl ViewportRenderer {
             .get(vp_idx)
             .and_then(|s| s.hdr_callback.as_ref())
         {
-            if let Some(pipeline) = &self.resources.dyn_res_upscale_ds_pipeline {
+            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_ds_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
                 render_pass.draw(0..3, 0..1);
@@ -478,7 +478,7 @@ impl ViewportRenderer {
             .get(vp_idx)
             .and_then(|s| s.hdr_callback.as_ref())
         {
-            if let Some(pipeline) = &self.resources.dyn_res_upscale_pipeline {
+            if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &hc.blit_bind_group, &[]);
                 render_pass.draw(0..3, 0..1);
@@ -958,9 +958,14 @@ impl ViewportRenderer {
         let blur_sampler = self.resources.backdrop_blur.sampler.as_ref().unwrap();
         let blur_pipeline = self.resources.backdrop_blur.pipeline.as_ref().unwrap();
         // Reuse dyn_res blit pipeline and BGL for the downsample pass.
-        let blit_pipeline = self.resources.dyn_res_upscale_pipeline.as_ref().unwrap();
-        let blit_bgl = self.resources.dyn_res_upscale_bgl.as_ref().unwrap();
-        let blit_sampler = self.resources.dyn_res_linear_sampler.as_ref().unwrap();
+        let blit_pipeline = self
+            .resources
+            .post
+            .dyn_res_upscale_pipeline
+            .as_ref()
+            .unwrap();
+        let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
+        let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
 
         // Step 1: downsample source -> blur_a (half-res) using bilinear blit.
         let downsample_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
