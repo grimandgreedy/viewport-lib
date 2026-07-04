@@ -310,6 +310,65 @@ pub(crate) fn build_fullscreen_pipeline(
     })
 }
 
+/// Build an outline selection-mask pipeline: the item's geometry drawn into a
+/// single-channel mask target, depth-tested against the scene so only visible
+/// pixels are marked. The mask format, vertex layout, cull mode, depth write,
+/// and depth compare vary per item and are passed in; the rest is fixed
+/// (triangle list, `Depth24PlusStencil8`, default stencil and bias, single
+/// sample, no blend, both stages `vs_main` / `fs_main`).
+///
+/// `depth_compare` must match the item's main opaque pipeline so the mask marks
+/// exactly the pixels that survived the depth test in the colour pass. `cull` is
+/// `Back` for closed solids and `None` otherwise; `depth_write` is off for
+/// billboards and screen-space items that do not own scene depth.
+pub(crate) fn build_outline_mask_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    mask_format: wgpu::TextureFormat,
+    vertex_buffers: &[wgpu::VertexBufferLayout],
+    cull: Option<wgpu::Face>,
+    depth_write: bool,
+    depth_compare: wgpu::CompareFunction,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: vertex_buffers,
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: mask_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: cull,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24PlusStencil8,
+            depth_write_enabled: depth_write,
+            depth_compare,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
 /// Pipeline layout with the standard scene binding convention:
 /// group 0 = camera, group 1 = the feature's per-item bind group layout.
 pub(crate) fn standard_scene_layout(

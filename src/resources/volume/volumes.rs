@@ -368,47 +368,18 @@ impl DeviceResources {
             attributes: &vert_attrs,
         };
 
-        self.volume.outline_mask_pipeline = Some(device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("volume_outline_mask_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[vert_layout],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R8Unorm,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            },
-        ));
+        self.volume.outline_mask_pipeline =
+            Some(crate::resources::builders::build_outline_mask_pipeline(
+                device,
+                "volume_outline_mask_pipeline",
+                &layout,
+                &shader,
+                wgpu::TextureFormat::R8Unorm,
+                &[vert_layout],
+                None,
+                true,
+                wgpu::CompareFunction::Less,
+            ));
     }
 
     /// Ensure the unit cube vertex + index buffers for volume bounding box proxy exist.
