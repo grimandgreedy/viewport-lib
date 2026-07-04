@@ -1,4 +1,4 @@
-mod instancing;
+pub(crate) mod instancing;
 pub mod lod;
 /// Factory functions for the mesh-family pipelines that share a single
 /// shader source. Used at init time and on `register_deformer` rebuild.

@@ -3082,68 +3082,13 @@ pub struct DeviceResources {
     /// Outline / x-ray pipelines, offscreen mask/composite targets, and layouts.
     pub(crate) outline: OutlineResources,
 
-    // --- Instancing resources (lazily created) ---
-    /// Bind group layout for the instanced storage buffer + textures (group 1).
-    pub(crate) instance_bind_group_layout: Option<wgpu::BindGroupLayout>,
-    /// Storage buffer for per-instance data.
-    pub(crate) instance_storage_buf: Option<wgpu::Buffer>,
-    /// Current capacity (in number of instances) of the storage buffer.
-    pub(crate) instance_storage_capacity: usize,
-    /// Per-texture-key bind groups for the instanced path.
-    ///
-    /// Each entry combines the shared instance storage buffer (binding 0) with
-    /// one specific texture combination (bindings 1-4). Keyed by
-    /// (albedo_id, normal_map_id, ao_map_id) using u64::MAX for fallback slots.
-    /// Invalidated when the storage buffer is resized.
-    pub(crate) instance_bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
-    /// Instanced solid render pipeline (TriangleList, opaque).
-    pub(crate) solid_instanced_pipeline: Option<wgpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None`) variant of `solid_instanced_pipeline` for
-    /// `Identical` backface-policy meshes.
-    pub(crate) solid_two_sided_instanced_pipeline: Option<wgpu::RenderPipeline>,
-    /// Instanced transparent render pipeline (TriangleList, alpha blending).
-    pub(crate) transparent_instanced_pipeline: Option<wgpu::RenderPipeline>,
-    /// Instanced shadow render pipeline (depth-only).
-    pub(crate) shadow_instanced_pipeline: Option<wgpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
-    /// `shadow_instanced_pipeline` for `Identical` backface-policy batches.
-    pub(crate) shadow_instanced_two_sided_pipeline: Option<wgpu::RenderPipeline>,
-    /// Per-cascade uniform buffers for shadow_instanced_pipeline (64 bytes each, one mat4x4).
-    pub(crate) shadow_instanced_cascade_bufs: [Option<wgpu::Buffer>; 4],
-    /// Per-cascade bind groups for shadow_instanced_pipeline group 0.
-    pub(crate) shadow_instanced_cascade_bgs: [Option<wgpu::BindGroup>; 4],
-
-    // --- GPU culling inputs (scene-global, camera-independent) ---
-    // The cull OUTPUTS (visibility indices, indirect args, batch counters, and
-    // their bind groups) are per-viewport and live in `ViewportCullState` on
-    // each `ViewportSlot`, not here.
-    /// Per-instance world-space AABB buffer. Rebuilt on batch cache miss.
-    pub(crate) instance_aabb_buf: Option<wgpu::Buffer>,
-    pub(crate) instance_aabb_capacity: usize,
-    /// Per-batch metadata buffer. Rebuilt on batch cache miss.
-    pub(crate) batch_meta_buf: Option<wgpu::Buffer>,
-    pub(crate) batch_meta_capacity: usize,
-
-    // --- GPU culling pipelines ---
-    /// Bind group layout for instanced cull pipelines (group 1).
-    /// Extends `instance_bgl` with binding 5: visibility_indices storage buffer.
-    pub(crate) instance_cull_bind_group_layout: Option<wgpu::BindGroupLayout>,
-    /// HDR-pass solid instanced pipeline using `vs_main_cull` (indirect draw path).
-    pub(crate) hdr_solid_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None`) variant of `hdr_solid_instanced_cull_pipeline`
-    /// for `Identical` backface-policy meshes (indirect draw path).
-    pub(crate) hdr_solid_instanced_cull_two_sided_pipeline: Option<wgpu::RenderPipeline>,
-    /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
-    pub(crate) oit_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
-
-    // --- GPU culling : shadow cascade extension ---
-    /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
-    pub(crate) shadow_instanced_cull_pipeline: Option<wgpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
-    /// `shadow_instanced_cull_pipeline` for `Identical` backface-policy batches.
-    pub(crate) shadow_instanced_cull_two_sided_pipeline: Option<wgpu::RenderPipeline>,
-    /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
-    pub(crate) shadow_cull_instance_bgl: Option<wgpu::BindGroupLayout>,
+    // --- Instancing and GPU-culling clusters ---
+    /// Instanced-draw pipelines, shared instance storage buffer, and bind group cache.
+    pub(crate) instancing: crate::resources::mesh::instancing::InstancingResources,
+    /// GPU-cull inputs (per-instance AABBs, per-batch meta) and cull-variant pipelines.
+    /// The cull OUTPUTS (visibility indices, indirect args, batch counters) are
+    /// per-viewport and live in `ViewportCullState` on each `ViewportSlot`, not here.
+    pub(crate) cull: crate::resources::mesh::instancing::CullResources,
 
     // --- Surface LIC shared resources ---
     /// Surface LIC pipelines and layouts (surface + advect passes).
@@ -3155,17 +3100,6 @@ pub struct DeviceResources {
     pub(crate) hdr_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_transparent_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) hdr_wireframe_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) hdr_solid_instanced_pipeline: Option<wgpu::RenderPipeline>,
-    /// Two-sided (`cull_mode: None`) variant of `hdr_solid_instanced_pipeline`
-    /// for `Identical` backface-policy meshes (direct draw path).
-    pub(crate) hdr_solid_two_sided_instanced_pipeline: Option<wgpu::RenderPipeline>,
-    pub(crate) hdr_transparent_instanced_pipeline: Option<wgpu::RenderPipeline>,
-    /// Instanced HDR pipeline with additive blend, no depth write. Used by
-    /// `MeshInstanceItem` batches that opt into [`SpriteBlend::Additive`].
-    pub(crate) hdr_instanced_additive_pipeline: Option<wgpu::RenderPipeline>,
-    /// Instanced HDR pipeline with premultiplied-alpha blend, no depth write.
-    /// Used by `MeshInstanceItem` batches with [`SpriteBlend::Premultiplied`].
-    pub(crate) hdr_instanced_premultiplied_pipeline: Option<wgpu::RenderPipeline>,
     /// HDR overlay pipeline (TriangleList, Rgba16Float, alpha blending) for cap fill in HDR path.
     pub(crate) hdr_overlay_pipeline: Option<wgpu::RenderPipeline>,
 

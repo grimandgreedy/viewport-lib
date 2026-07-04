@@ -1134,8 +1134,8 @@ impl DeviceResources {
                 source: wgpu::ShaderSource::Wgsl(composed.into()),
             });
 
-            if let Some(instance_bgl) = self.instance_bind_group_layout.as_ref() {
-                if self.solid_instanced_pipeline.is_some() {
+            if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
+                if self.instancing.solid_pipeline.is_some() {
                     let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                         device,
                         "instanced_pipeline_layout",
@@ -1151,11 +1151,11 @@ impl DeviceResources {
                             self.target_format,
                             self.sample_count,
                         );
-                    self.solid_instanced_pipeline = Some(ldr.solid);
-                    self.solid_two_sided_instanced_pipeline = Some(ldr.solid_two_sided);
-                    self.transparent_instanced_pipeline = Some(ldr.transparent);
+                    self.instancing.solid_pipeline = Some(ldr.solid);
+                    self.instancing.solid_two_sided_pipeline = Some(ldr.solid_two_sided);
+                    self.instancing.transparent_pipeline = Some(ldr.transparent);
                 }
-                if self.hdr_solid_instanced_pipeline.is_some() {
+                if self.instancing.hdr_solid_pipeline.is_some() {
                     let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                         device,
                         "hdr_instanced_pipeline_layout",
@@ -1167,15 +1167,15 @@ impl DeviceResources {
                         crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
                             device, &layout, &shader,
                         );
-                    self.hdr_solid_instanced_pipeline = Some(hdr.solid);
-                    self.hdr_solid_two_sided_instanced_pipeline = Some(hdr.solid_two_sided);
-                    self.hdr_transparent_instanced_pipeline = Some(hdr.transparent);
-                    self.hdr_instanced_additive_pipeline = Some(hdr.additive);
-                    self.hdr_instanced_premultiplied_pipeline = Some(hdr.premultiplied);
+                    self.instancing.hdr_solid_pipeline = Some(hdr.solid);
+                    self.instancing.hdr_solid_two_sided_pipeline = Some(hdr.solid_two_sided);
+                    self.instancing.hdr_transparent_pipeline = Some(hdr.transparent);
+                    self.instancing.hdr_additive_pipeline = Some(hdr.additive);
+                    self.instancing.hdr_premultiplied_pipeline = Some(hdr.premultiplied);
                 }
             }
-            if let Some(cull_bgl) = self.instance_cull_bind_group_layout.as_ref() {
-                if self.hdr_solid_instanced_cull_pipeline.is_some() {
+            if let Some(cull_bgl) = self.cull.bind_group_layout.as_ref() {
+                if self.cull.hdr_solid_pipeline.is_some() {
                     let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                         device,
                         "hdr_instanced_cull_pipeline_layout",
@@ -1187,12 +1187,12 @@ impl DeviceResources {
                         crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline(
                             device, &layout, &shader,
                         );
-                    self.hdr_solid_instanced_cull_pipeline = Some(pl);
+                    self.cull.hdr_solid_pipeline = Some(pl);
                     let pl_two_sided =
                         crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_two_sided_pipeline(
                             device, &layout, &shader,
                         );
-                    self.hdr_solid_instanced_cull_two_sided_pipeline = Some(pl_two_sided);
+                    self.cull.hdr_solid_two_sided_pipeline = Some(pl_two_sided);
                 }
             }
         }
@@ -1204,7 +1204,7 @@ impl DeviceResources {
                 label: Some("mesh_instanced_oit_shader_composed"),
                 source: wgpu::ShaderSource::Wgsl(composed.into()),
             });
-            if let Some(instance_bgl) = self.instance_bind_group_layout.as_ref() {
+            if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
                 if self.oit.instanced_pipeline.is_some() {
                     let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                         device,
@@ -1223,8 +1223,8 @@ impl DeviceResources {
                     self.oit.instanced_pipeline = Some(pl);
                 }
             }
-            if let Some(cull_bgl) = self.instance_cull_bind_group_layout.as_ref() {
-                if self.oit_instanced_cull_pipeline.is_some() {
+            if let Some(cull_bgl) = self.cull.bind_group_layout.as_ref() {
+                if self.cull.oit_pipeline.is_some() {
                     let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                         device,
                         "oit_instanced_cull_pipeline_layout",
@@ -1239,7 +1239,7 @@ impl DeviceResources {
                         "oit_instanced_cull_pipeline",
                         "vs_main_cull",
                     );
-                    self.oit_instanced_cull_pipeline = Some(pl);
+                    self.cull.oit_pipeline = Some(pl);
                 }
             }
         }

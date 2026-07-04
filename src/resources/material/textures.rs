@@ -480,7 +480,8 @@ impl DeviceResources {
     fn evict_texture_bind_group_caches(&mut self, raw: u64) {
         self.material_bind_groups
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
-        self.instance_bind_groups
+        self.instancing
+            .bind_groups
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
 
         // Invalidate per-mesh object bind groups that sampled the texture so

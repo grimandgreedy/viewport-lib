@@ -472,13 +472,13 @@ impl ViewportRenderer {
 
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
                         let use_indirect = self.instancing.gpu_culling_enabled
-                            && resources.hdr_solid_instanced_cull_pipeline.is_some()
+                            && resources.cull.hdr_solid_pipeline.is_some()
                             && cull0.indirect_args_buf.is_some();
 
                         if use_indirect {
                             if let (Some(pipeline), Some(pipeline_two_sided), Some(indirect_buf)) = (
-                                &resources.hdr_solid_instanced_cull_pipeline,
-                                &resources.hdr_solid_instanced_cull_two_sided_pipeline,
+                                &resources.cull.hdr_solid_pipeline,
+                                &resources.cull.hdr_solid_two_sided_pipeline,
                                 &cull0.indirect_args_buf,
                             ) {
                                 render_pass.set_bind_group(
@@ -527,8 +527,8 @@ impl ViewportRenderer {
                                 }
                             }
                         } else if let (Some(pipeline), Some(pipeline_two_sided)) = (
-                            &resources.hdr_solid_instanced_pipeline,
-                            &resources.hdr_solid_two_sided_instanced_pipeline,
+                            &resources.instancing.hdr_solid_pipeline,
+                            &resources.instancing.hdr_solid_two_sided_pipeline,
                         ) {
                             render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             let mut cur_two_sided: Option<bool> = None;
@@ -542,7 +542,7 @@ impl ViewportRenderer {
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) =
-                                    resources.instance_bind_groups.get(&mat_key)
+                                    resources.instancing.bind_groups.get(&mat_key)
                                 else {
                                     continue;
                                 };
@@ -1893,14 +1893,13 @@ impl ViewportRenderer {
                     // This viewport's own cull outputs.
                     let cull0 = &self.viewport_slots[vp_idx].cull;
                     let use_indirect_oit = self.instancing.gpu_culling_enabled
-                        && self.resources.oit_instanced_cull_pipeline.is_some()
+                        && self.resources.cull.oit_pipeline.is_some()
                         && cull0.indirect_args_buf.is_some();
 
                     if use_indirect_oit {
-                        if let (Some(pipeline), Some(indirect_buf)) = (
-                            &self.resources.oit_instanced_cull_pipeline,
-                            &cull0.indirect_args_buf,
-                        ) {
+                        if let (Some(pipeline), Some(indirect_buf)) =
+                            (&self.resources.cull.oit_pipeline, &cull0.indirect_args_buf)
+                        {
                             oit_pass.set_pipeline(pipeline);
                             oit_pass.set_bind_group(
                                 2,
@@ -1955,7 +1954,7 @@ impl ViewportRenderer {
                                 batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                             );
                             let Some(inst_tex_bg) =
-                                self.resources.instance_bind_groups.get(&mat_key)
+                                self.resources.instancing.bind_groups.get(&mat_key)
                             else {
                                 continue;
                             };

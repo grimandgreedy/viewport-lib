@@ -1,10 +1,89 @@
 use crate::resources::*;
 
+/// Instanced-draw pipelines, the shared per-instance storage buffer, and the
+/// per-material bind group cache. Created lazily by `ensure_instanced_pipelines`
+/// and `ensure_hdr_instanced_pipelines`.
+#[derive(Default)]
+pub(crate) struct InstancingResources {
+    /// Bind group layout for the instanced storage buffer + textures (group 1).
+    pub(crate) bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// Storage buffer for per-instance data.
+    pub(crate) storage_buf: Option<wgpu::Buffer>,
+    /// Current capacity (in number of instances) of the storage buffer.
+    pub(crate) storage_capacity: usize,
+    /// Per-texture-key bind groups for the instanced path.
+    ///
+    /// Each entry combines the shared instance storage buffer (binding 0) with
+    /// one specific texture combination (bindings 1-4). Keyed by
+    /// (albedo_id, normal_map_id, ao_map_id) using u64::MAX for fallback slots.
+    /// Invalidated when the storage buffer is resized.
+    pub(crate) bind_groups: std::collections::HashMap<(u64, u64, u64), wgpu::BindGroup>,
+    /// Instanced solid render pipeline (TriangleList, opaque).
+    pub(crate) solid_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `solid_pipeline` for
+    /// `Identical` backface-policy meshes.
+    pub(crate) solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
+    /// Instanced transparent render pipeline (TriangleList, alpha blending).
+    pub(crate) transparent_pipeline: Option<wgpu::RenderPipeline>,
+    /// Instanced shadow render pipeline (depth-only).
+    pub(crate) shadow_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
+    /// `shadow_pipeline` for `Identical` backface-policy batches.
+    pub(crate) shadow_two_sided_pipeline: Option<wgpu::RenderPipeline>,
+    /// Per-cascade uniform buffers for the shadow pipeline (64 bytes each, one mat4x4).
+    pub(crate) shadow_cascade_bufs: [Option<wgpu::Buffer>; 4],
+    /// Per-cascade bind groups for the shadow pipeline group 0.
+    pub(crate) shadow_cascade_bgs: [Option<wgpu::BindGroup>; 4],
+    /// HDR-pass instanced solid pipeline (direct draw path).
+    pub(crate) hdr_solid_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `hdr_solid_pipeline`
+    /// for `Identical` backface-policy meshes (direct draw path).
+    pub(crate) hdr_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) hdr_transparent_pipeline: Option<wgpu::RenderPipeline>,
+    /// Instanced HDR pipeline with additive blend, no depth write. Used by
+    /// `MeshInstanceItem` batches that opt into [`SpriteBlend::Additive`].
+    pub(crate) hdr_additive_pipeline: Option<wgpu::RenderPipeline>,
+    /// Instanced HDR pipeline with premultiplied-alpha blend, no depth write.
+    /// Used by `MeshInstanceItem` batches with [`SpriteBlend::Premultiplied`].
+    pub(crate) hdr_premultiplied_pipeline: Option<wgpu::RenderPipeline>,
+}
+
+/// GPU-culling inputs and pipelines. The per-instance AABBs and per-batch meta
+/// are scene-global (camera-independent); the cull OUTPUTS (visibility indices,
+/// indirect args, counters) are per-viewport and live in `ViewportCullState`.
+/// Pipelines are created lazily by `ensure_cull_instance_pipelines`.
+#[derive(Default)]
+pub(crate) struct CullResources {
+    /// Per-instance world-space AABB buffer. Rebuilt on batch cache miss.
+    pub(crate) aabb_buf: Option<wgpu::Buffer>,
+    pub(crate) aabb_capacity: usize,
+    /// Per-batch metadata buffer. Rebuilt on batch cache miss.
+    pub(crate) batch_meta_buf: Option<wgpu::Buffer>,
+    pub(crate) batch_meta_capacity: usize,
+    /// Bind group layout for instanced cull pipelines (group 1).
+    /// Extends the instance BGL with binding 5: visibility_indices storage buffer.
+    pub(crate) bind_group_layout: Option<wgpu::BindGroupLayout>,
+    /// HDR-pass solid instanced pipeline using `vs_main_cull` (indirect draw path).
+    pub(crate) hdr_solid_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `hdr_solid_pipeline`
+    /// for `Identical` backface-policy meshes (indirect draw path).
+    pub(crate) hdr_solid_two_sided_pipeline: Option<wgpu::RenderPipeline>,
+    /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
+    pub(crate) oit_pipeline: Option<wgpu::RenderPipeline>,
+    /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
+    pub(crate) shadow_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
+    /// `shadow_pipeline` for `Identical` backface-policy batches.
+    pub(crate) shadow_two_sided_pipeline: Option<wgpu::RenderPipeline>,
+    /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
+    pub(crate) shadow_bgl: Option<wgpu::BindGroupLayout>,
+}
+
 impl DeviceResources {
     /// Ensure the instanced pipelines and bind group layout are created.
     /// Called lazily when the instanced draw path is first needed.
     pub(crate) fn ensure_instanced_pipelines(&mut self, device: &wgpu::Device) {
-        if self.instance_bind_group_layout.is_some() {
+        if self.instancing.bind_group_layout.is_some() {
             return; // Already initialized.
         }
 
@@ -199,15 +278,15 @@ impl DeviceResources {
                 }],
             })
         });
-        self.shadow_instanced_cascade_bufs = cascade_bufs.map(Some);
-        self.shadow_instanced_cascade_bgs = cascade_bgs.map(Some);
+        self.instancing.shadow_cascade_bufs = cascade_bufs.map(Some);
+        self.instancing.shadow_cascade_bgs = cascade_bgs.map(Some);
 
-        self.instance_bind_group_layout = Some(instance_bgl);
-        self.solid_instanced_pipeline = Some(solid_instanced);
-        self.solid_two_sided_instanced_pipeline = Some(solid_two_sided_instanced);
-        self.transparent_instanced_pipeline = Some(transparent_instanced);
-        self.shadow_instanced_pipeline = Some(shadow_instanced);
-        self.shadow_instanced_two_sided_pipeline = Some(shadow_instanced_two_sided);
+        self.instancing.bind_group_layout = Some(instance_bgl);
+        self.instancing.solid_pipeline = Some(solid_instanced);
+        self.instancing.solid_two_sided_pipeline = Some(solid_two_sided_instanced);
+        self.instancing.transparent_pipeline = Some(transparent_instanced);
+        self.instancing.shadow_pipeline = Some(shadow_instanced);
+        self.instancing.shadow_two_sided_pipeline = Some(shadow_instanced_two_sided);
     }
 
     /// Ensure the HDR instanced pipelines exist. Called after
@@ -215,10 +294,10 @@ impl DeviceResources {
     /// available. Idempotent: returns immediately if the pipelines already
     /// exist or if the BGL hasn't been created yet.
     pub(crate) fn ensure_hdr_instanced_pipelines(&mut self, device: &wgpu::Device) {
-        if self.hdr_solid_instanced_pipeline.is_some() {
+        if self.instancing.hdr_solid_pipeline.is_some() {
             return;
         }
-        let Some(ref instance_bgl) = self.instance_bind_group_layout else {
+        let Some(ref instance_bgl) = self.instancing.bind_group_layout else {
             return;
         };
 
@@ -247,11 +326,11 @@ impl DeviceResources {
             &inst_layout,
             &inst_shader,
         );
-        self.hdr_solid_instanced_pipeline = Some(hdr_inst.solid);
-        self.hdr_solid_two_sided_instanced_pipeline = Some(hdr_inst.solid_two_sided);
-        self.hdr_transparent_instanced_pipeline = Some(hdr_inst.transparent);
-        self.hdr_instanced_additive_pipeline = Some(hdr_inst.additive);
-        self.hdr_instanced_premultiplied_pipeline = Some(hdr_inst.premultiplied);
+        self.instancing.hdr_solid_pipeline = Some(hdr_inst.solid);
+        self.instancing.hdr_solid_two_sided_pipeline = Some(hdr_inst.solid_two_sided);
+        self.instancing.hdr_transparent_pipeline = Some(hdr_inst.transparent);
+        self.instancing.hdr_additive_pipeline = Some(hdr_inst.additive);
+        self.instancing.hdr_premultiplied_pipeline = Some(hdr_inst.premultiplied);
     }
 
     /// Ensure the OIT instanced pipeline exists. Called after
@@ -262,7 +341,7 @@ impl DeviceResources {
         if self.oit.instanced_pipeline.is_some() {
             return;
         }
-        let Some(ref instance_bgl) = self.instance_bind_group_layout else {
+        let Some(ref instance_bgl) = self.instancing.bind_group_layout else {
             return;
         };
 
@@ -311,7 +390,8 @@ impl DeviceResources {
         }
 
         let _bgl = self
-            .instance_bind_group_layout
+            .instancing
+            .bind_group_layout
             .as_ref()
             .expect("ensure_instanced_pipelines must be called first");
 
@@ -322,24 +402,24 @@ impl DeviceResources {
         let data = &data[..data.len().min(max_instances)];
 
         let needed = data.len();
-        if needed > self.instance_storage_capacity {
+        if needed > self.instancing.storage_capacity {
             // Grow with 2x strategy, capped at the device limit.
             let new_cap = (needed * 2).max(64).min(max_instances);
             let buf_size = (new_cap * std::mem::size_of::<InstanceData>()) as u64;
-            self.instance_storage_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            self.instancing.storage_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instance_storage_buf"),
                 size: buf_size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            self.instance_storage_capacity = new_cap;
+            self.instancing.storage_capacity = new_cap;
 
             // Invalidate all per-texture-key bind groups; they reference the old buffer.
-            self.instance_bind_groups.clear();
+            self.instancing.bind_groups.clear();
         }
 
         queue.write_buffer(
-            self.instance_storage_buf.as_ref().unwrap(),
+            self.instancing.storage_buf.as_ref().unwrap(),
             0,
             bytemuck::cast_slice(data),
         );
@@ -364,20 +444,20 @@ impl DeviceResources {
             / std::mem::size_of::<crate::resources::types::InstanceAabb>();
         let aabbs = &aabbs[..aabbs.len().min(max_instances)];
 
-        if aabbs.len() > self.instance_aabb_capacity {
+        if aabbs.len() > self.cull.aabb_capacity {
             let new_cap = (aabbs.len() * 2).max(64).min(max_instances);
-            self.instance_aabb_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            self.cull.aabb_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instance_aabb_buf"),
                 size: (new_cap * std::mem::size_of::<crate::resources::types::InstanceAabb>())
                     as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            self.instance_aabb_capacity = new_cap;
+            self.cull.aabb_capacity = new_cap;
         }
         if !aabbs.is_empty() {
             queue.write_buffer(
-                self.instance_aabb_buf.as_ref().unwrap(),
+                self.cull.aabb_buf.as_ref().unwrap(),
                 0,
                 bytemuck::cast_slice(aabbs),
             );
@@ -389,22 +469,22 @@ impl DeviceResources {
         let metas = &metas[..metas.len().min(max_batches)];
         let batch_count = metas.len();
 
-        if batch_count > self.batch_meta_capacity {
+        if batch_count > self.cull.batch_meta_capacity {
             let new_cap = (batch_count * 2).max(16).min(max_batches);
             let meta_size =
                 (new_cap * std::mem::size_of::<crate::resources::types::BatchMeta>()) as u64;
-            self.batch_meta_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            self.cull.batch_meta_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("batch_meta_buf"),
                 size: meta_size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            self.batch_meta_capacity = new_cap;
+            self.cull.batch_meta_capacity = new_cap;
         }
 
         if !metas.is_empty() {
             queue.write_buffer(
-                self.batch_meta_buf.as_ref().unwrap(),
+                self.cull.batch_meta_buf.as_ref().unwrap(),
                 0,
                 bytemuck::cast_slice(metas),
             );
@@ -415,11 +495,11 @@ impl DeviceResources {
     ///
     /// Must be called after `ensure_instanced_pipelines`.  Idempotent.
     pub(crate) fn ensure_cull_instance_pipelines(&mut self, device: &wgpu::Device) {
-        if self.instance_cull_bind_group_layout.is_some() {
+        if self.cull.bind_group_layout.is_some() {
             return;
         }
 
-        let Some(ref _instance_bgl) = self.instance_bind_group_layout else {
+        let Some(ref _instance_bgl) = self.instancing.bind_group_layout else {
             return; // ensure_instanced_pipelines must be called first.
         };
 
@@ -550,10 +630,10 @@ impl DeviceResources {
             "vs_main_cull",
         );
 
-        self.instance_cull_bind_group_layout = Some(cull_bgl);
-        self.hdr_solid_instanced_cull_pipeline = Some(hdr_solid_cull);
-        self.hdr_solid_instanced_cull_two_sided_pipeline = Some(hdr_solid_cull_two_sided);
-        self.oit_instanced_cull_pipeline = Some(oit_cull);
+        self.cull.bind_group_layout = Some(cull_bgl);
+        self.cull.hdr_solid_pipeline = Some(hdr_solid_cull);
+        self.cull.hdr_solid_two_sided_pipeline = Some(hdr_solid_cull_two_sided);
+        self.cull.oit_pipeline = Some(oit_cull);
 
         // Shadow instanced cull pipeline.
         // Uses a minimal BGL for group 1: binding 0 (instances) + binding 5 (visibility_indices).
@@ -650,9 +730,9 @@ impl DeviceResources {
             None,
             crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
         );
-        self.shadow_instanced_cull_pipeline = Some(shadow_instanced_cull);
-        self.shadow_instanced_cull_two_sided_pipeline = Some(shadow_instanced_cull_two_sided);
-        self.shadow_cull_instance_bgl = Some(shadow_cull_bgl);
+        self.cull.shadow_pipeline = Some(shadow_instanced_cull);
+        self.cull.shadow_two_sided_pipeline = Some(shadow_instanced_cull_two_sided);
+        self.cull.shadow_bgl = Some(shadow_cull_bgl);
     }
 
     /// Get or create the shadow cull instance bind group for a given cascade index.
@@ -666,8 +746,8 @@ impl DeviceResources {
         cascade_idx: usize,
     ) -> Option<&'a wgpu::BindGroup> {
         if shadow_cull.shadow_cull_instance_bgs[cascade_idx].is_none() {
-            let bgl = self.shadow_cull_instance_bgl.as_ref()?;
-            let inst_buf = self.instance_storage_buf.as_ref()?;
+            let bgl = self.cull.shadow_bgl.as_ref()?;
+            let inst_buf = self.instancing.storage_buf.as_ref()?;
             let vis_buf = shadow_cull.shadow_vis_bufs[cascade_idx].as_ref()?;
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("shadow_cull_instance_bg_{cascade_idx}")),
@@ -707,8 +787,8 @@ impl DeviceResources {
         );
 
         if !cull_state.instance_cull_bind_groups.contains_key(&key) {
-            let bgl = self.instance_cull_bind_group_layout.as_ref()?;
-            let inst_buf = self.instance_storage_buf.as_ref()?;
+            let bgl = self.cull.bind_group_layout.as_ref()?;
+            let inst_buf = self.instancing.storage_buf.as_ref()?;
             let vis_buf = cull_state.visibility_index_buf.as_ref()?;
 
             let albedo_view = match albedo_id {
@@ -779,9 +859,9 @@ impl DeviceResources {
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
         );
 
-        if !self.instance_bind_groups.contains_key(&key) {
-            let bgl = self.instance_bind_group_layout.as_ref()?;
-            let buf = self.instance_storage_buf.as_ref()?;
+        if !self.instancing.bind_groups.contains_key(&key) {
+            let bgl = self.instancing.bind_group_layout.as_ref()?;
+            let buf = self.instancing.storage_buf.as_ref()?;
 
             let albedo_view = match albedo_id {
                 Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
@@ -822,10 +902,10 @@ impl DeviceResources {
                     },
                 ],
             });
-            self.instance_bind_groups.insert(key, bg);
+            self.instancing.bind_groups.insert(key, bg);
         }
 
-        self.instance_bind_groups.get(&key)
+        self.instancing.bind_groups.get(&key)
     }
 
     /// Upload one [`MeshInstanceItem`] batch and return draw data.
@@ -949,7 +1029,7 @@ impl DeviceResources {
         });
         queue.write_buffer(&instance_buf, 0, instance_bytes);
 
-        let bgl = self.instance_bind_group_layout.as_ref()?;
+        let bgl = self.instancing.bind_group_layout.as_ref()?;
         let albedo_view = match item.texture_id {
             Some(id) if self.textures.get(id).is_some() => &self.textures.get(id).unwrap().view,
             _ => &self.fallback_texture.view,

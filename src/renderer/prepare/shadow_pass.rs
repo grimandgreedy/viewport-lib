@@ -110,8 +110,8 @@ impl ViewportRenderer {
                 }
 
                 if let (Some(aabb_buf), Some(meta_buf), Some(counter_buf)) = (
-                    resources.instance_aabb_buf.as_ref(),
-                    resources.batch_meta_buf.as_ref(),
+                    resources.cull.aabb_buf.as_ref(),
+                    resources.cull.batch_meta_buf.as_ref(),
                     instancing.shadow_cull.batch_counter_buf.as_ref(),
                 ) {
                     let cull = instancing.cull_resources.as_ref().unwrap();
@@ -188,7 +188,7 @@ impl ViewportRenderer {
 
                 if instancing.use_instancing {
                     let use_shadow_indirect = instancing.gpu_culling_enabled
-                        && resources.shadow_instanced_cull_pipeline.is_some()
+                        && resources.cull.shadow_pipeline.is_some()
                         && instancing.shadow_cull.shadow_vis_bufs[0].is_some();
 
                     if use_shadow_indirect {
@@ -213,7 +213,7 @@ impl ViewportRenderer {
 
                             // Write cascade view-projection matrix.
                             queue.write_buffer(
-                                resources.shadow_instanced_cascade_bufs[cascade]
+                                resources.instancing.shadow_cascade_bufs[cascade]
                                     .as_ref()
                                     .expect("shadow_instanced_cascade_bufs not allocated"),
                                 0,
@@ -222,17 +222,16 @@ impl ViewportRenderer {
                                 ),
                             );
 
-                            let Some(pipeline) = resources.shadow_instanced_cull_pipeline.as_ref()
-                            else {
+                            let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
                                 continue;
                             };
                             let Some(pipeline_two_sided) =
-                                resources.shadow_instanced_cull_two_sided_pipeline.as_ref()
+                                resources.cull.shadow_two_sided_pipeline.as_ref()
                             else {
                                 continue;
                             };
                             let Some(cascade_bg) =
-                                resources.shadow_instanced_cascade_bgs[cascade].as_ref()
+                                resources.instancing.shadow_cascade_bgs[cascade].as_ref()
                             else {
                                 continue;
                             };
@@ -281,10 +280,10 @@ impl ViewportRenderer {
                             }
                         }
                     } else if let (Some(pipeline), Some(pipeline_two_sided), Some(instance_bg)) = (
-                        &resources.shadow_instanced_pipeline,
-                        &resources.shadow_instanced_two_sided_pipeline,
+                        &resources.instancing.shadow_pipeline,
+                        &resources.instancing.shadow_two_sided_pipeline,
                         instancing.batches.first().and_then(|b| {
-                            resources.instance_bind_groups.get(&(
+                            resources.instancing.bind_groups.get(&(
                                 b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
@@ -311,7 +310,7 @@ impl ViewportRenderer {
                             );
 
                             queue.write_buffer(
-                                resources.shadow_instanced_cascade_bufs[cascade]
+                                resources.instancing.shadow_cascade_bufs[cascade]
                                     .as_ref()
                                     .expect("shadow_instanced_cascade_bufs not allocated"),
                                 0,
@@ -320,7 +319,7 @@ impl ViewportRenderer {
                                 ),
                             );
 
-                            let cascade_bg = resources.shadow_instanced_cascade_bgs[cascade]
+                            let cascade_bg = resources.instancing.shadow_cascade_bgs[cascade]
                                 .as_ref()
                                 .expect("shadow_instanced_cascade_bgs not allocated");
                             shadow_pass.set_bind_group(0, cascade_bg, &[]);

@@ -231,8 +231,8 @@ macro_rules! emit_draw_calls {
                     // Draw opaque instanced batches.
                     if !opaque_batches.is_empty() && !frame.viewport.wireframe_mode {
                         if let (Some(pipeline), Some(pipeline_two_sided)) = (
-                            &resources.solid_instanced_pipeline,
-                            &resources.solid_two_sided_instanced_pipeline,
+                            &resources.instancing.solid_pipeline,
+                            &resources.instancing.solid_two_sided_pipeline,
                         ) {
                             render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             // Batches are sorted with two_sided in the key, so one- and
@@ -246,7 +246,7 @@ macro_rules! emit_draw_calls {
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
-                                let Some(inst_tex_bg) = resources.instance_bind_groups.get(&mat_key) else { continue };
+                                let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
                                 if cur_two_sided != Some(batch.two_sided) {
                                     render_pass.set_pipeline(if batch.two_sided { pipeline_two_sided } else { pipeline });
                                     cur_two_sided = Some(batch.two_sided);
@@ -265,7 +265,7 @@ macro_rules! emit_draw_calls {
 
                     // Draw transparent instanced batches.
                     if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
-                        if let Some(ref pipeline) = resources.transparent_instanced_pipeline {
+                        if let Some(ref pipeline) = resources.instancing.transparent_pipeline {
                             render_pass.set_pipeline(pipeline);
                             render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             for batch in &transparent_batches {
@@ -275,7 +275,7 @@ macro_rules! emit_draw_calls {
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
-                                let Some(inst_tex_bg) = resources.instance_bind_groups.get(&mat_key) else { continue };
+                                let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -974,15 +974,15 @@ macro_rules! emit_scivis_draw_calls {
             let mesh_buckets: [(crate::renderer::SpriteBlend, Option<&wgpu::RenderPipeline>); 3] = [
                 (
                     crate::renderer::SpriteBlend::AlphaBlend,
-                    resources.hdr_transparent_instanced_pipeline.as_ref(),
+                    resources.instancing.hdr_transparent_pipeline.as_ref(),
                 ),
                 (
                     crate::renderer::SpriteBlend::Additive,
-                    resources.hdr_instanced_additive_pipeline.as_ref(),
+                    resources.instancing.hdr_additive_pipeline.as_ref(),
                 ),
                 (
                     crate::renderer::SpriteBlend::Premultiplied,
-                    resources.hdr_instanced_premultiplied_pipeline.as_ref(),
+                    resources.instancing.hdr_premultiplied_pipeline.as_ref(),
                 ),
             ];
             for (blend, pipeline) in mesh_buckets {

@@ -238,14 +238,14 @@ impl ViewportRenderer {
                         bytemuck::cast_slice::<InstanceData, u8>(&all_instances[start..end]);
                     let new_hash = hash_instance_bytes(new_bytes);
                     if new_hash != instancing.cached_instance_hashes[bi] {
-                        if let Some(buf) = resources.instance_storage_buf.as_ref() {
+                        if let Some(buf) = resources.instancing.storage_buf.as_ref() {
                             queue.write_buffer(
                                 buf,
                                 batch.instance_offset as u64 * inst_stride,
                                 new_bytes,
                             );
                         }
-                        if let Some(aabb_buf) = resources.instance_aabb_buf.as_ref() {
+                        if let Some(aabb_buf) = resources.cull.aabb_buf.as_ref() {
                             let aabb_bytes =
                                 bytemuck::cast_slice::<InstanceAabb, u8>(&all_aabbs[start..end]);
                             queue.write_buffer(
@@ -371,8 +371,8 @@ impl ViewportRenderer {
             Some(vis_buf),
             Some(indirect_buf),
         ) = (
-            resources.instance_aabb_buf.as_ref(),
-            resources.batch_meta_buf.as_ref(),
+            resources.cull.aabb_buf.as_ref(),
+            resources.cull.batch_meta_buf.as_ref(),
             cull_state.batch_counter_buf.as_ref(),
             cull_state.visibility_index_buf.as_ref(),
             cull_state.indirect_args_buf.as_ref(),
