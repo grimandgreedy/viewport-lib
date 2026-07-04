@@ -20,7 +20,7 @@ use crate::scene::material::ItemSettings;
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct MeshInstanceItem {
-    /// Mesh handle returned by `ViewportGpuResources::upload_mesh_data`.
+    /// Mesh handle returned by `DeviceResources::upload_mesh_data`.
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Optional albedo texture handle. `None` renders flat-shaded with the
     /// per-instance `colours` alone.

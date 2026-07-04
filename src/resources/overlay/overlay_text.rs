@@ -2,13 +2,25 @@
 
 use crate::resources::types::OverlayTextVertex;
 
-impl crate::resources::ViewportGpuResources {
+/// Screen-space overlay text pipeline (glyph atlas quads), its layout, and sampler.
+/// Lazily built on the first frame with non-empty labels.
+#[derive(Default)]
+pub(crate) struct OverlayTextResources {
+    /// Render pipeline for screen-space text and solid overlay quads.
+    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout (group 0: atlas texture + sampler).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Linear sampler for the glyph atlas texture.
+    pub(crate) sampler: Option<wgpu::Sampler>,
+}
+
+impl crate::resources::DeviceResources {
     /// Lazily create the overlay text render pipeline.
     ///
     /// No-op if already created.  Called from `prepare_viewport_internal()` when
     /// `frame.overlays.labels` is non-empty.
     pub(crate) fn ensure_overlay_text_pipeline(&mut self, device: &wgpu::Device) {
-        if self.overlay_text_pipeline.is_some() {
+        if self.overlay_text.pipeline.is_some() {
             return;
         }
 
@@ -102,8 +114,8 @@ impl crate::resources::ViewportGpuResources {
             cache: None,
         });
 
-        self.overlay_text_bgl = Some(bgl);
-        self.overlay_text_sampler = Some(sampler);
-        self.overlay_text_pipeline = Some(pipeline);
+        self.overlay_text.bgl = Some(bgl);
+        self.overlay_text.sampler = Some(sampler);
+        self.overlay_text.pipeline = Some(pipeline);
     }
 }

@@ -2,6 +2,49 @@ use super::*;
 use crate::renderer::ShDegree;
 use crate::resources::types::{GaussianSplatGpuSet, GaussianSplatViewportSort};
 
+/// Gaussian splat render pipeline, the radix-sort compute passes, their bind
+/// group layouts, and the slotted store of uploaded splat sets. All lazily
+/// built; `store` holds the uploaded sets keyed by id.
+pub(crate) struct GaussianSplatResources {
+    /// Gaussian splat render pipeline. None until first splat set is submitted.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Bind group layout for group 1 of the render pipeline.
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Compute pipeline for per-splat view-space depth.
+    pub(crate) depth_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline that clears the sort histogram.
+    pub(crate) sort_clear_pipeline: Option<wgpu::ComputePipeline>,
+    /// Radix-sort histogram pass.
+    pub(crate) sort_histogram_pipeline: Option<wgpu::ComputePipeline>,
+    /// Radix-sort prefix-sum pass.
+    pub(crate) sort_prefix_pipeline: Option<wgpu::ComputePipeline>,
+    /// Radix-sort scatter pass.
+    pub(crate) sort_scatter_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline that initialises sort index values.
+    pub(crate) sort_init_pipeline: Option<wgpu::ComputePipeline>,
+    /// Bind group layout for the depth compute pass.
+    pub(crate) depth_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for the sort compute passes.
+    pub(crate) sort_bgl: Option<wgpu::BindGroupLayout>,
+}
+
+impl Default for GaussianSplatResources {
+    fn default() -> Self {
+        Self {
+            pipeline: None,
+            bgl: None,
+            depth_pipeline: None,
+            sort_clear_pipeline: None,
+            sort_histogram_pipeline: None,
+            sort_prefix_pipeline: None,
+            sort_scatter_pipeline: None,
+            sort_init_pipeline: None,
+            depth_bgl: None,
+            sort_bgl: None,
+        }
+    }
+}
+
 /// Check that a splat set is non-empty and its per-attribute vectors agree in
 /// length. Shared by the sync, async, and replace upload paths.
 fn validate_gaussian_splat_data(
@@ -142,12 +185,12 @@ struct SortUniform {
     _pad: u32,
 }
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Lazily create all Gaussian splat render and compute pipelines.
     ///
     /// No-op after first call. Called from prepare when gaussian_splats is non-empty.
     pub(crate) fn ensure_gaussian_splat_pipelines(&mut self, device: &wgpu::Device) {
-        if self.gaussian_splat_bgl.is_some() {
+        if self.gaussian_splat.bgl.is_some() {
             return;
         }
 
@@ -480,16 +523,16 @@ impl ViewportGpuResources {
                 cache: None,
             });
 
-        self.gaussian_splat_bgl = Some(splat_bgl);
-        self.gaussian_splat_pipeline = Some(gaussian_splat_pipeline);
-        self.gaussian_splat_depth_bgl = Some(depth_bgl);
-        self.gaussian_splat_depth_pipeline = Some(gaussian_splat_depth_pipeline);
-        self.gaussian_splat_sort_bgl = Some(sort_bgl);
-        self.gaussian_splat_sort_init_pipeline = Some(gaussian_splat_sort_init_pipeline);
-        self.gaussian_splat_sort_clear_pipeline = Some(gaussian_splat_sort_clear_pipeline);
-        self.gaussian_splat_sort_histogram_pipeline = Some(gaussian_splat_sort_histogram_pipeline);
-        self.gaussian_splat_sort_prefix_pipeline = Some(gaussian_splat_sort_prefix_pipeline);
-        self.gaussian_splat_sort_scatter_pipeline = Some(gaussian_splat_sort_scatter_pipeline);
+        self.gaussian_splat.bgl = Some(splat_bgl);
+        self.gaussian_splat.pipeline = Some(gaussian_splat_pipeline);
+        self.gaussian_splat.depth_bgl = Some(depth_bgl);
+        self.gaussian_splat.depth_pipeline = Some(gaussian_splat_depth_pipeline);
+        self.gaussian_splat.sort_bgl = Some(sort_bgl);
+        self.gaussian_splat.sort_init_pipeline = Some(gaussian_splat_sort_init_pipeline);
+        self.gaussian_splat.sort_clear_pipeline = Some(gaussian_splat_sort_clear_pipeline);
+        self.gaussian_splat.sort_histogram_pipeline = Some(gaussian_splat_sort_histogram_pipeline);
+        self.gaussian_splat.sort_prefix_pipeline = Some(gaussian_splat_sort_prefix_pipeline);
+        self.gaussian_splat.sort_scatter_pipeline = Some(gaussian_splat_sort_scatter_pipeline);
     }
 
     /// Upload one Gaussian splat set to the GPU and return its handle.
@@ -599,7 +642,7 @@ impl ViewportGpuResources {
                 progress.set(0.95);
 
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let id = resources.gaussian_splat_store.insert(gpu_set);
                         slot_for_apply.set(id);
                     }),
@@ -727,7 +770,7 @@ impl ViewportGpuResources {
                 // Build the render bind group (group 1). vals_ping holds sorted indices
                 // after 4 sort passes (even number of passes means result ends in ping).
                 let render_bg = {
-                    let bgl = self.gaussian_splat_bgl.as_ref().unwrap();
+                    let bgl = self.gaussian_splat.bgl.as_ref().unwrap();
                     let set_ref = self.gaussian_splat_store.get_by_index(store_index).unwrap();
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("splat_render_bg"),
@@ -845,7 +888,7 @@ impl ViewportGpuResources {
 
         // Build depth BG.
         let depth_bg = {
-            let bgl = self.gaussian_splat_depth_bgl.as_ref().unwrap();
+            let bgl = self.gaussian_splat.depth_bgl.as_ref().unwrap();
             let set_ref = self.gaussian_splat_store.get_by_index(store_index).unwrap();
             let vp_sort_ref = set_ref.viewport_sort[viewport_index].as_ref().unwrap();
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -876,7 +919,7 @@ impl ViewportGpuResources {
 
         // --- Depth compute pass ---
         {
-            let depth_pipeline = self.gaussian_splat_depth_pipeline.as_ref().unwrap();
+            let depth_pipeline = self.gaussian_splat.depth_pipeline.as_ref().unwrap();
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("splat_depth_pass"),
                 timestamp_writes: None,
@@ -902,7 +945,7 @@ impl ViewportGpuResources {
         // --- 4-pass radix sort ---
         // Build per-pass sort uniforms (shift = 0, 8, 16, 24; pass_num = 0..3).
         // We need sort_bgl and references to sort buffers for each pass.
-        let sort_bgl = self.gaussian_splat_sort_bgl.as_ref().unwrap();
+        let sort_bgl = self.gaussian_splat.sort_bgl.as_ref().unwrap();
 
         for pass in 0u32..4u32 {
             let sort_uni = SortUniform {
@@ -955,7 +998,7 @@ impl ViewportGpuResources {
 
             // If pass 0: run init_indices first.
             if pass == 0 {
-                let init_pipeline = self.gaussian_splat_sort_init_pipeline.as_ref().unwrap();
+                let init_pipeline = self.gaussian_splat.sort_init_pipeline.as_ref().unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("splat_init_pass"),
                     timestamp_writes: None,
@@ -967,7 +1010,7 @@ impl ViewportGpuResources {
 
             // Clear histogram.
             {
-                let clear_pipeline = self.gaussian_splat_sort_clear_pipeline.as_ref().unwrap();
+                let clear_pipeline = self.gaussian_splat.sort_clear_pipeline.as_ref().unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("splat_clear_hist"),
                     timestamp_writes: None,
@@ -980,7 +1023,8 @@ impl ViewportGpuResources {
             // Histogram pass.
             {
                 let hist_pipeline = self
-                    .gaussian_splat_sort_histogram_pipeline
+                    .gaussian_splat
+                    .sort_histogram_pipeline
                     .as_ref()
                     .unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -994,7 +1038,7 @@ impl ViewportGpuResources {
 
             // Prefix sum.
             {
-                let prefix_pipeline = self.gaussian_splat_sort_prefix_pipeline.as_ref().unwrap();
+                let prefix_pipeline = self.gaussian_splat.sort_prefix_pipeline.as_ref().unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("splat_prefix_pass"),
                     timestamp_writes: None,
@@ -1006,7 +1050,7 @@ impl ViewportGpuResources {
 
             // Scatter.
             {
-                let scatter_pipeline = self.gaussian_splat_sort_scatter_pipeline.as_ref().unwrap();
+                let scatter_pipeline = self.gaussian_splat.sort_scatter_pipeline.as_ref().unwrap();
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("splat_scatter_pass"),
                     timestamp_writes: None,
@@ -1030,7 +1074,7 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod async_tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::renderer::GaussianSplatData;
     use crate::resources::UploadStatus;
 
@@ -1060,8 +1104,7 @@ mod async_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // Upload a splat set, then remove it. The handle is now stale.
         let id1 = resources
@@ -1093,8 +1136,7 @@ mod async_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = resources
             .begin_upload_gaussian_splat(&device, &queue, GaussianSplatData::default())
             .unwrap_err();
@@ -1110,8 +1152,7 @@ mod async_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources
             .begin_upload_gaussian_splat(&device, &queue, sample_splats(8))
             .expect("job submitted");
@@ -1135,8 +1176,7 @@ mod async_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id = resources
             .upload_gaussian_splat(&device, &queue, &sample_splats(8))

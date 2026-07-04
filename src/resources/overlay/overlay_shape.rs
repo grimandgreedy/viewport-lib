@@ -5,13 +5,39 @@ use crate::resources::types::{
     OverlayShapeTexVertex, OverlayShapeTextureEntry, OverlayShapeVertex,
 };
 
-impl crate::resources::ViewportGpuResources {
+/// SDF overlay shape pipelines (solid + textured fill) and their shared sampler.
+/// Lazily built on the first frame with non-empty shapes.
+#[derive(Default)]
+pub(crate) struct OverlayShapeResources {
+    /// Render pipeline for screen-space SDF shapes (rounded rects, circles, etc.).
+    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    /// Render pipeline for SDF shapes with texture fill.
+    pub(crate) tex_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the texture pipeline (group 0: texture + sampler).
+    pub(crate) tex_bgl: Option<wgpu::BindGroupLayout>,
+    /// Clamp-to-edge linear sampler shared across all texture shape bind groups.
+    pub(crate) tex_sampler: Option<wgpu::Sampler>,
+}
+
+/// Fullscreen separable Gaussian blur pipeline used to produce the blurred
+/// scene texture for `backdrop_blur` overlay shapes.
+#[derive(Default)]
+pub(crate) struct BackdropBlurResources {
+    /// Fullscreen separable Gaussian blur pipeline.
+    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout (group 0: source texture + sampler + uniforms).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Linear clamp sampler shared by blur passes.
+    pub(crate) sampler: Option<wgpu::Sampler>,
+}
+
+impl crate::resources::DeviceResources {
     /// Lazily create the SDF overlay shape render pipeline.
     ///
     /// No-op if already created. Called from `prepare_viewport_internal()` when
     /// `frame.overlays.shapes` is non-empty.
     pub(crate) fn ensure_overlay_shape_pipeline(&mut self, device: &wgpu::Device) {
-        if self.overlay_shape_pipeline.is_some() {
+        if self.overlay_shape.pipeline.is_some() {
             return;
         }
 
@@ -74,7 +100,7 @@ impl crate::resources::ViewportGpuResources {
             cache: None,
         });
 
-        self.overlay_shape_pipeline = Some(pipeline);
+        self.overlay_shape.pipeline = Some(pipeline);
     }
 
     /// Lazily create the SDF overlay shape render pipeline with texture fill.
@@ -82,7 +108,7 @@ impl crate::resources::ViewportGpuResources {
     /// No-op if already created. Called from `prepare_viewport_internal()` when
     /// any shape in `OverlayFrame.shapes` carries an `OverlayTextureId`.
     pub(crate) fn ensure_overlay_shape_tex_pipeline(&mut self, device: &wgpu::Device) {
-        if self.overlay_shape_tex_pipeline.is_some() {
+        if self.overlay_shape.tex_pipeline.is_some() {
             return;
         }
 
@@ -177,16 +203,16 @@ impl crate::resources::ViewportGpuResources {
             cache: None,
         });
 
-        self.overlay_shape_tex_bgl = Some(bgl);
-        self.overlay_shape_tex_sampler = Some(sampler);
-        self.overlay_shape_tex_pipeline = Some(pipeline);
+        self.overlay_shape.tex_bgl = Some(bgl);
+        self.overlay_shape.tex_sampler = Some(sampler);
+        self.overlay_shape.tex_pipeline = Some(pipeline);
     }
 
     /// Upload RGBA8 pixel data as a persistent texture for overlay shape fills.
     ///
     /// Returns an `OverlayTextureId` that can be stored in
     /// `OverlayShapeItem::texture`. The texture persists for the lifetime of
-    /// this `ViewportGpuResources`.
+    /// this `DeviceResources`.
     ///
     /// `rgba_data` must contain exactly `width * height * 4` bytes in
     /// row-major, top-to-bottom order. The data is treated as sRGB-encoded
@@ -325,16 +351,14 @@ impl crate::resources::ViewportGpuResources {
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(
-                        move |resources: &mut crate::resources::ViewportGpuResources| {
-                            let id = resources.overlay_textures.len() as u64;
-                            resources.overlay_textures.push(OverlayShapeTextureEntry {
-                                _texture: texture,
-                                view,
-                            });
-                            slot_for_apply.set(OverlayTextureId(id));
-                        },
-                    ),
+                    Box::new(move |resources: &mut crate::resources::DeviceResources| {
+                        let id = resources.overlay_textures.len() as u64;
+                        resources.overlay_textures.push(OverlayShapeTextureEntry {
+                            _texture: texture,
+                            view,
+                        });
+                        slot_for_apply.set(OverlayTextureId(id));
+                    }),
                 ))
             })
         };
@@ -380,7 +404,7 @@ impl crate::resources::ViewportGpuResources {
     ///
     /// No-op if already created.
     pub(crate) fn ensure_backdrop_blur_pipeline(&mut self, device: &wgpu::Device) {
-        if self.backdrop_blur_pipeline.is_some() {
+        if self.backdrop_blur.pipeline.is_some() {
             return;
         }
 
@@ -471,8 +495,8 @@ impl crate::resources::ViewportGpuResources {
             cache: None,
         });
 
-        self.backdrop_blur_bgl = Some(bgl);
-        self.backdrop_blur_sampler = Some(sampler);
-        self.backdrop_blur_pipeline = Some(pipeline);
+        self.backdrop_blur.bgl = Some(bgl);
+        self.backdrop_blur.sampler = Some(sampler);
+        self.backdrop_blur.pipeline = Some(pipeline);
     }
 }

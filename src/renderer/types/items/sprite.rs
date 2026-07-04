@@ -48,7 +48,7 @@ pub enum SpriteBlend {
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct SpriteItem {
-    /// Texture ID from [`ViewportGpuResources::upload_texture`].
+    /// Texture ID from [`DeviceResources::upload_texture`].
     /// `None` renders solid-colour quads using `colours` / `default_colour` only.
     pub texture_id: Option<crate::resources::TextureId>,
     /// World-space positions, one per sprite instance.

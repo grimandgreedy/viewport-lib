@@ -404,7 +404,7 @@ pub(super) fn build_glyph_sphere() -> (Vec<Vertex>, Vec<u32>) {
 // in-place attribute hot-swap
 // ---------------------------------------------------------------------------
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Write new scalar data into an existing attribute buffer in-place.
     ///
     /// No GPU buffer reallocation, no mesh re-upload, no bind group rebuild is
@@ -610,7 +610,7 @@ pub struct ComputeFilterResult {
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
 }
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Lazily create the GPU compute filter pipeline on first use.
     fn ensure_compute_filter_pipeline(&mut self, device: &wgpu::Device) {
         if self.compute_filter_pipeline.is_some() {

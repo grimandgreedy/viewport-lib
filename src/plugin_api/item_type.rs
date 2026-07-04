@@ -107,7 +107,7 @@ pub struct ItemFrameContext<'a> {
 ///
 /// The render pass is the lib's `hdr_scene_pass` with the shared group-0
 /// bind group already bound. Plugin pipelines built via
-/// [`build_opaque_pipeline`](crate::resources::ViewportGpuResources::build_opaque_pipeline)
+/// [`build_opaque_pipeline`](crate::resources::DeviceResources::build_opaque_pipeline)
 /// drop in without further setup.
 #[non_exhaustive]
 pub struct PaintContext<'a> {
@@ -125,7 +125,7 @@ pub struct PaintContext<'a> {
 ///
 /// The lib's shadow render pass is already begun on entry. The plugin
 /// builds its pipeline against
-/// [`shadow_target_desc`](crate::resources::ViewportGpuResources::shadow_target_desc)
+/// [`shadow_target_desc`](crate::resources::DeviceResources::shadow_target_desc)
 /// and draws depth-only into the cascade tile selected by the lib's
 /// `set_viewport` / `set_scissor_rect` calls.
 #[non_exhaustive]
@@ -148,7 +148,7 @@ pub struct ShadowCastContext<'a> {
 /// the shared group-0 camera bind group bound. The pass targets a single
 /// `R8Unorm` colour attachment and the scene depth buffer; the plugin
 /// builds its mask pipeline against
-/// [`mask_target_desc`](crate::resources::ViewportGpuResources::mask_target_desc)
+/// [`mask_target_desc`](crate::resources::DeviceResources::mask_target_desc)
 /// and draws into it with any value `> 0` for covered pixels.
 #[non_exhaustive]
 pub struct OutlineMaskContext<'a> {
@@ -260,7 +260,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// Called inside the lib's `oit_pass` render pass with the standard
     /// group-0 bindings already bound. Implementations build their
     /// pipeline via
-    /// [`build_oit_pipeline`](crate::resources::ViewportGpuResources::build_oit_pipeline);
+    /// [`build_oit_pipeline`](crate::resources::DeviceResources::build_oit_pipeline);
     /// the fragment shader must return
     /// [`OitOutput`](crate::plugin_api::shared_wgsl::SHARED_OIT_WGSL),
     /// writing both `@location(0)` (accum) and `@location(1)` (reveal).
@@ -280,7 +280,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// group-0 bind group bound. Implementations iterate `items`, draw
     /// only those whose `item_settings(i).selected` is `true`, and write
     /// any non-zero R8 value at covered fragments. Use
-    /// [`build_mask_pipeline`](crate::resources::ViewportGpuResources::build_mask_pipeline)
+    /// [`build_mask_pipeline`](crate::resources::DeviceResources::build_mask_pipeline)
     /// to construct a compatible pipeline; the fragment helper
     /// [`SHARED_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_MASK_WGSL)
     /// provides the trivial `fs_mask` body.
@@ -320,7 +320,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// render pass. The lib has already set the viewport + scissor rect
     /// for the cascade tile and bound the cascade-space camera at group
     /// 0. The plugin draws depth-only with a pipeline built via
-    /// [`build_shadow_pipeline`](crate::resources::ViewportGpuResources::build_shadow_pipeline).
+    /// [`build_shadow_pipeline`](crate::resources::DeviceResources::build_shadow_pipeline).
     ///
     /// Implementations skip items where `item_settings(i).cast_shadows`
     /// is false. Default no-op: plugins that do not cast shadows leave

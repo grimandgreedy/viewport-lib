@@ -426,7 +426,7 @@ fn correct_winding(tri: &mut [u32; 3], interior_ref: &[f32; 3], positions: &[[f3
 /// boundary surface and remapping per-cell attributes to per-face attributes.
 ///
 /// After this step the boundary mesh is uploaded
-/// via [`upload_mesh_data`](super::ViewportGpuResources::upload_mesh_data)
+/// via [`upload_mesh_data`](super::DeviceResources::upload_mesh_data)
 /// and rendered exactly like any other surface mesh.
 ///
 /// Returns `(mesh_data, face_to_cell)` where `face_to_cell[i]` is the cell

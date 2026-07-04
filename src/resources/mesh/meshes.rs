@@ -3,8 +3,8 @@ use crate::resources::*;
 /// CPU-prepared vertex stream and ancillary buffers needed to finish a mesh
 /// upload on the main thread.
 ///
-/// Produced by `ViewportGpuResources::prep_mesh_data` and consumed by
-/// `ViewportGpuResources::assemble_mesh_data`. Sits between the worker
+/// Produced by `DeviceResources::prep_mesh_data` and consumed by
+/// `DeviceResources::assemble_mesh_data`. Sits between the worker
 /// thread and the apply step of `begin_upload_mesh_data`.
 pub(crate) struct MeshPrep {
     /// Interleaved GPU vertex stream (position + normal + uv + tangent +
@@ -19,7 +19,7 @@ pub(crate) struct MeshPrep {
     pub computed_tangents: Option<Vec<[f32; 4]>>,
 }
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Create a GpuMesh from vertex/index slices and register it into the resource list.
     ///
     /// Returns the `MeshId` of the new mesh.
@@ -33,7 +33,7 @@ impl ViewportGpuResources {
     ///
     /// ```no_run
     /// # use viewport_lib::error::ViewportError;
-    /// # fn demo(resources: &mut viewport_lib::resources::ViewportGpuResources, device: &wgpu::Device) {
+    /// # fn demo(resources: &mut viewport_lib::resources::DeviceResources, device: &wgpu::Device) {
     /// let result = resources.upload_mesh(device, &[], &[]);
     /// assert!(matches!(result, Err(ViewportError::EmptyMesh { .. })));
     /// # }
@@ -250,10 +250,10 @@ impl ViewportGpuResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
-                let prep = ViewportGpuResources::prep_mesh_data(&data);
+                let prep = DeviceResources::prep_mesh_data(&data);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let mesh_id = resources.assemble_mesh_data(&device_for_apply, &data, prep);
                         slot_for_apply.set(mesh_id);
                     }),
@@ -965,11 +965,11 @@ impl ViewportGpuResources {
                 let (mesh_data, face_to_cell) =
                     crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
                 progress.set(0.5);
-                ViewportGpuResources::validate_mesh_data(&mesh_data)?;
-                let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
+                DeviceResources::validate_mesh_data(&mesh_data)?;
+                let prep = DeviceResources::prep_mesh_data(&mesh_data);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let mesh_id =
                             resources.assemble_mesh_data(&device_for_apply, &mesh_data, prep);
                         slot_for_apply.set((mesh_id, face_to_cell));
@@ -1041,11 +1041,11 @@ impl ViewportGpuResources {
                         &clip_planes,
                     );
                 progress.set(0.5);
-                ViewportGpuResources::validate_mesh_data(&mesh_data)?;
-                let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
+                DeviceResources::validate_mesh_data(&mesh_data)?;
+                let prep = DeviceResources::prep_mesh_data(&mesh_data);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let mesh_id =
                             resources.assemble_mesh_data(&device_for_apply, &mesh_data, prep);
                         slot_for_apply.set((mesh_id, face_to_cell));
@@ -1109,11 +1109,11 @@ impl ViewportGpuResources {
                 let mesh_data =
                     crate::resources::volume::sparse_volume::extract_sparse_boundary(&data);
                 progress.set(0.5);
-                ViewportGpuResources::validate_mesh_data(&mesh_data)?;
-                let prep = ViewportGpuResources::prep_mesh_data(&mesh_data);
+                DeviceResources::validate_mesh_data(&mesh_data)?;
+                let prep = DeviceResources::prep_mesh_data(&mesh_data);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let mesh_id =
                             resources.assemble_mesh_data(&device_for_apply, &mesh_data, prep);
                         slot_for_apply.set(mesh_id);
@@ -2312,14 +2312,14 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
                 let (pending, scalar_range, uniform_buffer) =
-                    ViewportGpuResources::decompose_into_chunks(
+                    DeviceResources::decompose_into_chunks(
                         &device_for_worker,
                         &data,
                         &scalar_attribute,
                     );
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let chunks = {
                             let bgl = resources
                                 .pt_bind_group_layout
@@ -2556,7 +2556,7 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod override_tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::geometry::primitives;
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -2585,8 +2585,7 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
         let vertex_count = plane.positions.len();
@@ -2624,8 +2623,7 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
         let vertex_count = plane.positions.len();
@@ -2652,8 +2650,7 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Fabricate an id that is beyond the store.
         let bogus = crate::resources::mesh::mesh_store::MeshId::new(9999, 0);
         let buf = dummy_override_buffer(&device, 4);
@@ -2670,8 +2667,7 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // Upload a mesh, then remove it. The handle is now stale.
         let id1 = resources
@@ -2710,8 +2706,7 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let stale = resources
             .upload_mesh_data(&device, &primitives::cube(1.0))
@@ -2743,8 +2738,7 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let start = resources.resident_bytes().mesh_bytes;
         let id = resources
@@ -2767,7 +2761,7 @@ mod override_tests {
 
 #[cfg(test)]
 mod async_upload_tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::geometry::primitives;
     use crate::resources::UploadStatus;
 
@@ -2783,7 +2777,7 @@ mod async_upload_tests {
     }
 
     fn drive_until_ready(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         id: crate::resources::JobId,
@@ -2808,8 +2802,7 @@ mod async_upload_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let empty = crate::resources::MeshData::default();
         let err = resources
@@ -2825,8 +2818,7 @@ mod async_upload_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let plane = primitives::grid_plane(1.0, 1.0, 8, 8);
         let id = resources
@@ -2857,8 +2849,7 @@ mod async_upload_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
@@ -2871,8 +2862,7 @@ mod async_upload_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // Submit an env-map job so we have a live JobId of the wrong type.
         let pixels = vec![0.5f32; 8 * 4 * 4];
@@ -2896,7 +2886,7 @@ mod async_upload_tests {
 
 #[cfg(test)]
 mod c4_volume_mesh_tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::resources::volume::volume_mesh::VolumeMeshData;
     use crate::resources::{CELL_SENTINEL, SparseVolumeGridData, UploadStatus};
 
@@ -2912,7 +2902,7 @@ mod c4_volume_mesh_tests {
     }
 
     fn drive_until_ready(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         id: crate::resources::JobId,
@@ -2968,8 +2958,7 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_volume_mesh(&device, single_tet_volume());
         drive_until_ready(&mut resources, &device, &queue, job, "volume_mesh");
         let item = resources.upload_result_volume_mesh(job).expect("ready");
@@ -2988,8 +2977,7 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Empty clip planes: equivalent to plain volume mesh extraction.
         let job =
             resources.begin_upload_clipped_volume_mesh(&device, single_tet_volume(), Vec::new());
@@ -3007,8 +2995,7 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_sparse_volume_grid_data(&device, single_cell_sparse());
         drive_until_ready(&mut resources, &device, &queue, job, "sparse_volume_grid");
         let mesh_id = resources
@@ -3023,8 +3010,7 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job =
             resources.begin_upload_projected_tet(&device, single_tet_volume(), "density".into());
         drive_until_ready(&mut resources, &device, &queue, job, "projected_tet");
@@ -3038,8 +3024,7 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let vol = single_tet_volume();
         let _item = resources
             .upload_volume_mesh(&device, &vol)

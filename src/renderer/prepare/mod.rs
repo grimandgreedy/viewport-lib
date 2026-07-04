@@ -63,7 +63,7 @@ impl ViewportRenderer {
     /// pick id use hysteresis through `lod_levels`; items without one resolve
     /// fresh each frame.
     fn resolve_lod(
-        resources: &crate::resources::ViewportGpuResources,
+        resources: &crate::resources::DeviceResources,
         lod_levels: &mut std::collections::HashMap<u64, usize>,
         camera: &RenderCamera,
         items: &mut [SceneRenderItem],
@@ -387,7 +387,7 @@ impl ViewportRenderer {
                             .vector_attribute_buffers
                             .contains_key(&lic.vector_attribute)
                         {
-                            if let Some(bgl) = &resources.lic_surface_bgl {
+                            if let Some(bgl) = &resources.lic.surface_bgl {
                                 use crate::resources::LicObjectUniform;
                                 let model = item.model;
                                 let obj_data = LicObjectUniform { model };
@@ -1183,12 +1183,12 @@ mod lod_resolve_tests {
     use super::ViewportRenderer;
     use crate::geometry::primitives;
     use crate::renderer::{RenderCamera, SceneRenderItem};
-    use crate::resources::{LodGroupId, MeshData, ViewportGpuResources};
+    use crate::resources::{DeviceResources, LodGroupId, MeshData};
     use std::collections::HashMap;
 
     /// Upload each level mesh, then register the group.
     fn register(
-        res: &mut ViewportGpuResources,
+        res: &mut DeviceResources,
         device: &wgpu::Device,
         levels: &[(MeshData, f32)],
     ) -> crate::error::ViewportResult<LodGroupId> {
@@ -1233,7 +1233,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,
@@ -1266,7 +1266,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,
@@ -1297,7 +1297,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,
@@ -1331,7 +1331,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,
@@ -1358,7 +1358,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,

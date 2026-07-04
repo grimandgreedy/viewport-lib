@@ -5,7 +5,7 @@ use crate::scene::material::{ItemSettings, Material};
 /// Set `SceneRenderItem::lic` to `Some(LicOverlay { ... })` to render a
 /// Line Integral Convolution flow visualisation on that surface mesh.
 /// The mesh must have a `VertexVector` attribute matching `vector_attribute`
-/// uploaded via `ViewportGpuResources::upload_mesh_data`.
+/// uploaded via `DeviceResources::upload_mesh_data`.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct LicOverlay {
@@ -64,7 +64,7 @@ pub struct SceneRenderItem {
     /// - `None`: the item uses only per-mesh deformer data.
     /// - `Some(instance_id)`: the renderer binds the per-(mesh, instance)
     ///   deformer slot data attached via
-    ///   [`crate::resources::ViewportGpuResources::attach_deform_slot_instance`]
+    ///   [`crate::resources::DeviceResources::attach_deform_slot_instance`]
     ///   (or a plugin handle like
     ///   [`SkinningPlugin::attach_palette`](crate::plugins::skinning::SkinningPlugin::attach_palette)).
     ///
@@ -85,7 +85,7 @@ pub struct SceneRenderItem {
     /// and overwrites `mesh_id` with the matching level before drawing. Set
     /// `pick_id` for the switch to use hysteresis across frames; without one the
     /// level is picked fresh each frame. Build a group with
-    /// [`ViewportGpuResources::register_lod_group`](crate::ViewportGpuResources::register_lod_group).
+    /// [`DeviceResources::register_lod_group`](crate::DeviceResources::register_lod_group).
     pub lod_group: Option<crate::resources::LodGroupId>,
 }
 
@@ -116,7 +116,7 @@ impl Default for SceneRenderItem {
 /// When set, the renderer draws the interior cells via projected tetrahedra
 /// (Beer-Lambert through the volume) instead of the boundary surface. Requires
 /// that the item was uploaded with
-/// [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency)
+/// [`upload_volume_mesh_with_transparency`](crate::resources::DeviceResources::upload_volume_mesh_with_transparency)
 /// so the per-tet GPU buffer exists.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VolumeTransparency {

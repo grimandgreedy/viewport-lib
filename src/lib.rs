@@ -8,7 +8,7 @@
 //! # Quick start (single viewport, pass-based)
 //!
 //! 1. Create a [`ViewportRenderer`] from a `wgpu::Device` and target format.
-//! 2. Upload meshes or volumes through [`ViewportGpuResources`].
+//! 2. Upload meshes or volumes through [`DeviceResources`].
 //! 3. Build a [`FrameData`] each frame (camera via [`CameraFrame`] and
 //!    [`RenderCamera`], scene content via [`SceneFrame`], viewport chrome via
 //!    [`ViewportFrame`], etc.).
@@ -236,6 +236,8 @@ pub use quantities::{
     volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 
+#[allow(deprecated)]
+pub use resources::ViewportGpuResources;
 pub use resources::material::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
@@ -251,10 +253,10 @@ pub use resources::volume::volume_mesh::{
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc,
-    ComputeFilterResult, FontError, FontHandle, GpuImplicitItem, GpuImplicitOptions,
-    GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId, LightUniform, LightsUniform,
-    MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes, SingleLightUniform, TextureId,
-    TextureMemoryStats, UploadStatus, ViewportGpuResources, VolumeId, lerp_attributes,
+    ComputeFilterResult, DeviceResources, FontError, FontHandle, GpuImplicitItem,
+    GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId,
+    LightUniform, LightsUniform, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes,
+    SingleLightUniform, TextureId, TextureMemoryStats, UploadStatus, VolumeId, lerp_attributes,
     supports_texture_format,
 };
 pub use resources::{

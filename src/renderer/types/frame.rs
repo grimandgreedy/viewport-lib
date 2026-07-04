@@ -276,7 +276,7 @@ pub struct SceneFrame {
     /// through the standard mesh pipeline) or as a volumetric draw through
     /// projected tetrahedra (when [`VolumeMeshItem::transparency`] is set and
     /// the item was uploaded via
-    /// [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency)).
+    /// [`upload_volume_mesh_with_transparency`](crate::resources::DeviceResources::upload_volume_mesh_with_transparency)).
     /// Cell-level picking, selection outlines, and wireframe overlays are
     /// driven from this collection regardless of mode.
     pub volume_meshes: Vec<VolumeMeshItem>,

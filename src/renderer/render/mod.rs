@@ -12,7 +12,7 @@ macro_rules! emit_overlay_2d {
         // SDF overlay shapes (drawn before rects and labels).
         if let Some(ref sd) = $this.overlay_shape_gpu_data {
             if sd.vertex_count > 0 {
-                if let Some(pipeline) = &$this.resources.overlay_shape_pipeline {
+                if let Some(pipeline) = &$this.resources.overlay_shape.pipeline {
                     if let Some(vbuf) = &sd.vertex_buf {
                         $render_pass.set_pipeline(pipeline);
                         $render_pass.set_vertex_buffer(0, vbuf.slice(..));
@@ -21,7 +21,7 @@ macro_rules! emit_overlay_2d {
                 }
             }
             if !sd.tex_batches.is_empty() {
-                if let Some(pipeline) = &$this.resources.overlay_shape_tex_pipeline {
+                if let Some(pipeline) = &$this.resources.overlay_shape.tex_pipeline {
                     $render_pass.set_pipeline(pipeline);
                     for batch in &sd.tex_batches {
                         $render_pass.set_bind_group(0, &batch.bind_group, &[]);
@@ -33,7 +33,7 @@ macro_rules! emit_overlay_2d {
         }
         // Overlay rects (drawn before labels so they act as backgrounds).
         if let Some(ref rr) = $this.overlay_rect_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text_pipeline {
+            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
                 $render_pass.set_pipeline(pipeline);
                 $render_pass.set_bind_group(0, &rr.bind_group, &[]);
                 $render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
@@ -42,7 +42,7 @@ macro_rules! emit_overlay_2d {
         }
         // Overlay labels (drawn after rects).
         if let Some(ref ld) = $this.label_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text_pipeline {
+            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
                 $render_pass.set_pipeline(pipeline);
                 $render_pass.set_bind_group(0, &ld.bind_group, &[]);
                 $render_pass.set_vertex_buffer(0, ld.vertex_buf.slice(..));
@@ -51,7 +51,7 @@ macro_rules! emit_overlay_2d {
         }
         // Scalar bars (drawn after labels).
         if let Some(ref sb) = $this.scalar_bar_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text_pipeline {
+            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
                 $render_pass.set_pipeline(pipeline);
                 $render_pass.set_bind_group(0, &sb.bind_group, &[]);
                 $render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
@@ -60,7 +60,7 @@ macro_rules! emit_overlay_2d {
         }
         // Rulers (drawn after scalar bars).
         if let Some(ref rd) = $this.ruler_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text_pipeline {
+            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
                 $render_pass.set_pipeline(pipeline);
                 $render_pass.set_bind_group(0, &rd.bind_group, &[]);
                 $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
@@ -69,7 +69,7 @@ macro_rules! emit_overlay_2d {
         }
         // Loading bars (drawn after rulers).
         if let Some(ref lb) = $this.loading_bar_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text_pipeline {
+            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
                 $render_pass.set_pipeline(pipeline);
                 $render_pass.set_bind_group(0, &lb.bind_group, &[]);
                 $render_pass.set_vertex_buffer(0, lb.vertex_buf.slice(..));
@@ -237,11 +237,11 @@ impl ViewportRenderer {
             }
             // GPU marching cubes indirect draw.
             if !self.mc_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.mc_surface_pipeline {
+                if let Some(ref dual) = self.resources.mc.surface_pipeline {
                     render_pass.set_pipeline(dual.for_format(false));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for mc in &self.mc_gpu_data {
-                        let vol = &self.resources.mc_volumes[mc.volume_idx];
+                        let vol = &self.resources.mc.volumes[mc.volume_idx];
                         render_pass.set_bind_group(1, &mc.render_bg, &[]);
                         for slab in &vol.slabs {
                             render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
@@ -954,9 +954,9 @@ impl ViewportRenderer {
         spread: f32,
     ) -> wgpu::BindGroup {
         let bs = self.backdrop_blur_state.as_ref().unwrap();
-        let blur_bgl = self.resources.backdrop_blur_bgl.as_ref().unwrap();
-        let blur_sampler = self.resources.backdrop_blur_sampler.as_ref().unwrap();
-        let blur_pipeline = self.resources.backdrop_blur_pipeline.as_ref().unwrap();
+        let blur_bgl = self.resources.backdrop_blur.bgl.as_ref().unwrap();
+        let blur_sampler = self.resources.backdrop_blur.sampler.as_ref().unwrap();
+        let blur_pipeline = self.resources.backdrop_blur.pipeline.as_ref().unwrap();
         // Reuse dyn_res blit pipeline and BGL for the downsample pass.
         let blit_pipeline = self.resources.dyn_res_upscale_pipeline.as_ref().unwrap();
         let blit_bgl = self.resources.dyn_res_upscale_bgl.as_ref().unwrap();
@@ -1094,8 +1094,8 @@ impl ViewportRenderer {
         // Build the bind group for overlay shape drawing. Uses the overlay_shape_tex
         // bind group layout (texture + sampler) so blur shapes can be drawn with the
         // existing texture pipeline.
-        let tex_bgl = self.resources.overlay_shape_tex_bgl.as_ref().unwrap();
-        let tex_sampler = self.resources.overlay_shape_tex_sampler.as_ref().unwrap();
+        let tex_bgl = self.resources.overlay_shape.tex_bgl.as_ref().unwrap();
+        let tex_sampler = self.resources.overlay_shape.tex_sampler.as_ref().unwrap();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("backdrop_blur_overlay_bg"),
             layout: tex_bgl,
@@ -1128,7 +1128,7 @@ impl ViewportRenderer {
         if let Some(ref sd) = self.overlay_shape_gpu_data {
             if sd.blur_vertex_count > 0 {
                 if let (Some(pipeline), Some(vbuf)) = (
-                    &self.resources.overlay_shape_tex_pipeline,
+                    &self.resources.overlay_shape.tex_pipeline,
                     &sd.blur_vertex_buf,
                 ) {
                     render_pass.set_pipeline(pipeline);

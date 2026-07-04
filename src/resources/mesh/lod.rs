@@ -25,7 +25,7 @@ crate::resources::handle::slot_handle! {
     ///
     /// Carries the slot index plus the generation the slot had when the handle
     /// was issued. A group freed with
-    /// [`free_lod_group`](crate::ViewportGpuResources::free_lod_group) bumps its
+    /// [`free_lod_group`](crate::DeviceResources::free_lod_group) bumps its
     /// slot generation, so a stale handle resolves to `None` rather than
     /// aliasing a group registered later into the reused slot.
     pub struct LodGroupId;
@@ -68,9 +68,9 @@ pub enum LodTransition {
 ///
 /// Upload the level meshes however you like (sync `upload_mesh_data` or the
 /// async job path), then bundle them with
-/// [`ViewportGpuResources::register_lod_group`].
+/// [`DeviceResources::register_lod_group`].
 ///
-/// [`ViewportGpuResources::register_lod_group`]: crate::ViewportGpuResources::register_lod_group
+/// [`DeviceResources::register_lod_group`]: crate::DeviceResources::register_lod_group
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LodGroup {
@@ -264,7 +264,7 @@ impl LodGroupStore {
     }
 }
 
-impl crate::resources::ViewportGpuResources {
+impl crate::resources::DeviceResources {
     /// Group meshes that are already uploaded into a LOD chain.
     ///
     /// `levels` lists the meshes full detail first; `min_screen_sizes` gives the
@@ -536,7 +536,7 @@ mod tests {
 #[cfg(test)]
 mod registration_tests {
     use super::*;
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::geometry::primitives;
     use crate::resources::{AttributeData, MeshData};
 
@@ -561,7 +561,7 @@ mod registration_tests {
     /// Upload each level mesh, then register the group: the path a consumer
     /// takes, made one call for the tests.
     fn register(
-        res: &mut ViewportGpuResources,
+        res: &mut DeviceResources,
         device: &wgpu::Device,
         levels: &[(MeshData, f32)],
     ) -> ViewportResult<LodGroupId> {
@@ -580,7 +580,7 @@ mod registration_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = register(
             &mut res,
             &device,
@@ -601,7 +601,7 @@ mod registration_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = register(
             &mut res,
             &device,
@@ -619,7 +619,7 @@ mod registration_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = register(
             &mut res,
             &device,
@@ -640,7 +640,7 @@ mod registration_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = res.register_lod_group(&[], &[]);
         assert!(matches!(err, Err(ViewportError::LodGroupEmpty)));
     }

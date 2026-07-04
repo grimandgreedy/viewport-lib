@@ -1,11 +1,48 @@
 use super::*;
 
-impl ViewportGpuResources {
+/// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
+/// All lazily built; the uploaded glyph sets live in a separate flat store.
+#[derive(Default)]
+pub(crate) struct GlyphResources {
+    /// Glyph render pipeline. None until first glyph set is submitted.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Glyph wireframe pipeline (LineList, same bind groups as `pipeline`).
+    pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    /// Bind group layout for glyph uniforms (group 1).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for glyph instance storage (group 2).
+    pub(crate) instance_bgl: Option<wgpu::BindGroupLayout>,
+    /// Cached glyph base mesh for the Arrow shape.
+    pub(crate) arrow_mesh: Option<GlyphBaseMesh>,
+    /// Cached glyph base mesh for the Sphere shape.
+    pub(crate) sphere_mesh: Option<GlyphBaseMesh>,
+    /// Cached glyph base mesh for the Cube shape.
+    pub(crate) cube_mesh: Option<GlyphBaseMesh>,
+    /// Instanced mask pipeline for arrow/sphere glyph outlines.
+    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+}
+
+/// Tensor glyph (ellipsoid / superquadric) pipelines and layouts.
+#[derive(Default)]
+pub(crate) struct TensorGlyphResources {
+    /// Tensor glyph render pipeline. None until first tensor glyph set is submitted.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Tensor glyph wireframe pipeline (LineList, same bind groups as `pipeline`).
+    pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    /// Bind group layout for tensor glyph uniforms (group 1).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for tensor glyph instance storage (group 2).
+    pub(crate) instance_bgl: Option<wgpu::BindGroupLayout>,
+    /// Instanced mask pipeline for tensor glyph outlines.
+    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+}
+
+impl DeviceResources {
     /// Lazily create the glyph render pipeline (instanced TriangleList).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.glyphs` is non-empty.
     pub(crate) fn ensure_glyph_pipeline(&mut self, device: &wgpu::Device) {
-        if self.glyph_pipeline.is_some() {
+        if self.glyph.pipeline.is_some() {
             return;
         }
 
@@ -115,9 +152,9 @@ impl ViewportGpuResources {
             })
         };
 
-        self.glyph_bgl = Some(glyph_bgl);
-        self.glyph_instance_bgl = Some(glyph_instance_bgl);
-        self.glyph_pipeline = Some(DualPipeline {
+        self.glyph.bgl = Some(glyph_bgl);
+        self.glyph.instance_bgl = Some(glyph_instance_bgl);
+        self.glyph.pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
@@ -163,7 +200,7 @@ impl ViewportGpuResources {
                 cache: None,
             })
         };
-        self.glyph_wireframe_pipeline = Some(DualPipeline {
+        self.glyph.wireframe_pipeline = Some(DualPipeline {
             ldr: make_wf(self.target_format),
             hdr: make_wf(wgpu::TextureFormat::Rgba16Float),
         });
@@ -186,9 +223,9 @@ impl ViewportGpuResources {
 
         let (mesh_vbuf, mesh_ibuf, mesh_idx_count, mesh_edge_ibuf, mesh_edge_count) = {
             let mesh = match item.glyph_type {
-                crate::renderer::GlyphType::Arrow => self.glyph_arrow_mesh.as_ref(),
-                crate::renderer::GlyphType::Sphere => self.glyph_sphere_mesh.as_ref(),
-                crate::renderer::GlyphType::Cube => self.glyph_cube_mesh.as_ref(),
+                crate::renderer::GlyphType::Arrow => self.glyph.arrow_mesh.as_ref(),
+                crate::renderer::GlyphType::Sphere => self.glyph.sphere_mesh.as_ref(),
+                crate::renderer::GlyphType::Cube => self.glyph.cube_mesh.as_ref(),
             }
             .expect("glyph mesh should have been created by ensure_glyph_mesh");
 
@@ -316,7 +353,8 @@ impl ViewportGpuResources {
         let lut_sampler = &self.material_sampler;
 
         let bgl1 = self
-            .glyph_bgl
+            .glyph
+            .bgl
             .as_ref()
             .expect("ensure_glyph_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -339,7 +377,8 @@ impl ViewportGpuResources {
         });
 
         let bgl2 = self
-            .glyph_instance_bgl
+            .glyph
+            .instance_bgl
             .as_ref()
             .expect("ensure_glyph_pipeline not called");
         let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -372,9 +411,9 @@ impl ViewportGpuResources {
         use crate::renderer::GlyphType;
 
         let already_cached = match glyph_type {
-            GlyphType::Arrow => self.glyph_arrow_mesh.is_some(),
-            GlyphType::Sphere => self.glyph_sphere_mesh.is_some(),
-            GlyphType::Cube => self.glyph_cube_mesh.is_some(),
+            GlyphType::Arrow => self.glyph.arrow_mesh.is_some(),
+            GlyphType::Sphere => self.glyph.sphere_mesh.is_some(),
+            GlyphType::Cube => self.glyph.cube_mesh.is_some(),
         };
         if already_cached {
             return;
@@ -432,9 +471,9 @@ impl ViewportGpuResources {
         };
 
         match glyph_type {
-            GlyphType::Arrow => self.glyph_arrow_mesh = Some(mesh),
-            GlyphType::Sphere => self.glyph_sphere_mesh = Some(mesh),
-            GlyphType::Cube => self.glyph_cube_mesh = Some(mesh),
+            GlyphType::Arrow => self.glyph.arrow_mesh = Some(mesh),
+            GlyphType::Sphere => self.glyph.sphere_mesh = Some(mesh),
+            GlyphType::Cube => self.glyph.cube_mesh = Some(mesh),
         }
     }
 
@@ -443,7 +482,7 @@ impl ViewportGpuResources {
     /// No-op if already created. Called from `prepare()` when `frame.scene.tensor_glyphs`
     /// is non-empty.
     pub(crate) fn ensure_tensor_glyph_pipeline(&mut self, device: &wgpu::Device) {
-        if self.tensor_glyph_pipeline.is_some() {
+        if self.tensor_glyph.pipeline.is_some() {
             return;
         }
 
@@ -548,9 +587,9 @@ impl ViewportGpuResources {
             })
         };
 
-        self.tensor_glyph_bgl = Some(tg_bgl);
-        self.tensor_glyph_instance_bgl = Some(tg_instance_bgl);
-        self.tensor_glyph_pipeline = Some(DualPipeline {
+        self.tensor_glyph.bgl = Some(tg_bgl);
+        self.tensor_glyph.instance_bgl = Some(tg_instance_bgl);
+        self.tensor_glyph.pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
@@ -596,7 +635,7 @@ impl ViewportGpuResources {
                 cache: None,
             })
         };
-        self.tensor_glyph_wireframe_pipeline = Some(DualPipeline {
+        self.tensor_glyph.wireframe_pipeline = Some(DualPipeline {
             ldr: make_wf(self.target_format),
             hdr: make_wf(wgpu::TextureFormat::Rgba16Float),
         });
@@ -621,7 +660,8 @@ impl ViewportGpuResources {
         self.ensure_glyph_mesh(device, GlyphType::Sphere);
         let (mesh_vbuf, mesh_ibuf, mesh_idx_count, mesh_edge_ibuf, mesh_edge_count) = {
             let mesh = self
-                .glyph_sphere_mesh
+                .glyph
+                .sphere_mesh
                 .as_ref()
                 .expect("sphere mesh should be present after ensure_glyph_mesh");
             let vbuf: &'static wgpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
@@ -784,7 +824,8 @@ impl ViewportGpuResources {
         let lut_sampler = &self.material_sampler;
 
         let bgl1 = self
-            .tensor_glyph_bgl
+            .tensor_glyph
+            .bgl
             .as_ref()
             .expect("ensure_tensor_glyph_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -807,7 +848,8 @@ impl ViewportGpuResources {
         });
 
         let bgl2 = self
-            .tensor_glyph_instance_bgl
+            .tensor_glyph
+            .instance_bgl
             .as_ref()
             .expect("ensure_tensor_glyph_pipeline not called");
         let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -841,15 +883,17 @@ impl ViewportGpuResources {
     /// layouts from the main glyph pipeline (must be called after
     /// `ensure_glyph_pipeline`).
     pub(crate) fn ensure_glyph_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
-        if self.glyph_outline_mask_pipeline.is_some() {
+        if self.glyph.outline_mask_pipeline.is_some() {
             return;
         }
         let glyph_bgl = self
-            .glyph_bgl
+            .glyph
+            .bgl
             .as_ref()
             .expect("ensure_glyph_pipeline must be called first");
         let glyph_instance_bgl = self
-            .glyph_instance_bgl
+            .glyph
+            .instance_bgl
             .as_ref()
             .expect("ensure_glyph_pipeline must be called first");
 
@@ -870,7 +914,7 @@ impl ViewportGpuResources {
             push_constant_ranges: &[],
         });
 
-        self.glyph_outline_mask_pipeline = Some(device.create_render_pipeline(
+        self.glyph.outline_mask_pipeline = Some(device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
                 label: Some("glyph_outline_mask_pipeline"),
                 layout: Some(&layout),
@@ -918,15 +962,17 @@ impl ViewportGpuResources {
     /// Same idea as `ensure_glyph_outline_mask_pipeline` but for tensor
     /// glyph ellipsoids.  Must be called after `ensure_tensor_glyph_pipeline`.
     pub(crate) fn ensure_tensor_glyph_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
-        if self.tensor_glyph_outline_mask_pipeline.is_some() {
+        if self.tensor_glyph.outline_mask_pipeline.is_some() {
             return;
         }
         let tg_bgl = self
-            .tensor_glyph_bgl
+            .tensor_glyph
+            .bgl
             .as_ref()
             .expect("ensure_tensor_glyph_pipeline must be called first");
         let tg_instance_bgl = self
-            .tensor_glyph_instance_bgl
+            .tensor_glyph
+            .instance_bgl
             .as_ref()
             .expect("ensure_tensor_glyph_pipeline must be called first");
 
@@ -943,7 +989,7 @@ impl ViewportGpuResources {
             push_constant_ranges: &[],
         });
 
-        self.tensor_glyph_outline_mask_pipeline = Some(device.create_render_pipeline(
+        self.tensor_glyph.outline_mask_pipeline = Some(device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
                 label: Some("tensor_glyph_outline_mask_pipeline"),
                 layout: Some(&layout),
@@ -1035,7 +1081,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let gid =
                             resources.upload_glyph_set(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(gid);
@@ -1128,7 +1174,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let tid = resources.upload_tensor_glyph_set(
                             &device_for_apply,
                             &queue_for_apply,
@@ -1178,7 +1224,7 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::renderer::{GlyphItem, TensorGlyphItem};
     use crate::resources::UploadStatus;
 
@@ -1209,7 +1255,7 @@ mod tests {
     }
 
     fn drive_until_ready(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         id: crate::resources::JobId,
@@ -1235,8 +1281,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_glyph_set(&device, &queue, &sample_glyph_set());
         assert!(resources.glyph_set_store.contains(id));
         assert!(resources.drop_glyph_set(id));
@@ -1248,8 +1293,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_tensor_glyph_set(&device, &queue, &sample_tensor_glyph_set());
         assert!(resources.tensor_glyph_set_store.contains(id));
         assert!(resources.drop_tensor_glyph_set(id));
@@ -1261,8 +1305,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_glyph_set(&device, &queue, sample_glyph_set());
         drive_until_ready(&mut resources, &device, &queue, job, "glyph_set");
         let id = resources.upload_result_glyph_set(job).expect("ready");
@@ -1275,8 +1318,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job =
             resources.begin_upload_tensor_glyph_set(&device, &queue, sample_tensor_glyph_set());
         drive_until_ready(&mut resources, &device, &queue, job, "tensor_glyph_set");

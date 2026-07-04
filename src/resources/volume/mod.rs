@@ -9,4 +9,4 @@ pub mod sparse_volume;
 /// Unstructured volume mesh topology processing (tet / hex boundary extraction).
 pub mod tetmesh;
 pub mod volume_mesh;
-mod volumes;
+pub(crate) mod volumes;

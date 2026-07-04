@@ -12,7 +12,7 @@ use crate::resources::{
 
 /// Resident GPU bytes for one uploaded curve entry, summed by
 /// [`CurveStore::allocated_bytes`] and surfaced through
-/// [`ViewportGpuResources::resident_bytes`](crate::resources::ViewportGpuResources::resident_bytes).
+/// [`DeviceResources::resident_bytes`](crate::resources::DeviceResources::resident_bytes).
 ///
 /// Counts the buffers this entry owns. Base meshes shared across glyph and
 /// tensor-glyph batches are borrowed (`&'static`) from a single cached copy, so
@@ -153,7 +153,7 @@ macro_rules! curve_store {
 
 curve_store!(
     /// Handle to a pre-uploaded polyline produced by
-    /// [`ViewportGpuResources::upload_polyline`](crate::resources::ViewportGpuResources::upload_polyline).
+    /// [`DeviceResources::upload_polyline`](crate::resources::DeviceResources::upload_polyline).
     PolylineId,
     PolylineStore,
     PolylineGpuData
@@ -161,7 +161,7 @@ curve_store!(
 
 curve_store!(
     /// Handle to a pre-uploaded streamtube produced by
-    /// [`ViewportGpuResources::upload_streamtube`](crate::resources::ViewportGpuResources::upload_streamtube).
+    /// [`DeviceResources::upload_streamtube`](crate::resources::DeviceResources::upload_streamtube).
     StreamtubeId,
     StreamtubeStore,
     StreamtubeGpuData
@@ -169,7 +169,7 @@ curve_store!(
 
 curve_store!(
     /// Handle to a pre-uploaded tube produced by
-    /// [`ViewportGpuResources::upload_tube`](crate::resources::ViewportGpuResources::upload_tube).
+    /// [`DeviceResources::upload_tube`](crate::resources::DeviceResources::upload_tube).
     TubeId,
     TubeStore,
     StreamtubeGpuData
@@ -177,7 +177,7 @@ curve_store!(
 
 curve_store!(
     /// Handle to a pre-uploaded ribbon produced by
-    /// [`ViewportGpuResources::upload_ribbon`](crate::resources::ViewportGpuResources::upload_ribbon).
+    /// [`DeviceResources::upload_ribbon`](crate::resources::DeviceResources::upload_ribbon).
     RibbonId,
     RibbonStore,
     StreamtubeGpuData
@@ -185,7 +185,7 @@ curve_store!(
 
 curve_store!(
     /// Handle to a pre-uploaded point cloud produced by
-    /// [`ViewportGpuResources::upload_point_cloud`](crate::resources::ViewportGpuResources::upload_point_cloud).
+    /// [`DeviceResources::upload_point_cloud`](crate::resources::DeviceResources::upload_point_cloud).
     PointCloudId,
     PointCloudStore,
     PointCloudGpuData
@@ -193,7 +193,7 @@ curve_store!(
 
 curve_store!(
     /// Handle to a pre-uploaded glyph set produced by
-    /// [`ViewportGpuResources::upload_glyph_set`](crate::resources::ViewportGpuResources::upload_glyph_set).
+    /// [`DeviceResources::upload_glyph_set`](crate::resources::DeviceResources::upload_glyph_set).
     GlyphSetId,
     GlyphSetStore,
     GlyphGpuData
@@ -201,7 +201,7 @@ curve_store!(
 
 curve_store!(
     /// Handle to a pre-uploaded tensor glyph set produced by
-    /// [`ViewportGpuResources::upload_tensor_glyph_set`](crate::resources::ViewportGpuResources::upload_tensor_glyph_set).
+    /// [`DeviceResources::upload_tensor_glyph_set`](crate::resources::DeviceResources::upload_tensor_glyph_set).
     TensorGlyphSetId,
     TensorGlyphSetStore,
     TensorGlyphGpuData
@@ -209,7 +209,7 @@ curve_store!(
 
 curve_store!(
     /// Handle to a pre-uploaded sprite set produced by
-    /// [`ViewportGpuResources::upload_sprite_set`](crate::resources::ViewportGpuResources::upload_sprite_set).
+    /// [`DeviceResources::upload_sprite_set`](crate::resources::DeviceResources::upload_sprite_set).
     /// Backs static billboards such as foliage, signage, and light flares.
     SpriteSetId,
     SpriteSetStore,
@@ -218,7 +218,7 @@ curve_store!(
 
 curve_store!(
     /// Handle to a pre-uploaded sprite instance set produced by
-    /// [`ViewportGpuResources::upload_sprite_instance_set`](crate::resources::ViewportGpuResources::upload_sprite_instance_set).
+    /// [`DeviceResources::upload_sprite_instance_set`](crate::resources::DeviceResources::upload_sprite_instance_set).
     /// Backs entity sprites such as NPCs, item drops, and damage numbers.
     SpriteInstanceSetId,
     SpriteInstanceSetStore,

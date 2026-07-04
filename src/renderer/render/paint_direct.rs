@@ -44,7 +44,7 @@ impl ViewportRenderer {
         );
         // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
         if !self.gaussian_splat_draw_data.is_empty() {
-            if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
+            if let Some(ref dual) = self.resources.gaussian_splat.pipeline {
                 render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {
@@ -98,16 +98,16 @@ impl ViewportRenderer {
         if !self.mc_gpu_data.is_empty() {
             render_pass.set_bind_group(0, camera_bg, &[]);
             for mc in &self.mc_gpu_data {
-                let vol = &self.resources.mc_volumes[mc.volume_idx];
+                let vol = &self.resources.mc.volumes[mc.volume_idx];
                 if mc.wireframe || frame.viewport.wireframe_mode {
-                    if let Some(ref dual) = self.resources.mc_wireframe_pipeline {
+                    if let Some(ref dual) = self.resources.mc.wireframe_pipeline {
                         render_pass.set_pipeline(dual.for_format(false));
                         for (slab, wire_bg) in vol.slabs.iter().zip(mc.wire_slab_bgs.iter()) {
                             render_pass.set_bind_group(1, wire_bg, &[]);
                             render_pass.draw_indirect(&slab.wire_indirect_buf, 0);
                         }
                     }
-                } else if let Some(ref dual) = self.resources.mc_surface_pipeline {
+                } else if let Some(ref dual) = self.resources.mc.surface_pipeline {
                     render_pass.set_pipeline(dual.for_format(false));
                     render_pass.set_bind_group(1, &mc.render_bg, &[]);
                     for slab in &vol.slabs {

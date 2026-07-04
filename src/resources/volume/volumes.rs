@@ -1,6 +1,30 @@
 use crate::resources::*;
 
-impl ViewportGpuResources {
+/// Direct volume rendering pipelines, layouts, the cached unit cube geometry,
+/// and the default opacity LUT. All lazily built; the uploaded 3D volume
+/// textures live in a separate flat store.
+#[derive(Default)]
+pub(crate) struct VolumeResources {
+    /// Volume render pipeline. None until first volume is submitted.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Bind group layout for volume uniforms (group 1).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Cached unit cube vertex buffer for bounding-box rasterization.
+    pub(crate) cube_vb: Option<wgpu::Buffer>,
+    /// Cached unit cube index buffer.
+    pub(crate) cube_ib: Option<wgpu::Buffer>,
+    /// Default linear ramp opacity LUT texture (256x1, R8Unorm).
+    pub(crate) default_opacity_lut: Option<wgpu::Texture>,
+    pub(crate) default_opacity_lut_view: Option<wgpu::TextureView>,
+    /// Volume surface slice render pipeline. None until first slice item.
+    pub(crate) surface_slice_pipeline: Option<DualPipeline>,
+    /// Bind group layout for volume surface slice uniforms (group 1).
+    pub(crate) surface_slice_bgl: Option<wgpu::BindGroupLayout>,
+    /// Mask-write pipeline for volume AABB cubes. None until first selected volume.
+    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+}
+
+impl DeviceResources {
     /// Upload a 3D scalar field to the GPU as an `R32Float` 3D texture.
     ///
     /// `data` must be a flat array of `dims[0] * dims[1] * dims[2]` scalars in
@@ -144,7 +168,7 @@ impl ViewportGpuResources {
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let id = VolumeId(resources.volume_textures.len());
                         resources.volume_textures.push((texture, view));
                         slot_for_apply.set(id);
@@ -195,7 +219,7 @@ impl ViewportGpuResources {
 
     /// Create the volume render pipeline and bind group layout (lazy init).
     pub(crate) fn ensure_volume_pipeline(&mut self, device: &wgpu::Device) {
-        if self.volume_pipeline.is_some() {
+        if self.volume.pipeline.is_some() {
             return;
         }
 
@@ -333,11 +357,11 @@ impl ViewportGpuResources {
             })
         };
 
-        self.volume_pipeline = Some(DualPipeline {
+        self.volume.pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
-        self.volume_bgl = Some(bgl);
+        self.volume.bgl = Some(bgl);
     }
 
     /// Ensure the volume outline mask pipeline exists. This pipeline ray-marches the
@@ -345,10 +369,10 @@ impl ViewportGpuResources {
     /// rather than the AABB. Requires `ensure_volume_pipeline` to have been called
     /// first (needs `volume_bgl`).
     pub(crate) fn ensure_volume_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
-        if self.volume_outline_mask_pipeline.is_some() {
+        if self.volume.outline_mask_pipeline.is_some() {
             return;
         }
-        let bgl = self.volume_bgl.as_ref().expect(
+        let bgl = self.volume.bgl.as_ref().expect(
             "ensure_volume_pipeline must be called before ensure_volume_outline_mask_pipeline",
         );
 
@@ -376,7 +400,7 @@ impl ViewportGpuResources {
             attributes: &vert_attrs,
         };
 
-        self.volume_outline_mask_pipeline = Some(device.create_render_pipeline(
+        self.volume.outline_mask_pipeline = Some(device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
                 label: Some("volume_outline_mask_pipeline"),
                 layout: Some(&layout),
@@ -421,7 +445,7 @@ impl ViewportGpuResources {
 
     /// Ensure the unit cube vertex + index buffers for volume bounding box proxy exist.
     pub(crate) fn ensure_volume_cube(&mut self, device: &wgpu::Device) {
-        if self.volume_cube_vb.is_some() {
+        if self.volume.cube_vb.is_some() {
             return;
         }
 
@@ -471,13 +495,13 @@ impl ViewportGpuResources {
         }
         ibuf.unmap();
 
-        self.volume_cube_vb = Some(vbuf);
-        self.volume_cube_ib = Some(ibuf);
+        self.volume.cube_vb = Some(vbuf);
+        self.volume.cube_ib = Some(ibuf);
     }
 
     /// Ensure the default linear ramp opacity LUT exists.
     fn ensure_default_opacity_lut(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.volume_default_opacity_lut.is_some() {
+        if self.volume.default_opacity_lut.is_some() {
             return;
         }
 
@@ -522,8 +546,8 @@ impl ViewportGpuResources {
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.volume_default_opacity_lut = Some(texture);
-        self.volume_default_opacity_lut_view = Some(view);
+        self.volume.default_opacity_lut = Some(texture);
+        self.volume.default_opacity_lut_view = Some(view);
     }
 
     /// Prepare per-frame GPU data for a single volume item.
@@ -667,9 +691,9 @@ impl ViewportGpuResources {
         let opacity_lut_view = if let Some(cmap_id) = item.opacity_lut {
             self.colourmap_views
                 .get(cmap_id.0)
-                .unwrap_or(self.volume_default_opacity_lut_view.as_ref().unwrap())
+                .unwrap_or(self.volume.default_opacity_lut_view.as_ref().unwrap())
         } else {
-            self.volume_default_opacity_lut_view.as_ref().unwrap()
+            self.volume.default_opacity_lut_view.as_ref().unwrap()
         };
 
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -695,7 +719,8 @@ impl ViewportGpuResources {
         });
 
         let bgl = self
-            .volume_bgl
+            .volume
+            .bgl
             .as_ref()
             .expect("ensure_volume_pipeline not called");
 
@@ -779,7 +804,7 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::geometry::marching_cubes::VolumeData;
     use crate::resources::UploadStatus;
 
@@ -818,7 +843,7 @@ mod tests {
     }
 
     fn drive_until_ready(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         id: crate::resources::JobId,
@@ -844,8 +869,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let data = sample_volume_data();
         let _id = resources.upload_volume(&device, &queue, &data, [8, 8, 8]);
     }
@@ -856,8 +880,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = resources
             .begin_upload_volume(&device, &queue, vec![0.0_f32; 7], [8, 8, 8])
             .unwrap_err();
@@ -873,8 +896,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources
             .begin_upload_volume(&device, &queue, sample_volume_data(), [8, 8, 8])
             .expect("job submitted");
@@ -893,8 +915,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_volume_for_mc(&device, &queue, sample_volume_struct());
         drive_until_ready(&mut resources, &device, &queue, job, "volume_mc");
         let _id = resources.upload_result_volume_mc(job).expect("ready");
@@ -906,8 +927,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let vol = sample_volume_struct();
         let _id = resources
             .upload_volume_for_mc(&device, &queue, &vol)

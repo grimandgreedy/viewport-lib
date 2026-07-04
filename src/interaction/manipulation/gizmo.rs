@@ -7,7 +7,7 @@
 //! current mode (translate/rotate/scale), which axis is hovered or active, and the
 //! transform snapshot captured at drag start for undo.
 //!
-//! Rendering is handled by `gizmo_pipeline` in `ViewportGpuResources`, which uses
+//! Rendering is handled by `gizmo_pipeline` in `DeviceResources`, which uses
 //! `depth_compare: Always` so the gizmo always appears on top of scene geometry.
 //!
 //! Hit testing uses cylinder-distance approximation via `parry3d`-style math:

@@ -8,7 +8,7 @@ impl ViewportRenderer {
     /// is preserved), and dispatch the GPU frustum cull + indirect-args passes.
     /// Returns `(batches_reuploaded, batches_skipped)` for frame stats.
     pub(super) fn prepare_instanced(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         instancing: &mut InstancingState,
         instanceable: &[bool],
         scene_items: &[SceneRenderItem],
@@ -320,7 +320,7 @@ impl ViewportRenderer {
     /// on different cameras get independent visibility results.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn run_viewport_cull(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         cull_state: &mut crate::resources::ViewportCullState,
         instancing: &mut InstancingState,
         ts_query_set: Option<&wgpu::QuerySet>,

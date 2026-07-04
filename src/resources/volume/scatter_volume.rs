@@ -28,6 +28,72 @@ use crate::scene::scatter_volume::{
 /// per-volume draw flow handles up to this many active volumes.
 pub const MAX_SCATTER_VOLUMES: usize = 16;
 
+/// Scatter-volume (participating media) pipelines, layouts, and per-frame
+/// upload buffers. All device-shared and lazily built by the `ensure_scatter_*`
+/// methods; the uploaded density textures are keyed elsewhere.
+#[derive(Default)]
+pub(crate) struct ScatterResources {
+    /// Render pipeline for the scatter-volume pass. None until first item submitted.
+    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 1 layout (per-volume uniform with dynamic offset).
+    pub(crate) per_volume_bgl: Option<wgpu::BindGroupLayout>,
+    /// Group 2 layout (per-volume LUT + density texture + samplers).
+    pub(crate) per_volume_tex_bgl: Option<wgpu::BindGroupLayout>,
+    /// Group 3 layout (per-frame uniform + opaque depth + samplers).
+    pub(crate) frame_bgl: Option<wgpu::BindGroupLayout>,
+    /// Per-volume uniform buffer holding the packed `GpuScatterVolume` array,
+    /// stride-padded for dynamic offsetting.
+    pub(crate) per_volume_buffer: Option<wgpu::Buffer>,
+    /// Bind group for the per-volume uniform (group 1).
+    pub(crate) per_volume_bg: Option<wgpu::BindGroup>,
+    /// Stride between dynamic-offset uniform slots, in bytes.
+    pub(crate) per_volume_stride: u32,
+    /// Capacity of `per_volume_buffer` in slots.
+    pub(crate) per_volume_capacity: u32,
+    /// Per-frame uniform buffer (group 3 binding 0).
+    pub(crate) frame_uniform_buffer: Option<wgpu::Buffer>,
+    /// Cache of group 2 bind groups, keyed by `(lut_id, density_id)`.
+    pub(crate) per_volume_tex_cache: Vec<((usize, usize), wgpu::BindGroup)>,
+    /// Bind group for group 3, rebuilt when opaque depth view changes.
+    pub(crate) frame_bg: Option<wgpu::BindGroup>,
+    /// Linear sampler used to read opaque depth in the scatter pass.
+    pub(crate) depth_sampler: Option<wgpu::Sampler>,
+    /// Linear-clamp sampler used to read the colourmap LUT in the scatter pass.
+    pub(crate) colourmap_sampler: Option<wgpu::Sampler>,
+    /// 1x1x1 R32Float fallback view bound at the per-volume 3D density slot.
+    pub(crate) density_fallback_view: Option<wgpu::TextureView>,
+    /// Token combining (depth view, frame uniform buffer) for `frame_bg` reuse.
+    pub(crate) bound_depth: u64,
+    /// Composite pipeline that blends a scatter intermediate onto the HDR target.
+    pub(crate) composite_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the composite pass (one sampled RGBA16F + sampler).
+    pub(crate) composite_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bilinear-clamp sampler used by the composite pass.
+    pub(crate) composite_sampler: Option<wgpu::Sampler>,
+    /// Temporal-resolve pipeline: mixes (raw_current, history_prev) into history_new.
+    pub(crate) temporal_resolve_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the temporal-resolve pass.
+    pub(crate) temporal_resolve_bgl: Option<wgpu::BindGroupLayout>,
+    /// Per-frame uniform buffer for the temporal-resolve pass.
+    pub(crate) temporal_resolve_uniform_buffer: Option<wgpu::Buffer>,
+    /// Refraction pass: per-volume distortion using a noise-driven gradient.
+    pub(crate) refraction_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the refraction pass's per-volume uniform.
+    pub(crate) refraction_per_volume_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for the refraction pass's source-scene + depth bindings.
+    pub(crate) refraction_source_bgl: Option<wgpu::BindGroupLayout>,
+    /// Dynamic-offset uniform buffer holding every refractive volume's params.
+    pub(crate) refraction_per_volume_buffer: Option<wgpu::Buffer>,
+    /// Stride between refractive-volume slots.
+    pub(crate) refraction_per_volume_stride: u32,
+    /// Capacity (slot count) the refraction per-volume buffer is sized for.
+    pub(crate) refraction_per_volume_capacity: u32,
+    /// Dynamic-offset bind group for the refraction per-volume uniform buffer.
+    pub(crate) refraction_per_volume_bg: Option<wgpu::BindGroup>,
+    /// Blit pipeline that copies the HDR target into the refraction source texture.
+    pub(crate) refraction_blit_pipeline: Option<wgpu::RenderPipeline>,
+}
+
 /// Per-frame uniform layout shared across every per-volume draw.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
@@ -49,13 +115,13 @@ pub(crate) struct ScatterTemporalUniformRaw {
     pub temporal_pack: [f32; 4],
 }
 
-impl crate::resources::ViewportGpuResources {
+impl crate::resources::DeviceResources {
     // ---------------------------------------------------------------------
     // Bind group layouts
     // ---------------------------------------------------------------------
 
     fn ensure_scatter_per_volume_bgl(&mut self, device: &wgpu::Device) {
-        if self.scatter_per_volume_bgl.is_some() {
+        if self.scatter.per_volume_bgl.is_some() {
             return;
         }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -76,11 +142,11 @@ impl crate::resources::ViewportGpuResources {
                 count: None,
             }],
         });
-        self.scatter_per_volume_bgl = Some(bgl);
+        self.scatter.per_volume_bgl = Some(bgl);
     }
 
     fn ensure_scatter_per_volume_tex_bgl(&mut self, device: &wgpu::Device) {
-        if self.scatter_per_volume_tex_bgl.is_some() {
+        if self.scatter.per_volume_tex_bgl.is_some() {
             return;
         }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -124,11 +190,11 @@ impl crate::resources::ViewportGpuResources {
                 },
             ],
         });
-        self.scatter_per_volume_tex_bgl = Some(bgl);
+        self.scatter.per_volume_tex_bgl = Some(bgl);
     }
 
     fn ensure_scatter_frame_bgl(&mut self, device: &wgpu::Device) {
-        if self.scatter_frame_bgl.is_some() {
+        if self.scatter.frame_bgl.is_some() {
             return;
         }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -168,11 +234,11 @@ impl crate::resources::ViewportGpuResources {
                 },
             ],
         });
-        self.scatter_frame_bgl = Some(bgl);
+        self.scatter.frame_bgl = Some(bgl);
     }
 
     fn ensure_scatter_temporal_resolve_bgl(&mut self, device: &wgpu::Device) {
-        if self.scatter_temporal_resolve_bgl.is_some() {
+        if self.scatter.temporal_resolve_bgl.is_some() {
             return;
         }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -241,11 +307,11 @@ impl crate::resources::ViewportGpuResources {
                 },
             ],
         });
-        self.scatter_temporal_resolve_bgl = Some(bgl);
+        self.scatter.temporal_resolve_bgl = Some(bgl);
     }
 
     fn ensure_scatter_density_fallback(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.scatter_density_fallback_view.is_some() {
+        if self.scatter.density_fallback_view.is_some() {
             return;
         }
         let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -282,15 +348,15 @@ impl crate::resources::ViewportGpuResources {
                 depth_or_array_layers: 1,
             },
         );
-        self.scatter_density_fallback_view =
+        self.scatter.density_fallback_view =
             Some(tex.create_view(&wgpu::TextureViewDescriptor::default()));
     }
 
     fn ensure_scatter_depth_sampler(&mut self, device: &wgpu::Device) {
-        if self.scatter_depth_sampler.is_some() {
+        if self.scatter.depth_sampler.is_some() {
             return;
         }
-        self.scatter_depth_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
+        self.scatter.depth_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("scatter_depth_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -303,10 +369,10 @@ impl crate::resources::ViewportGpuResources {
     }
 
     fn ensure_scatter_colourmap_sampler(&mut self, device: &wgpu::Device) {
-        if self.scatter_colourmap_sampler.is_some() {
+        if self.scatter.colourmap_sampler.is_some() {
             return;
         }
-        self.scatter_colourmap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
+        self.scatter.colourmap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("scatter_colourmap_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -327,16 +393,16 @@ impl crate::resources::ViewportGpuResources {
         device: &wgpu::Device,
         colour_format: wgpu::TextureFormat,
     ) {
-        if self.scatter_pipeline.is_some() {
+        if self.scatter.pipeline.is_some() {
             return;
         }
         self.ensure_scatter_per_volume_bgl(device);
         self.ensure_scatter_per_volume_tex_bgl(device);
         self.ensure_scatter_frame_bgl(device);
 
-        let per_vol = self.scatter_per_volume_bgl.as_ref().unwrap();
-        let per_tex = self.scatter_per_volume_tex_bgl.as_ref().unwrap();
-        let frame_bgl = self.scatter_frame_bgl.as_ref().unwrap();
+        let per_vol = self.scatter.per_volume_bgl.as_ref().unwrap();
+        let per_tex = self.scatter.per_volume_tex_bgl.as_ref().unwrap();
+        let frame_bgl = self.scatter.frame_bgl.as_ref().unwrap();
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scatter_volume_shader"),
@@ -399,7 +465,7 @@ impl crate::resources::ViewportGpuResources {
             cache: None,
         });
 
-        self.scatter_pipeline = Some(pipeline);
+        self.scatter.pipeline = Some(pipeline);
     }
 
     pub(crate) fn ensure_scatter_composite_pipeline(
@@ -407,7 +473,7 @@ impl crate::resources::ViewportGpuResources {
         device: &wgpu::Device,
         colour_format: wgpu::TextureFormat,
     ) {
-        if self.scatter_composite_pipeline.is_some() {
+        if self.scatter.composite_pipeline.is_some() {
             return;
         }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -496,17 +562,17 @@ impl crate::resources::ViewportGpuResources {
             multiview: None,
             cache: None,
         });
-        self.scatter_composite_pipeline = Some(pipeline);
-        self.scatter_composite_bgl = Some(bgl);
-        self.scatter_composite_sampler = Some(sampler);
+        self.scatter.composite_pipeline = Some(pipeline);
+        self.scatter.composite_bgl = Some(bgl);
+        self.scatter.composite_sampler = Some(sampler);
     }
 
     pub(crate) fn ensure_scatter_temporal_resolve_pipeline(&mut self, device: &wgpu::Device) {
-        if self.scatter_temporal_resolve_pipeline.is_some() {
+        if self.scatter.temporal_resolve_pipeline.is_some() {
             return;
         }
         self.ensure_scatter_temporal_resolve_bgl(device);
-        let bgl = self.scatter_temporal_resolve_bgl.as_ref().unwrap();
+        let bgl = self.scatter.temporal_resolve_bgl.as_ref().unwrap();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scatter_temporal_resolve_shader"),
             source: wgpu::ShaderSource::Wgsl(
@@ -552,7 +618,7 @@ impl crate::resources::ViewportGpuResources {
             multiview: None,
             cache: None,
         });
-        self.scatter_temporal_resolve_pipeline = Some(pipeline);
+        self.scatter.temporal_resolve_pipeline = Some(pipeline);
     }
 
     // ---------------------------------------------------------------------
@@ -575,9 +641,9 @@ impl crate::resources::ViewportGpuResources {
         let capacity = volumes.len().min(MAX_SCATTER_VOLUMES).max(1) as u32;
         let buffer_size = (stride as u64) * (capacity as u64);
 
-        let need_realloc = self.scatter_per_volume_buffer.is_none()
-            || self.scatter_per_volume_stride != stride
-            || self.scatter_per_volume_capacity < capacity;
+        let need_realloc = self.scatter.per_volume_buffer.is_none()
+            || self.scatter.per_volume_stride != stride
+            || self.scatter.per_volume_capacity < capacity;
         if need_realloc {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter_per_volume_uniform"),
@@ -585,17 +651,17 @@ impl crate::resources::ViewportGpuResources {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.scatter_per_volume_buffer = Some(buf);
-            self.scatter_per_volume_stride = stride;
-            self.scatter_per_volume_capacity = capacity;
-            self.scatter_per_volume_bg = None;
+            self.scatter.per_volume_buffer = Some(buf);
+            self.scatter.per_volume_stride = stride;
+            self.scatter.per_volume_capacity = capacity;
+            self.scatter.per_volume_bg = None;
         }
 
         // Build the dynamic-offset bind group lazily.
-        if self.scatter_per_volume_bg.is_none() {
+        if self.scatter.per_volume_bg.is_none() {
             self.ensure_scatter_per_volume_bgl(device);
-            let bgl = self.scatter_per_volume_bgl.as_ref().unwrap();
-            let buf = self.scatter_per_volume_buffer.as_ref().unwrap();
+            let bgl = self.scatter.per_volume_bgl.as_ref().unwrap();
+            let buf = self.scatter.per_volume_buffer.as_ref().unwrap();
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scatter_per_volume_bg"),
                 layout: bgl,
@@ -608,7 +674,7 @@ impl crate::resources::ViewportGpuResources {
                     }),
                 }],
             });
-            self.scatter_per_volume_bg = Some(bg);
+            self.scatter.per_volume_bg = Some(bg);
         }
 
         // Pack and upload.
@@ -625,7 +691,7 @@ impl crate::resources::ViewportGpuResources {
                 n += 1;
             }
         }
-        if let Some(buf) = self.scatter_per_volume_buffer.as_ref() {
+        if let Some(buf) = self.scatter.per_volume_buffer.as_ref() {
             queue.write_buffer(
                 buf,
                 0,
@@ -650,15 +716,15 @@ impl crate::resources::ViewportGpuResources {
     ) {
         self.ensure_scatter_frame_bgl(device);
         self.ensure_scatter_depth_sampler(device);
-        if self.scatter_frame_uniform_buffer.is_none() {
+        if self.scatter.frame_uniform_buffer.is_none() {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter_frame_uniform"),
                 size: std::mem::size_of::<ScatterFrameUniformRaw>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.scatter_frame_uniform_buffer = Some(buf);
-            self.scatter_frame_bg = None;
+            self.scatter.frame_uniform_buffer = Some(buf);
+            self.scatter.frame_bg = None;
         }
         let raw = ScatterFrameUniformRaw {
             time_pack: [time_seconds, 0.0, 0.0, 0.0],
@@ -669,13 +735,13 @@ impl crate::resources::ViewportGpuResources {
                 0,
             ],
         };
-        if let Some(buf) = self.scatter_frame_uniform_buffer.as_ref() {
+        if let Some(buf) = self.scatter.frame_uniform_buffer.as_ref() {
             queue.write_buffer(buf, 0, bytemuck::bytes_of(&raw));
         }
-        if self.scatter_frame_bg.is_none() || self.scatter_bound_depth != depth_view_token {
-            let bgl = self.scatter_frame_bgl.as_ref().unwrap();
-            let buf = self.scatter_frame_uniform_buffer.as_ref().unwrap();
-            let sampler = self.scatter_depth_sampler.as_ref().unwrap();
+        if self.scatter.frame_bg.is_none() || self.scatter.bound_depth != depth_view_token {
+            let bgl = self.scatter.frame_bgl.as_ref().unwrap();
+            let buf = self.scatter.frame_uniform_buffer.as_ref().unwrap();
+            let sampler = self.scatter.depth_sampler.as_ref().unwrap();
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scatter_frame_bg"),
                 layout: bgl,
@@ -694,8 +760,8 @@ impl crate::resources::ViewportGpuResources {
                     },
                 ],
             });
-            self.scatter_frame_bg = Some(bg);
-            self.scatter_bound_depth = depth_view_token;
+            self.scatter.frame_bg = Some(bg);
+            self.scatter.bound_depth = depth_view_token;
         }
     }
 
@@ -714,15 +780,16 @@ impl crate::resources::ViewportGpuResources {
 
         let key = (lut_id, density_id);
         if let Some((_, bg)) = self
-            .scatter_per_volume_tex_cache
+            .scatter
+            .per_volume_tex_cache
             .iter()
             .find(|(k, _)| *k == key)
         {
             return bg.clone();
         }
-        let bgl = self.scatter_per_volume_tex_bgl.as_ref().unwrap();
-        let lut_sampler = self.scatter_colourmap_sampler.as_ref().unwrap();
-        let density_sampler = self.scatter_depth_sampler.as_ref().unwrap();
+        let bgl = self.scatter.per_volume_tex_bgl.as_ref().unwrap();
+        let lut_sampler = self.scatter.colourmap_sampler.as_ref().unwrap();
+        let density_sampler = self.scatter.depth_sampler.as_ref().unwrap();
         let lut_view: &wgpu::TextureView = if lut_id == usize::MAX {
             &self.fallback_lut_view
         } else {
@@ -730,7 +797,7 @@ impl crate::resources::ViewportGpuResources {
                 .get(lut_id)
                 .unwrap_or(&self.fallback_lut_view)
         };
-        let density_fallback = self.scatter_density_fallback_view.as_ref().unwrap();
+        let density_fallback = self.scatter.density_fallback_view.as_ref().unwrap();
         let density_view: &wgpu::TextureView = if density_id == usize::MAX {
             density_fallback
         } else {
@@ -761,7 +828,7 @@ impl crate::resources::ViewportGpuResources {
                 },
             ],
         });
-        self.scatter_per_volume_tex_cache.push((key, bg.clone()));
+        self.scatter.per_volume_tex_cache.push((key, bg.clone()));
         bg
     }
 
@@ -779,12 +846,12 @@ impl crate::resources::ViewportGpuResources {
     /// Clear the per-volume texture bind group cache. Call when the
     /// underlying texture vectors may have been mutated (uploads added).
     pub(crate) fn clear_scatter_per_volume_tex_cache(&mut self) {
-        self.scatter_per_volume_tex_cache.clear();
+        self.scatter.per_volume_tex_cache.clear();
     }
 
     /// Stride between dynamic-offset slots, in bytes.
     pub(crate) fn scatter_per_volume_stride(&self) -> u32 {
-        self.scatter_per_volume_stride
+        self.scatter.per_volume_stride
     }
 
     // ---------------------------------------------------------------------
@@ -796,8 +863,8 @@ impl crate::resources::ViewportGpuResources {
         device: &wgpu::Device,
         source_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        let bgl = self.scatter_composite_bgl.as_ref().unwrap();
-        let sampler = self.scatter_composite_sampler.as_ref().unwrap();
+        let bgl = self.scatter.composite_bgl.as_ref().unwrap();
+        let sampler = self.scatter.composite_sampler.as_ref().unwrap();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scatter_composite_bg"),
             layout: bgl,
@@ -830,16 +897,17 @@ impl crate::resources::ViewportGpuResources {
         self.ensure_scatter_temporal_resolve_bgl(device);
         self.ensure_scatter_depth_sampler(device);
         self.ensure_scatter_composite_pipeline(device, wgpu::TextureFormat::Rgba16Float);
-        if self.scatter_temporal_resolve_uniform_buffer.is_none() {
+        if self.scatter.temporal_resolve_uniform_buffer.is_none() {
             self.write_scatter_temporal_uniform(device, queue, [[0.0; 4]; 4], 0.0, false);
         }
-        let bgl = self.scatter_temporal_resolve_bgl.as_ref().unwrap();
+        let bgl = self.scatter.temporal_resolve_bgl.as_ref().unwrap();
         let buf = self
-            .scatter_temporal_resolve_uniform_buffer
+            .scatter
+            .temporal_resolve_uniform_buffer
             .as_ref()
             .unwrap();
-        let bilinear = self.scatter_composite_sampler.as_ref().unwrap();
-        let depth_sampler = self.scatter_depth_sampler.as_ref().unwrap();
+        let bilinear = self.scatter.composite_sampler.as_ref().unwrap();
+        let depth_sampler = self.scatter.depth_sampler.as_ref().unwrap();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scatter_temporal_resolve_bg"),
             layout: bgl,
@@ -877,7 +945,7 @@ impl crate::resources::ViewportGpuResources {
     // ---------------------------------------------------------------------
 
     fn ensure_scatter_refraction_per_volume_bgl(&mut self, device: &wgpu::Device) {
-        if self.scatter_refraction_per_volume_bgl.is_some() {
+        if self.scatter.refraction_per_volume_bgl.is_some() {
             return;
         }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -895,11 +963,11 @@ impl crate::resources::ViewportGpuResources {
                 count: None,
             }],
         });
-        self.scatter_refraction_per_volume_bgl = Some(bgl);
+        self.scatter.refraction_per_volume_bgl = Some(bgl);
     }
 
     fn ensure_scatter_refraction_source_bgl(&mut self, device: &wgpu::Device) {
-        if self.scatter_refraction_source_bgl.is_some() {
+        if self.scatter.refraction_source_bgl.is_some() {
             return;
         }
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -933,7 +1001,7 @@ impl crate::resources::ViewportGpuResources {
                 },
             ],
         });
-        self.scatter_refraction_source_bgl = Some(bgl);
+        self.scatter.refraction_source_bgl = Some(bgl);
     }
 
     pub(crate) fn ensure_scatter_refraction_pipeline(
@@ -941,15 +1009,15 @@ impl crate::resources::ViewportGpuResources {
         device: &wgpu::Device,
         colour_format: wgpu::TextureFormat,
     ) {
-        if self.scatter_refraction_pipeline.is_some() {
+        if self.scatter.refraction_pipeline.is_some() {
             return;
         }
         self.ensure_scatter_refraction_per_volume_bgl(device);
         self.ensure_scatter_refraction_source_bgl(device);
         self.ensure_scatter_composite_pipeline(device, colour_format);
 
-        let per_vol = self.scatter_refraction_per_volume_bgl.as_ref().unwrap();
-        let source_bgl = self.scatter_refraction_source_bgl.as_ref().unwrap();
+        let per_vol = self.scatter.refraction_per_volume_bgl.as_ref().unwrap();
+        let source_bgl = self.scatter.refraction_source_bgl.as_ref().unwrap();
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scatter_refraction_shader"),
@@ -999,7 +1067,7 @@ impl crate::resources::ViewportGpuResources {
             cache: None,
         });
 
-        self.scatter_refraction_pipeline = Some(pipeline);
+        self.scatter.refraction_pipeline = Some(pipeline);
     }
 
     /// Build a render pipeline that samples a source colour texture (via the
@@ -1011,11 +1079,11 @@ impl crate::resources::ViewportGpuResources {
         device: &wgpu::Device,
         colour_format: wgpu::TextureFormat,
     ) {
-        if self.scatter_refraction_blit_pipeline.is_some() {
+        if self.scatter.refraction_blit_pipeline.is_some() {
             return;
         }
         self.ensure_scatter_composite_pipeline(device, colour_format);
-        let bgl = self.scatter_composite_bgl.as_ref().unwrap();
+        let bgl = self.scatter.composite_bgl.as_ref().unwrap();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scatter_refraction_blit_shader"),
             source: wgpu::ShaderSource::Wgsl(
@@ -1059,7 +1127,7 @@ impl crate::resources::ViewportGpuResources {
             multiview: None,
             cache: None,
         });
-        self.scatter_refraction_blit_pipeline = Some(pipeline);
+        self.scatter.refraction_blit_pipeline = Some(pipeline);
     }
 
     /// Pack visible refractive volumes into the dynamic-offset uniform buffer.
@@ -1077,9 +1145,9 @@ impl crate::resources::ViewportGpuResources {
         let capacity = volumes.len().min(MAX_SCATTER_VOLUMES).max(1) as u32;
         let buffer_size = (stride as u64) * (capacity as u64);
 
-        let need_realloc = self.scatter_refraction_per_volume_buffer.is_none()
-            || self.scatter_refraction_per_volume_stride != stride
-            || self.scatter_refraction_per_volume_capacity < capacity;
+        let need_realloc = self.scatter.refraction_per_volume_buffer.is_none()
+            || self.scatter.refraction_per_volume_stride != stride
+            || self.scatter.refraction_per_volume_capacity < capacity;
         if need_realloc {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter_refraction_per_volume_uniform"),
@@ -1087,16 +1155,16 @@ impl crate::resources::ViewportGpuResources {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.scatter_refraction_per_volume_buffer = Some(buf);
-            self.scatter_refraction_per_volume_stride = stride;
-            self.scatter_refraction_per_volume_capacity = capacity;
-            self.scatter_refraction_per_volume_bg = None;
+            self.scatter.refraction_per_volume_buffer = Some(buf);
+            self.scatter.refraction_per_volume_stride = stride;
+            self.scatter.refraction_per_volume_capacity = capacity;
+            self.scatter.refraction_per_volume_bg = None;
         }
 
-        if self.scatter_refraction_per_volume_bg.is_none() {
+        if self.scatter.refraction_per_volume_bg.is_none() {
             self.ensure_scatter_refraction_per_volume_bgl(device);
-            let bgl = self.scatter_refraction_per_volume_bgl.as_ref().unwrap();
-            let buf = self.scatter_refraction_per_volume_buffer.as_ref().unwrap();
+            let bgl = self.scatter.refraction_per_volume_bgl.as_ref().unwrap();
+            let buf = self.scatter.refraction_per_volume_buffer.as_ref().unwrap();
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scatter_refraction_per_volume_bg"),
                 layout: bgl,
@@ -1109,7 +1177,7 @@ impl crate::resources::ViewportGpuResources {
                     }),
                 }],
             });
-            self.scatter_refraction_per_volume_bg = Some(bg);
+            self.scatter.refraction_per_volume_bg = Some(bg);
         }
 
         let mut bytes = vec![0u8; buffer_size as usize];
@@ -1125,7 +1193,7 @@ impl crate::resources::ViewportGpuResources {
                 n += 1;
             }
         }
-        if let Some(buf) = self.scatter_refraction_per_volume_buffer.as_ref() {
+        if let Some(buf) = self.scatter.refraction_per_volume_buffer.as_ref() {
             queue.write_buffer(
                 buf,
                 0,
@@ -1137,7 +1205,7 @@ impl crate::resources::ViewportGpuResources {
 
     /// Stride between dynamic-offset slots in the refraction per-volume buffer.
     pub(crate) fn scatter_refraction_per_volume_stride(&self) -> u32 {
-        self.scatter_refraction_per_volume_stride
+        self.scatter.refraction_per_volume_stride
     }
 
     /// Build the bind group sampling the refraction source texture + depth.
@@ -1149,8 +1217,8 @@ impl crate::resources::ViewportGpuResources {
     ) -> wgpu::BindGroup {
         self.ensure_scatter_refraction_source_bgl(device);
         self.ensure_scatter_composite_pipeline(device, wgpu::TextureFormat::Rgba16Float);
-        let bgl = self.scatter_refraction_source_bgl.as_ref().unwrap();
-        let sampler = self.scatter_composite_sampler.as_ref().unwrap();
+        let bgl = self.scatter.refraction_source_bgl.as_ref().unwrap();
+        let sampler = self.scatter.composite_sampler.as_ref().unwrap();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scatter_refraction_source_bg"),
             layout: bgl,
@@ -1180,14 +1248,14 @@ impl crate::resources::ViewportGpuResources {
         blend: f32,
         history_valid: bool,
     ) {
-        if self.scatter_temporal_resolve_uniform_buffer.is_none() {
+        if self.scatter.temporal_resolve_uniform_buffer.is_none() {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter_temporal_resolve_uniform"),
                 size: std::mem::size_of::<ScatterTemporalUniformRaw>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.scatter_temporal_resolve_uniform_buffer = Some(buf);
+            self.scatter.temporal_resolve_uniform_buffer = Some(buf);
         }
         let raw = ScatterTemporalUniformRaw {
             prev_view_proj,
@@ -1198,7 +1266,7 @@ impl crate::resources::ViewportGpuResources {
                 0.0,
             ],
         };
-        if let Some(buf) = self.scatter_temporal_resolve_uniform_buffer.as_ref() {
+        if let Some(buf) = self.scatter.temporal_resolve_uniform_buffer.as_ref() {
             queue.write_buffer(buf, 0, bytemuck::bytes_of(&raw));
         }
     }

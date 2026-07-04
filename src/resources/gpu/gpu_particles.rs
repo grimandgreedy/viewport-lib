@@ -4,7 +4,7 @@
 //! Each particle stores its world-space position, velocity, lifetime remaining,
 //! starting lifetime, colour, and size.
 //!
-//! The host calls [`ViewportGpuResources::create_gpu_particle_system`] once at
+//! The host calls [`DeviceResources::create_gpu_particle_system`] once at
 //! startup to allocate the buffer, then submits a
 //! [`GpuParticleSystemItem`](crate::renderer::GpuParticleSystemItem) per frame.
 //! The renderer dispatches an emit compute pass (recycling dead particles back
@@ -23,11 +23,48 @@ use wgpu::util::DeviceExt;
 
 use crate::renderer::{ParticleMeshAlign, SpriteBlend, SpriteLitParams, SpriteSizeMode};
 
+/// GPU particle-system compute/draw pipelines, their layouts, and the live
+/// systems. All pipelines are lazily built; `systems` holds the persistent
+/// per-system GPU state, indexed by `GpuParticleSystemId`.
+#[derive(Default)]
+pub(crate) struct ParticleResources {
+    /// Live particle systems. Slots can be reused after `drop_gpu_particle_system`.
+    pub(crate) systems: Vec<Option<ParticleSystem>>,
+    /// Layout for the emit + sim compute pipelines (group 1).
+    pub(crate) sim_bgl: Option<wgpu::BindGroupLayout>,
+    /// Layout for emit/sim params (group 0).
+    pub(crate) params_bgl: Option<wgpu::BindGroupLayout>,
+    /// Layout for the particle-sprite draw pipeline (group 1).
+    pub(crate) draw_bgl: Option<wgpu::BindGroupLayout>,
+    /// Compute pipeline that pops free-list slots and writes new particles.
+    pub(crate) emit_pipeline: Option<wgpu::ComputePipeline>,
+    /// Compute pipeline that integrates forces and decrements lifetime.
+    pub(crate) sim_pipeline: Option<wgpu::ComputePipeline>,
+    /// Draw pipeline variants for the particle-sprite shader, keyed by blend.
+    pub(crate) sprite_pipeline_alpha: Option<crate::resources::DualPipeline>,
+    pub(crate) sprite_pipeline_additive: Option<crate::resources::DualPipeline>,
+    pub(crate) sprite_pipeline_premultiplied: Option<crate::resources::DualPipeline>,
+    /// Lit variants of the GPU particle sprite pipelines.
+    pub(crate) sprite_lit_pipeline_alpha: Option<crate::resources::DualPipeline>,
+    pub(crate) sprite_lit_pipeline_additive: Option<crate::resources::DualPipeline>,
+    pub(crate) sprite_lit_pipeline_premultiplied: Option<crate::resources::DualPipeline>,
+    /// Group 2 BGL for the lit particle path: optional normal map + sampler.
+    pub(crate) sprite_lit_bgl: Option<wgpu::BindGroupLayout>,
+    /// Fallback bind group for the lit particle normal-map binding (group 2).
+    pub(crate) sprite_lit_fallback_bg: Option<wgpu::BindGroup>,
+    /// Layout for the mesh-route particle draw pipeline (group 1).
+    pub(crate) mesh_draw_bgl: Option<wgpu::BindGroupLayout>,
+    /// Draw pipeline variants for the particle-mesh shader, keyed by blend.
+    pub(crate) mesh_pipeline_alpha: Option<crate::resources::DualPipeline>,
+    pub(crate) mesh_pipeline_additive: Option<crate::resources::DualPipeline>,
+    pub(crate) mesh_pipeline_premultiplied: Option<crate::resources::DualPipeline>,
+}
+
 crate::resources::handle::registry_handle! {
     /// Handle to a persistent GPU particle system.
     ///
-    /// Returned by [`ViewportGpuResources::create_gpu_particle_system`]. Stable
-    /// until [`ViewportGpuResources::drop_gpu_particle_system`] is called. An
+    /// Returned by [`DeviceResources::create_gpu_particle_system`]. Stable
+    /// until [`DeviceResources::drop_gpu_particle_system`] is called. An
     /// append-only registry handle.
     pub struct GpuParticleSystemId;
 }
@@ -83,7 +120,7 @@ pub enum ParticleRender {
     /// position, velocity, `size`, and (for `Random` align) the spawn seed.
     /// Unlit; the particle colour multiplies an optional albedo sample.
     Mesh {
-        /// Mesh handle returned by `ViewportGpuResources::upload_mesh_data`.
+        /// Mesh handle returned by `DeviceResources::upload_mesh_data`.
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         /// Optional albedo texture handle. `None` renders flat-tinted.
         texture_id: Option<crate::resources::TextureId>,
@@ -243,7 +280,7 @@ pub(crate) struct ParticleFrameData {
     pub route: ParticleDrawRoute,
 }
 
-impl crate::resources::ViewportGpuResources {
+impl crate::resources::DeviceResources {
     /// Allocate a persistent GPU particle system.
     ///
     /// The returned [`GpuParticleSystemId`] stays valid until
@@ -323,7 +360,8 @@ impl crate::resources::ViewportGpuResources {
         let _ = queue; // queue currently unused; reserved for textures upload paths
 
         let sim_bgl = self
-            .particle_sim_bgl
+            .particle
+            .sim_bgl
             .as_ref()
             .expect("ensure_particle_pipelines failed to create sim BGL");
         let sim_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -397,7 +435,8 @@ impl crate::resources::ViewportGpuResources {
                     _ => &self.fallback_lut_view,
                 };
                 let draw_bgl = self
-                    .particle_draw_bgl
+                    .particle
+                    .draw_bgl
                     .as_ref()
                     .expect("ensure_particle_pipelines failed to create draw BGL");
                 sprite_draw_bg = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -424,7 +463,8 @@ impl crate::resources::ViewportGpuResources {
                 }));
                 if lit {
                     let lit_bgl = self
-                        .particle_sprite_lit_bgl
+                        .particle
+                        .sprite_lit_bgl
                         .as_ref()
                         .expect("ensure_particle_pipelines failed to create lit BGL");
                     let normal_view = match normal_texture_id {
@@ -485,7 +525,8 @@ impl crate::resources::ViewportGpuResources {
                     _ => &self.fallback_texture.view,
                 };
                 let mesh_bgl = self
-                    .particle_mesh_draw_bgl
+                    .particle
+                    .mesh_draw_bgl
                     .as_ref()
                     .expect("ensure_particle_pipelines failed to create mesh draw BGL");
                 mesh_draw_bg = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -530,29 +571,31 @@ impl crate::resources::ViewportGpuResources {
         };
 
         if let Some(idx) = self
-            .particle_systems
+            .particle
+            .systems
             .iter()
             .position(|slot: &Option<ParticleSystem>| slot.as_ref().is_none_or(|s| !s.alive))
         {
-            self.particle_systems[idx] = Some(system);
+            self.particle.systems[idx] = Some(system);
             GpuParticleSystemId(idx)
         } else {
-            self.particle_systems.push(Some(system));
-            GpuParticleSystemId(self.particle_systems.len() - 1)
+            self.particle.systems.push(Some(system));
+            GpuParticleSystemId(self.particle.systems.len() - 1)
         }
     }
 
     /// Release a particle system. The handle becomes invalid; the slot is
     /// reused on the next `create_gpu_particle_system` call.
     pub fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId) {
-        if let Some(Some(s)) = self.particle_systems.get_mut(id.0) {
+        if let Some(Some(s)) = self.particle.systems.get_mut(id.0) {
             s.alive = false;
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn particle_system(&self, id: GpuParticleSystemId) -> Option<&ParticleSystem> {
-        self.particle_systems
+        self.particle
+            .systems
             .get(id.0)?
             .as_ref()
             .filter(|s| s.alive)
@@ -563,7 +606,8 @@ impl crate::resources::ViewportGpuResources {
         &mut self,
         id: GpuParticleSystemId,
     ) -> Option<&mut ParticleSystem> {
-        self.particle_systems
+        self.particle
+            .systems
             .get_mut(id.0)?
             .as_mut()
             .filter(|s| s.alive)
@@ -572,7 +616,7 @@ impl crate::resources::ViewportGpuResources {
     /// Lazily create the compute + draw pipelines used by every particle
     /// system. No-op once the bind group layouts are present.
     pub(crate) fn ensure_particle_pipelines(&mut self, device: &wgpu::Device) {
-        if self.particle_sim_bgl.is_some() {
+        if self.particle.sim_bgl.is_some() {
             return;
         }
 
@@ -783,15 +827,15 @@ impl crate::resources::ViewportGpuResources {
         let ldr = self.target_format;
         let hdr = wgpu::TextureFormat::Rgba16Float;
         let alpha = wgpu::BlendState::ALPHA_BLENDING;
-        self.particle_sprite_pipeline_alpha = Some(crate::resources::DualPipeline {
+        self.particle.sprite_pipeline_alpha = Some(crate::resources::DualPipeline {
             ldr: make_draw(ldr, alpha, "particle_sprite_alpha"),
             hdr: make_draw(hdr, alpha, "particle_sprite_alpha"),
         });
-        self.particle_sprite_pipeline_additive = Some(crate::resources::DualPipeline {
+        self.particle.sprite_pipeline_additive = Some(crate::resources::DualPipeline {
             ldr: make_draw(ldr, additive, "particle_sprite_additive"),
             hdr: make_draw(hdr, additive, "particle_sprite_additive"),
         });
-        self.particle_sprite_pipeline_premultiplied = Some(crate::resources::DualPipeline {
+        self.particle.sprite_pipeline_premultiplied = Some(crate::resources::DualPipeline {
             ldr: make_draw(ldr, premul, "particle_sprite_premultiplied"),
             hdr: make_draw(hdr, premul, "particle_sprite_premultiplied"),
         });
@@ -875,15 +919,15 @@ impl crate::resources::ViewportGpuResources {
             })
         };
 
-        self.particle_sprite_lit_pipeline_alpha = Some(crate::resources::DualPipeline {
+        self.particle.sprite_lit_pipeline_alpha = Some(crate::resources::DualPipeline {
             ldr: make_lit_draw(ldr, alpha, "particle_sprite_lit_alpha"),
             hdr: make_lit_draw(hdr, alpha, "particle_sprite_lit_alpha"),
         });
-        self.particle_sprite_lit_pipeline_additive = Some(crate::resources::DualPipeline {
+        self.particle.sprite_lit_pipeline_additive = Some(crate::resources::DualPipeline {
             ldr: make_lit_draw(ldr, additive, "particle_sprite_lit_additive"),
             hdr: make_lit_draw(hdr, additive, "particle_sprite_lit_additive"),
         });
-        self.particle_sprite_lit_pipeline_premultiplied = Some(crate::resources::DualPipeline {
+        self.particle.sprite_lit_pipeline_premultiplied = Some(crate::resources::DualPipeline {
             ldr: make_lit_draw(ldr, premul, "particle_sprite_lit_premultiplied"),
             hdr: make_lit_draw(hdr, premul, "particle_sprite_lit_premultiplied"),
         });
@@ -903,8 +947,8 @@ impl crate::resources::ViewportGpuResources {
             ],
         });
 
-        self.particle_sprite_lit_bgl = Some(lit_bgl);
-        self.particle_sprite_lit_fallback_bg = Some(lit_fallback_bg);
+        self.particle.sprite_lit_bgl = Some(lit_bgl);
+        self.particle.sprite_lit_fallback_bg = Some(lit_fallback_bg);
 
         // Mesh-route draw pipelines. Same blend variants as the sprite route,
         // but the vertex stage consumes the mesh's standard `Vertex` layout
@@ -1006,25 +1050,25 @@ impl crate::resources::ViewportGpuResources {
             })
         };
 
-        self.particle_mesh_pipeline_alpha = Some(crate::resources::DualPipeline {
+        self.particle.mesh_pipeline_alpha = Some(crate::resources::DualPipeline {
             ldr: make_mesh_draw(ldr, alpha, "particle_mesh_alpha"),
             hdr: make_mesh_draw(hdr, alpha, "particle_mesh_alpha"),
         });
-        self.particle_mesh_pipeline_additive = Some(crate::resources::DualPipeline {
+        self.particle.mesh_pipeline_additive = Some(crate::resources::DualPipeline {
             ldr: make_mesh_draw(ldr, additive, "particle_mesh_additive"),
             hdr: make_mesh_draw(hdr, additive, "particle_mesh_additive"),
         });
-        self.particle_mesh_pipeline_premultiplied = Some(crate::resources::DualPipeline {
+        self.particle.mesh_pipeline_premultiplied = Some(crate::resources::DualPipeline {
             ldr: make_mesh_draw(ldr, premul, "particle_mesh_premultiplied"),
             hdr: make_mesh_draw(hdr, premul, "particle_mesh_premultiplied"),
         });
-        self.particle_mesh_draw_bgl = Some(mesh_draw_bgl);
+        self.particle.mesh_draw_bgl = Some(mesh_draw_bgl);
 
-        self.particle_params_bgl = Some(params_bgl);
-        self.particle_sim_bgl = Some(sim_bgl);
-        self.particle_draw_bgl = Some(draw_bgl);
-        self.particle_emit_pipeline = Some(emit_pipeline);
-        self.particle_sim_pipeline = Some(sim_pipeline);
+        self.particle.params_bgl = Some(params_bgl);
+        self.particle.sim_bgl = Some(sim_bgl);
+        self.particle.draw_bgl = Some(draw_bgl);
+        self.particle.emit_pipeline = Some(emit_pipeline);
+        self.particle.sim_pipeline = Some(sim_pipeline);
     }
 
     /// Run emit + sim compute passes for every particle system referenced this
@@ -1041,17 +1085,20 @@ impl crate::resources::ViewportGpuResources {
         self.ensure_particle_pipelines(device);
 
         let emit_pipeline = self
-            .particle_emit_pipeline
+            .particle
+            .emit_pipeline
             .as_ref()
             .expect("particle pipelines should exist after ensure")
             .clone();
         let sim_pipeline = self
-            .particle_sim_pipeline
+            .particle
+            .sim_pipeline
             .as_ref()
             .expect("particle pipelines should exist after ensure")
             .clone();
         let params_bgl = self
-            .particle_params_bgl
+            .particle
+            .params_bgl
             .as_ref()
             .expect("particle params BGL")
             .clone();
@@ -1063,7 +1110,7 @@ impl crate::resources::ViewportGpuResources {
 
         for item in items {
             let idx = item.system_id.0;
-            let (blend, route) = match self.particle_systems.get(idx).and_then(|s| s.as_ref()) {
+            let (blend, route) = match self.particle.systems.get(idx).and_then(|s| s.as_ref()) {
                 Some(s) if s.alive => match &s.render {
                     ParticleRender::Sprite { blend, lit, .. } => {
                         (*blend, ParticleDrawRoute::Sprite { lit: *lit })
@@ -1086,7 +1133,7 @@ impl crate::resources::ViewportGpuResources {
                 spawn_count,
                 frame_counter,
             ) = {
-                let system = self.particle_systems[idx].as_mut().unwrap();
+                let system = self.particle.systems[idx].as_mut().unwrap();
                 let dt = item.time_step.max(0.0);
                 system.spawn_accumulator += item.emitter.rate * dt;
                 let spawn_count = system.spawn_accumulator.floor() as u32;
@@ -1110,7 +1157,7 @@ impl crate::resources::ViewportGpuResources {
             // ----- Emit -----
             if spawn_count > 0 {
                 queue.write_buffer(
-                    &self.particle_systems[idx]
+                    &self.particle.systems[idx]
                         .as_ref()
                         .unwrap()
                         .emit_counter_buf,

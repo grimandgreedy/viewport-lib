@@ -1,6 +1,6 @@
 use crate::resources::*;
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Upload an RGBA texture to the GPU and return its texture ID.
     ///
     /// The ID can be stored in `Material::texture_id` to apply the texture to objects.
@@ -329,7 +329,7 @@ impl ViewportGpuResources {
                 Ok(
                     crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
                         submission,
-                        Box::new(move |resources: &mut ViewportGpuResources| {
+                        Box::new(move |resources: &mut DeviceResources| {
                             let tex_id = resources.textures.insert(gpu_texture, data_bytes);
                             slot_for_apply.set(tex_id);
                         }),
@@ -703,7 +703,7 @@ pub struct CompressedTextureDesc<'a> {
     pub mip_levels: &'a [&'a [u8]],
 }
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Get or create a cached material bind group for (albedo, normal_map, ao_map) texture combo.
     ///
     /// `u64::MAX` sentinel means "use fallback texture for that slot".
@@ -1477,7 +1477,7 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod async_texture_tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -1516,7 +1516,7 @@ mod async_texture_tests {
     }
 
     fn drive_until_ready(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         id: crate::resources::JobId,
@@ -1541,8 +1541,7 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // 2x2 image requires 16 bytes. Pass 12 and confirm the error fires
         // before any job is submitted.
@@ -1566,8 +1565,7 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let rgba = vec![128u8; 4 * 4 * 4];
         let id = resources
@@ -1599,8 +1597,7 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let rgba = vec![64u8; 8 * 8 * 4];
         let id = resources
@@ -1617,8 +1614,7 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let rgba = vec![200u8; 4 * 4 * 4];
         let tex_id = resources
@@ -1633,8 +1629,7 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id = resources
             .upload_texture(&device, &queue, 4, 4, &vec![200u8; 4 * 4 * 4])
@@ -1737,8 +1732,7 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // BC7 without the feature: rejected up front, no job submitted.
         let block = vec![0u8; 16];
@@ -1788,8 +1782,7 @@ mod async_texture_tests {
             eprintln!("skipping: no adapter with TEXTURE_COMPRESSION_BC");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // 4x4 BC7 needs one 16-byte block; pass 15 and confirm the level check
         // fires before any job is submitted.
@@ -1843,8 +1836,7 @@ mod async_texture_tests {
             eprintln!("skipping: no adapter with TEXTURE_COMPRESSION_BC");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let before = resources.texture_memory_stats().used_bytes;
         // 4x4 BC7 = one 16-byte block. Contents need not decode to anything in
@@ -1878,8 +1870,7 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // wgpu cannot create a BC texture whose dimensions are not multiples of
         // the 4x4 block. The upload must reject this up front (before any GPU

@@ -1,7 +1,7 @@
-/// Handle to a texture uploaded via `ViewportGpuResources::upload_overlay_texture`.
+/// Handle to a texture uploaded via `DeviceResources::upload_overlay_texture`.
 ///
 /// Pass this to `OverlayShapeItem::texture` to use the image as fill. The
-/// handle remains valid for the lifetime of the `ViewportGpuResources` it
+/// handle remains valid for the lifetime of the `DeviceResources` it
 /// came from; using it after the resources are dropped is a logic error.
 ///
 /// An append-only registry handle: overlay textures are kept for the session.

@@ -1,6 +1,6 @@
 //! `ViewportRenderer` : the main entry point for the viewport library.
 //!
-//! Wraps [`ViewportGpuResources`] and provides `prepare()` / `paint()` methods
+//! Wraps [`DeviceResources`] and provides `prepare()` / `paint()` methods
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
@@ -648,12 +648,14 @@ macro_rules! emit_scivis_draw_calls {
             for glyph in $glyph_gpu_data.iter() {
                 let pipeline = if glyph.wireframe {
                     resources
-                        .glyph_wireframe_pipeline
+                        .glyph
+                        .wireframe_pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 } else {
                     resources
-                        .glyph_pipeline
+                        .glyph
+                        .pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 };
@@ -692,7 +694,7 @@ macro_rules! emit_scivis_draw_calls {
         // Items with skip_clip=true (clip object wireframe overlays) use the clip-exempt
         // pipeline so they are always fully visible regardless of active clip volumes.
         // Items with wireframe=true use the thin 1px LineList pipeline instead.
-        if !$polyline_gpu_data.is_empty() && resources.polyline_pipeline.is_some() {
+        if !$polyline_gpu_data.is_empty() && resources.polyline.pipeline.is_some() {
             for pl in $polyline_gpu_data.iter() {
                 if pl.segment_count == 0 {
                     continue;
@@ -700,7 +702,8 @@ macro_rules! emit_scivis_draw_calls {
                 if pl.wireframe {
                     if let (Some(wf_pipeline), Some(wf_bg)) = (
                         resources
-                            .polyline_wireframe_pipeline
+                            .polyline
+                            .wireframe_pipeline
                             .as_ref()
                             .map(|d| d.for_format(_is_hdr)),
                         pl.wireframe_bind_group.as_ref(),
@@ -714,12 +717,14 @@ macro_rules! emit_scivis_draw_calls {
                 }
                 let pipeline = if pl.skip_clip {
                     resources
-                        .polyline_no_clip_pipeline
+                        .polyline
+                        .no_clip_pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 } else {
                     resources
-                        .polyline_pipeline
+                        .polyline
+                        .pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 };
@@ -735,7 +740,7 @@ macro_rules! emit_scivis_draw_calls {
 
         // Volume pass (after glyphs : volumes are translucent, rendered last).
         if !$volume_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.volume_pipeline {
+            if let Some(ref dual) = resources.volume.pipeline {
                 render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for vol in $volume_gpu_data.iter() {
@@ -760,12 +765,14 @@ macro_rules! emit_scivis_draw_calls {
                 }
                 let pipeline = if tube.wireframe {
                     resources
-                        .streamtube_wireframe_pipeline
+                        .streamtube
+                        .wireframe_pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 } else {
                     resources
-                        .streamtube_pipeline
+                        .streamtube
+                        .pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 };
@@ -799,12 +806,14 @@ macro_rules! emit_scivis_draw_calls {
                 }
                 let pipeline = if tube.wireframe {
                     resources
-                        .streamtube_wireframe_pipeline
+                        .streamtube
+                        .wireframe_pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 } else {
                     resources
-                        .streamtube_pipeline
+                        .streamtube
+                        .pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 };
@@ -847,12 +856,14 @@ macro_rules! emit_scivis_draw_calls {
             for tg in $tensor_glyph_gpu_data.iter() {
                 let pipeline = if tg.wireframe {
                     resources
-                        .tensor_glyph_wireframe_pipeline
+                        .tensor_glyph
+                        .wireframe_pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 } else {
                     resources
-                        .tensor_glyph_pipeline
+                        .tensor_glyph
+                        .pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 };
@@ -884,7 +895,7 @@ macro_rules! emit_scivis_draw_calls {
 
         // Volume surface slice pass (arbitrary mesh sampled from volume).
         if !$volume_surface_slice_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.volume_surface_slice_pipeline {
+            if let Some(ref dual) = resources.volume.surface_slice_pipeline {
                 render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for slice in $volume_surface_slice_gpu_data.iter() {
@@ -912,21 +923,25 @@ macro_rules! emit_scivis_draw_calls {
                 }
                 let pipeline = if ribbon.wireframe {
                     resources
-                        .ribbon_wireframe_pipeline
+                        .ribbon
+                        .wireframe_pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 } else {
                     match ribbon.blend {
                         crate::renderer::SpriteBlend::Additive => resources
-                            .ribbon_pipeline_additive
+                            .ribbon
+                            .pipeline_additive
                             .as_ref()
                             .map(|d| d.for_format(_is_hdr)),
                         crate::renderer::SpriteBlend::Premultiplied => resources
-                            .ribbon_pipeline_premultiplied
+                            .ribbon
+                            .pipeline_premultiplied
                             .as_ref()
                             .map(|d| d.for_format(_is_hdr)),
                         crate::renderer::SpriteBlend::AlphaBlend => resources
-                            .ribbon_pipeline
+                            .ribbon
+                            .pipeline
                             .as_ref()
                             .map(|d| d.for_format(_is_hdr)),
                     }
@@ -1017,32 +1032,32 @@ macro_rules! emit_scivis_draw_calls {
                 (
                     true,
                     crate::renderer::SpriteBlend::AlphaBlend,
-                    resources.sprite_pipeline_depth_write.as_ref(),
+                    resources.sprite.pipeline_depth_write.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::Additive,
-                    resources.sprite_pipeline_additive_depth_write.as_ref(),
+                    resources.sprite.pipeline_additive_depth_write.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::Premultiplied,
-                    resources.sprite_pipeline_premultiplied_depth_write.as_ref(),
+                    resources.sprite.pipeline_premultiplied_depth_write.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::AlphaBlend,
-                    resources.sprite_pipeline.as_ref(),
+                    resources.sprite.pipeline.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::Additive,
-                    resources.sprite_pipeline_additive.as_ref(),
+                    resources.sprite.pipeline_additive.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::Premultiplied,
-                    resources.sprite_pipeline_premultiplied.as_ref(),
+                    resources.sprite.pipeline_premultiplied.as_ref(),
                 ),
             ];
             // Group 2 (sprite_soft_bgl) carries the scene-depth resolve consumed
@@ -1052,7 +1067,7 @@ macro_rules! emit_scivis_draw_calls {
             // sample on a positive soft_particle_distance, so non-fade items
             // ignore this binding's contents. Soft fade itself is applied in the
             // separate transparent-sprite post-pass driven from `render.rs`.
-            let soft_bg = resources.sprite_soft_fallback_bg.as_ref();
+            let soft_bg = resources.sprite.soft_fallback_bg.as_ref();
             for (depth_write, blend, pipeline) in buckets {
                 let Some(dual) = pipeline else { continue };
                 let Some(soft_bg) = soft_bg else { continue };

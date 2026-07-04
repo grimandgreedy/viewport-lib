@@ -3,7 +3,7 @@ use crate::scene::material::ItemSettings;
 
 /// A volume item to render via GPU ray-marching.
 ///
-/// The caller uploads a 3D scalar field via [`ViewportGpuResources::upload_volume`](crate::resources::ViewportGpuResources::upload_volume) and
+/// The caller uploads a 3D scalar field via [`DeviceResources::upload_volume`](crate::resources::DeviceResources::upload_volume) and
 /// receives a [`VolumeId`](crate::resources::VolumeId). Each frame, submit a `VolumeItem` referencing that id plus
 /// transfer function and display parameters.
 ///

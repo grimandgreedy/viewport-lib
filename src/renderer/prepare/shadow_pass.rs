@@ -7,7 +7,7 @@ impl ViewportRenderer {
     /// tiles and point-light cube-map faces, including per-cascade plugin draws.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare_shadow_pass(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         instancing: &mut InstancingState,
         compute_filter_results: &[crate::resources::ComputeFilterResult],
         plugins: &std::collections::HashMap<

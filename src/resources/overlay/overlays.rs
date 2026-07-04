@@ -1,6 +1,6 @@
 use crate::resources::*;
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Re-upload the gizmo mesh with updated hover highlight colours.
     ///
     /// Called each frame when the hovered axis changes to brighten the appropriate axis colour.

@@ -1,6 +1,6 @@
 //! Internal job runner used by the async upload entry points.
 //!
-//! Every long-running upload on `ViewportGpuResources` routes through this
+//! Every long-running upload on `DeviceResources` routes through this
 //! runner. A submitted job runs its CPU work on a background thread, may
 //! optionally submit GPU commands, and reports completion on the main thread
 //! during `process_uploads`. Callers query progress through `upload_status`
@@ -29,7 +29,7 @@ pub struct JobId(u64);
 ///
 /// Each `begin_upload_*` fills the matching map from its apply closure; the
 /// paired `upload_result_*` drains it. Grouping these here keeps the async
-/// bookkeeping off `ViewportGpuResources` as one field rather than a score of
+/// bookkeeping off `DeviceResources` as one field rather than a score of
 /// flat ones. All maps start empty, so the whole struct is `Default`.
 #[derive(Default)]
 pub(crate) struct JobResults {
@@ -154,8 +154,8 @@ impl ProgressHandle {
 
 /// Closure run on the caller's thread once a job's worker (and any GPU
 /// submission) has completed. Real upload types use it to insert their newly
-/// built textures, buffers, and bind groups into `ViewportGpuResources`.
-pub type ApplyFn = Box<dyn FnOnce(&mut super::ViewportGpuResources) + Send>;
+/// built textures, buffers, and bind groups into `DeviceResources`.
+pub type ApplyFn = Box<dyn FnOnce(&mut super::DeviceResources) + Send>;
 
 /// Boxed GPU-submitting work for a `submit_with_gpu` job.
 ///
@@ -235,7 +235,7 @@ impl<T> Default for ResultSlot<T> {
 ///
 /// Workers that finish purely on the CPU and need no main-thread mutation
 /// return `JobProduct::default()`. Workers that submit GPU commands fill
-/// `gpu`; workers that need to store results on `ViewportGpuResources`
+/// `gpu`; workers that need to store results on `DeviceResources`
 /// fill `apply`.
 pub struct JobProduct {
     /// `Some` when the worker has submitted commands that must complete
@@ -243,7 +243,7 @@ pub struct JobProduct {
     /// submission via `device.poll`.
     pub gpu: Option<wgpu::SubmissionIndex>,
     /// `Some` when the worker has built state that must be folded into
-    /// `ViewportGpuResources` from the main thread.
+    /// `DeviceResources` from the main thread.
     pub apply: Option<ApplyFn>,
 }
 
@@ -345,7 +345,7 @@ type CompletionCallback = Box<dyn FnOnce(&UploadStatus) + Send>;
 
 /// What `process` hands back for a single completed job. The caller is
 /// responsible for running `apply` (if present and the status is `Ready`)
-/// against the live `ViewportGpuResources`, then invoking `callback`.
+/// against the live `DeviceResources`, then invoking `callback`.
 pub struct Completion {
     /// Id of the completed job; the caller uses it to record the apply
     /// duration back on the runner.
@@ -371,7 +371,7 @@ struct JobSlot {
 
 /// Background worker pool plus the table of in-flight jobs.
 ///
-/// Owned by `ViewportGpuResources`; reached from there via
+/// Owned by `DeviceResources`; reached from there via
 /// `process_uploads`, `upload_status`, and friends. `next_id` and the
 /// `submit_*` helpers are unused until upload entry points are wired
 /// through the runner.
@@ -416,7 +416,7 @@ pub struct PendingApply {
     /// Terminal status to record once the apply finishes; always
     /// `UploadStatus::Ready` for entries on the queue.
     pub status: UploadStatus,
-    /// Closure that mutates `ViewportGpuResources` and fills any typed
+    /// Closure that mutates `DeviceResources` and fills any typed
     /// result slot.
     pub apply: ApplyFn,
     /// Completion callback registered via `on_complete`.
@@ -431,7 +431,7 @@ impl Default for JobRunner {
 
 #[allow(dead_code)]
 impl JobRunner {
-    /// Construct an empty runner. The `ViewportGpuResources` initializer
+    /// Construct an empty runner. The `DeviceResources` initializer
     /// holds the single instance; callers do not construct this directly.
     pub fn new() -> Self {
         Self {
@@ -615,7 +615,7 @@ impl JobRunner {
 
     /// Pop the next apply closure off the queue. Returns `None` when the
     /// queue is empty. The caller is expected to run the closure against
-    /// `ViewportGpuResources` and then call `mark_applied` so the job
+    /// `DeviceResources` and then call `mark_applied` so the job
     /// transitions from Pending to Ready.
     pub fn pop_pending_apply(&mut self) -> Option<PendingApply> {
         self.pending_apply.pop_front()
@@ -806,7 +806,7 @@ impl JobRunner {
     }
 }
 
-impl super::ViewportGpuResources {
+impl super::DeviceResources {
     /// Advance the upload-job runner. Worker results received since the
     /// previous call are observed, GPU submissions are polled, completed
     /// jobs are folded into renderer state, and any completion callbacks
@@ -997,7 +997,7 @@ impl super::ViewportGpuResources {
 // Optional `future` feature: a thin Future wrapper around a JobId.
 // ---------------------------------------------------------------------------
 
-/// Future returned by [`ViewportGpuResources::upload_handle`].
+/// Future returned by [`DeviceResources::upload_handle`].
 ///
 /// Polling drives the wrapped job to completion using the standard
 /// `process_uploads` machinery; the consumer's main loop must keep calling
@@ -1043,7 +1043,7 @@ impl std::future::Future for JobHandle {
 }
 
 #[cfg(feature = "future")]
-impl super::ViewportGpuResources {
+impl super::DeviceResources {
     /// Wrap a `JobId` in a future that resolves when the job completes.
     ///
     /// The future is driven by completion callbacks fired during
@@ -1102,11 +1102,11 @@ type PluginResultSlot = ResultSlot<Box<dyn Any + Send>>;
 /// `submit_cpu` and the readers use `&self` so the plugin does not need to
 /// thread mutability through its own state.
 pub struct Jobs<'a> {
-    resources: &'a super::ViewportGpuResources,
+    resources: &'a super::DeviceResources,
 }
 
 impl<'a> Jobs<'a> {
-    pub(crate) fn new(resources: &'a super::ViewportGpuResources) -> Self {
+    pub(crate) fn new(resources: &'a super::DeviceResources) -> Self {
         Self { resources }
     }
 
@@ -1134,7 +1134,7 @@ impl<'a> Jobs<'a> {
                 let value: T = work();
                 let boxed: Box<dyn Any + Send> = Box::new(value);
                 Ok(JobProduct::with_apply(Box::new(
-                    move |_resources: &mut super::ViewportGpuResources| {
+                    move |_resources: &mut super::DeviceResources| {
                         slot_for_apply.set(boxed);
                     },
                 )))
@@ -1327,7 +1327,7 @@ mod tests {
         with_test_gpu(|device, queue| {
             // process() returns Completion entries so the caller can run
             // apply + callback after dropping any external lock. The
-            // integration on ViewportGpuResources does this automatically;
+            // integration on DeviceResources does this automatically;
             // the test drives it by hand.
             for _ in 0..200 {
                 for c in runner.process(device, queue) {
@@ -1446,11 +1446,8 @@ mod tests {
     // Plugin-facing facade
     // -----------------------------------------------------------------
 
-    fn make_resources_for_jobs() -> Option<(
-        wgpu::Device,
-        wgpu::Queue,
-        super::super::ViewportGpuResources,
-    )> {
+    fn make_resources_for_jobs()
+    -> Option<(wgpu::Device, wgpu::Queue, super::super::DeviceResources)> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
@@ -1460,16 +1457,13 @@ mod tests {
         .ok()?;
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
-        let resources = super::super::ViewportGpuResources::new(
-            &device,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            1,
-        );
+        let resources =
+            super::super::DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         Some((device, queue, resources))
     }
 
-    fn drive_resources<F: FnMut(&super::super::ViewportGpuResources) -> bool>(
-        resources: &mut super::super::ViewportGpuResources,
+    fn drive_resources<F: FnMut(&super::super::DeviceResources) -> bool>(
+        resources: &mut super::super::DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         mut predicate: F,

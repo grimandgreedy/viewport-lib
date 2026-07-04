@@ -1,6 +1,48 @@
 use super::*;
 
-impl ViewportGpuResources {
+/// Surface line-integral-convolution pipelines and their layouts.
+///
+/// Device-shared and lazily built by the LIC post-process setup. The
+/// per-viewport vector/intensity textures and the `lic_enabled` / `lic_strength`
+/// state live on `ViewportHdrState`, not here.
+#[derive(Default)]
+pub(crate) struct LicResources {
+    /// Renders mesh with vector storage buffer -> lic_vector_texture (Rgba8Unorm).
+    pub(crate) surface_pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 1 layout of the LIC surface pass (object uniform + vector buffer + noise).
+    pub(crate) surface_bgl: Option<wgpu::BindGroupLayout>,
+    /// Reads lic_vector_texture, writes LIC intensity to R8Unorm target.
+    pub(crate) advect_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the LIC advect pass.
+    pub(crate) advect_bgl: Option<wgpu::BindGroupLayout>,
+    /// Bilinear sampler for the LIC advect pass.
+    pub(crate) noise_sampler: Option<wgpu::Sampler>,
+    /// 1x1 R8Unorm white placeholder bound to tone_map binding 7 when LIC is inactive.
+    pub(crate) placeholder_view: Option<wgpu::TextureView>,
+}
+
+/// Weighted-blended OIT pipelines and composite layout.
+///
+/// Device-shared and lazily built: the mesh/instanced pipelines by
+/// `ensure_oit_instanced_pipeline` and the shared pipeline builders, the
+/// composite pipeline / BGL / sampler by the post-process setup. The
+/// viewport-sized accumulation and reveal textures live on `ViewportHdrState`,
+/// not here.
+#[derive(Default)]
+pub(crate) struct OitResources {
+    /// OIT mesh pipeline (non-instanced, mesh_oit.wgsl, two colour targets).
+    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    /// OIT instanced mesh pipeline (mesh_instanced_oit.wgsl / mesh_instanced with OIT targets).
+    pub(crate) instanced_pipeline: Option<wgpu::RenderPipeline>,
+    /// OIT composite pipeline (oit_composite.wgsl, fullscreen tri, no depth).
+    pub(crate) composite_pipeline: Option<wgpu::RenderPipeline>,
+    /// Bind group layout for the OIT composite pass (group 0: accum + reveal + sampler).
+    pub(crate) composite_bgl: Option<wgpu::BindGroupLayout>,
+    /// Linear clamp sampler shared by the OIT composite pass.
+    pub(crate) composite_sampler: Option<wgpu::Sampler>,
+}
+
+impl DeviceResources {
     /// Create or recreate the offscreen outline colour + depth/stencil textures and
     /// the fullscreen composite pipeline used to blit the outline onto the main pass.
     /// No-op if the size hasn't changed and resources already exist.
@@ -353,7 +395,7 @@ impl ViewportGpuResources {
                 &[128u8],
                 1,
             );
-            self.lic_placeholder_view = Some(lv);
+            self.lic.placeholder_view = Some(lv);
         }
 
         // --- SSAO noise (one-time) ---
@@ -1218,7 +1260,7 @@ impl ViewportGpuResources {
         self.pp_linear_sampler = Some(linear_sampler);
         self.pp_nearest_sampler = Some(nearest_sampler);
         self.fxaa_sampler = Some(fxaa_sampler);
-        self.oit_composite_sampler = Some(oit_sampler);
+        self.oit.composite_sampler = Some(oit_sampler);
         self.outline_composite_sampler = Some(outline_sampler);
 
         self.tone_map_bgl = Some(tone_map_bgl);
@@ -1227,7 +1269,7 @@ impl ViewportGpuResources {
         self.ssao_blur_bgl = Some(ssao_blur_bgl);
         self.contact_shadow_bgl = Some(cs_bgl);
         self.fxaa_bgl = Some(fxaa_bgl);
-        self.oit_composite_bgl = Some(oit_composite_bgl);
+        self.oit.composite_bgl = Some(oit_composite_bgl);
         self.outline_composite_bgl = Some(outline_composite_bgl);
 
         self.tone_map_pipeline = Some(tone_map_pipeline);
@@ -1373,8 +1415,8 @@ impl ViewportGpuResources {
         self.dof_bgl = Some(dof_bgl);
         self.dof_pipeline = Some(dof_pipeline);
 
-        self.oit_pipeline = Some(oit_pipeline);
-        self.oit_composite_pipeline = Some(oit_composite_pipeline);
+        self.oit.pipeline = Some(oit_pipeline);
+        self.oit.composite_pipeline = Some(oit_composite_pipeline);
         self.hdr_solid_pipeline = Some(hdr_solid_pipeline);
         self.hdr_solid_two_sided_pipeline = Some(hdr_solid_two_sided_pipeline);
         self.hdr_transparent_pipeline = Some(hdr_transparent_pipeline);
@@ -1387,7 +1429,7 @@ impl ViewportGpuResources {
         let _ = hdr_depth_stencil; // used in make_hdr_mesh closure above
 
         // --- Surface LIC shared resources ---
-        if self.lic_noise_sampler.is_none() {
+        if self.lic.noise_sampler.is_none() {
             // Bilinear sampler used for lic_vector_texture in the advect pass.
             let samp = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("lic_linear_sampler"),
@@ -1398,12 +1440,12 @@ impl ViewportGpuResources {
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
-            self.lic_noise_sampler = Some(samp);
+            self.lic.noise_sampler = Some(samp);
         }
 
         // LIC surface BGL (group 1): object uniform only.
         // Flow vectors are passed as vertex buffer 1 (not a storage binding).
-        if self.lic_surface_bgl.is_none() {
+        if self.lic.surface_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("lic_surface_bgl"),
                 entries: &[wgpu::BindGroupLayoutEntry {
@@ -1417,11 +1459,11 @@ impl ViewportGpuResources {
                     count: None,
                 }],
             });
-            self.lic_surface_bgl = Some(bgl);
+            self.lic.surface_bgl = Some(bgl);
         }
 
         // LIC advect BGL (fullscreen): params uniform, vector tex, noise tex, sampler x2.
-        if self.lic_advect_bgl.is_none() {
+        if self.lic.advect_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("lic_advect_bgl"),
                 entries: &[
@@ -1463,13 +1505,13 @@ impl ViewportGpuResources {
                     },
                 ],
             });
-            self.lic_advect_bgl = Some(bgl);
+            self.lic.advect_bgl = Some(bgl);
         }
 
         // LIC surface pipeline: renders mesh into Rgba8Unorm lic_vector_texture.
         // Group 0 = camera_bind_group_layout (already on self), group 1 = lic_surface_bgl.
-        if self.lic_surface_pipeline.is_none() {
-            if let Some(surface_bgl) = self.lic_surface_bgl.as_ref() {
+        if self.lic.surface_pipeline.is_none() {
+            if let Some(surface_bgl) = self.lic.surface_bgl.as_ref() {
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("lic_surface_shader"),
                     source: wgpu::ShaderSource::Wgsl(
@@ -1530,13 +1572,13 @@ impl ViewportGpuResources {
                     multiview: None,
                     cache: None,
                 });
-                self.lic_surface_pipeline = Some(pipeline);
+                self.lic.surface_pipeline = Some(pipeline);
             }
         }
 
         // LIC advect pipeline: fullscreen render into R8Unorm lic_output_texture.
-        if self.lic_advect_pipeline.is_none() {
-            if let Some(advect_bgl) = &self.lic_advect_bgl {
+        if self.lic.advect_pipeline.is_none() {
+            if let Some(advect_bgl) = &self.lic.advect_bgl {
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("lic_advect_shader"),
                     source: wgpu::ShaderSource::Wgsl(
@@ -1576,7 +1618,7 @@ impl ViewportGpuResources {
                     multiview: None,
                     cache: None,
                 });
-                self.lic_advect_pipeline = Some(pipeline);
+                self.lic.advect_pipeline = Some(pipeline);
             }
         }
 
@@ -1643,7 +1685,7 @@ impl ViewportGpuResources {
         }
 
         // --- Decal shared resources (D1) ---
-        if self.decal_depth_bgl.is_none() {
+        if self.decal.depth_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("decal_depth_bgl"),
                 entries: &[
@@ -1669,9 +1711,9 @@ impl ViewportGpuResources {
                     },
                 ],
             });
-            self.decal_depth_bgl = Some(bgl);
+            self.decal.depth_bgl = Some(bgl);
         }
-        if self.decal_sampler.is_none() {
+        if self.decal.sampler.is_none() {
             // Repeat address mode so UV scroll animation tiles correctly.
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("decal_sampler"),
@@ -1682,7 +1724,7 @@ impl ViewportGpuResources {
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
-            self.decal_sampler = Some(sampler);
+            self.decal.sampler = Some(sampler);
         }
     }
 
@@ -1990,7 +2032,8 @@ impl ViewportGpuResources {
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let oit_sampler = self
-            .oit_composite_sampler
+            .oit
+            .composite_sampler
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let outline_sampler = self
@@ -2042,7 +2085,8 @@ impl ViewportGpuResources {
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let oit_composite_bgl = self
-            .oit_composite_bgl
+            .oit
+            .composite_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let outline_composite_bgl = self
@@ -2086,7 +2130,8 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(
-                        self.lic_placeholder_view
+                        self.lic
+                            .placeholder_view
                             .as_ref()
                             .expect("ensure_hdr_shared not called"),
                     ),
@@ -2524,7 +2569,8 @@ impl ViewportGpuResources {
         });
 
         let lic_advect_bgl = self
-            .lic_advect_bgl
+            .lic
+            .advect_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let lic_advect_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2546,7 +2592,8 @@ impl ViewportGpuResources {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(
-                        self.lic_noise_sampler
+                        self.lic
+                            .noise_sampler
                             .as_ref()
                             .expect("ensure_hdr_shared not called"),
                     ),
@@ -2812,7 +2859,7 @@ impl ViewportGpuResources {
                     resource: wgpu::BindingResource::TextureView(if use_lic {
                         &hdr.lic_output_view
                     } else {
-                        self.lic_placeholder_view.as_ref().unwrap_or(cs_placeholder)
+                        self.lic.placeholder_view.as_ref().unwrap_or(cs_placeholder)
                     }),
                 },
             ],
@@ -2867,11 +2914,13 @@ impl ViewportGpuResources {
         let reveal_view = reveal_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         let sampler = self
-            .oit_composite_sampler
+            .oit
+            .composite_sampler
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let bgl = self
-            .oit_composite_bgl
+            .oit
+            .composite_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let composite_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {

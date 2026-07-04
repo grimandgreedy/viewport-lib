@@ -1,7 +1,7 @@
 use super::*;
 use crate::resources::Vertex;
 
-impl ViewportGpuResources {
+impl DeviceResources {
     // -------------------------------------------------------------------------
     // 2D Image Slice representation
     // -------------------------------------------------------------------------
@@ -905,7 +905,7 @@ impl ViewportGpuResources {
     /// No-op if already created. Called from `prepare()` when
     /// `frame.scene.volume_surface_slices` is non-empty.
     pub(crate) fn ensure_volume_surface_slice_pipeline(&mut self, device: &wgpu::Device) {
-        if self.volume_surface_slice_pipeline.is_some() {
+        if self.volume.surface_slice_pipeline.is_some() {
             return;
         }
 
@@ -1017,8 +1017,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.volume_surface_slice_bgl = Some(bgl);
-        self.volume_surface_slice_pipeline = Some(DualPipeline {
+        self.volume.surface_slice_bgl = Some(bgl);
+        self.volume.surface_slice_pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
@@ -1098,7 +1098,8 @@ impl ViewportGpuResources {
         });
 
         let bgl = self
-            .volume_surface_slice_bgl
+            .volume
+            .surface_slice_bgl
             .as_ref()
             .expect("ensure_volume_surface_slice_pipeline not called");
 

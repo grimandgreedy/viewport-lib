@@ -16,12 +16,12 @@
 //!   declarations and shading helpers (`viewport_pbr_shade`,
 //!   `viewport_oit_pack`, `viewport_sample_csm`, etc.) so plugin shaders stay
 //!   in lockstep with the lib's lighting and transparency contracts.
-//! - Pipeline builders on [`crate::resources::ViewportGpuResources`]
+//! - Pipeline builders on [`crate::resources::DeviceResources`]
 //!   (`build_opaque_pipeline`, `build_oit_pipeline`, ...) construct the
 //!   common variants in one call. Plugins ship one shader and call a
 //!   builder per variant.
 //!
-//! All accessors live on [`crate::resources::ViewportGpuResources`].
+//! All accessors live on [`crate::resources::DeviceResources`].
 //!
 //! # Compatibility policy
 //!
@@ -61,7 +61,7 @@
 //!   The composition-order policy (ObjectSpace before WorldSpace, priority
 //!   ascending within stage) is part of the contract and will not change.
 //!
-//! - **Builder methods on [`crate::resources::ViewportGpuResources`] that
+//! - **Builder methods on [`crate::resources::DeviceResources`] that
 //!   construct pipelines for plugins** (`build_opaque_pipeline`,
 //!   `build_oit_pipeline`, ...) keep their behaviour stable within a minor
 //!   version. Signature changes ride minor bumps and are listed in the
@@ -94,7 +94,7 @@ pub use target_desc::{
 /// re-declare them in plugin WGSL.
 ///
 /// Obtain a reference via
-/// [`ViewportGpuResources::shared_bindings`](crate::resources::ViewportGpuResources::shared_bindings).
+/// [`DeviceResources::shared_bindings`](crate::resources::DeviceResources::shared_bindings).
 pub struct SharedBindings<'a> {
     /// The group-0 `BindGroupLayout`. Pass by reference when calling
     /// `device.create_pipeline_layout`.

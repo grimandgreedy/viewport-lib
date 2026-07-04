@@ -1733,7 +1733,7 @@ impl ViewportRenderer {
                 // Draw glyph instances into the mask using the actual instanced
                 // mesh geometry so the outline follows arrow/sphere shapes.
                 if !glyph_outline_indices.is_empty() {
-                    if let Some(pipeline) = self.resources.glyph_outline_mask_pipeline.as_ref() {
+                    if let Some(pipeline) = self.resources.glyph.outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
                         for (idx, instance_filter) in glyph_outline_indices {
                             if let Some(glyph) = glyph_gpu_data.get(*idx) {
@@ -1771,7 +1771,7 @@ impl ViewportRenderer {
                 // Draw tensor glyph instances into the mask (instanced ellipsoids).
                 if !tensor_glyph_outline_indices.is_empty() {
                     if let Some(pipeline) =
-                        self.resources.tensor_glyph_outline_mask_pipeline.as_ref()
+                        self.resources.tensor_glyph.outline_mask_pipeline.as_ref()
                     {
                         pass.set_pipeline(pipeline);
                         for (idx, instance_filter) in tensor_glyph_outline_indices {
@@ -1806,7 +1806,7 @@ impl ViewportRenderer {
                 // Draw sprite billboards into the mask so the outline matches
                 // each sprite's actual quad shape and per-instance size.
                 if !sprite_outline_indices.is_empty() {
-                    if let Some(pipeline) = self.resources.sprite_outline_mask_pipeline.as_ref() {
+                    if let Some(pipeline) = self.resources.sprite.outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
                         for (idx, instance_filter) in sprite_outline_indices {
                             if let Some(sprite) = sprite_gpu_data.get(*idx) {
@@ -1831,7 +1831,7 @@ impl ViewportRenderer {
                 // Draw volumes into the mask using a simplified ray march so the
                 // outline hugs the actual volume silhouette, not the AABB.
                 if !vol_outline_indices.is_empty() {
-                    if let Some(pipeline) = self.resources.volume_outline_mask_pipeline.as_ref() {
+                    if let Some(pipeline) = self.resources.volume.outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
                         for &idx in vol_outline_indices {
                             if let Some(vol) = self.volume_gpu_data.get(idx) {
@@ -1892,13 +1892,13 @@ impl ViewportRenderer {
 
                 // Draw GPU marching cubes outlines (stride-24 vertex buffer, draw_indirect).
                 if !mc_outlines.is_empty() {
-                    if let Some(pipeline) = self.resources.mc_outline_mask_pipeline.as_ref() {
+                    if let Some(pipeline) = self.resources.mc.outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
                         pass.set_bind_group(0, camera_bg, &[]);
                         for mc_out in mc_outlines {
                             pass.set_bind_group(1, &mc_out.mask_bind_group, &[]);
                             if let Some(mc) = mc_gpu_frame_data.get(mc_out.mc_gpu_idx) {
-                                if let Some(vol) = self.resources.mc_volumes.get(mc.volume_idx) {
+                                if let Some(vol) = self.resources.mc.volumes.get(mc.volume_idx) {
                                     for slab in &vol.slabs {
                                         pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
                                         pass.draw_indirect(&slab.indirect_buf, 0);
@@ -1945,7 +1945,7 @@ impl ViewportRenderer {
                 // Draw polyline segment quads into the mask using the dedicated
                 // polyline_outline_mask_pipeline (instance-expanded quads).
                 if !polyline_outline_idxs.is_empty() {
-                    if let Some(pipeline) = self.resources.polyline_outline_mask_pipeline.as_ref() {
+                    if let Some(pipeline) = self.resources.polyline.outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
                         pass.set_bind_group(0, camera_bg, &[]);
                         for &idx in polyline_outline_idxs {

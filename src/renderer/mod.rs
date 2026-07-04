@@ -1,6 +1,6 @@
 //! `ViewportRenderer` : the main entry point for the viewport library.
 //!
-//! Wraps [`ViewportGpuResources`] and provides `prepare()` / `paint()` methods
+//! Wraps [`DeviceResources`] and provides `prepare()` / `paint()` methods
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
@@ -73,9 +73,9 @@ use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{
     BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,
-    ClipVolumesUniform, GridUniform, InstanceAabb, InstanceData, LightsUniform, ObjectUniform,
-    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance, ShadowAtlasUniform,
-    SingleLightUniform, SplatOutlineMaskUniform, ViewportGpuResources,
+    ClipVolumesUniform, DeviceResources, GridUniform, InstanceAabb, InstanceData, LightsUniform,
+    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
+    ShadowAtlasUniform, SingleLightUniform, SplatOutlineMaskUniform,
 };
 
 /// Per-viewport GPU state: uniform buffers and bind groups that differ per viewport.
@@ -83,7 +83,7 @@ use crate::resources::{
 /// Each viewport slot owns its own camera, clip planes, clip volume, shadow info,
 /// and grid buffers, plus the bind groups that reference them. Scene-global
 /// resources (lights, shadow atlas texture, IBL) are shared via the bind group
-/// pointing to buffers on `ViewportGpuResources`.
+/// pointing to buffers on `DeviceResources`.
 pub(crate) struct ViewportSlot {
     pub camera_buf: wgpu::Buffer,
     pub clip_planes_buf: wgpu::Buffer,
@@ -216,7 +216,7 @@ impl ViewportSlot {
     pub(crate) fn draw_axes_indicator(
         &self,
         render_pass: &mut wgpu::RenderPass<'_>,
-        resources: &ViewportGpuResources,
+        resources: &DeviceResources,
         show_axes_indicator: bool,
     ) {
         if show_axes_indicator && self.axes_vertex_count > 0 {
@@ -277,7 +277,7 @@ pub(crate) const GPU_TS_SLOTS: u32 = 5;
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
 /// issue draw calls.
 pub struct ViewportRenderer {
-    resources: ViewportGpuResources,
+    resources: DeviceResources,
     /// State for the instanced (GPU-driven) mesh draw path.
     instancing: InstancingState,
     /// Registered item-type plugins keyed by
@@ -597,7 +597,7 @@ impl ViewportRenderer {
             .features()
             .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         Self {
-            resources: ViewportGpuResources::new_with_cache(
+            resources: DeviceResources::new_with_cache(
                 device,
                 target_format,
                 sample_count,
@@ -698,7 +698,7 @@ impl ViewportRenderer {
     }
 
     /// Access the underlying GPU resources (e.g. for mesh uploads).
-    pub fn resources(&self) -> &ViewportGpuResources {
+    pub fn resources(&self) -> &DeviceResources {
         &self.resources
     }
 
@@ -882,7 +882,7 @@ impl ViewportRenderer {
     }
 
     /// Mutable access to the underlying GPU resources (e.g. for mesh uploads).
-    pub fn resources_mut(&mut self) -> &mut ViewportGpuResources {
+    pub fn resources_mut(&mut self) -> &mut DeviceResources {
         &mut self.resources
     }
 
@@ -1487,19 +1487,19 @@ impl ViewportRenderer {
     }
 
     /// Wall-clock work duration recorded for an async upload job. See
-    /// [`ViewportGpuResources::job_duration`].
+    /// [`DeviceResources::job_duration`].
     pub fn job_duration(&self, id: crate::resources::JobId) -> Option<std::time::Duration> {
         self.resources.job_duration(id)
     }
 
     /// Drop the recorded duration for `id` after reading it. See
-    /// [`ViewportGpuResources::drop_job_duration`].
+    /// [`DeviceResources::drop_job_duration`].
     pub fn drop_job_duration(&mut self, id: crate::resources::JobId) {
         self.resources.drop_job_duration(id);
     }
 
     /// Start an asynchronous 3D volume texture upload. See
-    /// [`ViewportGpuResources::begin_upload_volume`].
+    /// [`DeviceResources::begin_upload_volume`].
     pub fn begin_upload_volume(
         &mut self,
         device: &wgpu::Device,
@@ -1521,7 +1521,7 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous marching-cubes-ready volume upload. See
-    /// [`ViewportGpuResources::begin_upload_volume_for_mc`].
+    /// [`DeviceResources::begin_upload_volume_for_mc`].
     pub fn begin_upload_volume_for_mc(
         &mut self,
         device: &wgpu::Device,
@@ -1542,7 +1542,7 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous boundary-only volume mesh upload. See
-    /// [`ViewportGpuResources::begin_upload_volume_mesh`].
+    /// [`DeviceResources::begin_upload_volume_mesh`].
     pub fn begin_upload_volume_mesh(
         &mut self,
         device: &wgpu::Device,
@@ -1562,7 +1562,7 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous clipped volume mesh upload. See
-    /// [`ViewportGpuResources::begin_upload_clipped_volume_mesh`].
+    /// [`DeviceResources::begin_upload_clipped_volume_mesh`].
     pub fn begin_upload_clipped_volume_mesh(
         &mut self,
         device: &wgpu::Device,
@@ -1584,7 +1584,7 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous sparse voxel grid upload. See
-    /// [`ViewportGpuResources::begin_upload_sparse_volume_grid_data`].
+    /// [`DeviceResources::begin_upload_sparse_volume_grid_data`].
     pub fn begin_upload_sparse_volume_grid_data(
         &mut self,
         device: &wgpu::Device,
@@ -1605,7 +1605,7 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous Gaussian splat upload. See
-    /// [`ViewportGpuResources::begin_upload_gaussian_splat`].
+    /// [`DeviceResources::begin_upload_gaussian_splat`].
     pub fn begin_upload_gaussian_splat(
         &mut self,
         device: &wgpu::Device,
@@ -1626,7 +1626,7 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous overlay texture upload. See
-    /// [`ViewportGpuResources::begin_upload_overlay_texture`].
+    /// [`DeviceResources::begin_upload_overlay_texture`].
     pub fn begin_upload_overlay_texture(
         &mut self,
         device: &wgpu::Device,
@@ -1654,7 +1654,7 @@ impl ViewportRenderer {
     }
 
     /// Register a callback to fire when an upload job finishes. See
-    /// [`ViewportGpuResources::on_upload_complete`] for the semantics.
+    /// [`DeviceResources::on_upload_complete`] for the semantics.
     pub fn on_upload_complete<F>(&mut self, id: crate::resources::JobId, cb: F)
     where
         F: FnOnce(&crate::resources::UploadStatus) + Send + 'static,
@@ -1663,7 +1663,7 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous albedo texture upload. See
-    /// [`ViewportGpuResources::begin_upload_texture`] for the semantics.
+    /// [`DeviceResources::begin_upload_texture`] for the semantics.
     pub fn begin_upload_texture(
         &mut self,
         device: &wgpu::Device,
@@ -1677,7 +1677,7 @@ impl ViewportRenderer {
     }
 
     /// Start an asynchronous normal-map upload. See
-    /// [`ViewportGpuResources::begin_upload_normal_map`] for the semantics.
+    /// [`DeviceResources::begin_upload_normal_map`] for the semantics.
     pub fn begin_upload_normal_map(
         &mut self,
         device: &wgpu::Device,
@@ -1691,7 +1691,7 @@ impl ViewportRenderer {
     }
 
     /// Take the texture id from a completed async texture upload. See
-    /// [`ViewportGpuResources::upload_result_texture`] for the error
+    /// [`DeviceResources::upload_result_texture`] for the error
     /// semantics.
     pub fn upload_result_texture(
         &mut self,
@@ -1726,7 +1726,7 @@ impl ViewportRenderer {
     }
 
     /// Take the `MeshId` produced by a completed `begin_upload_mesh_data`
-    /// job. See [`ViewportGpuResources::upload_result_mesh`] for the error
+    /// job. See [`DeviceResources::upload_result_mesh`] for the error
     /// semantics.
     pub fn upload_result_mesh(
         &mut self,
@@ -2140,7 +2140,7 @@ impl ViewportRenderer {
         );
         // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
         if !self.gaussian_splat_draw_data.is_empty() {
-            if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
+            if let Some(ref dual) = self.resources.gaussian_splat.pipeline {
                 render_pass.set_pipeline(dual.for_format(false));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for dd in &self.gaussian_splat_draw_data {

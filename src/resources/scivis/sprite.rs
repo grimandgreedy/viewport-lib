@@ -1,6 +1,51 @@
 use super::*;
 
-impl ViewportGpuResources {
+/// Sprite billboard pipelines (emissive + lit, one per blend/depth-write pair),
+/// their bind group layouts, refraction pass, and soft-particle fallbacks. All
+/// lazily built; the uploaded sprite sets live in separate flat stores.
+#[derive(Default)]
+pub(crate) struct SpriteResources {
+    /// Sprite pipeline, alpha-blend, depth_write_enabled: false.
+    pub(crate) pipeline: Option<DualPipeline>,
+    pub(crate) pipeline_depth_write: Option<DualPipeline>,
+    pub(crate) pipeline_additive: Option<DualPipeline>,
+    pub(crate) pipeline_additive_depth_write: Option<DualPipeline>,
+    pub(crate) pipeline_premultiplied: Option<DualPipeline>,
+    pub(crate) pipeline_premultiplied_depth_write: Option<DualPipeline>,
+    /// Refractive sprite pipeline (HDR target only).
+    pub(crate) refraction_pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 2 BGL for the refraction pipeline: scene-colour texture + sampler.
+    pub(crate) refraction_bgl: Option<wgpu::BindGroupLayout>,
+    /// Sampler used by the refraction shader to read the scene-colour resolve.
+    pub(crate) refraction_sampler: Option<wgpu::Sampler>,
+    /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Bind group layout for the per-pass scene-depth resolve bound at group 2.
+    pub(crate) soft_bgl: Option<wgpu::BindGroupLayout>,
+    /// Fallback bind group for the group-2 soft-particle binding.
+    pub(crate) soft_fallback_bg: Option<wgpu::BindGroup>,
+    /// Sampler used for the group-2 scene-depth binding.
+    pub(crate) soft_sampler: Option<wgpu::Sampler>,
+    /// 1x1 Depth32Float texture backing the soft fallback bind group.
+    pub(crate) soft_fallback_tex: Option<wgpu::Texture>,
+    /// Lit sprite pipelines: one per (blend, depth_write) pair.
+    pub(crate) lit_pipeline: Option<DualPipeline>,
+    pub(crate) lit_pipeline_depth_write: Option<DualPipeline>,
+    pub(crate) lit_pipeline_additive: Option<DualPipeline>,
+    pub(crate) lit_pipeline_additive_depth_write: Option<DualPipeline>,
+    pub(crate) lit_pipeline_premultiplied: Option<DualPipeline>,
+    pub(crate) lit_pipeline_premultiplied_depth_write: Option<DualPipeline>,
+    /// Group 3 BGL for the optional lit normal map (texture + sampler).
+    pub(crate) lit_bgl: Option<wgpu::BindGroupLayout>,
+    /// Fallback bind group for the lit normal map binding.
+    pub(crate) lit_fallback_bg: Option<wgpu::BindGroup>,
+    /// 1x1 RGBA8Unorm texture backing the lit fallback bind group.
+    pub(crate) lit_fallback_tex: Option<wgpu::Texture>,
+    /// Sprite outline mask pipeline (R8Unorm). None until first selected sprite.
+    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+}
+
+impl DeviceResources {
     /// Lazily create the sprite billboard pipelines (alpha-blended, instanced quad expansion).
     ///
     /// Creates two pipelines that share the same shader and bind group layout but differ
@@ -10,7 +55,7 @@ impl ViewportGpuResources {
     /// No-op if already created. Called from `prepare()` when `frame.scene.sprite_items` is
     /// non-empty.
     pub(crate) fn ensure_sprite_pipelines(&mut self, device: &wgpu::Device) {
-        if self.sprite_bgl.is_some() {
+        if self.sprite.bgl.is_some() {
             return;
         }
 
@@ -250,24 +295,24 @@ impl ViewportGpuResources {
         let ldr = self.target_format;
         let hdr = wgpu::TextureFormat::Rgba16Float;
         let alpha = wgpu::BlendState::ALPHA_BLENDING;
-        self.sprite_bgl = Some(bgl);
-        self.sprite_soft_bgl = Some(soft_bgl);
-        self.sprite_soft_sampler = Some(soft_sampler);
-        self.sprite_soft_fallback_tex = Some(fallback_tex);
-        self.sprite_soft_fallback_bg = Some(fallback_bg);
-        self.sprite_pipeline = Some(DualPipeline {
+        self.sprite.bgl = Some(bgl);
+        self.sprite.soft_bgl = Some(soft_bgl);
+        self.sprite.soft_sampler = Some(soft_sampler);
+        self.sprite.soft_fallback_tex = Some(fallback_tex);
+        self.sprite.soft_fallback_bg = Some(fallback_bg);
+        self.sprite.pipeline = Some(DualPipeline {
             ldr: make_sprite(ldr, false, alpha, "sprite_pipeline"),
             hdr: make_sprite(hdr, false, alpha, "sprite_pipeline"),
         });
-        self.sprite_pipeline_depth_write = Some(DualPipeline {
+        self.sprite.pipeline_depth_write = Some(DualPipeline {
             ldr: make_sprite(ldr, true, alpha, "sprite_pipeline_depth_write"),
             hdr: make_sprite(hdr, true, alpha, "sprite_pipeline_depth_write"),
         });
-        self.sprite_pipeline_additive = Some(DualPipeline {
+        self.sprite.pipeline_additive = Some(DualPipeline {
             ldr: make_sprite(ldr, false, additive_blend, "sprite_pipeline_additive"),
             hdr: make_sprite(hdr, false, additive_blend, "sprite_pipeline_additive"),
         });
-        self.sprite_pipeline_additive_depth_write = Some(DualPipeline {
+        self.sprite.pipeline_additive_depth_write = Some(DualPipeline {
             ldr: make_sprite(
                 ldr,
                 true,
@@ -281,7 +326,7 @@ impl ViewportGpuResources {
                 "sprite_pipeline_additive_depth_write",
             ),
         });
-        self.sprite_pipeline_premultiplied = Some(DualPipeline {
+        self.sprite.pipeline_premultiplied = Some(DualPipeline {
             ldr: make_sprite(
                 ldr,
                 false,
@@ -295,7 +340,7 @@ impl ViewportGpuResources {
                 "sprite_pipeline_premultiplied",
             ),
         });
-        self.sprite_pipeline_premultiplied_depth_write = Some(DualPipeline {
+        self.sprite.pipeline_premultiplied_depth_write = Some(DualPipeline {
             ldr: make_sprite(
                 ldr,
                 true,
@@ -360,7 +405,7 @@ impl ViewportGpuResources {
             ),
         });
 
-        let bgl_ref = self.sprite_bgl.as_ref().unwrap();
+        let bgl_ref = self.sprite.bgl.as_ref().unwrap();
         let refraction_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sprite_refraction_pipeline_layout"),
             bind_group_layouts: &[&self.camera_bind_group_layout, bgl_ref, &refraction_bgl],
@@ -406,9 +451,9 @@ impl ViewportGpuResources {
             cache: None,
         });
 
-        self.sprite_refraction_bgl = Some(refraction_bgl);
-        self.sprite_refraction_sampler = Some(refraction_sampler);
-        self.sprite_refraction_pipeline = Some(refraction_pipeline);
+        self.sprite.refraction_bgl = Some(refraction_bgl);
+        self.sprite.refraction_sampler = Some(refraction_sampler);
+        self.sprite.refraction_pipeline = Some(refraction_pipeline);
 
         // -----------------------------------------------------------------
         // Lit sprite pipelines.
@@ -428,8 +473,8 @@ impl ViewportGpuResources {
             ),
         });
 
-        let sprite_bgl_ref = self.sprite_bgl.as_ref().unwrap();
-        let soft_bgl_ref = self.sprite_soft_bgl.as_ref().unwrap();
+        let sprite_bgl_ref = self.sprite.bgl.as_ref().unwrap();
+        let soft_bgl_ref = self.sprite.soft_bgl.as_ref().unwrap();
         let lit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sprite_lit_pipeline_layout"),
             bind_group_layouts: &[
@@ -483,19 +528,19 @@ impl ViewportGpuResources {
                 })
             };
 
-        self.sprite_lit_pipeline = Some(DualPipeline {
+        self.sprite.lit_pipeline = Some(DualPipeline {
             ldr: make_lit(ldr, false, alpha, "sprite_lit_pipeline"),
             hdr: make_lit(hdr, false, alpha, "sprite_lit_pipeline"),
         });
-        self.sprite_lit_pipeline_depth_write = Some(DualPipeline {
+        self.sprite.lit_pipeline_depth_write = Some(DualPipeline {
             ldr: make_lit(ldr, true, alpha, "sprite_lit_pipeline_depth_write"),
             hdr: make_lit(hdr, true, alpha, "sprite_lit_pipeline_depth_write"),
         });
-        self.sprite_lit_pipeline_additive = Some(DualPipeline {
+        self.sprite.lit_pipeline_additive = Some(DualPipeline {
             ldr: make_lit(ldr, false, additive_blend, "sprite_lit_pipeline_additive"),
             hdr: make_lit(hdr, false, additive_blend, "sprite_lit_pipeline_additive"),
         });
-        self.sprite_lit_pipeline_additive_depth_write = Some(DualPipeline {
+        self.sprite.lit_pipeline_additive_depth_write = Some(DualPipeline {
             ldr: make_lit(
                 ldr,
                 true,
@@ -509,7 +554,7 @@ impl ViewportGpuResources {
                 "sprite_lit_pipeline_additive_depth_write",
             ),
         });
-        self.sprite_lit_pipeline_premultiplied = Some(DualPipeline {
+        self.sprite.lit_pipeline_premultiplied = Some(DualPipeline {
             ldr: make_lit(
                 ldr,
                 false,
@@ -523,7 +568,7 @@ impl ViewportGpuResources {
                 "sprite_lit_pipeline_premultiplied",
             ),
         });
-        self.sprite_lit_pipeline_premultiplied_depth_write = Some(DualPipeline {
+        self.sprite.lit_pipeline_premultiplied_depth_write = Some(DualPipeline {
             ldr: make_lit(
                 ldr,
                 true,
@@ -555,8 +600,8 @@ impl ViewportGpuResources {
             ],
         });
 
-        self.sprite_lit_bgl = Some(lit_bgl);
-        self.sprite_lit_fallback_bg = Some(lit_fallback_bg);
+        self.sprite.lit_bgl = Some(lit_bgl);
+        self.sprite.lit_fallback_bg = Some(lit_fallback_bg);
     }
 
     /// Upload one [`SpriteItem`] to the GPU and return draw data.
@@ -736,7 +781,8 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let bgl = self
-            .sprite_bgl
+            .sprite
+            .bgl
             .as_ref()
             .expect("ensure_sprite_pipelines not called");
 
@@ -764,7 +810,7 @@ impl ViewportGpuResources {
         });
 
         let lit_normal_bg = if item.lit {
-            self.sprite_lit_bgl.as_ref().map(|lit_bgl| {
+            self.sprite.lit_bgl.as_ref().map(|lit_bgl| {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("sprite_lit_normal_bg"),
                     layout: lit_bgl,
@@ -804,11 +850,12 @@ impl ViewportGpuResources {
     /// Same bind group layout and vertex transform as the normal sprite pipeline but
     /// outputs a flat mask value.  Must be called after `ensure_sprite_pipelines`.
     pub(crate) fn ensure_sprite_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
-        if self.sprite_outline_mask_pipeline.is_some() {
+        if self.sprite.outline_mask_pipeline.is_some() {
             return;
         }
         let bgl = self
-            .sprite_bgl
+            .sprite
+            .bgl
             .as_ref()
             .expect("ensure_sprite_pipelines must be called first");
 
@@ -836,7 +883,7 @@ impl ViewportGpuResources {
             attributes: &vert_attrs,
         }];
 
-        self.sprite_outline_mask_pipeline = Some(device.create_render_pipeline(
+        self.sprite.outline_mask_pipeline = Some(device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
                 label: Some("sprite_outline_mask_pipeline"),
                 layout: Some(&layout),
@@ -933,7 +980,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let sid =
                             resources.upload_sprite_set(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(sid);
@@ -1037,7 +1084,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let sid = resources.upload_sprite_instance_set(
                             &device_for_apply,
                             &queue_for_apply,

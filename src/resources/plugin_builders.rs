@@ -1,4 +1,4 @@
-//! Plugin-facing accessors and pipeline builders on [`ViewportGpuResources`].
+//! Plugin-facing accessors and pipeline builders on [`DeviceResources`].
 //!
 //! See [`crate::plugin_api`] for the published types these methods return.
 
@@ -7,7 +7,7 @@ use crate::plugin_api::{
     SharedBindings,
     target_desc::{OIT_ACCUM_BLEND, OIT_REVEAL_BLEND},
 };
-use crate::resources::ViewportGpuResources;
+use crate::resources::DeviceResources;
 
 /// HDR colour format used by the scene buffer. Plugins targeting the HDR
 /// path build pipelines against this format.
@@ -25,7 +25,7 @@ pub const MASK_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 /// Pick-id colour format.
 pub const PICK_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
-impl ViewportGpuResources {
+impl DeviceResources {
     // ------------------------------------------------------------------
     // Target descriptors and SharedBindings accessor
     // ------------------------------------------------------------------
@@ -431,7 +431,7 @@ pub struct PluginPipelineOpts<'a> {
     pub vertex_layouts: &'a [wgpu::VertexBufferLayout<'a>],
     /// Bind group layouts for groups 1.. (the plugin's per-object data).
     /// Group 0 is supplied automatically from
-    /// [`ViewportGpuResources::shared_bindings`].
+    /// [`DeviceResources::shared_bindings`].
     pub extra_bind_group_layouts: &'a [&'a wgpu::BindGroupLayout],
     /// Primitive topology, cull mode, polygon mode.
     pub primitive: wgpu::PrimitiveState,
@@ -481,7 +481,7 @@ impl<'a> PluginPipelineOpts<'a> {
 fn build_layout(
     device: &wgpu::Device,
     label: Option<&str>,
-    res: &ViewportGpuResources,
+    res: &DeviceResources,
     extras: &[&wgpu::BindGroupLayout],
 ) -> wgpu::PipelineLayout {
     let mut bgls: Vec<&wgpu::BindGroupLayout> = Vec::with_capacity(1 + extras.len());

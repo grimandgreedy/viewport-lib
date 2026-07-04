@@ -905,16 +905,16 @@ impl ViewportRenderer {
             if !self.mc_gpu_data.is_empty() {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for mc in &self.mc_gpu_data {
-                    let vol = &self.resources.mc_volumes[mc.volume_idx];
+                    let vol = &self.resources.mc.volumes[mc.volume_idx];
                     if mc.wireframe || frame.viewport.wireframe_mode {
-                        if let Some(ref dual) = self.resources.mc_wireframe_pipeline {
+                        if let Some(ref dual) = self.resources.mc.wireframe_pipeline {
                             render_pass.set_pipeline(dual.for_format(true));
                             for (slab, wire_bg) in vol.slabs.iter().zip(mc.wire_slab_bgs.iter()) {
                                 render_pass.set_bind_group(1, wire_bg, &[]);
                                 render_pass.draw_indirect(&slab.wire_indirect_buf, 0);
                             }
                         }
-                    } else if let Some(ref dual) = self.resources.mc_surface_pipeline {
+                    } else if let Some(ref dual) = self.resources.mc.surface_pipeline {
                         render_pass.set_pipeline(dual.for_format(true));
                         render_pass.set_bind_group(1, &mc.render_bg, &[]);
                         for slab in &vol.slabs {
@@ -927,7 +927,7 @@ impl ViewportRenderer {
 
             // Gaussian splats (HDR path).
             if !self.gaussian_splat_draw_data.is_empty() {
-                if let Some(ref dual) = self.resources.gaussian_splat_pipeline {
+                if let Some(ref dual) = self.resources.gaussian_splat.pipeline {
                     render_pass.set_pipeline(dual.for_format(true));
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for dd in &self.gaussian_splat_draw_data {
@@ -1074,80 +1074,81 @@ impl ViewportRenderer {
                     true,
                     crate::renderer::SpriteBlend::AlphaBlend,
                     false,
-                    resources.sprite_pipeline_depth_write.as_ref(),
+                    resources.sprite.pipeline_depth_write.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::Additive,
                     false,
-                    resources.sprite_pipeline_additive_depth_write.as_ref(),
+                    resources.sprite.pipeline_additive_depth_write.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::Premultiplied,
                     false,
-                    resources.sprite_pipeline_premultiplied_depth_write.as_ref(),
+                    resources.sprite.pipeline_premultiplied_depth_write.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::AlphaBlend,
                     false,
-                    resources.sprite_pipeline.as_ref(),
+                    resources.sprite.pipeline.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::Additive,
                     false,
-                    resources.sprite_pipeline_additive.as_ref(),
+                    resources.sprite.pipeline_additive.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::Premultiplied,
                     false,
-                    resources.sprite_pipeline_premultiplied.as_ref(),
+                    resources.sprite.pipeline_premultiplied.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::AlphaBlend,
                     true,
-                    resources.sprite_lit_pipeline_depth_write.as_ref(),
+                    resources.sprite.lit_pipeline_depth_write.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::Additive,
                     true,
-                    resources.sprite_lit_pipeline_additive_depth_write.as_ref(),
+                    resources.sprite.lit_pipeline_additive_depth_write.as_ref(),
                 ),
                 (
                     true,
                     crate::renderer::SpriteBlend::Premultiplied,
                     true,
                     resources
-                        .sprite_lit_pipeline_premultiplied_depth_write
+                        .sprite
+                        .lit_pipeline_premultiplied_depth_write
                         .as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::AlphaBlend,
                     true,
-                    resources.sprite_lit_pipeline.as_ref(),
+                    resources.sprite.lit_pipeline.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::Additive,
                     true,
-                    resources.sprite_lit_pipeline_additive.as_ref(),
+                    resources.sprite.lit_pipeline_additive.as_ref(),
                 ),
                 (
                     false,
                     crate::renderer::SpriteBlend::Premultiplied,
                     true,
-                    resources.sprite_lit_pipeline_premultiplied.as_ref(),
+                    resources.sprite.lit_pipeline_premultiplied.as_ref(),
                 ),
             ];
-            let lit_fallback_bg = resources.sprite_lit_fallback_bg.as_ref();
+            let lit_fallback_bg = resources.sprite.lit_fallback_bg.as_ref();
 
-            let fallback_soft_bg = resources.sprite_soft_fallback_bg.as_ref();
+            let fallback_soft_bg = resources.sprite.soft_fallback_bg.as_ref();
 
             // Pass 1: depth-write sprites, depth attachment writable, fallback
             // bound at group 2 (the live depth view is aliased to the
@@ -1218,8 +1219,8 @@ impl ViewportRenderer {
             // live depth view can be sampled by the sprite shader for fade.
             if any_transparent {
                 let real_soft_bg = if let (Some(bgl), Some(sampler)) = (
-                    resources.sprite_soft_bgl.as_ref(),
-                    resources.sprite_soft_sampler.as_ref(),
+                    resources.sprite.soft_bgl.as_ref(),
+                    resources.sprite.soft_sampler.as_ref(),
                 ) {
                     Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("sprite_soft_bg"),
@@ -1343,13 +1344,14 @@ impl ViewportRenderer {
                 occlusion_query_set: None,
             });
             pass.set_bind_group(0, camera_bg, &[]);
-            let particle_lit_fallback = resources.particle_sprite_lit_fallback_bg.as_ref();
+            let particle_lit_fallback = resources.particle.sprite_lit_fallback_bg.as_ref();
             for pd in &self.particle_gpu_data {
                 if pd.hidden {
                     continue;
                 }
                 let Some(system) = resources
-                    .particle_systems
+                    .particle
+                    .systems
                     .get(pd.system_idx)
                     .and_then(|s| s.as_ref())
                     .filter(|s| s.alive)
@@ -1360,22 +1362,23 @@ impl ViewportRenderer {
                     crate::resources::gpu::gpu_particles::ParticleDrawRoute::Sprite { lit } => {
                         let dual = match (pd.blend, lit) {
                             (crate::renderer::SpriteBlend::Additive, false) => {
-                                resources.particle_sprite_pipeline_additive.as_ref()
+                                resources.particle.sprite_pipeline_additive.as_ref()
                             }
                             (crate::renderer::SpriteBlend::Premultiplied, false) => {
-                                resources.particle_sprite_pipeline_premultiplied.as_ref()
+                                resources.particle.sprite_pipeline_premultiplied.as_ref()
                             }
                             (crate::renderer::SpriteBlend::AlphaBlend, false) => {
-                                resources.particle_sprite_pipeline_alpha.as_ref()
+                                resources.particle.sprite_pipeline_alpha.as_ref()
                             }
                             (crate::renderer::SpriteBlend::Additive, true) => {
-                                resources.particle_sprite_lit_pipeline_additive.as_ref()
+                                resources.particle.sprite_lit_pipeline_additive.as_ref()
                             }
                             (crate::renderer::SpriteBlend::Premultiplied, true) => resources
-                                .particle_sprite_lit_pipeline_premultiplied
+                                .particle
+                                .sprite_lit_pipeline_premultiplied
                                 .as_ref(),
                             (crate::renderer::SpriteBlend::AlphaBlend, true) => {
-                                resources.particle_sprite_lit_pipeline_alpha.as_ref()
+                                resources.particle.sprite_lit_pipeline_alpha.as_ref()
                             }
                         };
                         let Some(dual) = dual else { continue };
@@ -1396,13 +1399,13 @@ impl ViewportRenderer {
                     crate::resources::gpu::gpu_particles::ParticleDrawRoute::Mesh { mesh_id } => {
                         let dual = match pd.blend {
                             crate::renderer::SpriteBlend::Additive => {
-                                resources.particle_mesh_pipeline_additive.as_ref()
+                                resources.particle.mesh_pipeline_additive.as_ref()
                             }
                             crate::renderer::SpriteBlend::Premultiplied => {
-                                resources.particle_mesh_pipeline_premultiplied.as_ref()
+                                resources.particle.mesh_pipeline_premultiplied.as_ref()
                             }
                             crate::renderer::SpriteBlend::AlphaBlend => {
-                                resources.particle_mesh_pipeline_alpha.as_ref()
+                                resources.particle.mesh_pipeline_alpha.as_ref()
                             }
                         };
                         let Some(dual) = dual else { continue };
@@ -1516,8 +1519,8 @@ impl ViewportRenderer {
             );
 
             // Build the group-2 bind group: sampled resolve view + sampler.
-            let refraction_bgl = resources.sprite_refraction_bgl.as_ref().unwrap();
-            let refraction_sampler = resources.sprite_refraction_sampler.as_ref().unwrap();
+            let refraction_bgl = resources.sprite.refraction_bgl.as_ref().unwrap();
+            let refraction_sampler = resources.sprite.refraction_sampler.as_ref().unwrap();
             let refraction_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("sprite_refraction_bg"),
                 layout: refraction_bgl,
@@ -1533,7 +1536,7 @@ impl ViewportRenderer {
                 ],
             });
 
-            if let Some(pipeline) = resources.sprite_refraction_pipeline.as_ref() {
+            if let Some(pipeline) = resources.sprite.refraction_pipeline.as_ref() {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("sprite_refraction_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1609,7 +1612,7 @@ impl ViewportRenderer {
         // Runs after the opaque pass, before the decal pass.
         // -----------------------------------------------------------------------
         if !self.decal_exclude_items.is_empty() {
-            if let Some(exclude_pl) = self.resources.decal_exclude_pipeline.as_ref() {
+            if let Some(exclude_pl) = self.resources.decal.exclude_pipeline.as_ref() {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1657,9 +1660,9 @@ impl ViewportRenderer {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
             let depth_bg = &slot_hdr.decal_depth_bg;
-            let replace_pipeline = self.resources.decal_replace_pipeline.as_ref();
-            let multiply_pipeline = self.resources.decal_multiply_pipeline.as_ref();
-            let additive_pipeline = self.resources.decal_additive_pipeline.as_ref();
+            let replace_pipeline = self.resources.decal.replace_pipeline.as_ref();
+            let multiply_pipeline = self.resources.decal.multiply_pipeline.as_ref();
+            let additive_pipeline = self.resources.decal.additive_pipeline.as_ref();
             // Scissor rects are in the decal render-target's pixel space. Read
             // the resolved HDR target size directly (ctx.w/ctx.h are the
             // supersampled/physical dimensions, which differ under SSAA or DPI
@@ -1936,7 +1939,7 @@ impl ViewportRenderer {
                                 );
                             }
                         }
-                    } else if let Some(ref pipeline) = self.resources.oit_instanced_pipeline {
+                    } else if let Some(ref pipeline) = self.resources.oit.instanced_pipeline {
                         oit_pass.set_pipeline(pipeline);
                         oit_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                         for batch in &self.instancing.batches {
@@ -1973,7 +1976,7 @@ impl ViewportRenderer {
                     // Transparent excluded items (two-sided, active attribute, matcap) are not
                     // in any instanced batch, so the instanced OIT loop above skips them.
                     // Render them here individually so they are not invisible at opacity < 1.
-                    if let Some(ref pipeline) = self.resources.oit_pipeline {
+                    if let Some(ref pipeline) = self.resources.oit.pipeline {
                         oit_pass.set_pipeline(pipeline);
                         for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
@@ -2013,7 +2016,7 @@ impl ViewportRenderer {
                             oit_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                         }
                     }
-                } else if let Some(ref pipeline) = self.resources.oit_pipeline {
+                } else if let Some(ref pipeline) = self.resources.oit.pipeline {
                     oit_pass.set_pipeline(pipeline);
                     for (item_idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden
@@ -2136,7 +2139,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         if has_transparent {
             if let (Some(pipeline), Some(bg)) = (
-                self.resources.oit_composite_pipeline.as_ref(),
+                self.resources.oit.composite_pipeline.as_ref(),
                 slot_hdr.oit_composite_bind_group.as_ref(),
             ) {
                 let hdr_view = &slot_hdr.hdr_view;
@@ -2352,7 +2355,7 @@ impl ViewportRenderer {
 
                     // Blit-copy HDR -> refraction source (replace blend).
                     if let Some(blit_pipeline) =
-                        self.resources.scatter_refraction_blit_pipeline.as_ref()
+                        self.resources.scatter.refraction_blit_pipeline.as_ref()
                     {
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("scatter_refraction_blit_pass"),
@@ -2377,8 +2380,8 @@ impl ViewportRenderer {
                     // Per-volume distortion pass: write distorted samples into
                     // the HDR target.
                     if let (Some(pipeline), Some(per_vol_bg)) = (
-                        self.resources.scatter_refraction_pipeline.as_ref(),
-                        self.resources.scatter_refraction_per_volume_bg.as_ref(),
+                        self.resources.scatter.refraction_pipeline.as_ref(),
+                        self.resources.scatter.refraction_per_volume_bg.as_ref(),
                     ) {
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("scatter_refraction_pass"),
@@ -2448,7 +2451,7 @@ impl ViewportRenderer {
             let mut per_vol_tex_bgs: Vec<wgpu::BindGroup> = Vec::with_capacity(n as usize);
             for (volume, _, _) in self.prepared_scatter_volumes.iter().take(n as usize) {
                 let (lut_id, density_id) =
-                    crate::resources::ViewportGpuResources::scatter_volume_tex_ids(volume);
+                    crate::resources::DeviceResources::scatter_volume_tex_ids(volume);
                 let bg = self
                     .resources
                     .ensure_scatter_per_volume_tex_bg(device, queue, lut_id, density_id);
@@ -2459,9 +2462,9 @@ impl ViewportRenderer {
                 let s = self.scatter_viewport_states[vp_idx].as_ref().unwrap();
                 let raw_view = &s.raw_current_view;
                 if let (Some(pipeline), Some(per_vol_bg), Some(frame_bg)) = (
-                    self.resources.scatter_pipeline.as_ref(),
-                    self.resources.scatter_per_volume_bg.as_ref(),
-                    self.resources.scatter_frame_bg.as_ref(),
+                    self.resources.scatter.pipeline.as_ref(),
+                    self.resources.scatter.per_volume_bg.as_ref(),
+                    self.resources.scatter.frame_bg.as_ref(),
                 ) {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("scatter_volume_pass"),
@@ -2508,7 +2511,7 @@ impl ViewportRenderer {
                         )
                     };
                     if let Some(resolve_pipeline) =
-                        self.resources.scatter_temporal_resolve_pipeline.as_ref()
+                        self.resources.scatter.temporal_resolve_pipeline.as_ref()
                     {
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("scatter_temporal_resolve_pass"),
@@ -2535,7 +2538,7 @@ impl ViewportRenderer {
                 };
 
                 // Composite pass: source -> HDR with premultiplied alpha-over.
-                if let Some(composite_pipeline) = self.resources.scatter_composite_pipeline.as_ref()
+                if let Some(composite_pipeline) = self.resources.scatter.composite_pipeline.as_ref()
                 {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("scatter_composite_pass"),
@@ -2579,8 +2582,8 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         if !self.lic_gpu_data.is_empty() {
             if let (Some(surface_pipeline), Some(advect_pipeline)) = (
-                self.resources.lic_surface_pipeline.as_ref(),
-                self.resources.lic_advect_pipeline.as_ref(),
+                self.resources.lic.surface_pipeline.as_ref(),
+                self.resources.lic.advect_pipeline.as_ref(),
             ) {
                 let camera_bg = &slot.camera_bind_group;
                 // Pass 1: surface vector pass (clears lic_vector_texture first).

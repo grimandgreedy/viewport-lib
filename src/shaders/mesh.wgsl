@@ -183,7 +183,7 @@ fn clip_volume_test(p: vec3<f32>) -> bool {
 @group(1) @binding(11) var metallic_roughness_tex: texture_2d<f32>;
 @group(1) @binding(12) var emissive_tex: texture_2d<f32>;
 // Optional per-vertex override storage buffers a `GpuPlugin` may bind via
-// `ViewportGpuResources::set_position_override_buffer` / `set_normal_override_buffer`.
+// `DeviceResources::set_position_override_buffer` / `set_normal_override_buffer`.
 // Flat `array<f32>` with 3 values per vertex so consumer compute shaders can
 // write tight `vec3` data without WGSL's 16-byte vec3 stride padding (matches
 // the warp_buffer convention). When unbound, a 12-byte zero sentinel is bound

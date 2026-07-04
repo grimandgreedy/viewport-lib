@@ -99,7 +99,7 @@ pub enum DecalAnimation {
 /// box is the projection direction (front face = +Z in local space).
 ///
 /// `texture_id` must be a value returned by
-/// [`ViewportGpuResources::upload_texture`].
+/// [`DeviceResources::upload_texture`].
 ///
 /// # Normal map (D2)
 ///

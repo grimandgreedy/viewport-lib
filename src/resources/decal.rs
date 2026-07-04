@@ -1,7 +1,7 @@
 //! Screen-space decal pipeline (D1 + D2 + D5).
 
 use crate::resources::mesh::mesh_store::MeshId;
-use crate::resources::{DualPipeline, ViewportGpuResources};
+use crate::resources::{DeviceResources, DualPipeline};
 use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
@@ -149,16 +149,45 @@ pub(crate) fn hash_decal_item(item: &crate::renderer::DecalItem) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline init and upload (impl ViewportGpuResources)
+// Cluster resources
 // ---------------------------------------------------------------------------
 
-impl ViewportGpuResources {
+/// Screen-space decal pipelines and their bind group layouts.
+///
+/// All fields are lazily built: the render pipelines and item BGL by
+/// `ensure_decal_pipeline`, the exclude pipeline by `ensure_decal_exclude_pipeline`,
+/// and `depth_bgl` / `sampler` by `ensure_hdr_shared`.
+#[derive(Default)]
+pub(crate) struct DecalResources {
+    /// Replace-blend decal pipeline (LDR + HDR). None until first decal is submitted.
+    pub(crate) replace_pipeline: Option<DualPipeline>,
+    /// Multiply-blend decal pipeline (LDR + HDR). None until first decal is submitted.
+    pub(crate) multiply_pipeline: Option<DualPipeline>,
+    /// Additive-blend decal pipeline (LDR + HDR). None until first decal is submitted.
+    pub(crate) additive_pipeline: Option<DualPipeline>,
+    /// BGL for group 1 of the decal pass: depth texture + stencil texture bindings.
+    pub(crate) depth_bgl: Option<wgpu::BindGroupLayout>,
+    /// BGL for group 2 of the decal pass: uniform buffer + albedo texture + sampler.
+    pub(crate) item_bgl: Option<wgpu::BindGroupLayout>,
+    /// Linear-clamp sampler used by the decal fragment shader.
+    pub(crate) sampler: Option<wgpu::Sampler>,
+    /// Pipeline that writes stencil = 0 for non-receiver surfaces (D5).
+    pub(crate) exclude_pipeline: Option<wgpu::RenderPipeline>,
+    /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
+    pub(crate) exclude_obj_bgl: Option<wgpu::BindGroupLayout>,
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline init and upload (impl DeviceResources)
+// ---------------------------------------------------------------------------
+
+impl DeviceResources {
     /// Lazily create the decal render pipelines and item bind group layout.
     ///
     /// No-op if already created.  Requires `decal_depth_bgl` to exist (created
     /// by `ensure_hdr_shared`).
     pub(crate) fn ensure_decal_pipeline(&mut self, device: &wgpu::Device) {
-        if self.decal_replace_pipeline.is_some() {
+        if self.decal.replace_pipeline.is_some() {
             return;
         }
 
@@ -216,7 +245,8 @@ impl ViewportGpuResources {
         });
 
         let depth_bgl = self
-            .decal_depth_bgl
+            .decal
+            .depth_bgl
             .as_ref()
             .expect("decal_depth_bgl must exist before ensure_decal_pipeline");
 
@@ -289,16 +319,16 @@ impl ViewportGpuResources {
             },
         };
 
-        self.decal_item_bgl = Some(item_bgl);
-        self.decal_replace_pipeline = Some(DualPipeline {
+        self.decal.item_bgl = Some(item_bgl);
+        self.decal.replace_pipeline = Some(DualPipeline {
             ldr: make(self.target_format, replace_blend),
             hdr: make(wgpu::TextureFormat::Rgba16Float, replace_blend),
         });
-        self.decal_multiply_pipeline = Some(DualPipeline {
+        self.decal.multiply_pipeline = Some(DualPipeline {
             ldr: make(self.target_format, multiply_blend),
             hdr: make(wgpu::TextureFormat::Rgba16Float, multiply_blend),
         });
-        self.decal_additive_pipeline = Some(DualPipeline {
+        self.decal.additive_pipeline = Some(DualPipeline {
             ldr: make(self.target_format, additive_blend),
             hdr: make(wgpu::TextureFormat::Rgba16Float, additive_blend),
         });
@@ -315,7 +345,8 @@ impl ViewportGpuResources {
         stencil_only_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         let bgl = self
-            .decal_depth_bgl
+            .decal
+            .depth_bgl
             .as_ref()
             .expect("decal_depth_bgl not created");
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -368,12 +399,14 @@ impl ViewportGpuResources {
         let emissive_view = resolve_tex(item.emissive_texture_id);
 
         let bgl = self
-            .decal_item_bgl
+            .decal
+            .item_bgl
             .as_ref()
             .expect("ensure_decal_pipeline not called");
 
         let sampler = self
-            .decal_sampler
+            .decal
+            .sampler
             .as_ref()
             .expect("decal_sampler not created");
 
@@ -424,7 +457,7 @@ impl ViewportGpuResources {
     ///
     /// No-op if already created. Must be called after `camera_bind_group_layout` exists.
     pub(crate) fn ensure_decal_exclude_pipeline(&mut self, device: &wgpu::Device) {
-        if self.decal_exclude_pipeline.is_some() {
+        if self.decal.exclude_pipeline.is_some() {
             return;
         }
 
@@ -523,8 +556,8 @@ impl ViewportGpuResources {
             cache: None,
         });
 
-        self.decal_exclude_obj_bgl = Some(obj_bgl);
-        self.decal_exclude_pipeline = Some(pipeline);
+        self.decal.exclude_obj_bgl = Some(obj_bgl);
+        self.decal.exclude_pipeline = Some(pipeline);
     }
 
     /// Upload one non-receiver surface for the decal exclude pass and return per-draw data.
@@ -543,7 +576,8 @@ impl ViewportGpuResources {
         });
 
         let bgl = self
-            .decal_exclude_obj_bgl
+            .decal
+            .exclude_obj_bgl
             .as_ref()
             .expect("ensure_decal_exclude_pipeline not called");
 

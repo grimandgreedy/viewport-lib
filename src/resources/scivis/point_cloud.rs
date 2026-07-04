@@ -1,6 +1,6 @@
 use super::*;
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Lazily create the point cloud render pipeline (PointList topology).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.point_clouds` is non-empty.
@@ -450,7 +450,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let pid = resources.upload_point_cloud(
                             &device_for_apply,
                             &queue_for_apply,
@@ -500,7 +500,7 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::renderer::PointCloudItem;
     use crate::resources::UploadStatus;
 
@@ -533,8 +533,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_point_cloud(&device, &queue, &sample_point_cloud());
         assert!(resources.point_cloud_store.contains(id));
         assert!(resources.drop_point_cloud(id));
@@ -547,8 +546,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_point_cloud(&device, &queue, sample_point_cloud());
         for _ in 0..200 {
             resources.process_uploads(&device, &queue);

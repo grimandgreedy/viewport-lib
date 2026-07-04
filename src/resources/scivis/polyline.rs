@@ -1,11 +1,29 @@
 use super::*;
 
-impl ViewportGpuResources {
+/// Polyline (screen-space thick line) pipelines and their layouts. All lazily
+/// built; the uploaded polyline data lives in a separate flat store.
+#[derive(Default)]
+pub(crate) struct PolylineResources {
+    /// Polyline render pipeline. None until first polyline set is submitted.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Clip-exempt polyline pipeline (uses fs_main_no_clip).
+    pub(crate) no_clip_pipeline: Option<DualPipeline>,
+    /// Bind group layout for polyline uniforms (group 1).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// Thin 1px LineList wireframe polyline pipeline.
+    pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    /// Bind group layout for the wireframe polyline pipeline (group 1).
+    pub(crate) wireframe_bgl: Option<wgpu::BindGroupLayout>,
+    /// Polyline outline mask pipeline (R8Unorm). None until first selected polyline.
+    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+}
+
+impl DeviceResources {
     /// Lazily create the polyline render pipeline (instanced TriangleList : screen-space thick lines).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.polylines` is non-empty.
     pub(crate) fn ensure_polyline_pipeline(&mut self, device: &wgpu::Device) {
-        if self.polyline_pipeline.is_some() {
+        if self.polyline.pipeline.is_some() {
             return;
         }
 
@@ -182,8 +200,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.polyline_bgl = Some(pl_bgl);
-        self.polyline_pipeline = Some(DualPipeline {
+        self.polyline.bgl = Some(pl_bgl);
+        self.polyline.pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
@@ -196,7 +214,7 @@ impl ViewportGpuResources {
     /// Reads segment endpoints from a storage buffer so no vertex buffer is needed.
     /// Created alongside `ensure_polyline_pipeline`; no-op if already created.
     pub(crate) fn ensure_polyline_wireframe_pipeline(&mut self, device: &wgpu::Device) {
-        if self.polyline_wireframe_pipeline.is_some() {
+        if self.polyline.wireframe_pipeline.is_some() {
             return;
         }
 
@@ -269,8 +287,8 @@ impl ViewportGpuResources {
             })
         };
 
-        self.polyline_wireframe_bgl = Some(wf_bgl);
-        self.polyline_wireframe_pipeline = Some(DualPipeline {
+        self.polyline.wireframe_bgl = Some(wf_bgl);
+        self.polyline.wireframe_pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
@@ -497,7 +515,8 @@ impl ViewportGpuResources {
         let lut_sampler = &self.lut_sampler;
 
         let bgl = self
-            .polyline_bgl
+            .polyline
+            .bgl
             .as_ref()
             .expect("ensure_polyline_pipeline not called");
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -519,7 +538,7 @@ impl ViewportGpuResources {
             ],
         });
 
-        let wireframe_bind_group = self.polyline_wireframe_bgl.as_ref().map(|bgl| {
+        let wireframe_bind_group = self.polyline.wireframe_bgl.as_ref().map(|bgl| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("polyline_wireframe_bind_group"),
                 layout: bgl,
@@ -614,7 +633,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let pid =
                             resources.upload_polyline(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(pid);
@@ -665,7 +684,7 @@ impl ViewportGpuResources {
     /// fragments are never discarded by clip planes or clip volumes. Used for
     /// clip object wireframe overlays which must always be fully visible.
     pub(crate) fn ensure_polyline_no_clip_pipeline(&mut self, device: &wgpu::Device) {
-        if self.polyline_no_clip_pipeline.is_some() {
+        if self.polyline.no_clip_pipeline.is_some() {
             return;
         }
         // The regular pipeline (and its BGL) must exist first.
@@ -679,7 +698,8 @@ impl ViewportGpuResources {
         });
 
         let pl_bgl = self
-            .polyline_bgl
+            .polyline
+            .bgl
             .as_ref()
             .expect("polyline_bgl must exist after ensure_polyline_pipeline");
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -802,7 +822,7 @@ impl ViewportGpuResources {
             })
         };
 
-        self.polyline_no_clip_pipeline = Some(DualPipeline {
+        self.polyline.no_clip_pipeline = Some(DualPipeline {
             ldr: make(self.target_format),
             hdr: make(wgpu::TextureFormat::Rgba16Float),
         });
@@ -814,13 +834,14 @@ impl ViewportGpuResources {
     /// screen-space quad expansion as the regular pipeline, but outputs white
     /// and skips clip plane / colour logic.
     pub(crate) fn ensure_polyline_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
-        if self.polyline_outline_mask_pipeline.is_some() {
+        if self.polyline.outline_mask_pipeline.is_some() {
             return;
         }
         self.ensure_polyline_pipeline(device);
 
         let pl_bgl = self
-            .polyline_bgl
+            .polyline
+            .bgl
             .as_ref()
             .expect("polyline_bgl must exist after ensure_polyline_pipeline");
 
@@ -909,7 +930,7 @@ impl ViewportGpuResources {
             ],
         };
 
-        self.polyline_outline_mask_pipeline = Some(device.create_render_pipeline(
+        self.polyline.outline_mask_pipeline = Some(device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
                 label: Some("polyline_outline_mask_pipeline"),
                 layout: Some(&layout),
@@ -955,7 +976,7 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::renderer::PolylineItem;
     use crate::resources::UploadStatus;
 
@@ -996,8 +1017,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_polyline(&device, &queue, &sample_polyline());
         assert!(resources.polyline_store.contains(id));
         // drop + reupload cycles the slot.
@@ -1013,8 +1033,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id1 = resources.upload_polyline(&device, &queue, &sample_polyline());
         assert!(resources.polyline_store.get(id1).is_some());
@@ -1040,8 +1059,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_polyline(&device, &queue, &sample_polyline());
         let mut updated = sample_polyline();
         updated.line_width = 5.0;
@@ -1055,8 +1073,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_polyline(&device, &queue, sample_polyline());
 
         // Not ready yet.

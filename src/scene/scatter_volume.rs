@@ -44,7 +44,7 @@ pub struct ScatterVolume {
     pub step_budget: Option<u32>,
     /// External 3D density texture (typically baked sim output) that
     /// modulates per-step density instead of procedural noise. Uploaded
-    /// via [`upload_volume`](crate::resources::ViewportGpuResources::upload_volume).
+    /// via [`upload_volume`](crate::resources::DeviceResources::upload_volume).
     /// The texture is sampled at normalized coordinates inside the volume's
     /// world-space AABB. When both `noise` and `density_texture` are set
     /// the texture takes precedence (noise is ignored for that volume).

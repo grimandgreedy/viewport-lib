@@ -3,7 +3,7 @@
 //! When `render_scale < 1.0`, the scene is rendered into a scaled intermediate
 //! texture and then upscaled to the surface via bilinear filtering.
 
-use crate::resources::ViewportGpuResources;
+use crate::resources::DeviceResources;
 
 /// Per-viewport intermediate render target for dynamic resolution rendering.
 ///
@@ -28,7 +28,7 @@ pub(crate) struct DynResTarget {
     pub surface_size: [u32; 2],
 }
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Ensure the shared upscale pipeline and sampler exist, creating them on
     /// first call. Idempotent.
     pub(crate) fn ensure_dyn_res_pipeline(&mut self, device: &wgpu::Device) {

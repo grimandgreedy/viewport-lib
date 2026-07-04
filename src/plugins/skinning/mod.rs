@@ -29,7 +29,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::resources::ViewportGpuResources;
+use crate::resources::DeviceResources;
 use crate::resources::mesh::mesh_store::MeshId;
 use crate::resources::mesh_sidecar::registry::{DeformStage, DeformerDesc, DeformerId};
 
@@ -191,7 +191,7 @@ impl SkinningPlugin {
     /// fails (extremely unlikely for the shipped body, which is covered by
     /// unit tests).
     pub fn install(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
     ) -> crate::error::ViewportResult<Self> {
         let deformer_id = match resources.deformer_id_by_name(SKINNING_DEFORMER_NAME) {
@@ -225,7 +225,7 @@ impl SkinningPlugin {
     /// weights buffer.
     pub fn attach_weights(
         &self,
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         mesh_id: MeshId,
         weights: &SkinWeights,
@@ -252,7 +252,7 @@ impl SkinningPlugin {
     /// next `process_uploads` call after the worker finishes.
     pub fn begin_upload_weights(
         &self,
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         mesh_id: MeshId,
         weights: SkinWeights,
@@ -267,7 +267,7 @@ impl SkinningPlugin {
             let tight = pack_skin_weights_tight(&packed);
             progress.set(0.9);
             Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                Box::new(move |resources: &mut ViewportGpuResources| {
+                Box::new(move |resources: &mut DeviceResources| {
                     resources.deform.attach_slot(
                         &device_for_apply,
                         mesh_id,
@@ -297,7 +297,7 @@ impl SkinningPlugin {
     /// composes with the scene node transform rather than replacing it.
     pub fn attach_palette(
         &self,
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         mesh_id: MeshId,
@@ -344,7 +344,7 @@ impl SkinningPlugin {
     /// with [`detach_palette`](Self::detach_palette) or by freeing the mesh.
     pub fn detach_weights(
         &self,
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         mesh_id: MeshId,
     ) -> bool {
@@ -364,7 +364,7 @@ impl SkinningPlugin {
     /// mesh's weight slot and skinnable marker in place.
     pub fn detach_palette(
         &self,
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         mesh_id: MeshId,
@@ -392,7 +392,7 @@ impl SkinningPlugin {
     /// `(mesh, instance)` and are not tracked here; reclaim them with
     /// [`detach_palette`](Self::detach_palette) or by freeing the meshes before
     /// uninstalling if their buffers must go immediately.
-    pub fn uninstall(self, resources: &mut ViewportGpuResources, device: &wgpu::Device) {
+    pub fn uninstall(self, resources: &mut DeviceResources, device: &wgpu::Device) {
         let slot = self.deformer_id.slot();
         let meshes: Vec<MeshId> = {
             let marker = self
@@ -448,7 +448,7 @@ fn pack_skin_weights_tight(packed: &[PackedSkinVertex]) -> Vec<u8> {
 mod async_skin_tests {
     use super::SkinWeights;
     use super::SkinningPlugin;
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::geometry::primitives;
     use crate::resources::UploadStatus;
 
@@ -476,8 +476,7 @@ mod async_skin_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let skinning = SkinningPlugin::install(&mut resources, &device).unwrap();
         let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
@@ -493,8 +492,7 @@ mod async_skin_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let skinning = SkinningPlugin::install(&mut resources, &device).unwrap();
         let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
@@ -523,8 +521,7 @@ mod async_skin_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let skinning = SkinningPlugin::install(&mut resources, &device).unwrap();
         let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
         let a = resources.upload_mesh_data(&device, &plane).unwrap();
@@ -554,8 +551,7 @@ mod async_skin_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let skinning = SkinningPlugin::install(&mut resources, &device).unwrap();
         let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();

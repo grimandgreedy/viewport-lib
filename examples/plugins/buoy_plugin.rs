@@ -253,7 +253,7 @@ impl BuoyPlugin {
     }
 
     /// Clone-able handle to the buoy mesh's per-vertex position output. Pass
-    /// to `ViewportGpuResources::set_position_override_buffer` once at setup.
+    /// to `DeviceResources::set_position_override_buffer` once at setup.
     pub fn output_buffer(&self) -> wgpu::Buffer {
         self.out_buf.clone()
     }

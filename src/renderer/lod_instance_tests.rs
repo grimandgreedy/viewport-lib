@@ -12,11 +12,11 @@ use super::{
 };
 use crate::geometry::primitives;
 use crate::renderer::PickId;
-use crate::resources::{LodGroupId, MeshData, ViewportGpuResources};
+use crate::resources::{DeviceResources, LodGroupId, MeshData};
 
 /// Upload each level mesh, then register the group.
 fn register(
-    res: &mut ViewportGpuResources,
+    res: &mut DeviceResources,
     device: &wgpu::Device,
     levels: &[(MeshData, f32)],
 ) -> LodGroupId {

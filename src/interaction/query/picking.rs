@@ -666,7 +666,7 @@ fn ray_aabb_volume(
 /// * `id` : caller-assigned object identifier, copied into [`PickHit::id`]
 /// * `item` : volume render parameters (bounding box, transform, thresholds)
 /// * `volume` : CPU-side scalar field: same data passed to
-///   [`upload_volume`](crate::resources::ViewportGpuResources::upload_volume)
+///   [`upload_volume`](crate::resources::DeviceResources::upload_volume)
 ///
 /// # Returns
 /// `Some(PickHit)` on a hit:

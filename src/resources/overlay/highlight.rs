@@ -1,5 +1,5 @@
 use crate::interaction::select::sub_object::{SubObjectRef, SubSelectionRef};
-use crate::resources::types::{SubHighlightGpuData, SubHighlightUniform, ViewportGpuResources};
+use crate::resources::types::{DeviceResources, SubHighlightGpuData, SubHighlightUniform};
 
 /// Recover the two world-space endpoint positions for a global polyline segment index.
 ///
@@ -28,7 +28,7 @@ fn segment_endpoints(
     None
 }
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Lazily create sub-object highlight pipelines for both the HDR path
     /// (`Rgba16Float` colour target) and the LDR path (swapchain `target_format`).
     /// Idempotent: returns immediately if already created.

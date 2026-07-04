@@ -1,12 +1,39 @@
 use super::*;
 
-impl ViewportGpuResources {
+/// Streamtube (connected tube mesh) pipelines and layout. Lazily built; the
+/// uploaded streamtube/tube data lives in separate flat stores.
+#[derive(Default)]
+pub(crate) struct StreamtubeResources {
+    /// Streamtube render pipeline. None until first streamtube item is submitted.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Streamtube wireframe pipeline (LineList topology, cull_mode None).
+    pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    /// Bind group layout for streamtube uniforms (group 1).
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+}
+
+/// Ribbon pipelines (one per blend mode) and layout.
+#[derive(Default)]
+pub(crate) struct RibbonResources {
+    /// Ribbon pipeline: alpha blend, depth write enabled. Default for plain ribbons.
+    pub(crate) pipeline: Option<DualPipeline>,
+    /// Ribbon pipeline with additive blend and depth write disabled.
+    pub(crate) pipeline_additive: Option<DualPipeline>,
+    /// Ribbon pipeline with premultiplied-alpha blend and depth write disabled.
+    pub(crate) pipeline_premultiplied: Option<DualPipeline>,
+    /// Ribbon wireframe pipeline (LineList topology, cull_mode None).
+    pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    /// Bind group layout for ribbons (group 1): uniform + optional streak texture + sampler.
+    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+}
+
+impl DeviceResources {
     /// Lazily create the streamtube render pipeline (connected tube mesh, TriangleList).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.streamtube_items`
     /// is non-empty.
     pub(crate) fn ensure_streamtube_pipeline(&mut self, device: &wgpu::Device) {
-        if self.streamtube_pipeline.is_some() {
+        if self.streamtube.pipeline.is_some() {
             return;
         }
 
@@ -282,26 +309,26 @@ impl ViewportGpuResources {
 
         let ldr = self.target_format;
         let hdr = wgpu::TextureFormat::Rgba16Float;
-        self.streamtube_bgl = Some(streamtube_bgl);
-        self.ribbon_bgl = Some(ribbon_bgl);
-        self.streamtube_pipeline = Some(DualPipeline {
+        self.streamtube.bgl = Some(streamtube_bgl);
+        self.ribbon.bgl = Some(ribbon_bgl);
+        self.streamtube.pipeline = Some(DualPipeline {
             ldr: make_tube(ldr),
             hdr: make_tube(hdr),
         });
-        self.streamtube_wireframe_pipeline = Some(DualPipeline {
+        self.streamtube.wireframe_pipeline = Some(DualPipeline {
             ldr: make_tube_wireframe(ldr),
             hdr: make_tube_wireframe(hdr),
         });
         let alpha_blend = wgpu::BlendState::ALPHA_BLENDING;
-        self.ribbon_pipeline = Some(DualPipeline {
+        self.ribbon.pipeline = Some(DualPipeline {
             ldr: make_ribbon(ldr, alpha_blend, true, "ribbon_pipeline"),
             hdr: make_ribbon(hdr, alpha_blend, true, "ribbon_pipeline"),
         });
-        self.ribbon_pipeline_additive = Some(DualPipeline {
+        self.ribbon.pipeline_additive = Some(DualPipeline {
             ldr: make_ribbon(ldr, additive_blend, false, "ribbon_pipeline_additive"),
             hdr: make_ribbon(hdr, additive_blend, false, "ribbon_pipeline_additive"),
         });
-        self.ribbon_pipeline_premultiplied = Some(DualPipeline {
+        self.ribbon.pipeline_premultiplied = Some(DualPipeline {
             ldr: make_ribbon(
                 ldr,
                 premultiplied_blend,
@@ -315,7 +342,7 @@ impl ViewportGpuResources {
                 "ribbon_pipeline_premultiplied",
             ),
         });
-        self.ribbon_wireframe_pipeline = Some(DualPipeline {
+        self.ribbon.wireframe_pipeline = Some(DualPipeline {
             ldr: make_ribbon_wireframe(ldr),
             hdr: make_ribbon_wireframe(hdr),
         });
@@ -550,7 +577,8 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let bgl = self
-            .streamtube_bgl
+            .streamtube
+            .bgl
             .as_ref()
             .expect("ensure_streamtube_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -887,7 +915,8 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let bgl = self
-            .streamtube_bgl
+            .streamtube
+            .bgl
             .as_ref()
             .expect("ensure_streamtube_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1233,7 +1262,8 @@ impl ViewportGpuResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         let bgl = self
-            .ribbon_bgl
+            .ribbon
+            .bgl
             .as_ref()
             .expect("ensure_streamtube_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1317,7 +1347,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let sid =
                             resources.upload_streamtube(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(sid);
@@ -1377,7 +1407,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let tid = resources.upload_tube(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(tid);
                     }),
@@ -1436,7 +1466,7 @@ impl ViewportGpuResources {
             runner.submit_cpu(move |progress| {
                 progress.set(0.9);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let rid =
                             resources.upload_ribbon(&device_for_apply, &queue_for_apply, &item);
                         slot_for_apply.set(rid);
@@ -1483,7 +1513,7 @@ impl ViewportGpuResources {
 
 #[cfg(test)]
 mod tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::renderer::{RibbonItem, StreamtubeItem, TubeItem};
     use crate::resources::UploadStatus;
 
@@ -1526,7 +1556,7 @@ mod tests {
     }
 
     fn drive_until_ready(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         id: crate::resources::JobId,
@@ -1607,8 +1637,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_streamtube(&device, &queue, &sample_streamtube());
         assert!(resources.streamtube_store.contains(id));
         assert!(resources.drop_streamtube(id));
@@ -1621,8 +1650,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let start = resources.resident_bytes().scivis_bytes;
         let id = resources.upload_tube(&device, &queue, &sample_tube());
         assert!(resources.tube_store.contains(id));
@@ -1645,8 +1673,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_ribbon(&device, &queue, &sample_ribbon());
         assert!(resources.ribbon_store.contains(id));
         assert!(resources.drop_ribbon(id));
@@ -1658,8 +1685,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_streamtube(&device, &queue, sample_streamtube());
         drive_until_ready(&mut resources, &device, &queue, job, "streamtube");
         let id = resources.upload_result_streamtube(job).expect("ready");
@@ -1677,8 +1703,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_tube(&device, &queue, sample_tube());
         drive_until_ready(&mut resources, &device, &queue, job, "tube");
         let id = resources.upload_result_tube(job).expect("ready");
@@ -1691,8 +1716,7 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_ribbon(&device, &queue, sample_ribbon());
         drive_until_ready(&mut resources, &device, &queue, job, "ribbon");
         let id = resources.upload_result_ribbon(job).expect("ready");

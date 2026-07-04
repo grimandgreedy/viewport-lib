@@ -53,6 +53,8 @@ pub use self::types::BatchMeta;
 #[allow(deprecated)]
 pub use self::types::ClipVolumeUniform;
 pub(crate) use self::types::ScatterViewportState;
+#[allow(deprecated)]
+pub use self::types::ViewportGpuResources;
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ContactShadowUniform,
     CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
@@ -69,10 +71,10 @@ pub(crate) use self::types::{
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, GpuMesh, GpuTexture,
-    LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
+    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, DeviceResources, GpuMesh,
+    GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
     PointCloudGpuData, PolylineGpuData, ProjectedTetId, ResidentBytes, ScreenImageGpuData,
-    SingleLightUniform, TextureMemoryStats, Vertex, ViewportGpuResources, VolumeGpuData, VolumeId,
+    SingleLightUniform, TextureMemoryStats, Vertex, VolumeGpuData, VolumeId,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;

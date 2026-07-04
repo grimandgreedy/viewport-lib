@@ -518,7 +518,7 @@ impl crate::resources::ViewportCullState {
     }
 }
 
-impl crate::resources::ViewportGpuResources {
+impl crate::resources::DeviceResources {
     /// Enable or disable the HiZ occlusion test on the main-camera cull.
     pub(crate) fn set_occlusion_culling(&mut self, enabled: bool) {
         self.occlusion_culling_enabled = enabled;

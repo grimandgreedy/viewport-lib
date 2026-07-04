@@ -13,8 +13,33 @@ use wgpu::util::DeviceExt as _;
 use crate::{
     geometry::marching_cubes::{TRI_TABLE, VolumeData},
     renderer::GpuMarchingCubesJob,
-    resources::{DualPipeline, ViewportGpuResources},
+    resources::{DeviceResources, DualPipeline},
 };
+
+/// GPU marching-cubes pipelines, layouts, and static case tables.
+///
+/// The three compute passes (classify / prefix-sum / generate), the surface and
+/// wireframe render pipelines, and the shared case-count / case-table buffers.
+/// All device-shared and lazily built; `volumes` holds the per-item extraction
+/// state keyed by submission order.
+#[derive(Default)]
+pub(crate) struct McResources {
+    pub(crate) classify_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) prefix_sum_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) generate_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) surface_pipeline: Option<DualPipeline>,
+    pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    pub(crate) wireframe_render_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) classify_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) prefix_sum_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) generate_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) render_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) case_count_buf: Option<wgpu::Buffer>,
+    pub(crate) case_table_buf: Option<wgpu::Buffer>,
+    pub(crate) volumes: Vec<McVolumeGpuData>,
+    /// Outline mask pipeline for MC surfaces (stride-24 vertex buffer, draw_indirect).
+    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -23,7 +48,7 @@ use crate::{
 crate::resources::handle::slot_handle! {
     /// Handle to a volume scalar field uploaded for GPU marching cubes.
     ///
-    /// Returned by [`ViewportGpuResources::upload_volume_for_mc`]. Pass to
+    /// Returned by [`DeviceResources::upload_volume_for_mc`]. Pass to
     /// [`GpuMarchingCubesJob`] to select which volume to triangulate each frame.
     ///
     /// Carries the slot index plus the generation the slot had when the handle
@@ -195,15 +220,15 @@ fn case_table_flat() -> [i32; 256 * 16] {
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline init and volume upload (impl ViewportGpuResources)
+// Pipeline init and volume upload (impl DeviceResources)
 // ---------------------------------------------------------------------------
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Lazily create all GPU MC pipelines and shared lookup buffers.
     ///
     /// No-op if already initialised.
     pub(crate) fn ensure_mc_pipelines(&mut self, device: &wgpu::Device) {
-        if self.mc_classify_pipeline.is_some() {
+        if self.mc.classify_pipeline.is_some() {
             return;
         }
 
@@ -494,21 +519,21 @@ impl ViewportGpuResources {
         // ----------------------------------------------------------------
         // Commit all resources.
         // ----------------------------------------------------------------
-        self.mc_case_count_buf = Some(mc_case_count_buf);
-        self.mc_case_table_buf = Some(mc_case_table_buf);
-        self.mc_classify_bgl = Some(classify_bgl);
-        self.mc_prefix_sum_bgl = Some(prefix_sum_bgl);
-        self.mc_generate_bgl = Some(generate_bgl);
-        self.mc_render_bgl = Some(render_bgl);
-        self.mc_classify_pipeline = Some(classify_pipeline);
-        self.mc_prefix_sum_pipeline = Some(prefix_sum_pipeline);
-        self.mc_generate_pipeline = Some(generate_pipeline);
-        self.mc_surface_pipeline = Some(DualPipeline {
+        self.mc.case_count_buf = Some(mc_case_count_buf);
+        self.mc.case_table_buf = Some(mc_case_table_buf);
+        self.mc.classify_bgl = Some(classify_bgl);
+        self.mc.prefix_sum_bgl = Some(prefix_sum_bgl);
+        self.mc.generate_bgl = Some(generate_bgl);
+        self.mc.render_bgl = Some(render_bgl);
+        self.mc.classify_pipeline = Some(classify_pipeline);
+        self.mc.prefix_sum_pipeline = Some(prefix_sum_pipeline);
+        self.mc.generate_pipeline = Some(generate_pipeline);
+        self.mc.surface_pipeline = Some(DualPipeline {
             ldr: make_surface(self.target_format),
             hdr: make_surface(wgpu::TextureFormat::Rgba16Float),
         });
-        self.mc_wireframe_render_bgl = Some(wireframe_render_bgl);
-        self.mc_wireframe_pipeline = Some(DualPipeline {
+        self.mc.wireframe_render_bgl = Some(wireframe_render_bgl);
+        self.mc.wireframe_pipeline = Some(DualPipeline {
             ldr: make_wireframe(self.target_format),
             hdr: make_wireframe(wgpu::TextureFormat::Rgba16Float),
         });
@@ -540,13 +565,13 @@ impl ViewportGpuResources {
         &mut self,
         mut gpu_data: McVolumeGpuData,
     ) -> McVolumeId {
-        if let Some(free_idx) = self.mc_volumes.iter().position(|v| !v.alive) {
-            gpu_data.generation = self.mc_volumes[free_idx].generation;
-            self.mc_volumes[free_idx] = gpu_data;
-            McVolumeId::new(free_idx as u32, self.mc_volumes[free_idx].generation)
+        if let Some(free_idx) = self.mc.volumes.iter().position(|v| !v.alive) {
+            gpu_data.generation = self.mc.volumes[free_idx].generation;
+            self.mc.volumes[free_idx] = gpu_data;
+            McVolumeId::new(free_idx as u32, self.mc.volumes[free_idx].generation)
         } else {
-            let idx = self.mc_volumes.len();
-            self.mc_volumes.push(gpu_data);
+            let idx = self.mc.volumes.len();
+            self.mc.volumes.push(gpu_data);
             McVolumeId::new(idx as u32, 0)
         }
     }
@@ -554,7 +579,7 @@ impl ViewportGpuResources {
     /// Look up a live volume by handle, validating the generation. Returns
     /// `None` for a stale handle, a freed slot, or an out-of-range index.
     pub(crate) fn mc_volume(&self, id: McVolumeId) -> Option<&McVolumeGpuData> {
-        let vol = self.mc_volumes.get(id.index as usize)?;
+        let vol = self.mc.volumes.get(id.index as usize)?;
         if vol.generation != id.generation || !vol.alive {
             return None;
         }
@@ -705,7 +730,7 @@ pub(crate) fn build_mc_volume_gpu_data(
     }
 }
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Start an asynchronous marching-cubes-ready volume upload.
     ///
     /// Returns a [`JobId`](crate::resources::JobId) immediately. Slab
@@ -743,7 +768,7 @@ impl ViewportGpuResources {
                     build_mc_volume_gpu_data(&device_for_worker, &queue_for_worker, &vol)?;
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut ViewportGpuResources| {
+                    Box::new(move |resources: &mut DeviceResources| {
                         let id = resources.insert_mc_volume_gpu_data(gpu_data);
                         slot_for_apply.set(id);
                     }),
@@ -794,7 +819,7 @@ impl ViewportGpuResources {
     /// immediately (wgpu defers the real GPU free until in-flight commands that
     /// reference the buffers complete).
     pub fn free_mc_volume(&mut self, id: McVolumeId) {
-        if let Some(v) = self.mc_volumes.get_mut(id.index as usize) {
+        if let Some(v) = self.mc.volumes.get_mut(id.index as usize) {
             if v.generation == id.generation && v.alive {
                 v.slabs.clear();
                 v.alive = false;
@@ -805,7 +830,8 @@ impl ViewportGpuResources {
 
     /// Total resident GPU bytes across every live MC volume.
     pub(crate) fn mc_volume_resident_bytes(&self) -> u64 {
-        self.mc_volumes
+        self.mc
+            .volumes
             .iter()
             .filter(|v| v.alive)
             .map(|v| v.gpu_bytes())
@@ -819,7 +845,7 @@ impl ViewportGpuResources {
     /// normal f32x3 at offset 12). Uses the existing `outline_mask.wgsl` shader since
     /// only position is needed. No-op if already created.
     pub(crate) fn ensure_mc_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
-        if self.mc_outline_mask_pipeline.is_some() {
+        if self.mc.outline_mask_pipeline.is_some() {
             return;
         }
 
@@ -850,7 +876,7 @@ impl ViewportGpuResources {
             attributes: &vert_attrs,
         };
 
-        self.mc_outline_mask_pipeline = Some(device.create_render_pipeline(
+        self.mc.outline_mask_pipeline = Some(device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
                 label: Some("mc_outline_mask_pipeline"),
                 layout: Some(&layout),
@@ -906,15 +932,15 @@ impl ViewportGpuResources {
             return Vec::new();
         }
 
-        let classify_pipeline = self.mc_classify_pipeline.as_ref().expect("mc pipelines");
-        let prefix_sum_pipeline = self.mc_prefix_sum_pipeline.as_ref().unwrap();
-        let generate_pipeline = self.mc_generate_pipeline.as_ref().unwrap();
-        let classify_bgl = self.mc_classify_bgl.as_ref().unwrap();
-        let prefix_sum_bgl = self.mc_prefix_sum_bgl.as_ref().unwrap();
-        let generate_bgl = self.mc_generate_bgl.as_ref().unwrap();
-        let render_bgl = self.mc_render_bgl.as_ref().unwrap();
-        let case_count_buf = self.mc_case_count_buf.as_ref().unwrap();
-        let case_table_buf = self.mc_case_table_buf.as_ref().unwrap();
+        let classify_pipeline = self.mc.classify_pipeline.as_ref().expect("mc pipelines");
+        let prefix_sum_pipeline = self.mc.prefix_sum_pipeline.as_ref().unwrap();
+        let generate_pipeline = self.mc.generate_pipeline.as_ref().unwrap();
+        let classify_bgl = self.mc.classify_bgl.as_ref().unwrap();
+        let prefix_sum_bgl = self.mc.prefix_sum_bgl.as_ref().unwrap();
+        let generate_bgl = self.mc.generate_bgl.as_ref().unwrap();
+        let render_bgl = self.mc.render_bgl.as_ref().unwrap();
+        let case_count_buf = self.mc.case_count_buf.as_ref().unwrap();
+        let case_table_buf = self.mc.case_table_buf.as_ref().unwrap();
 
         let mut frame_data = Vec::with_capacity(jobs.len());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1171,7 +1197,7 @@ impl ViewportGpuResources {
             }
 
             let wire_slab_bgs: Vec<wgpu::BindGroup> =
-                if let Some(ref wire_bgl) = self.mc_wireframe_render_bgl {
+                if let Some(ref wire_bgl) = self.mc.wireframe_render_bgl {
                     vol.slabs
                         .iter()
                         .map(|slab| {
@@ -1247,7 +1273,7 @@ fn bgl_storage_rw(binding: u32) -> wgpu::BindGroupLayoutEntry {
 
 #[cfg(test)]
 mod residency_tests {
-    use crate::ViewportGpuResources;
+    use crate::DeviceResources;
     use crate::geometry::marching_cubes::VolumeData;
 
     fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -1280,8 +1306,7 @@ mod residency_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id1 = resources
             .upload_volume_for_mc(&device, &queue, &sample_volume())
@@ -1312,8 +1337,7 @@ mod residency_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources =
-            ViewportGpuResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let start = resources.resident_bytes().mc_volume_bytes;
         let id = resources

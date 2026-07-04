@@ -4,7 +4,7 @@
 //! positions. Each frame, `pre_prepare` writes the latest time uniform and
 //! dispatches one workgroup per 64 vertices to produce displaced positions.
 //! The output buffer is meant to be passed to
-//! `ViewportGpuResources::set_position_override_buffer` once at setup; the
+//! `DeviceResources::set_position_override_buffer` once at setup; the
 //! standard mesh pipeline then reads it every frame with no rebind needed.
 //!
 //! This is example code shared across showcases. Treat it as a reference
@@ -210,14 +210,14 @@ impl WavePlugin {
     }
 
     /// Clone-able handle to the output position buffer. Pass to
-    /// `ViewportGpuResources::set_position_override_buffer` once at setup; the
+    /// `DeviceResources::set_position_override_buffer` once at setup; the
     /// renderer re-reads it every frame without further rebinds.
     pub fn output_buffer(&self) -> wgpu::Buffer {
         self.out_buf.clone()
     }
 
     /// Clone-able handle to the analytic-normal output buffer. Pass to
-    /// `ViewportGpuResources::set_normal_override_buffer` to get correctly
+    /// `DeviceResources::set_normal_override_buffer` to get correctly
     /// shaded illumination on the displaced surface.
     pub fn normal_buffer(&self) -> wgpu::Buffer {
         self.out_normals_buf.clone()

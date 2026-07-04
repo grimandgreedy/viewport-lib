@@ -7,7 +7,7 @@ impl ViewportRenderer {
     /// material/feature flags, write one `ObjectUniform` per scene item, and build
     /// or reuse the per-item bind groups (plus the wireframe-mode uniform pool).
     pub(super) fn prepare_per_object(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         mesh_uniforms: &mut PerObjectState,
         use_instancing: bool,
         scene_items: &[SceneRenderItem],

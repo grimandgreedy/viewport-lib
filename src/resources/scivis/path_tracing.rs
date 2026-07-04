@@ -1,6 +1,6 @@
 use super::*;
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Lazily create the projected-tetrahedra render pipeline.
     ///
     /// No-op if already created. Called from `render.rs` when transparent_volume_meshes

@@ -158,7 +158,7 @@ pub struct ClusterCell {
     pub _pad: u32,
 }
 
-/// All clustered-shading state owned by `ViewportGpuResources`.
+/// All clustered-shading state owned by `DeviceResources`.
 pub struct ClusteredResources {
     /// `ClusterGridUniform` uniform buffer (group 0 binding 14).
     pub grid_uniform_buf: wgpu::Buffer,

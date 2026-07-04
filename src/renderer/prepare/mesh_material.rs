@@ -20,7 +20,7 @@ use super::*;
 /// two-sided (`cull_mode: None`) instanced pipeline.
 pub(crate) fn is_instanceable(
     item: &SceneRenderItem,
-    resources: &ViewportGpuResources,
+    resources: &DeviceResources,
     compute_filter_results: &[crate::resources::ComputeFilterResult],
 ) -> bool {
     !item.settings.hidden

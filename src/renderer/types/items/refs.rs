@@ -11,7 +11,7 @@ use crate::scene::material::ItemSettings;
 #[non_exhaustive]
 pub struct PolylineRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_polyline`](crate::resources::ViewportGpuResources::upload_polyline)
+    /// [`DeviceResources::upload_polyline`](crate::resources::DeviceResources::upload_polyline)
     /// or `begin_upload_polyline`.
     pub source: crate::resources::PolylineId,
     /// Per-frame model matrix. Identity uses the polyline's own world-space
@@ -37,7 +37,7 @@ impl PolylineRefItem {
 #[non_exhaustive]
 pub struct StreamtubeRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_streamtube`](crate::resources::ViewportGpuResources::upload_streamtube)
+    /// [`DeviceResources::upload_streamtube`](crate::resources::DeviceResources::upload_streamtube)
     /// or `begin_upload_streamtube`.
     pub source: crate::resources::StreamtubeId,
     /// Per-frame model matrix.
@@ -62,7 +62,7 @@ impl StreamtubeRefItem {
 #[non_exhaustive]
 pub struct TubeRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_tube`](crate::resources::ViewportGpuResources::upload_tube)
+    /// [`DeviceResources::upload_tube`](crate::resources::DeviceResources::upload_tube)
     /// or `begin_upload_tube`.
     pub source: crate::resources::TubeId,
     /// Per-frame model matrix.
@@ -87,7 +87,7 @@ impl TubeRefItem {
 #[non_exhaustive]
 pub struct RibbonRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_ribbon`](crate::resources::ViewportGpuResources::upload_ribbon)
+    /// [`DeviceResources::upload_ribbon`](crate::resources::DeviceResources::upload_ribbon)
     /// or `begin_upload_ribbon`.
     pub source: crate::resources::RibbonId,
     /// Per-frame model matrix.
@@ -112,7 +112,7 @@ impl RibbonRefItem {
 #[non_exhaustive]
 pub struct PointCloudRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_point_cloud`](crate::resources::ViewportGpuResources::upload_point_cloud)
+    /// [`DeviceResources::upload_point_cloud`](crate::resources::DeviceResources::upload_point_cloud)
     /// or `begin_upload_point_cloud`.
     pub source: crate::resources::PointCloudId,
     /// Per-frame model matrix. Composes on top of the model baked into the
@@ -139,7 +139,7 @@ impl PointCloudRefItem {
 #[non_exhaustive]
 pub struct GlyphSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_glyph_set`](crate::resources::ViewportGpuResources::upload_glyph_set)
+    /// [`DeviceResources::upload_glyph_set`](crate::resources::DeviceResources::upload_glyph_set)
     /// or `begin_upload_glyph_set`.
     pub source: crate::resources::GlyphSetId,
     /// Per-frame model matrix. Composes on top of the per-instance
@@ -165,7 +165,7 @@ impl GlyphSetRefItem {
 #[non_exhaustive]
 pub struct TensorGlyphSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_tensor_glyph_set`](crate::resources::ViewportGpuResources::upload_tensor_glyph_set)
+    /// [`DeviceResources::upload_tensor_glyph_set`](crate::resources::DeviceResources::upload_tensor_glyph_set)
     /// or `begin_upload_tensor_glyph_set`.
     pub source: crate::resources::TensorGlyphSetId,
     /// Per-frame model matrix. Composes on top of the per-instance
@@ -195,7 +195,7 @@ impl TensorGlyphSetRefItem {
 #[non_exhaustive]
 pub struct SpriteSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_sprite_set`](crate::resources::ViewportGpuResources::upload_sprite_set)
+    /// [`DeviceResources::upload_sprite_set`](crate::resources::DeviceResources::upload_sprite_set)
     /// or `begin_upload_sprite_set`.
     pub source: crate::resources::SpriteSetId,
     /// Per-item render settings (visibility, wireframe, selection).
@@ -222,7 +222,7 @@ impl SpriteSetRefItem {
 #[non_exhaustive]
 pub struct SpriteInstanceSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportGpuResources::upload_sprite_instance_set`](crate::resources::ViewportGpuResources::upload_sprite_instance_set)
+    /// [`DeviceResources::upload_sprite_instance_set`](crate::resources::DeviceResources::upload_sprite_instance_set)
     /// or `begin_upload_sprite_instance_set`.
     pub source: crate::resources::SpriteInstanceSetId,
     /// Per-item render settings.

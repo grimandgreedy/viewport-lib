@@ -1,8 +1,8 @@
 //! CPU-side marching cubes isosurface extraction from volumetric scalar data.
 //!
 //! The output is a standard [`MeshData`](crate::resources::MeshData) that can be uploaded via
-//! [`upload_mesh_data()`](crate::ViewportGpuResources::upload_mesh_data) or
-//! [`replace_mesh_data()`](crate::ViewportGpuResources::replace_mesh_data).
+//! [`upload_mesh_data()`](crate::DeviceResources::upload_mesh_data) or
+//! [`replace_mesh_data()`](crate::DeviceResources::replace_mesh_data).
 //!
 //! # Example
 //!

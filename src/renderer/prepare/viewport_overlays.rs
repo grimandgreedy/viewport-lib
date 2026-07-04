@@ -269,8 +269,8 @@ impl ViewportRenderer {
                 if !verts.is_empty() {
                     let vertex_buf =
                         upload_overlay_vbuf(device, queue, "overlay_label_vbuf", &verts);
-                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
-                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("overlay_label_bg"),
                         layout: bgl,
@@ -582,8 +582,8 @@ impl ViewportRenderer {
                 if !verts.is_empty() {
                     let vertex_buf =
                         upload_overlay_vbuf(device, queue, "overlay_scalar_bar_vbuf", &verts);
-                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
-                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("overlay_scalar_bar_bg"),
                         layout: bgl,
@@ -767,8 +767,8 @@ impl ViewportRenderer {
                 if !verts.is_empty() {
                     let vertex_buf =
                         upload_overlay_vbuf(device, queue, "overlay_ruler_vbuf", &verts);
-                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
-                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("overlay_ruler_bg"),
                         layout: bgl,
@@ -898,8 +898,8 @@ impl ViewportRenderer {
 
                 if !verts.is_empty() {
                     let vertex_buf = upload_overlay_vbuf(device, queue, "loading_bar_vbuf", &verts);
-                    let bgl = self.resources.overlay_text_bgl.as_ref().unwrap();
-                    let sampler = self.resources.overlay_text_sampler.as_ref().unwrap();
+                    let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
+                    let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("loading_bar_bg"),
                         layout: bgl,
@@ -1515,8 +1515,8 @@ impl ViewportRenderer {
                 let mut tex_batches = Vec::new();
                 if has_tex {
                     if let (Some(bgl), Some(sampler)) = (
-                        self.resources.overlay_shape_tex_bgl.as_ref(),
-                        self.resources.overlay_shape_tex_sampler.as_ref(),
+                        self.resources.overlay_shape.tex_bgl.as_ref(),
+                        self.resources.overlay_shape.tex_sampler.as_ref(),
                     ) {
                         for (tid, verts) in &tex_groups {
                             if verts.is_empty() {

@@ -121,7 +121,7 @@ pub struct SparseVolumeGridData {
 /// per-face attributes.
 ///
 /// Returns an empty [`MeshData`] if `active_cells` is empty or `cell_size <=
-/// 0.0`.  This causes [`upload_mesh_data`](super::ViewportGpuResources::upload_mesh_data)
+/// 0.0`.  This causes [`upload_mesh_data`](super::DeviceResources::upload_mesh_data)
 /// to return a `ViewportError::EmptyMesh`, the upload layer handles it.
 pub(crate) fn extract_sparse_boundary(data: &SparseVolumeGridData) -> MeshData {
     if data.active_cells.is_empty() || data.cell_size <= 0.0 {

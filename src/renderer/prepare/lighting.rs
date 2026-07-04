@@ -11,7 +11,7 @@ impl ViewportRenderer {
     /// depth pass consumes.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare_lighting(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         shadow: &mut ShadowState,
         last_cluster_stats: &mut Option<crate::resources::gpu::clustered::ClusterStats>,
         last_frustum_culled_lights: &mut u32,

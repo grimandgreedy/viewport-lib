@@ -4,7 +4,7 @@
 //! [`GpuImplicitOptions`].
 
 use crate::renderer::GpuImplicitItem;
-use crate::resources::{DualPipeline, ViewportGpuResources};
+use crate::resources::{DeviceResources, DualPipeline};
 use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
@@ -113,10 +113,10 @@ pub(crate) struct ImplicitGpuItem {
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline init and upload (impl ViewportGpuResources)
+// Pipeline init and upload (impl DeviceResources)
 // ---------------------------------------------------------------------------
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Lazily create the GPU implicit surface render pipeline.
     ///
     /// No-op if already created.  Called from `prepare()` when any

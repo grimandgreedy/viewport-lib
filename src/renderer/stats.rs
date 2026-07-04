@@ -320,7 +320,7 @@ pub struct FrameStats {
     /// `prepare()` call.
     ///
     /// Counts full buffer reallocations triggered by
-    /// [`crate::ViewportGpuResources::replace_mesh_data`] and initial uploads
+    /// [`crate::DeviceResources::replace_mesh_data`] and initial uploads
     /// via `upload_mesh_data` / `upload_mesh`. Uniform buffer writes are not
     /// counted.
     pub upload_bytes: u64,

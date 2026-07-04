@@ -1,6 +1,6 @@
 use crate::resources::*;
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Ensure the instanced pipelines and bind group layout are created.
     /// Called lazily when the instanced draw path is first needed.
     pub(crate) fn ensure_instanced_pipelines(&mut self, device: &wgpu::Device) {
@@ -259,7 +259,7 @@ impl ViewportGpuResources {
     /// available. Idempotent: returns immediately if the pipeline already
     /// exists or if the BGL hasn't been created yet.
     pub(crate) fn ensure_oit_instanced_pipeline(&mut self, device: &wgpu::Device) {
-        if self.oit_instanced_pipeline.is_some() {
+        if self.oit.instanced_pipeline.is_some() {
             return;
         }
         let Some(ref instance_bgl) = self.instance_bind_group_layout else {
@@ -295,7 +295,7 @@ impl ViewportGpuResources {
             "vs_main",
         );
 
-        self.oit_instanced_pipeline = Some(pipeline);
+        self.oit.instanced_pipeline = Some(pipeline);
     }
 
     /// Upload instance data to the storage buffer, resizing if needed.
@@ -348,7 +348,7 @@ impl ViewportGpuResources {
     /// Upload the shared cull inputs: per-instance AABBs and per-batch metadata.
     ///
     /// These are the same for every viewport (they do not depend on the camera),
-    /// so they live on `ViewportGpuResources`. The per-viewport cull outputs are
+    /// so they live on `DeviceResources`. The per-viewport cull outputs are
     /// allocated separately by `ViewportCullState::ensure_outputs`. Buffers grow
     /// with the same 2x strategy as `upload_instance_data`. Call on every batch
     /// cache miss, immediately after `upload_instance_data`.

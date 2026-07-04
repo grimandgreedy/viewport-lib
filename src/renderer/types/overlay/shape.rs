@@ -169,7 +169,7 @@ pub struct OverlayShapeItem {
     /// Draw order relative to other shapes. Lower values render first (further back).
     pub z_order: i32,
     /// Optional texture fill. When set the shape samples the image uploaded
-    /// via `ViewportGpuResources::upload_overlay_texture`, clipped by the SDF
+    /// via `DeviceResources::upload_overlay_texture`, clipped by the SDF
     /// boundary. `fill` acts as a tint when this is `Some`.
     pub texture: Option<OverlayTextureId>,
     /// RGBA colour of the outer shadow/glow halo. Default: transparent (no shadow).

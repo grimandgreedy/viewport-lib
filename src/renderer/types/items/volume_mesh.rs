@@ -18,7 +18,7 @@ use crate::scene::material::Material;
 ///    The renderer rasterises every interior cell through the projected-tetrahedra
 ///    pipeline and integrates Beer-Lambert opacity along view rays. Use this when
 ///    you need to see *through* the volume. Requires the item to have been uploaded
-///    via [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency)
+///    via [`upload_volume_mesh_with_transparency`](crate::resources::DeviceResources::upload_volume_mesh_with_transparency)
 ///    so [`projected_tet_id`](Self::projected_tet_id) is populated; otherwise the
 ///    transparency request is silently ignored.
 ///
@@ -52,9 +52,9 @@ pub struct VolumeMeshItem {
     /// pick hit into a cell index.
     pub face_to_cell: Vec<u32>,
     /// Projected-tet GPU handle. `None` for items uploaded via
-    /// [`upload_volume_mesh`](crate::resources::ViewportGpuResources::upload_volume_mesh)
+    /// [`upload_volume_mesh`](crate::resources::DeviceResources::upload_volume_mesh)
     /// (boundary-only path); `Some(_)` for items uploaded via
-    /// [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency).
+    /// [`upload_volume_mesh_with_transparency`](crate::resources::DeviceResources::upload_volume_mesh_with_transparency).
     ///
     /// Transparency requires this to be `Some`. The handle is crate-internal,
     /// produced by the upload helper.
@@ -62,7 +62,7 @@ pub struct VolumeMeshItem {
     /// CPU-side volume mesh data used for interior-inclusive cell picking when
     /// transparency is active.
     ///
-    /// Populated by [`upload_volume_mesh_with_transparency`](crate::resources::ViewportGpuResources::upload_volume_mesh_with_transparency).
+    /// Populated by [`upload_volume_mesh_with_transparency`](crate::resources::DeviceResources::upload_volume_mesh_with_transparency).
     /// Without it, transparent items still render but cell-level picking via
     /// `renderer.pick()` falls back to face-on-boundary hits only.
     pub volume_mesh_data:
@@ -92,7 +92,7 @@ impl VolumeMeshItem {
     /// Construct a boundary-only volume mesh item.
     ///
     /// Prefer using
-    /// [`upload_volume_mesh`](crate::resources::ViewportGpuResources::upload_volume_mesh)
+    /// [`upload_volume_mesh`](crate::resources::DeviceResources::upload_volume_mesh)
     /// which returns a fully populated item. This constructor is provided for
     /// host code that already has a `MeshId` and `face_to_cell` map (for
     /// example after a clipped re-upload).
@@ -142,7 +142,7 @@ impl VolumeMeshItem {
 
     /// Replace the boundary mesh ID and face-to-cell map, for example after a
     /// clipped re-upload via
-    /// [`replace_clipped_volume_mesh`](crate::resources::ViewportGpuResources::replace_clipped_volume_mesh).
+    /// [`replace_clipped_volume_mesh`](crate::resources::DeviceResources::replace_clipped_volume_mesh).
     pub fn update_mesh(
         &mut self,
         boundary_mesh_id: crate::resources::mesh::mesh_store::MeshId,

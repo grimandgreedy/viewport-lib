@@ -5,7 +5,7 @@
 //! into a single GPU texture atlas on demand.
 //!
 //! Public surface: [`FontHandle`] (opaque font identifier) and
-//! [`super::ViewportGpuResources::upload_font`].  Everything else is `pub(crate)`.
+//! [`super::DeviceResources::upload_font`].  Everything else is `pub(crate)`.
 
 use std::collections::HashMap;
 
@@ -17,7 +17,7 @@ const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../../fonts/Inter-Regular.ttf"
 // ---------------------------------------------------------------------------
 
 /// Opaque handle to a font uploaded via
-/// [`ViewportGpuResources::upload_font`](super::ViewportGpuResources::upload_font).
+/// [`DeviceResources::upload_font`](super::DeviceResources::upload_font).
 ///
 /// Pass `None` (or omit the field) on overlay items to use the built-in default
 /// font.  Pass `Some(handle)` to use a user-supplied TTF font.
@@ -86,7 +86,7 @@ pub(crate) struct TextLayout {
 
 /// A dynamically-growing glyph atlas backed by a single `Rgba8Unorm` texture.
 ///
-/// Owned by [`ViewportGpuResources`]; never exposed in the public API.
+/// Owned by [`DeviceResources`]; never exposed in the public API.
 pub(crate) struct GlyphAtlas {
     /// Parsed fontdue fonts.  Index 0 is always the built-in default.
     fonts: Vec<fontdue::Font>,
@@ -536,7 +536,7 @@ impl GlyphAtlas {
 // FontError
 // ---------------------------------------------------------------------------
 
-/// Error returned by [`super::ViewportGpuResources::upload_font`].
+/// Error returned by [`super::DeviceResources::upload_font`].
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum FontError {
     /// The TTF data could not be parsed.
@@ -545,10 +545,10 @@ pub enum FontError {
 }
 
 // ---------------------------------------------------------------------------
-// ViewportGpuResources integration
+// DeviceResources integration
 // ---------------------------------------------------------------------------
 
-impl crate::resources::ViewportGpuResources {
+impl crate::resources::DeviceResources {
     /// Upload a user-supplied TTF font for use with overlay items.
     ///
     /// Returns an opaque [`FontHandle`] that can be passed to [`LabelItem`],

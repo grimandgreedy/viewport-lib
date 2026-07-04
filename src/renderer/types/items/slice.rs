@@ -63,7 +63,7 @@ impl Default for ImageSliceItem {
 /// scalar at that world-space position. The slice surface can be a flat plane,
 /// a disk, a saddle, a paraboloid -- any shape that can be expressed as a mesh.
 ///
-/// Upload the surface mesh once with [`ViewportGpuResources::upload_mesh_data`]
+/// Upload the surface mesh once with [`DeviceResources::upload_mesh_data`]
 /// to get a [`MeshId`](crate::resources::mesh::mesh_store::MeshId), then submit a
 /// `VolumeSurfaceSliceItem` referencing that mesh each frame.
 ///

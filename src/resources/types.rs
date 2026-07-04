@@ -21,8 +21,8 @@ pub struct ColourmapId(pub usize);
 
 /// Identifies a matcap texture uploaded to the GPU.
 ///
-/// Obtained from [`ViewportGpuResources::upload_matcap`] or
-/// [`ViewportGpuResources::builtin_matcap_id`]. An append-only registry handle.
+/// Obtained from [`DeviceResources::upload_matcap`] or
+/// [`DeviceResources::builtin_matcap_id`]. An append-only registry handle.
 /// The `blendable` flag controls whether the alpha channel tints the base
 /// geometry colour (`true`) or the matcap fully replaces the object colour (`false`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,7 +36,7 @@ pub struct MatcapId {
 
 /// Built-in matcap presets bundled with viewport-lib.
 ///
-/// Pass to [`ViewportGpuResources::builtin_matcap_id`] after the renderer
+/// Pass to [`DeviceResources::builtin_matcap_id`] after the renderer
 /// has been prepared for at least one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinMatcap {
@@ -70,7 +70,7 @@ crate::resources::handle::registry_handle! {
     /// Identifies a projected-tetrahedra mesh uploaded to the GPU for transparent
     /// volume rendering.
     ///
-    /// Obtained from [`ViewportGpuResources::upload_projected_tet`]. An
+    /// Obtained from [`DeviceResources::upload_projected_tet`]. An
     /// append-only registry handle.
     pub struct ProjectedTetId;
 }
@@ -1608,7 +1608,7 @@ pub(crate) struct OverlayShapeTexBatch {
 
 /// Persistent texture entry for an overlay shape texture fill.
 ///
-/// Stored in `ViewportGpuResources::overlay_textures`.
+/// Stored in `DeviceResources::overlay_textures`.
 pub(crate) struct OverlayShapeTextureEntry {
     pub _texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -1745,7 +1745,7 @@ pub struct GpuTexture {
 // Async texture upload types
 // ---------------------------------------------------------------------------
 
-/// Texture memory usage reported by [`ViewportGpuResources::texture_memory_stats`].
+/// Texture memory usage reported by [`DeviceResources::texture_memory_stats`].
 ///
 /// Counts bytes and textures uploaded via both the sync and async paths.
 /// Internal resources (shadow maps, colourmaps, post-process targets) are
@@ -1759,7 +1759,7 @@ pub struct TextureMemoryStats {
 }
 
 /// Resident GPU bytes for the user-uploaded working set, from
-/// [`ViewportGpuResources::resident_bytes`].
+/// [`DeviceResources::resident_bytes`].
 ///
 /// These are the classes a streaming or eviction policy frees and re-uploads:
 /// meshes (`upload_mesh_data` and friends), user textures (`upload_texture` and
@@ -1854,7 +1854,7 @@ pub struct GpuMesh {
     /// When `Some`, the standard mesh pipeline reads positions from this buffer
     /// (group 1 binding 13, an `array<vec3<f32>>`) instead of the vertex
     /// buffer's position attribute. Set via
-    /// `ViewportGpuResources::set_position_override_buffer` and consumed by a
+    /// `DeviceResources::set_position_override_buffer` and consumed by a
     /// `GpuPlugin`'s compute output. Mutually exclusive per frame with
     /// `write_mesh_positions_normals`; the two paths race if both are used.
     pub position_override_buffer: Option<wgpu::Buffer>,
@@ -2238,8 +2238,8 @@ pub struct ScreenImageGpuData {
 #[derive(Clone)]
 pub struct GlyphGpuData {
     /// Vertex buffer for the glyph base mesh (borrowed from cached `GlyphBaseMesh`).
-    /// We keep a reference via raw pointer : `ViewportGpuResources` owns the mesh.
-    /// Safety: the mesh lives as long as `ViewportGpuResources`.
+    /// We keep a reference via raw pointer : `DeviceResources` owns the mesh.
+    /// Safety: the mesh lives as long as `DeviceResources`.
     pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
     /// Triangle index buffer for the glyph base mesh.
     pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
@@ -2264,7 +2264,7 @@ pub struct GlyphGpuData {
 
 /// Per-frame GPU data for one tensor glyph item, created in `prepare()`.
 ///
-/// The sphere base mesh is borrowed from `glyph_sphere_mesh` (owned by `ViewportGpuResources`).
+/// The sphere base mesh is borrowed from `glyph_sphere_mesh` (owned by `DeviceResources`).
 #[derive(Clone)]
 pub struct TensorGlyphGpuData {
     /// Vertex buffer for the sphere base mesh (borrowed).
@@ -2387,7 +2387,7 @@ pub(crate) struct ProjectedTetChunk {
 ///
 /// Large meshes are split into multiple chunks so each storage buffer
 /// stays within `max_storage_buffer_binding_size`.
-/// Created by [`ViewportGpuResources::upload_projected_tet`].
+/// Created by [`DeviceResources::upload_projected_tet`].
 pub(crate) struct GpuProjectedTetMesh {
     /// One or more device-limit-bounded chunks.
     pub chunks: Vec<ProjectedTetChunk>,
@@ -2442,7 +2442,7 @@ pub struct LicSurfaceGpuData {
 /// resized automatically when the viewport dimensions change.
 ///
 /// Shared infrastructure (pipelines, BGLs, samplers, placeholder textures,
-/// SSAO noise/kernel) lives on [`ViewportGpuResources`] and is created once
+/// SSAO noise/kernel) lives on [`DeviceResources`] and is created once
 /// by `ensure_hdr_shared`.
 #[allow(dead_code)]
 pub(crate) struct ViewportHdrState {
@@ -2664,7 +2664,7 @@ pub(crate) struct ScatterViewportState {
 }
 
 // ---------------------------------------------------------------------------
-// ViewportGpuResources: top-level GPU resource container
+// DeviceResources: top-level GPU resource container
 // ---------------------------------------------------------------------------
 
 /// A render pipeline compiled for both the LDR swapchain format and the HDR
@@ -2685,12 +2685,20 @@ impl DualPipeline {
     }
 }
 
-/// All GPU resources for the 3D viewport.
+/// Former name of [`DeviceResources`]. Renamed to reflect that this holds the
+/// device-shared resources, not per-viewport state. Kept as an alias so existing
+/// code keeps compiling; prefer `DeviceResources` in new code.
+#[deprecated(note = "renamed to DeviceResources")]
+pub type ViewportGpuResources = DeviceResources;
+
+/// Device-shared GPU resources: pipelines, layouts, samplers, fallbacks, LUTs,
+/// and the per-feature pipeline clusters (`decal`, `scatter`, `volume`, ...).
+/// Created once at init and shared across every viewport.
 ///
 /// Typically stored in the host framework's resource container and accessed
 /// by `ViewportRenderer` during prepare() and paint().
 #[allow(dead_code)]
-pub struct ViewportGpuResources {
+pub struct DeviceResources {
     /// Swapchain texture format; all pipelines are compiled for this format.
     pub target_format: wgpu::TextureFormat,
     /// MSAA sample count used by all render pipelines.
@@ -2967,12 +2975,9 @@ pub struct ViewportGpuResources {
     pub(crate) xray_pipeline: wgpu::RenderPipeline,
     /// Billboard disc pipeline for the Gaussian splat outline mask pass.
     pub(crate) splat_outline_mask_pipeline: wgpu::RenderPipeline,
-    /// Mask-write pipeline for volume AABB cubes (position-only vertex layout, no face culling).
-    pub(crate) volume_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
-    /// Instanced mask pipeline for arrow/sphere glyph outlines (reuses glyph bind groups).
-    pub(crate) glyph_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
-    /// Instanced mask pipeline for tensor glyph outlines (reuses tensor glyph bind groups).
-    pub(crate) tensor_glyph_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    // The volume outline mask pipeline lives on `volume.outline_mask_pipeline`;
+    // the glyph / tensor-glyph ones on `glyph.outline_mask_pipeline` and
+    // `tensor_glyph.outline_mask_pipeline`.
     // --- Outline offscreen resources (lazily created) ---
     /// Offscreen RGBA texture the outline stencil pass renders into.
     pub(crate) outline_colour_texture: Option<wgpu::Texture>,
@@ -3096,18 +3101,8 @@ pub struct ViewportGpuResources {
     pub(crate) contact_shadow_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Surface LIC shared resources ---
-    /// Render pipeline: renders mesh with vector storage buffer -> lic_vector_texture (Rgba8Unorm).
-    pub(crate) lic_surface_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for group 1 of the LIC surface pass (object uniform + vector buffer + noise).
-    pub(crate) lic_surface_bgl: Option<wgpu::BindGroupLayout>,
-    /// Render pipeline: reads lic_vector_texture, writes LIC intensity to R8Unorm target.
-    pub(crate) lic_advect_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the LIC advect pass.
-    pub(crate) lic_advect_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bilinear sampler for the LIC advect pass (used to sample lic_vector_texture).
-    pub(crate) lic_noise_sampler: Option<wgpu::Sampler>,
-    /// 1x1 R8Unorm white placeholder bound to tone_map binding 7 when LIC is not active.
-    pub(crate) lic_placeholder_view: Option<wgpu::TextureView>,
+    /// Surface LIC pipelines and layouts (surface + advect passes).
+    pub(crate) lic: crate::resources::postprocess::LicResources,
 
     /// 1x1 black Rgba16Float placeholder used when bloom is disabled.
     pub(crate) bloom_placeholder_view: Option<wgpu::TextureView>,
@@ -3173,162 +3168,35 @@ pub struct ViewportGpuResources {
     pub(crate) colourmaps_initialized: bool,
 
     // --- Gaussian splat pipelines (lazily created) ---
-    /// Gaussian splat render pipeline. None until first splat set is submitted.
-    pub(crate) gaussian_splat_pipeline: Option<DualPipeline>,
-    /// Bind group layout for group 1 of the Gaussian splat render pipeline.
-    pub(crate) gaussian_splat_bgl: Option<wgpu::BindGroupLayout>,
-    /// Compute pipeline for computing view-space depth values per splat.
-    pub(crate) gaussian_splat_depth_pipeline: Option<wgpu::ComputePipeline>,
-    /// Compute pipeline for clearing the sort histogram.
-    pub(crate) gaussian_splat_sort_clear_pipeline: Option<wgpu::ComputePipeline>,
-    /// Compute pipeline for the radix sort histogram pass.
-    pub(crate) gaussian_splat_sort_histogram_pipeline: Option<wgpu::ComputePipeline>,
-    /// Compute pipeline for the radix sort prefix sum pass.
-    pub(crate) gaussian_splat_sort_prefix_pipeline: Option<wgpu::ComputePipeline>,
-    /// Compute pipeline for the radix sort scatter pass.
-    pub(crate) gaussian_splat_sort_scatter_pipeline: Option<wgpu::ComputePipeline>,
-    /// Compute pipeline for initializing sort index values.
-    pub(crate) gaussian_splat_sort_init_pipeline: Option<wgpu::ComputePipeline>,
-    /// Bind group layout for the depth compute pass.
-    pub(crate) gaussian_splat_depth_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for the sort compute passes.
-    pub(crate) gaussian_splat_sort_bgl: Option<wgpu::BindGroupLayout>,
+    /// Gaussian splat render/sort pipelines and their bind group layouts.
+    pub(crate) gaussian_splat: crate::resources::scivis::gaussian_splat::GaussianSplatResources,
     /// Slotted store of all uploaded Gaussian splat sets.
     pub(crate) gaussian_splat_store: GaussianSplatStore,
 
     // --- Sprite billboard pipelines (lazily created) ---
-    /// Sprite pipeline, alpha-blend, depth_write_enabled: false.
-    pub(crate) sprite_pipeline: Option<DualPipeline>,
-    /// Sprite pipeline, alpha-blend, depth_write_enabled: true.
-    pub(crate) sprite_pipeline_depth_write: Option<DualPipeline>,
-    /// Sprite pipeline, additive, depth_write_enabled: false.
-    pub(crate) sprite_pipeline_additive: Option<DualPipeline>,
-    /// Sprite pipeline, additive, depth_write_enabled: true.
-    pub(crate) sprite_pipeline_additive_depth_write: Option<DualPipeline>,
-    /// Sprite pipeline, premultiplied, depth_write_enabled: false.
-    pub(crate) sprite_pipeline_premultiplied: Option<DualPipeline>,
-    /// Sprite pipeline, premultiplied, depth_write_enabled: true.
-    pub(crate) sprite_pipeline_premultiplied_depth_write: Option<DualPipeline>,
-    /// Refractive sprite pipeline (HDR target only). Samples the scene-colour
-    /// resolve at an offset driven by the sprite's texture and writes back
-    /// with alpha-blend modulated by the texture's alpha channel.
-    pub(crate) sprite_refraction_pipeline: Option<wgpu::RenderPipeline>,
-    /// Group 2 BGL for the refraction pipeline: scene-colour texture + sampler.
-    pub(crate) sprite_refraction_bgl: Option<wgpu::BindGroupLayout>,
-    /// Sampler used by the refraction shader to read the scene-colour resolve.
-    pub(crate) sprite_refraction_sampler: Option<wgpu::Sampler>,
-    /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
-    pub(crate) sprite_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for the per-pass scene-depth resolve bound at group 2.
-    /// One sampleable depth texture plus a sampler. Bound during sprite draws so
-    /// the fragment shader can apply soft-particle fade against opaque geometry.
-    pub(crate) sprite_soft_bgl: Option<wgpu::BindGroupLayout>,
-    /// Fallback bind group for the group-2 soft-particle binding, used by paths
-    /// that do not have a resolved scene-depth texture available. Its contents
-    /// are only sampled when the per-batch `soft_particle_distance` is set, so
-    /// callers that never enable soft fade can rely on the fallback bind alone.
-    pub(crate) sprite_soft_fallback_bg: Option<wgpu::BindGroup>,
-    /// Sampler used for the group-2 scene-depth binding. Created alongside the
-    /// fallback bind group.
-    pub(crate) sprite_soft_sampler: Option<wgpu::Sampler>,
-    /// 1x1 Depth32Float texture backing the fallback bind group. Held to keep
-    /// the underlying texture alive for the lifetime of the bind group.
-    pub(crate) sprite_soft_fallback_tex: Option<wgpu::Texture>,
-    /// Lit sprite pipelines: one per (blend, depth_write) pair. Same pipeline
-    /// layout as the emissive sprite, but a different shader module that
-    /// samples the scene lighting and an optional tangent-space normal map.
-    pub(crate) sprite_lit_pipeline: Option<DualPipeline>,
-    /// Lit sprite pipeline, alpha-blend, depth_write_enabled: true.
-    pub(crate) sprite_lit_pipeline_depth_write: Option<DualPipeline>,
-    /// Lit sprite pipeline, additive, depth_write_enabled: false.
-    pub(crate) sprite_lit_pipeline_additive: Option<DualPipeline>,
-    /// Lit sprite pipeline, additive, depth_write_enabled: true.
-    pub(crate) sprite_lit_pipeline_additive_depth_write: Option<DualPipeline>,
-    /// Lit sprite pipeline, premultiplied, depth_write_enabled: false.
-    pub(crate) sprite_lit_pipeline_premultiplied: Option<DualPipeline>,
-    /// Lit sprite pipeline, premultiplied, depth_write_enabled: true.
-    pub(crate) sprite_lit_pipeline_premultiplied_depth_write: Option<DualPipeline>,
-    /// Bind group layout for the optional tangent-space normal map sampled by
-    /// the lit sprite shader. Group 3: texture + sampler.
-    pub(crate) sprite_lit_bgl: Option<wgpu::BindGroupLayout>,
-    /// Fallback bind group for the lit normal map binding. Backed by a 1x1
-    /// `(128, 128, 255)` texture so `NormalMap` mode falls back to a flat
-    /// normal when no map is supplied.
-    pub(crate) sprite_lit_fallback_bg: Option<wgpu::BindGroup>,
-    /// 1x1 RGBA8Unorm texture backing the lit fallback bind group.
-    pub(crate) sprite_lit_fallback_tex: Option<wgpu::Texture>,
-    /// Sprite outline mask pipeline (R8Unorm, no texture sampling). None until first selected sprite.
-    pub(crate) sprite_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
-    /// Polyline outline mask pipeline (R8Unorm, same instance layout as polyline). None until first selected polyline.
-    pub(crate) polyline_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Sprite (emissive + lit) pipelines, layouts, refraction, and soft-particle fallbacks.
+    pub(crate) sprite: crate::resources::scivis::sprite::SpriteResources,
+    // The polyline outline mask pipeline lives on `polyline.outline_mask_pipeline`.
 
-    // --- point cloud and glyph pipelines (lazily created) ---
+    // --- point cloud pipelines (lazily created) ---
     /// Point cloud render pipeline. None until first point cloud is submitted.
     pub(crate) point_cloud_pipeline: Option<DualPipeline>,
-    /// Glyph render pipeline. None until first glyph set is submitted.
-    pub(crate) glyph_pipeline: Option<DualPipeline>,
-    /// Glyph wireframe pipeline (LineList, same bind groups as glyph_pipeline).
-    pub(crate) glyph_wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for point cloud uniforms (group 1).
     pub(crate) point_cloud_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for glyph uniforms (group 1).
-    pub(crate) glyph_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for glyph instance storage (group 2).
-    pub(crate) glyph_instance_bgl: Option<wgpu::BindGroupLayout>,
-    /// Cached glyph base mesh for Arrow shape (vertex + index buffers).
-    pub(crate) glyph_arrow_mesh: Option<GlyphBaseMesh>,
-    /// Cached glyph base mesh for Sphere shape.
-    pub(crate) glyph_sphere_mesh: Option<GlyphBaseMesh>,
-    /// Cached glyph base mesh for Cube shape.
-    pub(crate) glyph_cube_mesh: Option<GlyphBaseMesh>,
 
-    // --- Tensor glyph rendering (lazily created) ---
-    /// Tensor glyph render pipeline. None until first tensor glyph set is submitted.
-    pub(crate) tensor_glyph_pipeline: Option<DualPipeline>,
-    /// Tensor glyph wireframe pipeline (LineList, same bind groups as tensor_glyph_pipeline).
-    pub(crate) tensor_glyph_wireframe_pipeline: Option<DualPipeline>,
-    /// Bind group layout for tensor glyph uniforms (group 1).
-    pub(crate) tensor_glyph_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for tensor glyph instance storage (group 2).
-    pub(crate) tensor_glyph_instance_bgl: Option<wgpu::BindGroupLayout>,
+    // --- glyph rendering (lazily created) ---
+    /// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
+    pub(crate) glyph: crate::resources::scivis::glyph::GlyphResources,
+    /// Tensor glyph pipelines and layouts.
+    pub(crate) tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources,
 
-    // --- polyline rendering (lazily created) ---
-    /// Polyline render pipeline. None until first polyline set is submitted.
-    pub(crate) polyline_pipeline: Option<DualPipeline>,
-    /// Clip-exempt polyline pipeline: same as polyline_pipeline but uses fs_main_no_clip
-    /// so clip overlay wireframes are always fully visible.
-    pub(crate) polyline_no_clip_pipeline: Option<DualPipeline>,
-    /// Bind group layout for polyline uniforms (group 1).
-    pub(crate) polyline_bgl: Option<wgpu::BindGroupLayout>,
-    /// Wireframe polyline pipeline: thin 1px LineList, reads segment endpoints from a
-    /// storage buffer. Created alongside polyline_pipeline.
-    pub(crate) polyline_wireframe_pipeline: Option<DualPipeline>,
-    /// Bind group layout for the wireframe polyline pipeline (group 1: segment storage buffer).
-    pub(crate) polyline_wireframe_bgl: Option<wgpu::BindGroupLayout>,
-
-    // --- streamtube rendering (lazily created) ---
-    /// Streamtube render pipeline. None until first streamtube item is submitted.
-    pub(crate) streamtube_pipeline: Option<DualPipeline>,
-    /// Streamtube wireframe pipeline (LineList topology, cull_mode None). None until first wireframe streamtube.
-    pub(crate) streamtube_wireframe_pipeline: Option<DualPipeline>,
-    /// Ribbon pipeline: same layout as streamtube but cull_mode None and two-sided normals.
-    /// Standard alpha blend, depth write enabled. Default for plain ribbons.
-    pub(crate) ribbon_pipeline: Option<DualPipeline>,
-    /// Ribbon pipeline with additive blend and depth write disabled. Picked
-    /// when `RibbonItem::blend == SpriteBlend::Additive`, the right look for
-    /// energy or spark trails.
-    pub(crate) ribbon_pipeline_additive: Option<DualPipeline>,
-    /// Ribbon pipeline with premultiplied-alpha blend and depth write disabled.
-    /// Picked when `RibbonItem::blend == SpriteBlend::Premultiplied`.
-    pub(crate) ribbon_pipeline_premultiplied: Option<DualPipeline>,
-    /// Ribbon wireframe pipeline (LineList topology, cull_mode None).
-    pub(crate) ribbon_wireframe_pipeline: Option<DualPipeline>,
-    /// Bind group layout for streamtube uniforms (group 1).
-    pub(crate) streamtube_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for ribbons (group 1): uniform + optional streak
-    /// texture + sampler. Distinct from `streamtube_bgl` so streamtubes do not
-    /// pay for a texture binding they never sample.
-    pub(crate) ribbon_bgl: Option<wgpu::BindGroupLayout>,
+    // --- polyline / streamtube / ribbon rendering (lazily created) ---
+    /// Polyline pipelines and layouts.
+    pub(crate) polyline: crate::resources::scivis::polyline::PolylineResources,
+    /// Streamtube pipelines and layout.
+    pub(crate) streamtube: crate::resources::scivis::tube::StreamtubeResources,
+    /// Ribbon pipelines (one per blend) and layout.
+    pub(crate) ribbon: crate::resources::scivis::tube::RibbonResources,
 
     // --- Image slice rendering (lazily created) ---
     /// Image slice render pipeline. None until first slice item is submitted.
@@ -3336,25 +3204,11 @@ pub struct ViewportGpuResources {
     /// Bind group layout for image slice uniforms (group 1).
     pub(crate) image_slice_bgl: Option<wgpu::BindGroupLayout>,
 
-    // --- Volume surface slice rendering (lazily created) ---
-    /// Volume surface slice render pipeline. None until first item is submitted.
-    pub(crate) volume_surface_slice_pipeline: Option<DualPipeline>,
-    /// Bind group layout for volume surface slice uniforms (group 1).
-    pub(crate) volume_surface_slice_bgl: Option<wgpu::BindGroupLayout>,
-
     // --- volume rendering (lazily created) ---
     /// Uploaded 3D volume textures. Index = VolumeId value.
     pub(crate) volume_textures: Vec<(wgpu::Texture, wgpu::TextureView)>,
-    /// Volume render pipeline. None until first volume is submitted.
-    pub(crate) volume_pipeline: Option<DualPipeline>,
-    /// Bind group layout for volume uniforms (group 1).
-    pub(crate) volume_bgl: Option<wgpu::BindGroupLayout>,
-    /// Cached unit cube vertex+index buffers for bounding box rasterization.
-    pub(crate) volume_cube_vb: Option<wgpu::Buffer>,
-    pub(crate) volume_cube_ib: Option<wgpu::Buffer>,
-    /// Default linear ramp opacity LUT texture (256x1, R8Unorm).
-    pub(crate) volume_default_opacity_lut: Option<wgpu::Texture>,
-    pub(crate) volume_default_opacity_lut_view: Option<wgpu::TextureView>,
+    /// Volume render/surface-slice/outline pipelines, layouts, cube geometry, and default LUT.
+    pub(crate) volume: crate::resources::volume::volumes::VolumeResources,
 
     // --- GPU compute filtering (lazily created) ---
     /// Compute pipeline for Clip / Threshold index compaction. None until first use.
@@ -3363,28 +3217,10 @@ pub struct ViewportGpuResources {
     pub(crate) compute_filter_bgl: Option<wgpu::BindGroupLayout>,
 
     // --- Order-independent transparency (OIT) : lazily created ---
-    // These fields are superseded by ViewportHdrState.oit_* but kept for ensure_oit_targets compat.
-    #[allow(dead_code)]
-    /// Weighted-blended accumulation texture (Rgba16Float, viewport-sized).
-    pub(crate) oit_accum_texture: Option<wgpu::Texture>,
-    pub(crate) oit_accum_view: Option<wgpu::TextureView>,
-    /// Weighted-blended reveal (transmittance) texture (R8Unorm, viewport-sized).
-    pub(crate) oit_reveal_texture: Option<wgpu::Texture>,
-    pub(crate) oit_reveal_view: Option<wgpu::TextureView>,
-    /// OIT mesh pipeline (non-instanced, mesh_oit.wgsl, two colour targets).
-    pub(crate) oit_pipeline: Option<wgpu::RenderPipeline>,
-    /// OIT instanced mesh pipeline (mesh_instanced_oit.wgsl / mesh_instanced with OIT targets).
-    pub(crate) oit_instanced_pipeline: Option<wgpu::RenderPipeline>,
-    /// OIT composite pipeline (oit_composite.wgsl, fullscreen tri, no depth).
-    pub(crate) oit_composite_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the OIT composite pass (group 0: accum + reveal + sampler).
-    pub(crate) oit_composite_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group for the OIT composite pass (rebuilt on OIT target resize).
-    pub(crate) oit_composite_bind_group: Option<wgpu::BindGroup>,
-    /// Linear clamp sampler shared by the OIT composite pass.
-    pub(crate) oit_composite_sampler: Option<wgpu::Sampler>,
-    /// Last OIT target size [w, h]. Used to detect resize.
-    pub(crate) oit_size: [u32; 2],
+    // The viewport-sized accum/reveal textures, composite bind group, and target
+    // size live on ViewportHdrState; only the shared pipelines and layout sit here.
+    /// Weighted-blended OIT pipelines and composite layout.
+    pub(crate) oit: crate::resources::postprocess::OitResources,
 
     // --- Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Render pipeline for the projected tetrahedra pass. None until first item submitted.
@@ -3404,86 +3240,8 @@ pub struct ViewportGpuResources {
     pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
 
     // --- Scatter-volume (participating media) rendering (lazily created) ---
-    //
-    // Pipeline layout uses four bind groups:
-    //   group 0: shared camera (existing camera_bind_group_layout)
-    //   group 1: per-volume `GpuScatterVolume` uniform with dynamic offset
-    //   group 2: per-volume colourmap LUT + 3D density texture (cached by id)
-    //   group 3: shared per-frame uniform + opaque depth + samplers
-    //
-    /// Render pipeline for the scatter-volume pass. None until first item submitted.
-    pub(crate) scatter_pipeline: Option<wgpu::RenderPipeline>,
-    /// Group 1 layout (per-volume uniform with dynamic offset).
-    pub(crate) scatter_per_volume_bgl: Option<wgpu::BindGroupLayout>,
-    /// Group 2 layout (per-volume LUT + density texture + samplers).
-    pub(crate) scatter_per_volume_tex_bgl: Option<wgpu::BindGroupLayout>,
-    /// Group 3 layout (per-frame uniform + opaque depth + samplers).
-    pub(crate) scatter_frame_bgl: Option<wgpu::BindGroupLayout>,
-    /// Per-volume uniform buffer holding the packed `GpuScatterVolume` array,
-    /// stride-padded to `min_uniform_buffer_offset_alignment` for dynamic
-    /// offsetting.
-    pub(crate) scatter_per_volume_buffer: Option<wgpu::Buffer>,
-    /// Bind group for the per-volume uniform (group 1). Rebuilt only when the
-    /// buffer is reallocated.
-    pub(crate) scatter_per_volume_bg: Option<wgpu::BindGroup>,
-    /// Stride between dynamic-offset uniform slots, in bytes.
-    pub(crate) scatter_per_volume_stride: u32,
-    /// Capacity of `scatter_per_volume_buffer` in slots.
-    pub(crate) scatter_per_volume_capacity: u32,
-    /// Per-frame uniform buffer (group 3 binding 0).
-    pub(crate) scatter_frame_uniform_buffer: Option<wgpu::Buffer>,
-    /// Cache of group 2 bind groups, keyed by `(lut_id, density_id)`. Built
-    /// on demand each frame; invalidated when the source texture vec grows.
-    pub(crate) scatter_per_volume_tex_cache: Vec<((usize, usize), wgpu::BindGroup)>,
-    /// Bind group for group 3, rebuilt when opaque depth view changes.
-    pub(crate) scatter_frame_bg: Option<wgpu::BindGroup>,
-    /// Linear sampler used to read opaque depth in the scatter pass.
-    pub(crate) scatter_depth_sampler: Option<wgpu::Sampler>,
-    /// Linear-clamp sampler used to read the colourmap LUT in the scatter pass.
-    pub(crate) scatter_colourmap_sampler: Option<wgpu::Sampler>,
-    /// 1x1x1 R32Float fallback view bound at the per-volume 3D density slot
-    /// when a volume does not supply its own density texture.
-    pub(crate) scatter_density_fallback_view: Option<wgpu::TextureView>,
-    /// Token combining (depth view, frame uniform buffer) for `scatter_frame_bg`
-    /// reuse.
-    pub(crate) scatter_bound_depth: u64,
-    /// Composite pipeline that samples a scatter intermediate (raw or history)
-    /// and blends it onto the HDR target with premultiplied alpha-over.
-    pub(crate) scatter_composite_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the composite pass (one sampled RGBA16F + sampler).
-    pub(crate) scatter_composite_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bilinear-clamp sampler used by the composite pass.
-    pub(crate) scatter_composite_sampler: Option<wgpu::Sampler>,
-    /// Temporal-resolve pipeline: reads (raw_current, history_prev) and writes
-    /// the mixed result to history_new. Half-res when downsample is on.
-    pub(crate) scatter_temporal_resolve_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the temporal-resolve pass (uniform + raw + history
-    /// + opaque depth + samplers).
-    pub(crate) scatter_temporal_resolve_bgl: Option<wgpu::BindGroupLayout>,
-    /// Per-frame uniform buffer for the temporal-resolve pass (mat4 + vec4
-    /// temporal pack + viewport dims).
-    pub(crate) scatter_temporal_resolve_uniform_buffer: Option<wgpu::Buffer>,
-    /// Refraction pass: per-volume distortion using a noise-driven gradient.
-    /// Writes the displaced scene colour back into the HDR target before the
-    /// scatter pass runs.
-    pub(crate) scatter_refraction_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the refraction pass's per-volume uniform.
-    pub(crate) scatter_refraction_per_volume_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for the refraction pass's source-scene + depth bindings.
-    pub(crate) scatter_refraction_source_bgl: Option<wgpu::BindGroupLayout>,
-    /// Single dynamic-offset uniform buffer holding every refractive volume's
-    /// packed parameters. Stride matches `min_uniform_buffer_offset_alignment`.
-    pub(crate) scatter_refraction_per_volume_buffer: Option<wgpu::Buffer>,
-    /// Cached stride between refractive-volume slots in
-    /// `scatter_refraction_per_volume_buffer`.
-    pub(crate) scatter_refraction_per_volume_stride: u32,
-    /// Capacity (slot count) the per-volume buffer is currently sized for.
-    pub(crate) scatter_refraction_per_volume_capacity: u32,
-    /// Dynamic-offset bind group for the per-volume uniform buffer.
-    pub(crate) scatter_refraction_per_volume_bg: Option<wgpu::BindGroup>,
-    /// Blit pipeline that copies the HDR target into the refraction source
-    /// texture before the per-volume distortion runs.
-    pub(crate) scatter_refraction_blit_pipeline: Option<wgpu::RenderPipeline>,
+    /// Scatter-volume pipelines, layouts, and per-frame upload buffers.
+    pub(crate) scatter: crate::resources::volume::scatter_volume::ScatterResources,
 
     // --- IBL / environment map resources ---
     /// IBL irradiance equirect texture view (binding 7). None until environment uploaded.
@@ -3543,56 +3301,12 @@ pub struct ViewportGpuResources {
     pub(crate) implicit_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
 
     // --- GPU marching cubes (lazily created) ---
-    pub(crate) mc_classify_pipeline: Option<wgpu::ComputePipeline>,
-    pub(crate) mc_prefix_sum_pipeline: Option<wgpu::ComputePipeline>,
-    pub(crate) mc_generate_pipeline: Option<wgpu::ComputePipeline>,
-    pub(crate) mc_surface_pipeline: Option<DualPipeline>,
-    pub(crate) mc_wireframe_pipeline: Option<DualPipeline>,
-    pub(crate) mc_wireframe_render_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_classify_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_prefix_sum_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_generate_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_render_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) mc_case_count_buf: Option<wgpu::Buffer>,
-    pub(crate) mc_case_table_buf: Option<wgpu::Buffer>,
-    pub(crate) mc_volumes: Vec<crate::resources::volume::gpu_marching_cubes::McVolumeGpuData>,
-    /// Outline mask pipeline for MC surfaces (stride-24 vertex buffer, draw_indirect). None until first selected item.
-    pub(crate) mc_outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Marching-cubes compute/render pipelines, layouts, case tables, and per-item volumes.
+    pub(crate) mc: crate::resources::volume::gpu_marching_cubes::McResources,
 
     // --- GPU particle systems ---
-    /// Live particle systems indexed by `GpuParticleSystemId`. Slots can be
-    /// reused after `drop_gpu_particle_system`.
-    pub(crate) particle_systems: Vec<Option<crate::resources::gpu::gpu_particles::ParticleSystem>>,
-    /// Bind group layout for the emit + sim compute pipelines (group 1:
-    /// particle buffer + free-list buffer; emit/sim params are group 0).
-    pub(crate) particle_sim_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for emit/sim params (group 0).
-    pub(crate) particle_params_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bind group layout for the particle-sprite draw pipeline (group 1).
-    pub(crate) particle_draw_bgl: Option<wgpu::BindGroupLayout>,
-    /// Compute pipeline that pops free-list slots and writes new particles.
-    pub(crate) particle_emit_pipeline: Option<wgpu::ComputePipeline>,
-    /// Compute pipeline that integrates forces and decrements lifetime.
-    pub(crate) particle_sim_pipeline: Option<wgpu::ComputePipeline>,
-    /// Draw pipeline variants for the particle-sprite shader, keyed by blend.
-    pub(crate) particle_sprite_pipeline_alpha: Option<DualPipeline>,
-    pub(crate) particle_sprite_pipeline_additive: Option<DualPipeline>,
-    pub(crate) particle_sprite_pipeline_premultiplied: Option<DualPipeline>,
-    /// Lit variants of the GPU particle sprite pipelines.
-    pub(crate) particle_sprite_lit_pipeline_alpha: Option<DualPipeline>,
-    pub(crate) particle_sprite_lit_pipeline_additive: Option<DualPipeline>,
-    pub(crate) particle_sprite_lit_pipeline_premultiplied: Option<DualPipeline>,
-    /// Group 2 BGL for the lit particle path: optional tangent-space normal
-    /// map + filtering sampler.
-    pub(crate) particle_sprite_lit_bgl: Option<wgpu::BindGroupLayout>,
-    /// Fallback bind group for the lit particle normal-map binding (group 2).
-    pub(crate) particle_sprite_lit_fallback_bg: Option<wgpu::BindGroup>,
-    /// Bind group layout for the mesh-route particle draw pipeline (group 1).
-    pub(crate) particle_mesh_draw_bgl: Option<wgpu::BindGroupLayout>,
-    /// Draw pipeline variants for the particle-mesh shader, keyed by blend.
-    pub(crate) particle_mesh_pipeline_alpha: Option<DualPipeline>,
-    pub(crate) particle_mesh_pipeline_additive: Option<DualPipeline>,
-    pub(crate) particle_mesh_pipeline_premultiplied: Option<DualPipeline>,
+    /// Particle compute/draw pipelines, their layouts, and the live systems.
+    pub(crate) particle: crate::resources::gpu::gpu_particles::ParticleResources,
 
     // --- Screen-space image overlays (lazily created) ---
     /// Render pipeline for screen-space image quads. None until first screen image is submitted.
@@ -3640,37 +3354,15 @@ pub struct ViewportGpuResources {
     /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
     pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
 
-    // --- Overlay text pipeline (lazily created) ---
-    /// Render pipeline for screen-space text and solid overlay quads.
-    /// `None` until the first frame with non-empty `OverlayFrame.labels`.
-    pub(crate) overlay_text_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the overlay text pipeline (group 0: atlas texture + sampler).
-    pub(crate) overlay_text_bgl: Option<wgpu::BindGroupLayout>,
-    /// Linear sampler for the glyph atlas texture.
-    pub(crate) overlay_text_sampler: Option<wgpu::Sampler>,
-
-    // --- SDF overlay shape pipeline (lazily created) ---
-    /// Render pipeline for screen-space SDF shapes (rounded rects, circles, etc.).
-    /// `None` until the first frame with non-empty `OverlayFrame.shapes`.
-    pub(crate) overlay_shape_pipeline: Option<wgpu::RenderPipeline>,
-    /// Render pipeline for SDF shapes with texture fill.
-    /// `None` until the first frame that references an `OverlayTextureId`.
-    pub(crate) overlay_shape_tex_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the texture pipeline (group 0: texture + sampler).
-    pub(crate) overlay_shape_tex_bgl: Option<wgpu::BindGroupLayout>,
-    /// Clamp-to-edge linear sampler shared across all texture shape bind groups.
-    pub(crate) overlay_shape_tex_sampler: Option<wgpu::Sampler>,
+    // --- Overlay text / SDF shape / backdrop-blur pipelines (lazily created) ---
+    /// Overlay text pipeline, layout, and sampler.
+    pub(crate) overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources,
+    /// SDF overlay shape pipelines (solid + textured) and sampler.
+    pub(crate) overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources,
     /// Persistent textures uploaded via `upload_overlay_texture`.
     pub(crate) overlay_textures: Vec<OverlayShapeTextureEntry>,
-
-    // --- Backdrop blur pipeline (lazily created) ---
-    /// Fullscreen separable Gaussian blur pipeline used to produce the blurred
-    /// scene texture for `backdrop_blur` overlay shapes.
-    pub(crate) backdrop_blur_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the blur pipeline (group 0: source texture + sampler + uniforms).
-    pub(crate) backdrop_blur_bgl: Option<wgpu::BindGroupLayout>,
-    /// Linear clamp sampler shared by blur passes.
-    pub(crate) backdrop_blur_sampler: Option<wgpu::Sampler>,
+    /// Backdrop blur pipeline, layout, and sampler.
+    pub(crate) backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources,
 
     // --- Depth blit pipeline (lazily created, shared across all viewports) ---
     // Copies a scene-resolution depth texture to a native-resolution depth-only target.
@@ -3698,24 +3390,9 @@ pub struct ViewportGpuResources {
     /// `FrameStats::upload_bytes`.
     pub frame_upload_bytes: u64,
 
-    // --- Screen-space decal pipelines (D1, lazily created) ---
-    /// Replace-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) decal_replace_pipeline: Option<DualPipeline>,
-    /// Multiply-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) decal_multiply_pipeline: Option<DualPipeline>,
-    /// Additive-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) decal_additive_pipeline: Option<DualPipeline>,
-    /// BGL for group 1 of the decal pass: depth texture + stencil texture bindings.
-    pub(crate) decal_depth_bgl: Option<wgpu::BindGroupLayout>,
-    /// BGL for group 2 of the decal pass: uniform buffer + albedo texture + sampler.
-    pub(crate) decal_item_bgl: Option<wgpu::BindGroupLayout>,
-    /// Linear-clamp sampler used by the decal fragment shader.
-    pub(crate) decal_sampler: Option<wgpu::Sampler>,
-    // --- D5: decal receiver masking ---
-    /// Pipeline that writes stencil = 0 for non-receiver surfaces (D5).
-    pub(crate) decal_exclude_pipeline: Option<wgpu::RenderPipeline>,
-    /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
-    pub(crate) decal_exclude_obj_bgl: Option<wgpu::BindGroupLayout>,
+    // --- Screen-space decal pipelines (D1 + D5, lazily created) ---
+    /// Decal render/exclude pipelines and their bind group layouts.
+    pub(crate) decal: crate::resources::decal::DecalResources,
 
     // --- HiZ occlusion culling ---
     /// When true, the main-camera GPU cull runs the HiZ occlusion test on top
@@ -3732,7 +3409,7 @@ pub struct ViewportGpuResources {
 /// are viewport-specific: two viewports on different cameras must not share
 /// them, or the last one to run would clobber the other. The cull INPUTS
 /// (per-instance AABBs, per-batch meta) and all cull PIPELINES are
-/// camera-independent and stay on `ViewportGpuResources`.
+/// camera-independent and stay on `DeviceResources`.
 ///
 /// Owned by each `ViewportSlot`. The bind-group caches here reference this
 /// state's own buffers, so they are invalidated when those buffers resize.

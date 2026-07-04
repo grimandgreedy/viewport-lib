@@ -13,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::error::ViewportResult;
-use crate::resources::ViewportGpuResources;
+use crate::resources::DeviceResources;
 use crate::resources::mesh::mesh_store::MeshId;
 use crate::resources::mesh_sidecar::registry::{
     DeformerDesc, DeformerId, MESH_FAMILY_SHADERS, StoredDeformer, allocate_internal_slot,
@@ -742,10 +742,10 @@ impl DeformationState {
 }
 
 // ---------------------------------------------------------------------------
-// Public API on ViewportGpuResources
+// Public API on DeviceResources
 // ---------------------------------------------------------------------------
 
-impl ViewportGpuResources {
+impl DeviceResources {
     /// Write the shared header uniform's `time_seconds` field. Cheap; safe to
     /// call per frame.
     pub fn set_deform_time(&mut self, queue: &wgpu::Queue, time_seconds: f32) {
@@ -1044,7 +1044,7 @@ impl ViewportGpuResources {
 
         // mesh_oit.wgsl: only present after ensure_hdr_shared has been
         // called.
-        if self.oit_pipeline.is_some() {
+        if self.oit.pipeline.is_some() {
             if let Some(base) = lookup_source("mesh_oit.wgsl") {
                 let composed = compose_shader(base, &registrations);
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1063,7 +1063,7 @@ impl ViewportGpuResources {
                     &oit_layout,
                     &shader,
                 );
-                self.oit_pipeline = Some(oit);
+                self.oit.pipeline = Some(oit);
             }
         }
 
@@ -1205,7 +1205,7 @@ impl ViewportGpuResources {
                 source: wgpu::ShaderSource::Wgsl(composed.into()),
             });
             if let Some(instance_bgl) = self.instance_bind_group_layout.as_ref() {
-                if self.oit_instanced_pipeline.is_some() {
+                if self.oit.instanced_pipeline.is_some() {
                     let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                         device,
                         "oit_instanced_pipeline_layout",
@@ -1220,7 +1220,7 @@ impl ViewportGpuResources {
                         "oit_instanced_pipeline",
                         "vs_main",
                     );
-                    self.oit_instanced_pipeline = Some(pl);
+                    self.oit.instanced_pipeline = Some(pl);
                 }
             }
             if let Some(cull_bgl) = self.instance_cull_bind_group_layout.as_ref() {

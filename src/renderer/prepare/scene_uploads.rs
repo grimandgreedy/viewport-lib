@@ -24,7 +24,7 @@ impl ViewportRenderer {
     /// Returns `(instances_resolved, switches, culled, reduced)` for the LOD
     /// stats, where `reduced` counts instances drawn below full detail.
     pub(super) fn upload_mesh_instances(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         mesh_instance_gpu_data: &mut Vec<crate::resources::MeshInstanceGpuData>,
         lod_levels: &mut std::collections::HashMap<(u64, u32), usize>,
         device: &wgpu::Device,
@@ -144,7 +144,7 @@ impl ViewportRenderer {
     }
 
     pub(super) fn upload_geometry_glyphs(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         point_cloud_gpu_data: &mut Vec<crate::resources::PointCloudGpuData>,
         glyph_gpu_data: &mut Vec<crate::resources::GlyphGpuData>,
         sprite_gpu_data: &mut Vec<crate::resources::SpriteGpuData>,
@@ -320,7 +320,7 @@ impl ViewportRenderer {
     }
 
     pub(super) fn upload_polylines(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         polyline_gpu_data: &mut Vec<crate::resources::PolylineGpuData>,
         polyline_selected_gpu_indices: &mut Vec<usize>,
         glyph_gpu_data: &mut Vec<crate::resources::GlyphGpuData>,
@@ -472,7 +472,7 @@ impl ViewportRenderer {
     }
 
     pub(super) fn upload_implicit_decals_mc(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         implicit_gpu_data: &mut Vec<crate::resources::volume::implicit::ImplicitGpuItem>,
         pick_implicit_items: &mut Vec<GpuImplicitPickItem>,
         decal_gpu_data: &mut Vec<crate::resources::decal::DecalGpuItem>,
@@ -604,7 +604,7 @@ impl ViewportRenderer {
     }
 
     pub(super) fn upload_images(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         screen_image_gpu_data: &mut Vec<crate::resources::ScreenImageGpuData>,
         overlay_image_gpu_data: &mut Vec<crate::resources::ScreenImageGpuData>,
         device: &wgpu::Device,
@@ -657,7 +657,7 @@ impl ViewportRenderer {
     }
 
     pub(super) fn upload_tubes_ribbons(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         streamtube_gpu_data: &mut Vec<crate::resources::StreamtubeGpuData>,
         streamtube_selected_gpu_indices: &mut Vec<usize>,
         tube_gpu_data: &mut Vec<crate::resources::StreamtubeGpuData>,
@@ -821,7 +821,7 @@ impl ViewportRenderer {
     }
 
     pub(super) fn upload_slices(
-        resources: &mut ViewportGpuResources,
+        resources: &mut DeviceResources,
         image_slice_gpu_data: &mut Vec<crate::resources::ImageSliceGpuData>,
         volume_surface_slice_gpu_data: &mut Vec<crate::resources::VolumeSurfaceSliceGpuData>,
         device: &wgpu::Device,
