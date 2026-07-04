@@ -356,32 +356,20 @@ impl crate::resources::DeviceResources {
         if self.scatter.depth_sampler.is_some() {
             return;
         }
-        self.scatter.depth_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("scatter_depth_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        }));
+        self.scatter.depth_sampler = Some(crate::resources::builders::clamp_nearest_sampler(
+            device,
+            "scatter_depth_sampler",
+        ));
     }
 
     fn ensure_scatter_colourmap_sampler(&mut self, device: &wgpu::Device) {
         if self.scatter.colourmap_sampler.is_some() {
             return;
         }
-        self.scatter.colourmap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("scatter_colourmap_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        }));
+        self.scatter.colourmap_sampler = Some(crate::resources::builders::clamp_linear_sampler(
+            device,
+            "scatter_colourmap_sampler",
+        ));
     }
 
     // ---------------------------------------------------------------------
@@ -496,16 +484,8 @@ impl crate::resources::DeviceResources {
                 },
             ],
         });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("scatter_composite_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "scatter_composite_sampler");
         let shader = crate::resources::builders::wgsl_module(
             device,
             "scatter_composite_shader",
@@ -528,38 +508,14 @@ impl crate::resources::DeviceResources {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter_composite_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: colour_format,
-                    blend: Some(blend),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "scatter_composite_pipeline",
+            &layout,
+            &shader,
+            colour_format,
+            Some(blend),
+        );
         self.scatter.composite_pipeline = Some(pipeline);
         self.scatter.composite_bgl = Some(bgl);
         self.scatter.composite_sampler = Some(sampler);
@@ -581,40 +537,16 @@ impl crate::resources::DeviceResources {
             bind_group_layouts: &[bgl],
             push_constant_ranges: &[],
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter_temporal_resolve_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    // History textures are RGBA16F.
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    // Replace blend -- this pass owns the new history fully.
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        // History textures are RGBA16F. Blend is None: this pass owns the new
+        // history fully and overwrites it.
+        let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "scatter_temporal_resolve_pipeline",
+            &layout,
+            &shader,
+            wgpu::TextureFormat::Rgba16Float,
+            None,
+        );
         self.scatter.temporal_resolve_pipeline = Some(pipeline);
     }
 
@@ -1030,40 +962,16 @@ impl crate::resources::DeviceResources {
             push_constant_ranges: &[],
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter_refraction_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: colour_format,
-                    // Replace blend: the distorted sample overwrites the HDR
-                    // pixel before the scatter pass composites on top.
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        // Replace blend: the distorted sample overwrites the HDR pixel before
+        // the scatter pass composites on top.
+        let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "scatter_refraction_pipeline",
+            &layout,
+            &shader,
+            colour_format,
+            None,
+        );
 
         self.scatter.refraction_pipeline = Some(pipeline);
     }
@@ -1092,38 +1000,14 @@ impl crate::resources::DeviceResources {
             bind_group_layouts: &[bgl],
             push_constant_ranges: &[],
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter_refraction_blit_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: colour_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "scatter_refraction_blit_pipeline",
+            &layout,
+            &shader,
+            colour_format,
+            None,
+        );
         self.scatter.refraction_blit_pipeline = Some(pipeline);
     }
 

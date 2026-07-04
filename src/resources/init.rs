@@ -693,14 +693,9 @@ impl DeviceResources {
         // allocated unconditionally here. Watch this number on mobile.
         mark("buffers_and_shadow_textures");
 
-        let shadow_atlas_depth_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("shadow_atlas_depth_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default() // NO compare field -- non-comparison sampler for float reads
-        });
+        // Non-comparison sampler (no compare field) for plain float depth reads.
+        let shadow_atlas_depth_sampler =
+            crate::resources::builders::clamp_nearest_sampler(device, "shadow_atlas_depth_sampler");
 
         // Shadow atlas uniform buffer (binding 5).
         let shadow_info_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -753,15 +748,7 @@ impl DeviceResources {
         let ibl_fallback_brdf_view =
             ibl_fallback_brdf_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let ibl_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("ibl_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            ..Default::default()
-        });
+        let ibl_sampler = crate::resources::builders::env_sampler(device, "ibl_sampler");
 
         // 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
         let debug_frag_sentinel_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1721,26 +1708,14 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shared material sampler (linear + repeat : reused for all material textures)
         // ------------------------------------------------------------------
-        let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("material_sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let material_sampler = crate::resources::builders::repeat_linear_sampler(
+            device,
+            "material_sampler",
+            wgpu::FilterMode::Nearest,
+        );
 
         // Clamp-to-edge sampler for colourmap LUT lookups (prevents wrap artifact at scalar extremes).
-        let lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("lut_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let lut_sampler = crate::resources::builders::clamp_linear_sampler(device, "lut_sampler");
 
         // ------------------------------------------------------------------
         // Fallback normal map: 1x1 [128, 128, 255, 255] : flat tangent-space normal
@@ -1844,15 +1819,8 @@ impl DeviceResources {
             });
             // Texture pixels are uploaded lazily on first prepare() via queue.write_texture.
             let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("fallback_texture_sampler"),
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::Repeat,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            });
+            // Same config as material_sampler (repeat, linear), so share it.
+            let sampler = material_sampler.clone();
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("fallback_texture_bg"),
                 layout: &texture_bgl,

@@ -153,8 +153,13 @@ pub(crate) fn clamp_nearest_sampler(device: &wgpu::Device, label: &str) -> wgpu:
 }
 
 /// Linear-filtered sampler that repeats on all axes. Used for tiling textures
-/// (decals, patterned materials).
-pub(crate) fn repeat_linear_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
+/// (decals, patterned materials). `mipmap_filter` varies: most callers want
+/// `Nearest`, uploaded user textures pick it from the mip chain at runtime.
+pub(crate) fn repeat_linear_sampler(
+    device: &wgpu::Device,
+    label: &str,
+    mipmap_filter: wgpu::FilterMode,
+) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: wgpu::AddressMode::Repeat,
@@ -162,6 +167,22 @@ pub(crate) fn repeat_linear_sampler(device: &wgpu::Device, label: &str) -> wgpu:
         address_mode_w: wgpu::AddressMode::Repeat,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter,
+        ..Default::default()
+    })
+}
+
+/// Sampler for an equirectangular environment map: horizontal wrap (Repeat u),
+/// vertical clamp (Clamp v), linear filtering including across mip levels. Used
+/// by the image-based lighting passes that sample a lat-long HDR.
+pub(crate) fn env_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     })
 }
@@ -241,6 +262,52 @@ pub(crate) fn build_dual_pipeline(
         ldr: make(desc.ldr_format),
         hdr: make(wgpu::TextureFormat::Rgba16Float),
     }
+}
+
+/// Build a full-screen pass pipeline: one triangle-list draw covering the
+/// target, no depth attachment, no culling, single sample. The vertex shader
+/// generates the covering triangle from `vertex_index`, so there are no vertex
+/// buffers. Both stages are `vs_main` / `fs_main` in `shader`. Post-process and
+/// composite passes (tone map, bloom, SSAO, FXAA, OIT composite, upscales, the
+/// scatter composites) all share this shape and differ only in target format
+/// and blend.
+pub(crate) fn build_fullscreen_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    target_format: wgpu::TextureFormat,
+    blend: Option<wgpu::BlendState>,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
 }
 
 /// Pipeline layout with the standard scene binding convention:

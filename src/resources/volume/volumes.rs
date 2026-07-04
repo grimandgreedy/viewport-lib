@@ -667,16 +667,8 @@ impl DeviceResources {
             self.volume.default_opacity_lut_view.as_ref().unwrap()
         };
 
-        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("volume_nearest_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let nearest_sampler =
+            crate::resources::builders::clamp_nearest_sampler(device, "volume_nearest_sampler");
 
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("volume_lut_sampler"),

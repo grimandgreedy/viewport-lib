@@ -812,49 +812,20 @@ impl DeviceResources {
                 ],
             });
 
-        // --- Fullscreen pipeline helper ---
+        // Fullscreen pass helper: build the single-bgl layout, then the pipeline.
         let make_fs_pipeline = |label: &str,
                                 shader: wgpu::ShaderModule,
-                                vs: &str,
-                                fs: &str,
                                 bgl: &wgpu::BindGroupLayout,
-                                fmt: wgpu::TextureFormat,
-                                depth: Option<wgpu::DepthStencilState>|
+                                fmt: wgpu::TextureFormat|
          -> wgpu::RenderPipeline {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{label}_layout")),
                 bind_group_layouts: &[bgl],
                 push_constant_ranges: &[],
             });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(vs),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fs),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: depth,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
+            crate::resources::builders::build_fullscreen_pipeline(
+                device, label, &layout, &shader, fmt, None,
+            )
         };
 
         // Tone map pipeline
@@ -866,11 +837,8 @@ impl DeviceResources {
         let tone_map_pipeline = make_fs_pipeline(
             "tone_map_pipeline",
             tone_map_shader,
-            "vs_main",
-            "fs_main",
             &tone_map_bgl,
             output_format,
-            None,
         );
 
         // Bloom pipelines
@@ -882,11 +850,8 @@ impl DeviceResources {
         let bloom_threshold_pipeline = make_fs_pipeline(
             "bloom_threshold_pipeline",
             bloom_threshold_shader,
-            "vs_main",
-            "fs_main",
             &bloom_bgl,
             wgpu::TextureFormat::Rgba16Float,
-            None,
         );
         let bloom_blur_shader = crate::resources::builders::wgsl_module(
             device,
@@ -896,11 +861,8 @@ impl DeviceResources {
         let bloom_blur_pipeline = make_fs_pipeline(
             "bloom_blur_pipeline",
             bloom_blur_shader,
-            "vs_main",
-            "fs_main",
             &bloom_bgl,
             wgpu::TextureFormat::Rgba16Float,
-            None,
         );
 
         // SSAO pipelines
@@ -912,11 +874,8 @@ impl DeviceResources {
         let ssao_pipeline = make_fs_pipeline(
             "ssao_pipeline",
             ssao_shader,
-            "vs_main",
-            "fs_main",
             &ssao_bgl,
             wgpu::TextureFormat::R8Unorm,
-            None,
         );
         let ssao_blur_shader = crate::resources::builders::wgsl_module(
             device,
@@ -926,11 +885,8 @@ impl DeviceResources {
         let ssao_blur_pipeline = make_fs_pipeline(
             "ssao_blur_pipeline",
             ssao_blur_shader,
-            "vs_main",
-            "fs_main",
             &ssao_blur_bgl,
             wgpu::TextureFormat::R8Unorm,
-            None,
         );
 
         // Contact shadow pipeline
@@ -942,11 +898,8 @@ impl DeviceResources {
         let cs_pipeline = make_fs_pipeline(
             "contact_shadow_pipeline",
             cs_shader,
-            "vs_main",
-            "fs_main",
             &cs_bgl,
             wgpu::TextureFormat::R8Unorm,
-            None,
         );
 
         // FXAA pipeline
@@ -955,15 +908,8 @@ impl DeviceResources {
             "fxaa_shader",
             crate::resources::builders::wgsl_source!("fxaa"),
         );
-        let fxaa_pipeline = make_fs_pipeline(
-            "fxaa_pipeline",
-            fxaa_shader,
-            "vs_main",
-            "fs_main",
-            &fxaa_bgl,
-            output_format,
-            None,
-        );
+        let fxaa_pipeline =
+            make_fs_pipeline("fxaa_pipeline", fxaa_shader, &fxaa_bgl, output_format);
 
         // OIT composite pipeline
         let oit_comp_shader = crate::resources::builders::wgsl_module(
@@ -988,38 +934,14 @@ impl DeviceResources {
             bind_group_layouts: &[&oit_composite_bgl],
             push_constant_ranges: &[],
         });
-        let oit_composite_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("oit_composite_pipeline"),
-                layout: Some(&oit_comp_layout),
-                vertex: wgpu::VertexState {
-                    module: &oit_comp_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &oit_comp_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        blend: Some(premul_blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            });
+        let oit_composite_pipeline = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "oit_composite_pipeline",
+            &oit_comp_layout,
+            &oit_comp_shader,
+            wgpu::TextureFormat::Rgba16Float,
+            Some(premul_blend),
+        );
 
         // OIT mesh pipeline. Two color targets (`Rgba16Float` accumulation +
         // `R8Unorm` reveal) and depth-test-only.
@@ -1296,35 +1218,14 @@ impl DeviceResources {
             bind_group_layouts: &[&ssaa_resolve_bgl],
             push_constant_ranges: &[],
         });
-        let ssaa_resolve_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ssaa_resolve_pipeline"),
-                layout: Some(&ssaa_resolve_layout),
-                vertex: wgpu::VertexState {
-                    module: &ssaa_resolve_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &ssaa_resolve_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let ssaa_resolve_pipeline = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "ssaa_resolve_pipeline",
+            &ssaa_resolve_layout,
+            &ssaa_resolve_shader,
+            wgpu::TextureFormat::Rgba16Float,
+            None,
+        );
         self.post.ssaa_resolve_bgl = Some(ssaa_resolve_bgl);
         self.post.ssaa_resolve_pipeline = Some(ssaa_resolve_pipeline);
 
@@ -1378,11 +1279,8 @@ impl DeviceResources {
         let dof_pipeline = make_fs_pipeline(
             "dof_pipeline",
             dof_shader,
-            "vs_main",
-            "fs_main",
             &dof_bgl,
             wgpu::TextureFormat::Rgba16Float,
-            None,
         );
         self.post.dof_bgl = Some(dof_bgl);
         self.post.dof_pipeline = Some(dof_pipeline);
@@ -1553,34 +1451,14 @@ impl DeviceResources {
                     bind_group_layouts: &[advect_bgl],
                     push_constant_ranges: &[],
                 });
-                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("lic_advect_pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: Default::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::R8Unorm,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
-                });
+                let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+                    device,
+                    "lic_advect_pipeline",
+                    &layout,
+                    &shader,
+                    wgpu::TextureFormat::R8Unorm,
+                    None,
+                );
                 self.lic.advect_pipeline = Some(pipeline);
             }
         }
@@ -1677,8 +1555,11 @@ impl DeviceResources {
         }
         if self.decal.sampler.is_none() {
             // Repeat address mode so UV scroll animation tiles correctly.
-            let sampler =
-                crate::resources::builders::repeat_linear_sampler(device, "decal_sampler");
+            let sampler = crate::resources::builders::repeat_linear_sampler(
+                device,
+                "decal_sampler",
+                wgpu::FilterMode::Nearest,
+            );
             self.decal.sampler = Some(sampler);
         }
     }

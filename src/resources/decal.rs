@@ -255,38 +255,17 @@ impl DeviceResources {
             push_constant_ranges: &[],
         });
 
+        // No depth attachment: decals read depth as a texture, they do not write
+        // to the depth buffer. Blend mode is the only thing that varies.
         let make = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("decal_pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                // No depth attachment: decals read depth as a texture, they do not
-                // write to the depth buffer.
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
+            crate::resources::builders::build_fullscreen_pipeline(
+                device,
+                "decal_pipeline",
+                &layout,
+                &shader,
+                fmt,
+                Some(blend),
+            )
         };
 
         let replace_blend = wgpu::BlendState::ALPHA_BLENDING;

@@ -623,19 +623,13 @@ fn build_gpu_texture(
     } else {
         wgpu::FilterMode::Nearest
     };
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some(if is_normal_map {
-            "user_normal_map_sampler"
-        } else {
-            "user_texture_sampler"
-        }),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::Repeat,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter,
-        ..Default::default()
-    });
+    let sampler_label = if is_normal_map {
+        "user_normal_map_sampler"
+    } else {
+        "user_texture_sampler"
+    };
+    let sampler =
+        crate::resources::builders::repeat_linear_sampler(device, sampler_label, mipmap_filter);
     let (slot0_view, slot2_view) = if is_normal_map {
         (fallback_albedo_view, &view)
     } else {
@@ -1438,15 +1432,10 @@ impl DeviceResources {
 
         // Ensure the shared clamp sampler is created.
         if self.content.matcap_sampler.is_none() {
-            self.content.matcap_sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("matcap_sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            }));
+            self.content.matcap_sampler = Some(crate::resources::builders::clamp_linear_sampler(
+                device,
+                "matcap_sampler",
+            ));
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

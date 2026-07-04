@@ -157,15 +157,8 @@ impl DeviceResources {
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
         // Nearest-neighbor sampler for crisp slice sampling.
-        let vol_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("image_slice_vol_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let vol_sampler =
+            crate::resources::builders::clamp_nearest_sampler(device, "image_slice_vol_sampler");
 
         // Resolve LUT view index before creating any bind group references.
         let lut_view_idx: Option<usize> = self.content.builtin_colourmap_ids.and_then(|ids| {
@@ -531,14 +524,8 @@ impl DeviceResources {
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("screen_image_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "screen_image_sampler");
 
         // Compute NDC extents from anchor, image size, and scale.
         let img_w_ndc = 2.0 * item.width as f32 * item.scale / viewport_w.max(1.0);
@@ -786,14 +773,8 @@ impl DeviceResources {
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("overlay_image_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "overlay_image_sampler");
 
         let img_w_ndc = 2.0 * item.width as f32 * item.scale / viewport_w.max(1.0);
         let img_h_ndc = 2.0 * item.height as f32 * item.scale / viewport_h.max(1.0);
@@ -1021,15 +1002,10 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        let vol_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("volume_surface_slice_vol_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let vol_sampler = crate::resources::builders::clamp_nearest_sampler(
+            device,
+            "volume_surface_slice_vol_sampler",
+        );
 
         let lut_view_idx: Option<usize> = self.content.builtin_colourmap_ids.and_then(|ids| {
             let preset_id = item

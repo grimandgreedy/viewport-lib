@@ -130,16 +130,8 @@ impl DeviceResources {
             ],
         });
 
-        let soft_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("sprite_soft_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let soft_sampler =
+            crate::resources::builders::clamp_nearest_sampler(device, "sprite_soft_sampler");
 
         let fallback_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("sprite_soft_fallback_tex"),
@@ -386,16 +378,8 @@ impl DeviceResources {
             ],
         });
 
-        let refraction_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("sprite_refraction_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let refraction_sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "sprite_refraction_sampler");
 
         let refraction_shader = crate::resources::builders::wgsl_module(
             device,

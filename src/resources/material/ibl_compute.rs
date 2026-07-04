@@ -79,15 +79,7 @@ fn upload_source(
 
 /// Sampler shared by all compute dispatches that read the source equirect.
 fn make_sampler(device: &wgpu::Device) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("ibl_compute_sampler"),
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Linear,
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        ..Default::default()
-    })
+    crate::resources::builders::env_sampler(device, "ibl_compute_sampler")
 }
 
 /// BGL shared by irradiance + prefilter (params buffer is optional via
