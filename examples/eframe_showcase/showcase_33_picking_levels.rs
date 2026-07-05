@@ -2179,6 +2179,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .to_cols_array_2d();
             d.texture_id = tex;
             d.settings.pick_id = PickId(pick);
+            d.settings.selected = app.pl_state.selection.contains(pick);
             fd.scene.decals.push(d);
         }
     }
