@@ -118,6 +118,39 @@ pub(super) struct ManipulationSession {
     /// Used in scale mode to convert the cumulative factor (current_dist / anchor_dist)
     /// into a per-frame incremental factor.  Reset to 1.0 whenever `cursor_anchor` is updated.
     pub(super) last_scale_factor: f32,
+    /// Running sum of the unsnapped world translation applied since the session
+    /// (or last constraint change) began. Snapping rounds this cumulative value,
+    /// not the per-frame increment, so the object stays grid-locked without drift.
+    pub(super) cumulative_translation: glam::Vec3,
+    /// Running sum of the translation already emitted to the app. The per-frame
+    /// [`TransformDelta::translation`] is the difference between the (possibly
+    /// snapped) target cumulative and this.
+    pub(super) emitted_translation: glam::Vec3,
+    /// Running sum of the unsnapped rotation angle (radians) about the constrained
+    /// axis. Only tracked for single-axis rotation, where angle snapping is meaningful.
+    pub(super) cumulative_angle: f32,
+    /// Running sum of the rotation angle already emitted to the app.
+    pub(super) emitted_angle: f32,
+}
+
+impl Default for ManipulationSession {
+    fn default() -> Self {
+        Self {
+            kind: ManipulationKind::Move,
+            axis: None,
+            exclude_axis: false,
+            numeric: None,
+            is_gizmo_drag: false,
+            gizmo_center: glam::Vec3::ZERO,
+            cursor_anchor: None,
+            cursor_last_total: glam::Vec2::ZERO,
+            last_scale_factor: 1.0,
+            cumulative_translation: glam::Vec3::ZERO,
+            emitted_translation: glam::Vec3::ZERO,
+            cumulative_angle: 0.0,
+            emitted_angle: 0.0,
+        }
+    }
 }
 
 impl ManipulationSession {
@@ -322,6 +355,7 @@ mod tests {
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
+            ..Default::default()
         };
         update_constraint(&mut session, true, false, false, false, false, false);
         assert_eq!(session.axis, Some(GizmoAxis::X));
@@ -340,6 +374,7 @@ mod tests {
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
+            ..Default::default()
         };
         update_constraint(&mut session, false, false, false, false, true, false);
         assert_eq!(session.axis, Some(GizmoAxis::Y));
@@ -358,6 +393,7 @@ mod tests {
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
+            ..Default::default()
         };
         update_constraint(&mut session, false, true, false, false, false, false);
         assert!(session.numeric.is_none());

@@ -34,6 +34,7 @@ pub use types::*;
 
 use crate::interaction::input::{Action, ActionFrame};
 use crate::interaction::manipulation::gizmo::{Gizmo, GizmoAxis, GizmoMode, GizmoSpace};
+use crate::interaction::query::snap::{SnapConfig, snap_value, snap_vec3};
 use session::{ManipulationSession, update_constraint, update_numeric_state};
 
 /// Manages a single object-manipulation session (G/R/S + axis constraints + gizmo drag).
@@ -42,12 +43,37 @@ use session::{ManipulationSession, update_constraint, update_numeric_state};
 /// resulting [`TransformDelta`].
 pub struct ManipulationController {
     session: Option<ManipulationSession>,
+    /// Snap increments applied while dragging. Default is all-`None` (no snapping),
+    /// so a controller that never calls [`set_snap`](Self::set_snap) behaves exactly
+    /// as before. Snapping rounds the cumulative transform (not the per-frame delta),
+    /// so the object steps cleanly between grid stops without accumulating drift.
+    snap: SnapConfig,
 }
 
 impl ManipulationController {
-    /// Create a controller with no active session.
+    /// Create a controller with no active session and no snapping.
     pub fn new() -> Self {
-        Self { session: None }
+        Self {
+            session: None,
+            snap: SnapConfig::default(),
+        }
+    }
+
+    /// Set the snap increments used while dragging.
+    ///
+    /// Each field is an optional increment: translation in world units, rotation in
+    /// radians, scale as a fraction. `None` (or a non-positive increment) disables
+    /// snapping on that channel. Rotation snapping applies to single-axis rotations
+    /// only, where a snapped angle is well defined. Safe to change mid-drag, e.g. to
+    /// bind snapping to a held modifier key.
+    pub fn set_snap(&mut self, snap: SnapConfig) {
+        self.snap = snap;
+    }
+
+    /// Builder form of [`set_snap`](Self::set_snap).
+    pub fn with_snap(mut self, snap: SnapConfig) -> Self {
+        self.snap = snap;
+        self
     }
 
     /// Drive the controller for one frame.
@@ -62,6 +88,7 @@ impl ManipulationController {
     /// 7. G/R/S keys (when `selection_center` is `Some`) -> begins session
     /// 8. Otherwise -> [`ManipResult::None`]
     pub fn update(&mut self, frame: &ActionFrame, ctx: ManipulationContext) -> ManipResult {
+        let snap = self.snap.clone();
         if let Some(ref mut session) = self.session {
             // 1. Confirm: Enter key, or left-click when not a gizmo drag.
             let click_confirm = ctx.clicked && !session.is_gizmo_drag;
@@ -103,6 +130,12 @@ impl ManipulationController {
                 session.cursor_anchor = ctx.cursor_viewport;
                 session.cursor_last_total = glam::Vec2::ZERO;
                 session.last_scale_factor = 1.0;
+                // The app restores its snapshot on this result, so the snap
+                // accumulators must start fresh for the new constraint too.
+                session.cumulative_translation = glam::Vec3::ZERO;
+                session.emitted_translation = glam::Vec3::ZERO;
+                session.cumulative_angle = 0.0;
+                session.emitted_angle = 0.0;
                 return ManipResult::ConstraintChanged;
             }
 
@@ -131,7 +164,7 @@ impl ManipulationController {
 
             match session.kind {
                 ManipulationKind::Move => {
-                    delta.translation = solvers::constrained_translation(
+                    let frame_translation = solvers::constrained_translation(
                         pointer_delta,
                         session.axis,
                         session.exclude_axis,
@@ -139,6 +172,22 @@ impl ManipulationController {
                         &ctx.camera,
                         ctx.viewport_size,
                     );
+                    session.cumulative_translation += frame_translation;
+                    delta.translation = match snap.translation {
+                        Some(inc) if inc > 0.0 => {
+                            // Snap the movement-from-start, then emit the step needed
+                            // to reach it. Rounding the cumulative (not the frame delta)
+                            // keeps the object on grid stops without drift.
+                            let target = snap_vec3(session.cumulative_translation, inc);
+                            let step = target - session.emitted_translation;
+                            session.emitted_translation = target;
+                            step
+                        }
+                        _ => {
+                            session.emitted_translation += frame_translation;
+                            frame_translation
+                        }
+                    };
                     // Numeric position override.
                     if let Some(ref numeric) = session.numeric {
                         delta.position_override = numeric.parsed_values();
@@ -171,7 +220,22 @@ impl ManipulationController {
                                 ctx.viewport_size,
                                 camera_view,
                             ) + twist;
-                            glam::Quat::from_axis_angle(axis_world, angle)
+                            session.cumulative_angle += angle;
+                            let step = match snap.rotation {
+                                Some(inc) if inc > 0.0 => {
+                                    // Snap the cumulative angle so rotation clicks
+                                    // between fixed steps (e.g. 15 deg).
+                                    let target = snap_value(session.cumulative_angle, inc);
+                                    let out = target - session.emitted_angle;
+                                    session.emitted_angle = target;
+                                    out
+                                }
+                                _ => {
+                                    session.emitted_angle += angle;
+                                    angle
+                                }
+                            };
+                            glam::Quat::from_axis_angle(axis_world, step)
                         }
                     } else {
                         // Unconstrained: rotate around camera view direction.
@@ -179,6 +243,11 @@ impl ManipulationController {
                         glam::Quat::from_axis_angle(view_dir, pointer_delta.x * 0.01 + twist)
                     };
                     delta.rotation = rot;
+                    // Numeric rotation override (per-axis angle). The app interprets
+                    // the value; the drag-driven rotation above is ignored when set.
+                    if let Some(ref numeric) = session.numeric {
+                        delta.rotation_override = numeric.parsed_values();
+                    }
                 }
 
                 ManipulationKind::Scale => {
@@ -210,10 +279,15 @@ impl ManipulationController {
                         }
                     };
 
-                    // Convert cumulative -> per-frame incremental so the app can keep
-                    // multiplying each frame as before.
-                    let incr = (cumulative / session.last_scale_factor).max(0.001);
-                    session.last_scale_factor = cumulative;
+                    // Snap the cumulative factor (not the per-frame step) so scaling
+                    // clicks between stops, then convert to a per-frame incremental
+                    // factor the app keeps multiplying in as before.
+                    let target = match snap.scale {
+                        Some(inc) if inc > 0.0 => snap_value(cumulative, inc).max(0.001),
+                        _ => cumulative,
+                    };
+                    let incr = (target / session.last_scale_factor).max(0.001);
+                    session.last_scale_factor = target;
 
                     delta.scale = match (session.axis, session.exclude_axis) {
                         (None, _) => glam::Vec3::splat(incr),
@@ -273,16 +347,18 @@ impl ManipulationController {
                         GizmoMode::Rotate => ManipulationKind::Rotate,
                         GizmoMode::Scale => ManipulationKind::Scale,
                     };
+                    let (axis, exclude_axis) = hit_to_constraint(hit);
                     self.session = Some(ManipulationSession {
                         kind,
-                        axis: Some(hit),
-                        exclude_axis: false,
+                        axis,
+                        exclude_axis,
                         numeric: None,
                         is_gizmo_drag: true,
                         gizmo_center: center,
                         cursor_anchor: ctx.cursor_viewport,
                         cursor_last_total: glam::Vec2::ZERO,
                         last_scale_factor: 1.0,
+                        ..Default::default()
                     });
                     return ManipResult::None;
                 }
@@ -312,6 +388,7 @@ impl ManipulationController {
                     cursor_anchor: ctx.cursor_viewport,
                     cursor_last_total: glam::Vec2::ZERO,
                     last_scale_factor: 1.0,
+                    ..Default::default()
                 });
                 return ManipResult::None;
             }
@@ -352,6 +429,7 @@ impl ManipulationController {
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
+            ..Default::default()
         });
     }
 
@@ -370,6 +448,26 @@ impl Default for ManipulationController {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/// Normalise a hit gizmo axis into the `(axis, exclude)` constraint the solvers
+/// understand.
+///
+/// The single-axis handles map straight through. A plane handle becomes an
+/// *exclude* of the third axis, so translation and scale happen in that plane
+/// (XY plane = exclude Z, and so on). The screen handle becomes a free
+/// (unconstrained) manipulation: camera-plane translation or uniform scale.
+/// Without this, plane and screen handles fell through to the Z axis.
+fn hit_to_constraint(hit: GizmoAxis) -> (Option<GizmoAxis>, bool) {
+    match hit {
+        GizmoAxis::X => (Some(GizmoAxis::X), false),
+        GizmoAxis::Y => (Some(GizmoAxis::Y), false),
+        GizmoAxis::Z => (Some(GizmoAxis::Z), false),
+        GizmoAxis::XY => (Some(GizmoAxis::Z), true),
+        GizmoAxis::XZ => (Some(GizmoAxis::Y), true),
+        GizmoAxis::YZ => (Some(GizmoAxis::X), true),
+        GizmoAxis::Screen | GizmoAxis::None => (None, false),
+    }
+}
 
 /// Compute a world-space ray direction from a viewport-local cursor position.
 fn unproject_cursor_to_ray(
@@ -399,6 +497,7 @@ fn unproject_cursor_to_ray(
 mod tests {
     use super::*;
     use crate::interaction::input::ActionFrame;
+    use crate::interaction::query::snap::SnapConfig;
     use session::{NumericInputState, update_constraint};
 
     fn make_camera() -> crate::camera::camera::Camera {
@@ -435,6 +534,7 @@ mod tests {
             cursor_anchor: None,
             cursor_last_total: glam::Vec2::ZERO,
             last_scale_factor: 1.0,
+            ..Default::default()
         };
 
         // X: constrained, not excluded.
@@ -652,5 +752,158 @@ mod tests {
         assert_eq!(result, ManipResult::None); // None on first frame
         assert!(ctrl.is_active());
         assert_eq!(ctrl.state().unwrap().kind, ManipulationKind::Move);
+    }
+
+    // -----------------------------------------------------------------------
+    // Snapping
+    // -----------------------------------------------------------------------
+
+    /// Drive a move via `pointer_delta` (no cursor anchor), returning the emitted
+    /// translation from the single resulting `Update`.
+    fn drive_move(snap: SnapConfig, pointer_delta: glam::Vec2) -> glam::Vec3 {
+        let mut ctrl = ManipulationController::new().with_snap(snap);
+        ctrl.begin(ManipulationKind::Move, glam::Vec3::ZERO);
+        let mut ctx = idle_ctx();
+        ctx.pointer_delta = pointer_delta; // cursor_viewport stays None -> delta path
+        match ctrl.update(&ActionFrame::default(), ctx) {
+            ManipResult::Update(delta) => delta.translation,
+            other => panic!("expected Update, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn move_snap_rounds_translation_to_increment() {
+        let inc = 0.5;
+        let snap = SnapConfig {
+            translation: Some(inc),
+            ..Default::default()
+        };
+        // A large drag so the snapped result lands on a non-zero grid stop.
+        let t = drive_move(snap, glam::Vec2::new(4000.0, -2500.0));
+        for c in [t.x, t.y, t.z] {
+            let steps = c / inc;
+            assert!(
+                (steps - steps.round()).abs() < 1e-4,
+                "component {c} is not a multiple of {inc}"
+            );
+        }
+    }
+
+    #[test]
+    fn move_without_snap_matches_raw_solver() {
+        // With snapping off, the emitted delta is exactly the solver output : the
+        // existing behaviour is preserved.
+        let pd = glam::Vec2::new(50.0, 0.0);
+        let emitted = drive_move(SnapConfig::default(), pd);
+        let raw = solvers::constrained_translation(
+            pd,
+            None,
+            false,
+            glam::Vec3::ZERO,
+            &make_camera(),
+            glam::Vec2::new(800.0, 600.0),
+        );
+        assert!(
+            (emitted - raw).length() < 1e-4,
+            "unsnapped emit {emitted:?} should equal raw solver {raw:?}"
+        );
+    }
+
+    #[test]
+    fn sub_increment_move_snaps_to_no_movement() {
+        // A drag smaller than half an increment rounds to the nearest stop (no
+        // movement) when snapping, but produces a real delta without it.
+        let pd = glam::Vec2::new(3.0, 0.0);
+        let snapped = drive_move(
+            SnapConfig {
+                translation: Some(1.0),
+                ..Default::default()
+            },
+            pd,
+        );
+        let free = drive_move(SnapConfig::default(), pd);
+        assert!(
+            snapped.length() < 1e-6,
+            "sub-increment drag should snap to no movement, got {snapped:?}"
+        );
+        assert!(
+            free.length() > 1e-6,
+            "same drag without snap should move, got {free:?}"
+        );
+    }
+
+    #[test]
+    fn sub_increment_scale_snaps_to_identity() {
+        // The scale path snaps the cumulative factor the same way: a tiny drag
+        // rounds back to 1.0 (no scale) when snapping, but scales without it.
+        fn drive_scale(snap: SnapConfig) -> glam::Vec3 {
+            let mut ctrl = ManipulationController::new().with_snap(snap);
+            ctrl.begin(ManipulationKind::Scale, glam::Vec3::ZERO);
+            let mut ctx = idle_ctx();
+            ctx.pointer_delta = glam::Vec2::new(2.0, 0.0);
+            match ctrl.update(&ActionFrame::default(), ctx) {
+                ManipResult::Update(delta) => delta.scale,
+                other => panic!("expected Update, got {other:?}"),
+            }
+        }
+        let snapped = drive_scale(SnapConfig {
+            scale: Some(0.5),
+            ..Default::default()
+        });
+        let free = drive_scale(SnapConfig::default());
+        assert!(
+            (snapped - glam::Vec3::ONE).length() < 1e-4,
+            "sub-increment scale should snap to identity, got {snapped:?}"
+        );
+        assert!(
+            (free - glam::Vec3::ONE).length() > 1e-6,
+            "same scale drag without snap should change scale, got {free:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Handle constraint mapping
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hit_to_constraint_single_axes_pass_through() {
+        assert_eq!(hit_to_constraint(GizmoAxis::X), (Some(GizmoAxis::X), false));
+        assert_eq!(hit_to_constraint(GizmoAxis::Y), (Some(GizmoAxis::Y), false));
+        assert_eq!(hit_to_constraint(GizmoAxis::Z), (Some(GizmoAxis::Z), false));
+    }
+
+    #[test]
+    fn hit_to_constraint_plane_handles_exclude_third_axis() {
+        // A plane handle drags in that plane, i.e. excludes the perpendicular axis.
+        assert_eq!(hit_to_constraint(GizmoAxis::XY), (Some(GizmoAxis::Z), true));
+        assert_eq!(hit_to_constraint(GizmoAxis::XZ), (Some(GizmoAxis::Y), true));
+        assert_eq!(hit_to_constraint(GizmoAxis::YZ), (Some(GizmoAxis::X), true));
+    }
+
+    #[test]
+    fn hit_to_constraint_screen_is_unconstrained() {
+        assert_eq!(hit_to_constraint(GizmoAxis::Screen), (None, false));
+    }
+
+    // -----------------------------------------------------------------------
+    // Numeric rotation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn numeric_rotate_emits_rotation_override() {
+        // Typing a number during a rotate session fills the per-axis override the
+        // app applies as an angle : the same path Move/Scale already had.
+        let mut ctrl = ManipulationController::new();
+        ctrl.begin(ManipulationKind::Rotate, glam::Vec3::ZERO);
+        let mut frame = ActionFrame::default();
+        frame.typed_chars.extend(['4', '5']);
+        match ctrl.update(&frame, idle_ctx()) {
+            ManipResult::Update(delta) => {
+                assert_eq!(delta.rotation_override[0], Some(45.0));
+                assert_eq!(delta.rotation_override[1], None);
+                assert_eq!(delta.rotation_override[2], None);
+            }
+            other => panic!("expected Update, got {other:?}"),
+        }
     }
 }

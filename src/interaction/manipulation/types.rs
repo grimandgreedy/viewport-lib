@@ -14,6 +14,12 @@ pub enum ManipulationKind {
 }
 
 /// Solved per-frame transform increment. Zero/identity values mean "no change on this axis."
+///
+/// The `*_override` arrays carry raw numeric input, one value per axis. They are
+/// interpretation-agnostic: the controller reports the typed numbers, and the app
+/// decides whether to apply them as absolute values or relative to the drag-start
+/// transform (an app-managed toggle). `None` means no override on that axis.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransformDelta {
     /// Add to object position.
@@ -22,9 +28,11 @@ pub struct TransformDelta {
     pub rotation: glam::Quat,
     /// Multiply componentwise with current scale.
     pub scale: glam::Vec3,
-    /// Set individual position axes (from numeric input). None = no override.
+    /// Numeric input for each position axis. None = no override.
     pub position_override: [Option<f32>; 3],
-    /// Set individual scale axes (from numeric input). None = no override.
+    /// Numeric input for each rotation axis, as an angle. None = no override.
+    pub rotation_override: [Option<f32>; 3],
+    /// Numeric input for each scale axis. None = no override.
     pub scale_override: [Option<f32>; 3],
 }
 
@@ -35,6 +43,7 @@ impl Default for TransformDelta {
             rotation: glam::Quat::IDENTITY,
             scale: glam::Vec3::ONE,
             position_override: [None; 3],
+            rotation_override: [None; 3],
             scale_override: [None; 3],
         }
     }
@@ -132,6 +141,7 @@ mod tests {
         assert!((d.rotation.w - 1.0).abs() < 1e-6);
         assert_eq!(d.scale, glam::Vec3::ONE);
         assert!(d.position_override.iter().all(|o| o.is_none()));
+        assert!(d.rotation_override.iter().all(|o| o.is_none()));
         assert!(d.scale_override.iter().all(|o| o.is_none()));
     }
 

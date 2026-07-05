@@ -102,17 +102,20 @@ impl App {
     /// Apply a [`viewport_lib::TransformDelta`] to all selected scene nodes.
     ///
     /// Rotation and scale pivot around `interact_gizmo_center`.
-    /// When `position_override` or `scale_override` is set (numeric input), the
-    /// snapshot is restored first and the override applied as an absolute value.
+    /// When a numeric override is set (position, rotation, or scale), the snapshot
+    /// is restored first and the override applied relative to it. Whether numeric
+    /// input reads as relative or absolute is an app-side choice: this reference
+    /// applies it relative to the drag-start transform.
     pub(crate) fn apply_interact_delta(&mut self, delta: viewport_lib::TransformDelta) {
         let Some(center) = self.interact_state.gizmo_center else {
             return;
         };
 
         let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
+        let has_rot_override = delta.rotation_override.iter().any(|v| v.is_some());
         let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
 
-        if has_pos_override || has_scale_override {
+        if has_pos_override || has_rot_override || has_scale_override {
             self.restore_interact_snapshots();
         }
 
@@ -136,7 +139,17 @@ impl App {
             delta.scale
         };
 
-        let rot_mat = glam::Mat4::from_quat(delta.rotation);
+        let rotation = if has_rot_override {
+            // Numeric rotation is typed in degrees, one value per axis.
+            let rx = delta.rotation_override[0].unwrap_or(0.0).to_radians();
+            let ry = delta.rotation_override[1].unwrap_or(0.0).to_radians();
+            let rz = delta.rotation_override[2].unwrap_or(0.0).to_radians();
+            glam::Quat::from_euler(glam::EulerRot::XYZ, rx, ry, rz)
+        } else {
+            delta.rotation
+        };
+
+        let rot_mat = glam::Mat4::from_quat(rotation);
         let scale_mat = glam::Mat4::from_scale(scale);
         let translate_mat = glam::Mat4::from_translation(translation);
         let to_pivot = glam::Mat4::from_translation(-center);
