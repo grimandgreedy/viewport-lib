@@ -6,7 +6,8 @@
 //! Scene: two cubes and two hemispheres; an 80-point grid cloud; a scalar
 //! volume; a 3x3 Gaussian splat grid; a hex capsule mesh; a hex cylinder
 //! transparent volume mesh; spiral streamline polylines; arrow and tensor
-//! glyph sets; and sprites.
+//! glyph sets; sprites; and two target decals on the cube tops (pickable
+//! through the unified picker).
 //!
 //! Controls:
 //!   - Left-click : select at the active level
@@ -18,14 +19,14 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, CellSelectionInfo, ColourmapId, FrameData, GaussianSplatData,
+    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, FrameData, GaussianSplatData,
     GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
     GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
     LightingSettings, Material, McVolumeId, MeshId, NodeId, PickId, PickMask, PickRectResult,
     PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, SceneRenderItem,
     ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
-    TensorGlyphItem, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData, VolumeMeshItem,
-    VolumeSurfaceSliceItem,
+    TensorGlyphItem, TextureId, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData,
+    VolumeMeshItem, VolumeSurfaceSliceItem,
 };
 
 use crate::App;
@@ -125,6 +126,40 @@ fn make_pl_splat_data(positions: &[[f32; 3]]) -> GaussianSplatData {
         sh_coefficients,
         sh_degree: ShDegree::Zero,
     }
+}
+
+/// Build a small RGBA target texture (concentric red/white rings on a
+/// transparent background) used by the demo decals. Returns `(w, h, rgba)`.
+fn make_pl_decal_texture() -> (u32, u32, Vec<u8>) {
+    const W: u32 = 64;
+    const H: u32 = 64;
+    let mut rgba = vec![0u8; (W * H * 4) as usize];
+    let cx = (W as f32 - 1.0) * 0.5;
+    let cy = (H as f32 - 1.0) * 0.5;
+    let max_r = W as f32 * 0.5;
+    for y in 0..H {
+        for x in 0..W {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let r = (dx * dx + dy * dy).sqrt() / max_r;
+            if r > 0.95 {
+                // Outside the disc: leave fully transparent so the sticker reads
+                // as a circle rather than a square.
+                continue;
+            }
+            let (cr, cg, cb) = if (r * 4.0) as u32 % 2 == 0 {
+                (230u8, 40u8, 40u8)
+            } else {
+                (245u8, 245u8, 245u8)
+            };
+            let idx = ((y * W + x) * 4) as usize;
+            rgba[idx] = cr;
+            rgba[idx + 1] = cg;
+            rgba[idx + 2] = cb;
+            rgba[idx + 3] = 255;
+        }
+    }
+    (W, H, rgba)
 }
 
 /// Build a hex mesh of a capsule (pill) shape.
@@ -360,6 +395,9 @@ pub(crate) struct PlState {
     pub mc_volume_id: Option<McVolumeId>,
     /// CPU-side copy of the MC volume data, retained for CPU picking.
     pub mc_volume_data: Option<std::sync::Arc<viewport_lib::VolumeData>>,
+    /// Texture handle for the target sticker shared by the demo decals
+    /// (pick_id 60 and 61).
+    pub decal_texture_id: Option<TextureId>,
 }
 
 impl Default for PlState {
@@ -414,6 +452,7 @@ impl Default for PlState {
             surface_slice_mesh_id: None,
             mc_volume_id: None,
             mc_volume_data: None,
+            decal_texture_id: None,
         }
     }
 }
@@ -814,6 +853,17 @@ impl App {
             }
             self.pl_state.ribbon_positions = pos;
             self.pl_state.ribbon_strip_lengths = lens;
+        }
+
+        // --- Decal texture: a target sticker uploaded once, shared by both
+        // demo decals (pick_id 60 and 61). ---
+        let (dw, dh, drgba) = make_pl_decal_texture();
+        if let Ok(tex) =
+            renderer
+                .resources_mut()
+                .upload_texture(&self.device, &self.queue, dw, dh, &drgba)
+        {
+            self.pl_state.decal_texture_id = Some(tex);
         }
 
         self.pl_state.built = true;
@@ -1449,6 +1499,8 @@ impl App {
             52 => Some("Screen Image"),
             53 => Some("GPU Implicit"),
             54 => Some("GPU Marching Cubes"),
+            60 => Some("Decal A"),
+            61 => Some("Decal B"),
             _ => None,
         }
     }
@@ -2110,6 +2162,25 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             settings: mc_settings,
             cpu_data: app.pl_state.mc_volume_data.clone(),
         });
+    }
+    // Decals: two target stickers projected onto the cube tops (pick_id 60, 61).
+    // Decals are pickable through the unified picker via their projection box.
+    // Each box straddles the cube's +Z face, so its front face sits just above
+    // the surface and a click on the sticker selects the decal rather than the
+    // cube beneath it. Try the "Object" mask in the Unified API section.
+    if let Some(tex) = app.pl_state.decal_texture_id {
+        for (pick, centre) in [
+            (60u64, glam::vec3(-4.5, 0.0, 1.0)),
+            (61u64, glam::vec3(4.5, 0.0, 1.0)),
+        ] {
+            let mut d = DecalItem::default();
+            d.transform = (glam::Mat4::from_translation(centre)
+                * glam::Mat4::from_scale(glam::vec3(1.6, 1.6, 0.6)))
+            .to_cols_array_2d();
+            d.texture_id = tex;
+            d.settings.pick_id = PickId(pick);
+            fd.scene.decals.push(d);
+        }
     }
 }
 
