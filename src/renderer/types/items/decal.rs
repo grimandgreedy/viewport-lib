@@ -197,7 +197,9 @@ pub struct DecalItem {
     pub projection: DecalProjection,
     /// Visibility and opacity overrides. `hidden` skips the decal entirely; `opacity`
     /// multiplies the final alpha. `unlit` and `wireframe` are accepted but have no
-    /// effect on decals. `pick_id` and `selected` are also no-op for decals. Default: all no-op.
+    /// effect on decals. Set `pick_id` to make the decal pickable: `pick()` ray-tests
+    /// the projection box and returns this id. `selected` is a no-op (decals draw no
+    /// selection outline). Default: all no-op, decal not pickable.
     pub settings: ItemSettings,
 }
 

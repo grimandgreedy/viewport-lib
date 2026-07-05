@@ -17,6 +17,48 @@ pub(super) fn warn_pick_cache_disabled() {
     });
 }
 
+/// Ray versus the local unit box `[-0.5, 0.5]^3`, used for decal projection
+/// volumes. `origin` and `dir` are the ray in the box's local space (the world
+/// ray transformed by the inverse of the box's model matrix).
+///
+/// Returns the entry parameter `t` along `dir`, or `None` if the ray misses.
+/// Because an affine transform maps the world ray parameter to the same
+/// parameter on the local ray, the returned `t` is directly comparable to the
+/// world-space `time_of_impact` used by the other pick sections. If the origin
+/// is inside the box, returns `0.0`.
+pub(super) fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f32> {
+    const HALF: f32 = 0.5;
+    let mut t_enter = f32::NEG_INFINITY;
+    let mut t_exit = f32::INFINITY;
+    for i in 0..3 {
+        let o = origin[i];
+        let d = dir[i];
+        if d.abs() < 1e-9 {
+            // Ray is parallel to this slab: a miss unless the origin lies within it.
+            if o < -HALF || o > HALF {
+                return None;
+            }
+        } else {
+            let inv = 1.0 / d;
+            let mut t0 = (-HALF - o) * inv;
+            let mut t1 = (HALF - o) * inv;
+            if t0 > t1 {
+                std::mem::swap(&mut t0, &mut t1);
+            }
+            t_enter = t_enter.max(t0);
+            t_exit = t_exit.min(t1);
+            if t_enter > t_exit {
+                return None;
+            }
+        }
+    }
+    if t_exit < 0.0 {
+        // The box is entirely behind the ray origin.
+        return None;
+    }
+    Some(t_enter.max(0.0))
+}
+
 // ---------------------------------------------------------------------------
 // Strip index helpers (shared by polyline, tube, ribbon picking)
 // ---------------------------------------------------------------------------
@@ -505,4 +547,36 @@ pub(super) fn pick_mc_volume(
         prev = cur;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ray_unit_box_toi;
+    use glam::Vec3;
+
+    #[test]
+    fn ray_box_hit_from_outside_returns_front_face_toi() {
+        // Looking down -Z from z=2: enters the box front face at z=0.5, t=1.5.
+        let toi = ray_unit_box_toi(Vec3::new(0.0, 0.0, 2.0), Vec3::new(0.0, 0.0, -1.0));
+        assert!(toi.is_some());
+        assert!((toi.unwrap() - 1.5).abs() < 1e-5, "got {:?}", toi);
+    }
+
+    #[test]
+    fn ray_missing_the_box_returns_none() {
+        // Parallel to Z but offset in X/Y well outside the [-0.5, 0.5] slab.
+        assert!(ray_unit_box_toi(Vec3::new(2.0, 2.0, 2.0), Vec3::new(0.0, 0.0, -1.0)).is_none());
+    }
+
+    #[test]
+    fn ray_origin_inside_the_box_returns_zero() {
+        let toi = ray_unit_box_toi(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(toi, Some(0.0));
+    }
+
+    #[test]
+    fn box_entirely_behind_the_ray_returns_none() {
+        // Origin at z=2 pointing away (+Z): the box is behind, no hit.
+        assert!(ray_unit_box_toi(Vec3::new(0.0, 0.0, 2.0), Vec3::new(0.0, 0.0, 1.0)).is_none());
+    }
 }

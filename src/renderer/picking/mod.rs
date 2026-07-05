@@ -46,6 +46,7 @@ impl ViewportRenderer {
         self.pick_image_slice_items = frame.scene.image_slices.clone();
         self.pick_volume_surface_slice_items = frame.scene.volume_surface_slices.clone();
         self.pick_screen_image_items = frame.scene.screen_images.clone();
+        self.pick_decal_items = frame.scene.decals.clone();
     }
 
     /// Empty the CPU pick caches populated by `cache_pick_items`, freeing their
@@ -67,6 +68,7 @@ impl ViewportRenderer {
         self.pick_image_slice_items = Vec::new();
         self.pick_volume_surface_slice_items = Vec::new();
         self.pick_screen_image_items = Vec::new();
+        self.pick_decal_items = Vec::new();
     }
 }
 

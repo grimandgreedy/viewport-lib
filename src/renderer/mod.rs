@@ -468,6 +468,8 @@ pub struct ViewportRenderer {
     pick_volume_surface_slice_items: Vec<VolumeSurfaceSliceItem>,
     /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_screen_image_items: Vec<ScreenImageItem>,
+    /// Decal items from the last `prepare()` call, retained for `pick()` dispatch.
+    pick_decal_items: Vec<DecalItem>,
     /// GPU implicit surface items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_implicit_items: Vec<GpuImplicitPickItem>,
     /// GPU marching cubes jobs from the last `prepare()` call, retained for `pick()` dispatch.
@@ -675,6 +677,7 @@ impl ViewportRenderer {
             pick_image_slice_items: Vec::new(),
             pick_volume_surface_slice_items: Vec::new(),
             pick_screen_image_items: Vec::new(),
+            pick_decal_items: Vec::new(),
             pick_implicit_items: Vec::new(),
             pick_mc_items: Vec::new(),
             cpu_pick_cache_enabled: false,

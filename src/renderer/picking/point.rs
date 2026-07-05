@@ -1195,6 +1195,43 @@ impl ViewportRenderer {
             }
         }
 
+        // 13. Decal picks (OBJECT only): ray versus the decal projection box.
+        // A decal is the unit box [-0.5, 0.5]^3 mapped to world by `transform`.
+        // The box front face typically hugs the receiver surface, so a decal
+        // that straddles a surface wins over that surface by `toi`, letting a
+        // click select the decal itself. A decal whose box floats in empty
+        // space is still pickable wherever the ray passes through the volume.
+        if wants_object {
+            for item in &self.pick_decal_items {
+                if item.settings.hidden || item.settings.pick_id == PickId::NONE {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.transform);
+                if model.determinant().abs() < 1e-12 {
+                    continue;
+                }
+                let inv = model.inverse();
+                let local_origin = inv.transform_point3(ray_origin);
+                let local_dir = inv.transform_vector3(ray_dir);
+                if let Some(toi) = ray_unit_box_toi(local_origin, local_dir) {
+                    let world_pos = ray_origin + ray_dir * toi;
+                    #[allow(deprecated)]
+                    consider(
+                        toi,
+                        PickHit {
+                            id: item.settings.pick_id.0,
+                            sub_object: None,
+                            world_pos,
+                            normal: -ray_dir.normalize_or_zero(),
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        },
+                    );
+                }
+            }
+        }
+
         // Consult registered item-type plugins after the built-in pickers.
         // Each plugin returns its own closest hit; the router compares
         // by world-space ray t against the running best.
