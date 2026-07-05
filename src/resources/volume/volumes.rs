@@ -85,9 +85,7 @@ impl DeviceResources {
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let id = VolumeId(self.content.volume_textures.len());
-        self.content.volume_textures.push((texture, view));
-        id
+        VolumeId(self.content.volume_textures.push((texture, view)))
     }
 
     /// Start an asynchronous volume upload.
@@ -169,8 +167,7 @@ impl DeviceResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
-                        let id = VolumeId(resources.content.volume_textures.len());
-                        resources.content.volume_textures.push((texture, view));
+                        let id = VolumeId(resources.content.volume_textures.push((texture, view)));
                         slot_for_apply.set(id);
                     }),
                 ))
@@ -503,15 +500,11 @@ impl DeviceResources {
         self.ensure_default_opacity_lut(device, queue);
 
         let vol_id = item.volume_id.0;
-        assert!(
-            vol_id < self.content.volume_textures.len(),
-            "invalid VolumeId: {} (only {} volumes uploaded)",
-            vol_id,
-            self.content.volume_textures.len()
-        );
-
         let dims = {
-            let tex = &self.content.volume_textures[vol_id].0;
+            let uploaded = self.content.volume_textures.len();
+            let (tex, _) = self.content.volume_textures.get(vol_id).unwrap_or_else(|| {
+                panic!("invalid VolumeId: {vol_id} (only {uploaded} volumes uploaded)")
+            });
             let size = tex.size();
             [size.width, size.height, size.depth_or_array_layers]
         };
@@ -613,7 +606,12 @@ impl DeviceResources {
         }
         uniform_buf.unmap();
 
-        let volume_view = &self.content.volume_textures[vol_id].1;
+        let volume_view = &self
+            .content
+            .volume_textures
+            .get(vol_id)
+            .expect("VolumeId validated above")
+            .1;
 
         let colour_lut_view = if let Some(cmap_id) = item.colour_lut {
             self.content

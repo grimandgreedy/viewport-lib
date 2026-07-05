@@ -51,6 +51,10 @@ impl crate::resources::handle::ContentHandle for TextureId {
     fn generation(&self) -> u32 {
         (self.0 >> 32) as u32
     }
+
+    fn from_parts(index: u32, generation: u32) -> Self {
+        pack_texture_id(index, generation)
+    }
 }
 
 /// Pack a slot index and generation into a texture id.
@@ -61,70 +65,32 @@ fn pack_texture_id(index: u32, generation: u32) -> TextureId {
     TextureId(((generation as u64) << 32) | index as u64)
 }
 
-/// Split a texture id back into `(index, generation)`.
-fn unpack_texture_id(id: TextureId) -> (u32, u32) {
-    (id.0 as u32, (id.0 >> 32) as u32)
-}
-
-/// One texture slot: the texture (when occupied), the slot's current
-/// generation, and the byte size charged for it (for resident-bytes
-/// accounting).
-struct TexSlot {
-    texture: Option<GpuTexture>,
-    generation: u32,
-    bytes: u64,
-}
-
 /// Slotted storage for user-uploaded GPU textures with generational ids, a free
-/// list, and maintained byte / count totals.
+/// list, and maintained byte / count totals. The id packs the slot index and
+/// generation into a `u64`; the generic core keys on it through
+/// [`ContentHandle`](crate::resources::handle::ContentHandle).
 pub(crate) struct TextureStore {
-    slots: Vec<TexSlot>,
-    free_list: Vec<usize>,
-    allocated_bytes: u64,
-    live_count: u32,
+    store: crate::resources::handle::SlotStore<GpuTexture, TextureId>,
 }
 
 impl TextureStore {
     /// Create an empty texture store.
     pub fn new() -> Self {
         Self {
-            slots: Vec::new(),
-            free_list: Vec::new(),
-            allocated_bytes: 0,
-            live_count: 0,
+            store: crate::resources::handle::SlotStore::default(),
         }
     }
 
     /// Insert a texture charging `bytes` against it, reusing a free slot if one
     /// is available. Returns the handle carrying the slot's generation.
     pub fn insert(&mut self, texture: GpuTexture, bytes: u64) -> TextureId {
-        self.allocated_bytes += bytes;
-        self.live_count += 1;
-        if let Some(idx) = self.free_list.pop() {
-            let slot = &mut self.slots[idx];
-            slot.texture = Some(texture);
-            slot.bytes = bytes;
-            pack_texture_id(idx as u32, slot.generation)
-        } else {
-            let idx = self.slots.len();
-            self.slots.push(TexSlot {
-                texture: Some(texture),
-                generation: 0,
-                bytes,
-            });
-            pack_texture_id(idx as u32, 0)
-        }
+        self.store.insert(texture, bytes)
     }
 
     /// Look up the live texture for `id`, or `None` if the index is out of
     /// range, the slot is empty, or the handle's generation is stale.
     pub fn get(&self, id: TextureId) -> Option<&GpuTexture> {
-        let (index, generation) = unpack_texture_id(id);
-        let slot = self.slots.get(index as usize)?;
-        if slot.generation != generation {
-            return None;
-        }
-        slot.texture.as_ref()
+        self.store.get(id)
     }
 
     /// Remove the texture for `id`, dropping the `GpuTexture`, bumping the slot
@@ -133,19 +99,7 @@ impl TextureStore {
     /// Returns `true` if a texture was actually removed, `false` if the slot was
     /// empty, out of range, or the handle was stale.
     pub fn remove(&mut self, id: TextureId) -> bool {
-        let (index, generation) = unpack_texture_id(id);
-        if let Some(slot) = self.slots.get_mut(index as usize) {
-            if slot.generation == generation && slot.texture.is_some() {
-                slot.texture = None;
-                slot.generation = slot.generation.wrapping_add(1);
-                self.allocated_bytes = self.allocated_bytes.saturating_sub(slot.bytes);
-                self.live_count = self.live_count.saturating_sub(1);
-                slot.bytes = 0;
-                self.free_list.push(index as usize);
-                return true;
-            }
-        }
-        false
+        self.store.remove(id).is_some()
     }
 
     /// Swap the texture in `id`'s slot for `texture`, charging `bytes` in place
@@ -162,24 +116,16 @@ impl TextureStore {
         texture: GpuTexture,
         bytes: u64,
     ) -> Option<GpuTexture> {
-        let (index, generation) = unpack_texture_id(id);
-        let slot = self.slots.get_mut(index as usize)?;
-        if slot.generation != generation || slot.texture.is_none() {
-            return None;
-        }
-        let old = slot.texture.replace(texture);
-        self.allocated_bytes = self.allocated_bytes.saturating_sub(slot.bytes) + bytes;
-        slot.bytes = bytes;
-        old
+        self.store.replace(id, texture, bytes)
     }
 
     /// Number of live (occupied) texture slots.
     pub fn len(&self) -> usize {
-        self.live_count as usize
+        self.store.len()
     }
 
     /// Total bytes charged for the textures currently resident in the store.
     pub fn allocated_bytes(&self) -> u64 {
-        self.allocated_bytes
+        self.store.allocated_bytes()
     }
 }

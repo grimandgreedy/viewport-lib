@@ -242,14 +242,14 @@ impl crate::resources::DeviceResources {
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let id = self.content.overlay_textures.len() as u64;
-        self.content
+        let id = self
+            .content
             .overlay_textures
             .push(OverlayShapeTextureEntry {
                 _texture: texture,
                 view,
             });
-        OverlayTextureId(id)
+        OverlayTextureId(id as u64)
     }
 
     /// Start an asynchronous overlay texture upload.
@@ -329,15 +329,14 @@ impl crate::resources::DeviceResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut crate::resources::DeviceResources| {
-                        let id = resources.content.overlay_textures.len() as u64;
-                        resources
+                        let id = resources
                             .content
                             .overlay_textures
                             .push(OverlayShapeTextureEntry {
                                 _texture: texture,
                                 view,
                             });
-                        slot_for_apply.set(OverlayTextureId(id));
+                        slot_for_apply.set(OverlayTextureId(id as u64));
                     }),
                 ))
             })

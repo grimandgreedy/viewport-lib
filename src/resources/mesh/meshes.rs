@@ -2259,12 +2259,11 @@ impl DeviceResources {
                 .collect::<Vec<_>>()
         };
 
-        let id = ProjectedTetId(self.content.projected_tet_store.len());
-        self.content.projected_tet_store.push(GpuProjectedTetMesh {
+        let id = ProjectedTetId(self.content.projected_tet_store.push(GpuProjectedTetMesh {
             chunks,
             uniform_buffer,
             scalar_range,
-        });
+        }));
         Ok((id, scalar_range.0, scalar_range.1))
     }
 
@@ -2338,15 +2337,16 @@ impl DeviceResources {
                                 })
                                 .collect::<Vec<_>>()
                         };
-                        let pid = ProjectedTetId(resources.content.projected_tet_store.len());
-                        resources
-                            .content
-                            .projected_tet_store
-                            .push(GpuProjectedTetMesh {
-                                chunks,
-                                uniform_buffer,
-                                scalar_range,
-                            });
+                        let pid = ProjectedTetId(
+                            resources
+                                .content
+                                .projected_tet_store
+                                .push(GpuProjectedTetMesh {
+                                    chunks,
+                                    uniform_buffer,
+                                    scalar_range,
+                                }),
+                        );
                         slot_for_apply.set((pid, scalar_range.0, scalar_range.1));
                     }),
                 ))
@@ -2415,7 +2415,12 @@ impl DeviceResources {
                 .bind_group_layout
                 .as_ref()
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
-            let uniform_buf = &self.content.projected_tet_store[id.0].uniform_buffer;
+            let uniform_buf = &self
+                .content
+                .projected_tet_store
+                .get(id.0)
+                .expect("ProjectedTetId must reference an uploaded mesh")
+                .uniform_buffer;
             pending
                 .into_iter()
                 .map(|(tet_buffer, tet_count)| {
@@ -2442,7 +2447,11 @@ impl DeviceResources {
                 .collect::<Vec<_>>()
         };
 
-        let slot = &mut self.content.projected_tet_store[id.0];
+        let slot = self
+            .content
+            .projected_tet_store
+            .get_mut(id.0)
+            .expect("ProjectedTetId must reference an uploaded mesh");
         slot.chunks = chunks;
         slot.scalar_range = scalar_range;
 

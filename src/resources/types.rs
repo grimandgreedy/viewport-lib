@@ -2087,47 +2087,27 @@ pub(crate) struct GaussianSplatDrawData {
     pub wireframe: bool,
 }
 
-/// One splat slot: the set (when occupied) and the slot's current generation.
-pub(crate) struct GaussianSplatSlot {
-    pub set: Option<GaussianSplatGpuSet>,
-    pub generation: u32,
-}
-
 /// Slotted store for Gaussian splat sets with generational handles.
 ///
 /// A removed set leaves an empty slot that a later insert reuses. Each slot
 /// carries a generation bumped on removal, and a [`GaussianSplatId`] captures
 /// the generation it was issued against, so a stale handle resolves to `None`
-/// rather than aliasing the set now in its slot.
+/// rather than aliasing the set now in its slot. An entry's byte charge is its
+/// [`GaussianSplatGpuSet::gpu_bytes`].
 pub(crate) struct GaussianSplatStore {
-    pub slots: Vec<GaussianSplatSlot>,
-    free_list: Vec<usize>,
-    allocated_bytes: u64,
+    store: crate::resources::handle::SlotStore<GaussianSplatGpuSet, crate::renderer::GaussianSplatId>,
 }
 
 impl GaussianSplatStore {
     pub fn new() -> Self {
         Self {
-            slots: Vec::new(),
-            free_list: Vec::new(),
-            allocated_bytes: 0,
+            store: crate::resources::handle::SlotStore::default(),
         }
     }
 
     pub fn insert(&mut self, set: GaussianSplatGpuSet) -> crate::renderer::GaussianSplatId {
-        self.allocated_bytes += set.gpu_bytes();
-        if let Some(idx) = self.free_list.pop() {
-            let slot = &mut self.slots[idx];
-            slot.set = Some(set);
-            crate::renderer::GaussianSplatId::new(idx as u32, slot.generation)
-        } else {
-            let idx = self.slots.len();
-            self.slots.push(GaussianSplatSlot {
-                set: Some(set),
-                generation: 0,
-            });
-            crate::renderer::GaussianSplatId::new(idx as u32, 0)
-        }
+        let bytes = set.gpu_bytes();
+        self.store.insert(set, bytes)
     }
 
     /// Swap the set in `id`'s slot for `set`, keeping the slot generation so the
@@ -2138,62 +2118,44 @@ impl GaussianSplatStore {
         id: crate::renderer::GaussianSplatId,
         set: GaussianSplatGpuSet,
     ) -> bool {
-        if let Some(slot) = self.slots.get_mut(id.index as usize) {
-            if slot.generation == id.generation && slot.set.is_some() {
-                if let Some(old) = &slot.set {
-                    self.allocated_bytes = self.allocated_bytes.saturating_sub(old.gpu_bytes());
-                }
-                self.allocated_bytes += set.gpu_bytes();
-                slot.set = Some(set);
-                return true;
-            }
-        }
-        false
+        let bytes = set.gpu_bytes();
+        self.store.replace(id, set, bytes).is_some()
     }
 
     /// Total resident GPU bytes across every live splat set.
     pub fn allocated_bytes(&self) -> u64 {
-        self.allocated_bytes
+        self.store.allocated_bytes()
     }
 
     /// Look up a set by handle, validating the generation. Returns `None` for a
     /// stale handle, an empty slot, or an out-of-range index.
     pub fn get(&self, id: crate::renderer::GaussianSplatId) -> Option<&GaussianSplatGpuSet> {
-        let slot = self.slots.get(id.index as usize)?;
-        if slot.generation != id.generation {
-            return None;
-        }
-        slot.set.as_ref()
+        self.store.get(id)
     }
 
     /// Look up a set by raw slot index, without a generation check. For the
     /// per-frame draw path, where the index was already validated through
     /// [`get`](Self::get) earlier in the same frame.
     pub fn get_by_index(&self, idx: usize) -> Option<&GaussianSplatGpuSet> {
-        self.slots.get(idx)?.set.as_ref()
+        self.store.get_by_index(idx)
     }
 
     /// Mutable raw-index lookup, same contract as [`get_by_index`](Self::get_by_index).
     pub fn get_mut_by_index(&mut self, idx: usize) -> Option<&mut GaussianSplatGpuSet> {
-        self.slots.get_mut(idx)?.set.as_mut()
+        self.store.get_mut_by_index(idx)
+    }
+
+    /// Total number of slots (occupied plus free). Reported in stale-handle
+    /// errors to show how many slots exist.
+    pub fn slot_count(&self) -> usize {
+        self.store.slot_count()
     }
 
     /// Remove a set by handle, bumping the slot generation and freeing the slot.
     /// Returns `true` if a set was removed, `false` for a stale handle or an
     /// already-empty slot.
     pub fn remove(&mut self, id: crate::renderer::GaussianSplatId) -> bool {
-        if let Some(slot) = self.slots.get_mut(id.index as usize) {
-            if slot.generation == id.generation && slot.set.is_some() {
-                if let Some(old) = &slot.set {
-                    self.allocated_bytes = self.allocated_bytes.saturating_sub(old.gpu_bytes());
-                }
-                slot.set = None;
-                slot.generation = slot.generation.wrapping_add(1);
-                self.free_list.push(id.index as usize);
-                return true;
-            }
-        }
-        false
+        self.store.remove(id).is_some()
     }
 }
 
@@ -2851,13 +2813,14 @@ pub struct ContentResources {
     /// Slotted store of all uploaded Gaussian splat sets.
     pub(crate) gaussian_splat_store: GaussianSplatStore,
     /// Uploaded 3D volume textures. Index = VolumeId value.
-    pub(crate) volume_textures: Vec<(wgpu::Texture, wgpu::TextureView)>,
+    pub(crate) volume_textures:
+        crate::resources::handle::Registry<(wgpu::Texture, wgpu::TextureView)>,
     /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
-    pub(crate) projected_tet_store: Vec<GpuProjectedTetMesh>,
+    pub(crate) projected_tet_store: crate::resources::handle::Registry<GpuProjectedTetMesh>,
     /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
     pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
     /// Persistent textures uploaded via `upload_overlay_texture`.
-    pub(crate) overlay_textures: Vec<OverlayShapeTextureEntry>,
+    pub(crate) overlay_textures: crate::resources::handle::Registry<OverlayShapeTextureEntry>,
     /// Matcap textures (256x256 RGBA), indexed by `MatcapId::index`.
     pub(crate) matcap_textures: Vec<wgpu::Texture>,
     /// Texture views for each uploaded matcap.

@@ -179,7 +179,12 @@ impl DeviceResources {
             .expect("ensure_image_slice_pipeline not called");
 
         // Borrow vol_view and lut_view after all mutable references are resolved.
-        let vol_view = &self.content.volume_textures[item.volume_id.0].1;
+        let vol_view = &self
+            .content
+            .volume_textures
+            .get(item.volume_id.0)
+            .expect("volume existence checked above")
+            .1;
         let lut_view = lut_view_idx
             .map(|i| &self.content.colourmap_views[i])
             .unwrap_or(&self.content.fallback_lut_view);
@@ -997,7 +1002,12 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_volume_surface_slice_pipeline not called");
 
-        let vol_view = &self.content.volume_textures[item.volume_id.0].1;
+        let vol_view = &self
+            .content
+            .volume_textures
+            .get(item.volume_id.0)
+            .expect("volume existence checked above")
+            .1;
         let lut_view = lut_view_idx
             .map(|i| &self.content.colourmap_views[i])
             .unwrap_or(&self.content.fallback_lut_view);

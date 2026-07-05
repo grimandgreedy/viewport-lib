@@ -186,81 +186,47 @@ pub fn projected_screen_size(local_aabb: &Aabb, model: &glam::Mat4, camera: &Ren
     radius / (distance * half_fov_tan)
 }
 
-/// One group slot: the group (when occupied) and the slot's current generation.
-struct LodSlot {
-    group: Option<LodGroup>,
-    generation: u32,
-}
-
 /// Registry of LOD groups owned by the renderer. Slotted with generational
 /// handles: `free_lod_group` frees a slot and bumps its generation, so a later
 /// `register_lod_group` can reuse the slot without a stale `LodGroupId` aliasing
-/// the new group.
+/// the new group. LOD groups carry no measured GPU size, so slots are charged
+/// zero bytes.
 pub(crate) struct LodGroupStore {
-    slots: Vec<LodSlot>,
-    free_list: Vec<usize>,
+    store: crate::resources::handle::SlotStore<LodGroup, LodGroupId>,
 }
 
 impl LodGroupStore {
     pub fn new() -> Self {
         Self {
-            slots: Vec::new(),
-            free_list: Vec::new(),
+            store: crate::resources::handle::SlotStore::default(),
         }
     }
 
     pub fn insert(&mut self, group: LodGroup) -> LodGroupId {
-        if let Some(idx) = self.free_list.pop() {
-            let slot = &mut self.slots[idx];
-            slot.group = Some(group);
-            LodGroupId::new(idx as u32, slot.generation)
-        } else {
-            let idx = self.slots.len();
-            self.slots.push(LodSlot {
-                group: Some(group),
-                generation: 0,
-            });
-            LodGroupId::new(idx as u32, 0)
-        }
+        self.store.insert(group, 0)
     }
 
     pub fn get(&self, id: LodGroupId) -> Option<&LodGroup> {
-        let slot = self.slots.get(id.index as usize)?;
-        if slot.generation != id.generation {
-            return None;
-        }
-        slot.group.as_ref()
+        self.store.get(id)
     }
 
     pub fn get_mut(&mut self, id: LodGroupId) -> Option<&mut LodGroup> {
-        let slot = self.slots.get_mut(id.index as usize)?;
-        if slot.generation != id.generation {
-            return None;
-        }
-        slot.group.as_mut()
+        self.store.get_mut(id)
     }
 
     /// Remove the group for `id`, bump the slot generation, and free the slot.
     /// Returns the removed group so the caller can free member meshes, or `None`
     /// if the slot was empty, out of range, or the handle was stale.
     pub fn remove(&mut self, id: LodGroupId) -> Option<LodGroup> {
-        let slot = self.slots.get_mut(id.index as usize)?;
-        if slot.generation != id.generation {
-            return None;
-        }
-        let group = slot.group.take()?;
-        slot.generation = slot.generation.wrapping_add(1);
-        self.free_list.push(id.index as usize);
-        Some(group)
+        self.store.remove(id)
     }
 
     /// Iterate the meshes still referenced by any live group. Used to decide
     /// whether a member mesh of a freed group is shared with another group.
     pub fn live_member_meshes(&self) -> impl Iterator<Item = MeshId> + '_ {
-        self.slots
+        self.store
             .iter()
-            .filter_map(|s| s.group.as_ref())
-            .flat_map(|g| g.levels.iter().map(|l| l.mesh))
+            .flat_map(|(_, g)| g.levels.iter().map(|l| l.mesh))
     }
 }
 

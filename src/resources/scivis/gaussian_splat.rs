@@ -558,7 +558,7 @@ impl DeviceResources {
         } else {
             Err(crate::error::ViewportError::StaleHandle {
                 index: id.index() as usize,
-                count: self.content.gaussian_splat_store.slots.len(),
+                count: self.content.gaussian_splat_store.slot_count(),
             })
         }
     }

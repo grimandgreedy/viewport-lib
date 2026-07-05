@@ -1538,10 +1538,11 @@ impl ViewportRenderer {
                                 continue;
                             }
                             let tidx = *tid as usize;
-                            if tidx >= self.resources.content.overlay_textures.len() {
+                            let Some(entry) = self.resources.content.overlay_textures.get(tidx)
+                            else {
                                 continue;
-                            }
-                            let view = &self.resources.content.overlay_textures[tidx].view;
+                            };
+                            let view = &entry.view;
                             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                                 label: Some("overlay_shape_tex_bg"),
                                 layout: bgl,
