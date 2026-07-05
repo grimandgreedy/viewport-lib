@@ -1,6 +1,5 @@
 use super::*;
 use crate::renderer::ShDegree;
-use crate::resources::types::{GaussianSplatGpuSet, GaussianSplatViewportSort};
 
 /// Gaussian splat render pipeline, the radix-sort compute passes, their bind
 /// group layouts, and the slotted store of uploaded splat sets. All lazily
@@ -1191,5 +1190,153 @@ mod async_tests {
             err,
             crate::error::ViewportError::StaleHandle { .. }
         ));
+    }
+}
+
+/// Per-viewport sort buffers for one Gaussian splat set.
+pub(crate) struct GaussianSplatViewportSort {
+    /// u32 view-space depth keys (flipped for back-to-front), written by depth compute each frame.
+    pub depth_buf: wgpu::Buffer,
+    /// Ping/pong key buffers for radix sort.
+    pub keys_ping: wgpu::Buffer,
+    pub keys_pong: wgpu::Buffer,
+    /// Ping/pong value (index) buffers for radix sort.
+    pub vals_ping: wgpu::Buffer,
+    pub vals_pong: wgpu::Buffer,
+    /// 256-entry atomic histogram / prefix-sum scratch.
+    pub histogram_buf: wgpu::Buffer,
+    /// Render bind group (group 1). Contains sorted_indices, positions, scales, rotations,
+    /// opacities, sh_coefficients, and the per-viewport SplatUniform.
+    pub render_bg: wgpu::BindGroup,
+    /// Eye position at last sort; skip re-sort when unchanged.
+    pub last_eye: [f32; 3],
+    /// Per-viewport uniform buffer holding SplatUniform (model, viewport dims, sh_degree, count).
+    pub uniform_buf: wgpu::Buffer,
+}
+
+/// Persistent GPU state for one uploaded Gaussian splat set.
+pub(crate) struct GaussianSplatGpuSet {
+    /// Positions as vec4<f32> (w=1), one per splat.
+    pub position_buf: wgpu::Buffer,
+    /// Scales as vec4<f32> (w=0), one per splat.
+    pub scale_buf: wgpu::Buffer,
+    /// Rotations as vec4<f32> [x,y,z,w], one per splat.
+    pub rotation_buf: wgpu::Buffer,
+    /// Opacities as f32, one per splat.
+    pub opacity_buf: wgpu::Buffer,
+    /// SH coefficients as f32, count = splat_count * sh_degree.coeff_count().
+    pub sh_buf: wgpu::Buffer,
+    /// SH degree for this set.
+    pub sh_degree: crate::renderer::ShDegree,
+    /// Number of splats.
+    pub count: u32,
+    /// Per-viewport sort buffers; index = viewport_index. Grown lazily.
+    pub viewport_sort: Vec<Option<GaussianSplatViewportSort>>,
+    /// CPU positions kept for potential picking (object-space).
+    #[allow(dead_code)]
+    pub cpu_positions: Vec<[f32; 3]>,
+    /// CPU scales kept for potential picking.
+    #[allow(dead_code)]
+    pub cpu_scales: Vec<[f32; 3]>,
+}
+
+impl GaussianSplatGpuSet {
+    /// Resident GPU bytes for the persistent source buffers (position, scale,
+    /// rotation, opacity, SH). Per-viewport sort scratch is derived and grows
+    /// lazily, so it is not counted here.
+    pub fn gpu_bytes(&self) -> u64 {
+        self.position_buf.size()
+            + self.scale_buf.size()
+            + self.rotation_buf.size()
+            + self.opacity_buf.size()
+            + self.sh_buf.size()
+    }
+}
+
+/// Per-frame draw data produced in prepare_viewport_internal.
+pub(crate) struct GaussianSplatDrawData {
+    /// Index into gaussian_splat_store.
+    pub store_index: usize,
+    /// Viewport index that prepared this data.
+    pub viewport_index: usize,
+    /// Model matrix for this item.
+    #[allow(dead_code)]
+    pub model: [[f32; 4]; 4],
+    /// Number of splats.
+    pub count: u32,
+    /// When true, skip the splat rasterization draw; a wireframe polyline overlay is rendered instead.
+    pub wireframe: bool,
+}
+
+/// Slotted store for Gaussian splat sets with generational handles.
+///
+/// A removed set leaves an empty slot that a later insert reuses. Each slot
+/// carries a generation bumped on removal, and a [`GaussianSplatId`] captures
+/// the generation it was issued against, so a stale handle resolves to `None`
+/// rather than aliasing the set now in its slot. An entry's byte charge is its
+/// [`GaussianSplatGpuSet::gpu_bytes`].
+pub(crate) struct GaussianSplatStore {
+    store:
+        crate::resources::handle::SlotStore<GaussianSplatGpuSet, crate::renderer::GaussianSplatId>,
+}
+
+impl GaussianSplatStore {
+    pub fn new() -> Self {
+        Self {
+            store: crate::resources::handle::SlotStore::default(),
+        }
+    }
+
+    pub fn insert(&mut self, set: GaussianSplatGpuSet) -> crate::renderer::GaussianSplatId {
+        let bytes = set.gpu_bytes();
+        self.store.insert(set, bytes)
+    }
+
+    /// Swap the set in `id`'s slot for `set`, keeping the slot generation so the
+    /// handle stays valid. Returns `true` on success, `false` for a stale handle
+    /// or an empty slot.
+    pub fn replace(
+        &mut self,
+        id: crate::renderer::GaussianSplatId,
+        set: GaussianSplatGpuSet,
+    ) -> bool {
+        let bytes = set.gpu_bytes();
+        self.store.replace(id, set, bytes).is_some()
+    }
+
+    /// Total resident GPU bytes across every live splat set.
+    pub fn allocated_bytes(&self) -> u64 {
+        self.store.allocated_bytes()
+    }
+
+    /// Look up a set by handle, validating the generation. Returns `None` for a
+    /// stale handle, an empty slot, or an out-of-range index.
+    pub fn get(&self, id: crate::renderer::GaussianSplatId) -> Option<&GaussianSplatGpuSet> {
+        self.store.get(id)
+    }
+
+    /// Look up a set by raw slot index, without a generation check. For the
+    /// per-frame draw path, where the index was already validated through
+    /// [`get`](Self::get) earlier in the same frame.
+    pub fn get_by_index(&self, idx: usize) -> Option<&GaussianSplatGpuSet> {
+        self.store.get_by_index(idx)
+    }
+
+    /// Mutable raw-index lookup, same contract as [`get_by_index`](Self::get_by_index).
+    pub fn get_mut_by_index(&mut self, idx: usize) -> Option<&mut GaussianSplatGpuSet> {
+        self.store.get_mut_by_index(idx)
+    }
+
+    /// Total number of slots (occupied plus free). Reported in stale-handle
+    /// errors to show how many slots exist.
+    pub fn slot_count(&self) -> usize {
+        self.store.slot_count()
+    }
+
+    /// Remove a set by handle, bumping the slot generation and freeing the slot.
+    /// Returns `true` if a set was removed, `false` for a stale handle or an
+    /// already-empty slot.
+    pub fn remove(&mut self, id: crate::renderer::GaussianSplatId) -> bool {
+        self.store.remove(id).is_some()
     }
 }

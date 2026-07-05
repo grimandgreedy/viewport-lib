@@ -362,51 +362,6 @@ impl DeviceResources {
         }
     }
 
-    /// Resident GPU bytes for the user-uploaded working set: meshes, user
-    /// textures, Gaussian splats, marching-cubes volumes, and pre-uploaded
-    /// scivis curves.
-    ///
-    /// Cheap enough to poll per frame: mesh, texture, and splat totals are
-    /// running counters, and the volume / curve totals sum a handful of live
-    /// entries. A streaming or eviction policy compares [`ResidentBytes::total`]
-    /// against its own byte budget and calls the matching `free_*` to stay under
-    /// it. Built-in LUTs, IBL maps, and render targets are not counted; see
-    /// [`ResidentBytes`].
-    pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
-        let scivis_bytes = self.content.polyline_store.allocated_bytes()
-            + self.content.streamtube_store.allocated_bytes()
-            + self.content.tube_store.allocated_bytes()
-            + self.content.ribbon_store.allocated_bytes()
-            + self.content.point_cloud_store.allocated_bytes()
-            + self.content.glyph_set_store.allocated_bytes()
-            + self.content.tensor_glyph_set_store.allocated_bytes()
-            + self.content.sprite_set_store.allocated_bytes()
-            + self.content.sprite_instance_set_store.allocated_bytes();
-        crate::resources::types::ResidentBytes {
-            mesh_bytes: self.mesh_store.allocated_bytes(),
-            texture_bytes: self.content.textures.allocated_bytes(),
-            gaussian_splat_bytes: self.content.gaussian_splat_store.allocated_bytes(),
-            mc_volume_bytes: self.mc_volume_resident_bytes(),
-            scivis_bytes,
-        }
-    }
-
-    /// Query the GPU's device-local VRAM budget for `device`.
-    ///
-    /// A thin wrapper over [`vram_budget`](crate::resources::vram_budget) so the
-    /// hardware total sits next to [`resident_bytes`](Self::resident_bytes): a
-    /// policy sizes an eviction budget as a fraction of `total_bytes` and
-    /// compares [`ResidentBytes::total`](crate::resources::ResidentBytes::total)
-    /// against it. Returns `None` on backends that cannot be introspected. See
-    /// [`VramBudget`](crate::resources::VramBudget) for what `available_bytes`
-    /// reports per backend.
-    pub fn vram_budget(
-        &self,
-        device: &wgpu::Device,
-    ) -> Option<crate::resources::types::VramBudget> {
-        crate::resources::vram::vram_budget(device)
-    }
-
     /// Release a user-uploaded texture, reclaiming its slot and GPU memory.
     ///
     /// Drops the `GpuTexture` (wgpu defers the real free until in-flight
@@ -1950,4 +1905,20 @@ mod async_texture_tests {
         }
         assert_eq!(resources.uploads_pending(), 0);
     }
+}
+
+// ---------------------------------------------------------------------------
+// GpuTexture: GPU texture with sampler and bind group
+// ---------------------------------------------------------------------------
+
+/// A GPU texture with its view, sampler, and bind group for shader binding.
+pub struct GpuTexture {
+    /// Underlying wgpu texture object.
+    pub texture: wgpu::Texture,
+    /// Full-texture view used for sampling.
+    pub view: wgpu::TextureView,
+    /// Sampler bound alongside the view.
+    pub sampler: wgpu::Sampler,
+    /// Bind group that binds `view` and `sampler` for use in shaders.
+    pub bind_group: wgpu::BindGroup,
 }

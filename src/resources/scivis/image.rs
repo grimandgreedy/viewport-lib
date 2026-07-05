@@ -1090,3 +1090,19 @@ impl DeviceResources {
         self.screen_image.rect_outline_mask_pipeline = Some(pipeline);
     }
 }
+
+/// Per-frame GPU data for one screen-space image overlay, created in `prepare()`.
+pub struct ScreenImageGpuData {
+    /// Uniform buffer: `ScreenImageUniform` (32 bytes) with NDC extents and alpha.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    /// Uploaded RGBA8 texture for this image (recreated each frame).
+    pub(crate) _texture: wgpu::Texture,
+    /// Bind group (group 0): uniform + colour texture + sampler.
+    /// Used by the regular pipeline (no depth test).
+    pub(crate) bind_group: wgpu::BindGroup,
+    /// Uploaded R32Float depth texture. `None` when the item has no depth data.
+    pub(crate) _depth_texture: Option<wgpu::Texture>,
+    /// Bind group for the depth-composite pipeline (group 0: uniform + colour + sampler + depth).
+    /// `Some` only when the item carries per-pixel depth data.
+    pub(crate) depth_bind_group: Option<wgpu::BindGroup>,
+}

@@ -368,7 +368,7 @@ impl DeviceResources {
             .copy_from_slice(bytemuck::cast_slice(&indices));
         ibuf.unmap();
 
-        let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
+        let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
         let edge_buf_size = (std::mem::size_of::<u32>() * edge_indices.len().max(2)) as u64;
         let edge_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_mesh_edge_ibuf"),
@@ -1110,4 +1110,73 @@ mod tests {
             .expect("ready");
         assert!(resources.content.tensor_glyph_set_store.contains(id));
     }
+}
+
+/// Cached GPU vertex + index buffers for a glyph base mesh (arrow, sphere, cube).
+pub(crate) struct GlyphBaseMesh {
+    /// Vertex buffer using the full `Vertex` layout (64 bytes stride).
+    pub vertex_buffer: wgpu::Buffer,
+    /// Triangle index buffer.
+    pub index_buffer: wgpu::Buffer,
+    /// Number of indices.
+    pub index_count: u32,
+    /// Edge index buffer (deduplicated pairs) for wireframe LineList rendering.
+    pub edge_index_buffer: wgpu::Buffer,
+    /// Number of indices in the edge buffer.
+    pub edge_index_count: u32,
+}
+/// Per-frame GPU data for one glyph item, created in `prepare()`.
+#[derive(Clone)]
+pub struct GlyphGpuData {
+    /// Vertex buffer for the glyph base mesh (borrowed from cached `GlyphBaseMesh`).
+    /// We keep a reference via raw pointer : `DeviceResources` owns the mesh.
+    /// Safety: the mesh lives as long as `DeviceResources`.
+    pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
+    /// Triangle index buffer for the glyph base mesh.
+    pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
+    /// Number of triangle mesh indices.
+    pub(crate) mesh_index_count: u32,
+    /// Edge index buffer for wireframe LineList rendering (borrowed from cached `GlyphBaseMesh`).
+    pub(crate) mesh_edge_index_buffer: &'static wgpu::Buffer,
+    /// Number of edge indices.
+    pub(crate) mesh_edge_index_count: u32,
+    /// Number of glyph instances.
+    pub(crate) instance_count: u32,
+    /// Whether this batch should be drawn with the wireframe pipeline.
+    pub(crate) wireframe: bool,
+    /// Bind group (group 1): glyph uniform + LUT texture + sampler.
+    pub(crate) uniform_bind_group: wgpu::BindGroup,
+    /// Bind group (group 2): instance storage buffer.
+    pub(crate) instance_bind_group: wgpu::BindGroup,
+    // Keep the buffers alive.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _instance_buf: wgpu::Buffer,
+}
+
+/// Per-frame GPU data for one tensor glyph item, created in `prepare()`.
+///
+/// The sphere base mesh is borrowed from `glyph_sphere_mesh` (owned by `DeviceResources`).
+#[derive(Clone)]
+pub struct TensorGlyphGpuData {
+    /// Vertex buffer for the sphere base mesh (borrowed).
+    pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
+    /// Triangle index buffer for the sphere base mesh (borrowed).
+    pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
+    /// Number of triangle mesh indices.
+    pub(crate) mesh_index_count: u32,
+    /// Edge index buffer for wireframe LineList rendering (borrowed from sphere mesh).
+    pub(crate) mesh_edge_index_buffer: &'static wgpu::Buffer,
+    /// Number of edge indices.
+    pub(crate) mesh_edge_index_count: u32,
+    /// Number of tensor glyph instances.
+    pub(crate) instance_count: u32,
+    /// Whether this batch should be drawn with the wireframe pipeline.
+    pub(crate) wireframe: bool,
+    /// Bind group (group 1): uniform + LUT texture + sampler.
+    pub(crate) uniform_bind_group: wgpu::BindGroup,
+    /// Bind group (group 2): per-instance storage buffer.
+    pub(crate) instance_bind_group: wgpu::BindGroup,
+    // Keep buffers alive.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _instance_buf: wgpu::Buffer,
 }

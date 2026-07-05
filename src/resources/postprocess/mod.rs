@@ -1,4 +1,19 @@
+//! Shared post-processing pipelines and their per-viewport render targets.
+//!
+//! Holds [`PostProcessResources`] (FXAA/SSAA, bloom, SSAO, tone-map, DoF,
+//! contact shadows, depth blit, and dynamic-resolution upscale) and the
+//! `impl DeviceResources` methods that build and drive those passes. The
+//! post-effect uniforms live in `uniforms`, the Surface LIC pipelines in
+//! `lic`, and the order-independent transparency pipelines in `oit`.
+
 use super::*;
+
+pub(crate) mod lic;
+pub(crate) mod oit;
+pub(crate) mod uniforms;
+
+pub(crate) use self::lic::LicResources;
+pub(crate) use self::oit::OitResources;
 
 /// Shared post-processing pipelines, layouts, samplers, and static textures:
 /// FXAA / SSAA resolve, bloom, SSAO, tone-map, DoF, contact shadows, the
@@ -42,48 +57,6 @@ pub(crate) struct PostProcessResources {
     pub(crate) dyn_res_upscale_ds_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) dyn_res_upscale_bgl: Option<wgpu::BindGroupLayout>,
     pub(crate) dyn_res_linear_sampler: Option<wgpu::Sampler>,
-}
-
-/// Surface line-integral-convolution pipelines and their layouts.
-///
-/// Device-shared and lazily built by the LIC post-process setup. The
-/// per-viewport vector/intensity textures and the `lic_enabled` / `lic_strength`
-/// state live on `ViewportHdrState`, not here.
-#[derive(Default)]
-pub(crate) struct LicResources {
-    /// Renders mesh with vector storage buffer -> lic_vector_texture (Rgba8Unorm).
-    pub(crate) surface_pipeline: Option<wgpu::RenderPipeline>,
-    /// Group 1 layout of the LIC surface pass (object uniform + vector buffer + noise).
-    pub(crate) surface_bgl: Option<wgpu::BindGroupLayout>,
-    /// Reads lic_vector_texture, writes LIC intensity to R8Unorm target.
-    pub(crate) advect_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the LIC advect pass.
-    pub(crate) advect_bgl: Option<wgpu::BindGroupLayout>,
-    /// Bilinear sampler for the LIC advect pass.
-    pub(crate) noise_sampler: Option<wgpu::Sampler>,
-    /// 1x1 R8Unorm white placeholder bound to tone_map binding 7 when LIC is inactive.
-    pub(crate) placeholder_view: Option<wgpu::TextureView>,
-}
-
-/// Weighted-blended OIT pipelines and composite layout.
-///
-/// Device-shared and lazily built: the mesh/instanced pipelines by
-/// `ensure_oit_instanced_pipeline` and the shared pipeline builders, the
-/// composite pipeline / BGL / sampler by the post-process setup. The
-/// viewport-sized accumulation and reveal textures live on `ViewportHdrState`,
-/// not here.
-#[derive(Default)]
-pub(crate) struct OitResources {
-    /// OIT mesh pipeline (non-instanced, mesh_oit.wgsl, two colour targets).
-    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
-    /// OIT instanced mesh pipeline (mesh_instanced_oit.wgsl / mesh_instanced with OIT targets).
-    pub(crate) instanced_pipeline: Option<wgpu::RenderPipeline>,
-    /// OIT composite pipeline (oit_composite.wgsl, fullscreen tri, no depth).
-    pub(crate) composite_pipeline: Option<wgpu::RenderPipeline>,
-    /// Bind group layout for the OIT composite pass (group 0: accum + reveal + sampler).
-    pub(crate) composite_bgl: Option<wgpu::BindGroupLayout>,
-    /// Linear clamp sampler shared by the OIT composite pass.
-    pub(crate) composite_sampler: Option<wgpu::Sampler>,
 }
 
 impl DeviceResources {

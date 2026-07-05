@@ -405,7 +405,7 @@ impl DeviceResources {
         let index_count = indices.len() as u32;
 
         // Edge index buffer: deduplicated triangle edges as line-list pairs for wireframe.
-        let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
+        let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
         let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
         let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("streamtube_edge_ibuf"),
@@ -745,7 +745,7 @@ impl DeviceResources {
 
         let index_count = indices.len() as u32;
 
-        let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
+        let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
         let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
         let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tube_edge_ibuf"),
@@ -1081,7 +1081,7 @@ impl DeviceResources {
 
         let index_count = indices.len() as u32;
 
-        let edge_indices = crate::resources::extra_impls::generate_edge_indices(&indices);
+        let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
         let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
         let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ribbon_edge_ibuf"),
@@ -1597,4 +1597,31 @@ mod tests {
         let id = resources.upload_result_ribbon(job).expect("ready");
         assert!(resources.content.ribbon_store.contains(id));
     }
+}
+
+/// Per-frame GPU data for one streamtube item, created in `prepare()`.
+///
+/// The connected tube mesh (vertices + indices) is generated CPU-side for the
+/// entire item (all strips) and uploaded as a single owned buffer pair.
+#[derive(Clone)]
+pub struct StreamtubeGpuData {
+    /// Owned vertex buffer for the connected tube mesh (world-space positions + normals).
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    /// Owned index buffer for the connected tube mesh (triangle indices).
+    pub(crate) index_buffer: wgpu::Buffer,
+    /// Number of triangle indices to draw (solid mode).
+    pub(crate) index_count: u32,
+    /// Owned index buffer for wireframe edges (deduplicated line-list pairs).
+    pub(crate) edge_index_buffer: wgpu::Buffer,
+    /// Number of edge indices to draw (wireframe mode).
+    pub(crate) edge_index_count: u32,
+    /// Whether this item should be drawn in wireframe mode.
+    pub(crate) wireframe: bool,
+    /// Bind group (group 1): tube uniform (colour, radius).
+    pub(crate) uniform_bind_group: wgpu::BindGroup,
+    /// Blend mode for the draw. Streamtubes always set this to
+    /// `SpriteBlend::AlphaBlend`; ribbons honour the value from `RibbonItem`.
+    pub(crate) blend: crate::renderer::SpriteBlend,
+    // Keep uniform buffer alive.
+    pub(crate) _uniform_buf: wgpu::Buffer,
 }

@@ -681,7 +681,7 @@ impl DeviceResources {
             if in_place {
                 use bytemuck::cast_slice;
                 let edge_indices =
-                    crate::resources::extra_impls::generate_edge_indices(&data.indices);
+                    crate::resources::mesh::geometry::generate_edge_indices(&data.indices);
                 let normal_line_verts = Self::build_normal_lines(data);
                 let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
 
@@ -2337,16 +2337,13 @@ impl DeviceResources {
                                 })
                                 .collect::<Vec<_>>()
                         };
-                        let pid = ProjectedTetId(
-                            resources
-                                .content
-                                .projected_tet_store
-                                .push(GpuProjectedTetMesh {
-                                    chunks,
-                                    uniform_buffer,
-                                    scalar_range,
-                                }),
-                        );
+                        let pid = ProjectedTetId(resources.content.projected_tet_store.push(
+                            GpuProjectedTetMesh {
+                                chunks,
+                                uniform_buffer,
+                                scalar_range,
+                            },
+                        ));
                         slot_for_apply.set((pid, scalar_range.0, scalar_range.1));
                     }),
                 ))
@@ -3035,4 +3032,138 @@ mod c4_volume_mesh_tests {
             .upload_sparse_volume_grid_data(&device, &single_cell_sparse())
             .expect("sparse sync ok");
     }
+}
+
+/// Raw mesh data for upload to the GPU. Framework-agnostic representation.
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct MeshData {
+    /// Vertex positions in local space.
+    pub positions: Vec<[f32; 3]>,
+    /// Per-vertex normals (must be the same length as `positions`).
+    pub normals: Vec<[f32; 3]>,
+    /// Triangle index list (every 3 indices form one triangle).
+    pub indices: Vec<u32>,
+    /// Optional per-vertex UV coordinates. `None` means zero-fill [0.0, 0.0].
+    pub uvs: Option<Vec<[f32; 2]>>,
+    /// Optional per-vertex tangents [tx, ty, tz, w] where w is handedness (+/-1.0).
+    ///
+    /// `None` = auto-compute from UVs if available, or zero-fill otherwise.
+    /// Tangents are required for correct normal map rendering.
+    pub tangents: Option<Vec<[f32; 4]>>,
+    /// Named scalar attributes for per-vertex or per-cell scalar field visualisation.
+    ///
+    /// Keys are user-defined attribute names (e.g. `"pressure"`, `"velocity_mag"`).
+    /// Cell attributes are averaged to vertices at upload time.
+    pub attributes: std::collections::HashMap<String, AttributeData>,
+}
+
+impl Default for MeshData {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            normals: Vec::new(),
+            indices: Vec::new(),
+            uvs: None,
+            tangents: None,
+            attributes: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl MeshData {
+    /// Compute the local-space AABB from vertex positions.
+    pub fn compute_aabb(&self) -> crate::scene::aabb::Aabb {
+        crate::scene::aabb::Aabb::from_positions(&self.positions)
+    }
+}
+
+impl crate::resources::DeviceResources {
+    /// Write new scalar data into an existing attribute buffer in-place.
+    ///
+    /// No GPU buffer reallocation, no mesh re-upload, no bind group rebuild is
+    /// required. The attribute bind group *will* be rebuilt on the next
+    /// `prepare()` call if the scalar range changes (tracked via `last_tex_key`).
+    ///
+    /// # Errors
+    ///
+    /// - [`ViewportError::SlotEmpty`](crate::error::ViewportError::SlotEmpty) : `mesh_id` not found in the store.
+    /// - [`ViewportError::AttributeNotFound`](crate::error::ViewportError::AttributeNotFound) : `name` not present on the mesh.
+    /// - [`ViewportError::AttributeLengthMismatch`](crate::error::ViewportError::AttributeLengthMismatch) : `data.len()` differs from
+    ///   the original upload (same-topology requirement).
+    pub fn replace_attribute(
+        &mut self,
+        queue: &wgpu::Queue,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        name: &str,
+        data: &[f32],
+    ) -> crate::error::ViewportResult<()> {
+        // Resolve the mesh.
+        let gpu_mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::SlotEmpty {
+                    index: mesh_id.index(),
+                })?;
+
+        // Find the existing attribute buffer.
+        let buffer = gpu_mesh.attribute_buffers.get(name).ok_or_else(|| {
+            crate::error::ViewportError::AttributeNotFound {
+                mesh_id: mesh_id.index(),
+                name: name.to_string(),
+            }
+        })?;
+
+        // Validate same topology (buffer size must match).
+        let expected_elems = (buffer.size() / 4) as usize;
+        if data.len() != expected_elems {
+            return Err(crate::error::ViewportError::AttributeLengthMismatch {
+                expected: expected_elems,
+                got: data.len(),
+            });
+        }
+
+        // Zero-copy in-place write via the wgpu staging belt.
+        queue.write_buffer(buffer, 0, bytemuck::cast_slice(data));
+
+        // Recompute scalar range so LUT mapping stays accurate.
+        let (min, max) = data
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(mn, mx), &v| (mn.min(v), mx.max(v)));
+        let range = if min > max { (0.0, 1.0) } else { (min, max) };
+        gpu_mesh.attribute_ranges.insert(name.to_string(), range);
+
+        // Force bind group rebuild on next prepare() by invalidating the key.
+        gpu_mesh.last_tex_key = (
+            gpu_mesh.last_tex_key.0,
+            gpu_mesh.last_tex_key.1,
+            gpu_mesh.last_tex_key.2,
+            gpu_mesh.last_tex_key.3,
+            u64::MAX, // attribute hash component
+            gpu_mesh.last_tex_key.5,
+            gpu_mesh.last_tex_key.6,
+            gpu_mesh.last_tex_key.7,
+            gpu_mesh.last_tex_key.8,
+            gpu_mesh.last_tex_key.9,
+            gpu_mesh.last_tex_key.10,
+        );
+
+        Ok(())
+    }
+}
+
+/// Linearly interpolate between two attribute buffers element-wise.
+///
+/// Both slices must have the same length. `t` is clamped to `[0.0, 1.0]`.
+/// Returns a new `Vec<f32>` with `a[i] * (1 - t) + b[i] * t`.
+///
+/// Use this to blend per-vertex scalar attributes between two consecutive
+/// timesteps when scrubbing the timeline at sub-frame resolution.
+pub fn lerp_attributes(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
+    let t = t.clamp(0.0, 1.0);
+    let one_minus_t = 1.0 - t;
+    a.iter()
+        .zip(b.iter())
+        .map(|(&av, &bv)| av * one_minus_t + bv * t)
+        .collect()
 }

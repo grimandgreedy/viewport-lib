@@ -985,3 +985,24 @@ mod tests {
         assert_eq!(item.model[3], [3.0, 4.0, 5.0, 1.0]);
     }
 }
+
+/// Per-frame GPU data for one polyline item, created in `prepare()`.
+#[derive(Clone)]
+pub struct PolylineGpuData {
+    /// Instance buffer: `[xa, ya, za, xb, yb, zb, scalar_a, scalar_b]` per segment (32 bytes).
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    /// Number of line segments (instances).  Draw call: `draw(0..6, 0..segment_count)`.
+    pub(crate) segment_count: u32,
+    /// Bind group (group 1): uniform + LUT texture + sampler.
+    pub(crate) bind_group: wgpu::BindGroup,
+    // Keep the uniform buffer alive for the lifetime of this struct.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    /// When true, renders with the clip-exempt pipeline (no clip plane or clip volume test).
+    /// Used for clip object wireframe overlays that must always be fully visible.
+    pub(crate) skip_clip: bool,
+    /// When true, render as thin 1px lines using the wireframe pipeline instead of thick billboards.
+    pub(crate) wireframe: bool,
+    /// Bind group for the wireframe pipeline (group 1: segment storage buffer).
+    /// None when the wireframe pipeline has not been created yet.
+    pub(crate) wireframe_bind_group: Option<wgpu::BindGroup>,
+}

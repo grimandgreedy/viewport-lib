@@ -1653,3 +1653,11 @@ fn attr_value<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
 fn attr_f32(tag: &str, name: &str) -> Option<f32> {
     attr_value(tag, name)?.parse().ok()
 }
+
+/// Identifies a colourmap (LUT) uploaded to the GPU.
+///
+/// An append-only registry handle. The inner index is public because the
+/// built-in colourmaps have stable indices a consumer can name directly; the
+/// registry is never freed, so this stays a plain index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColourmapId(pub usize);

@@ -473,3 +473,127 @@ impl DeviceResources {
         )
     }
 }
+
+/// Per-vertex data for overlay rendering: position only (no normal/colour in vertex).
+///
+/// Colour is provided via the OverlayUniform rather than per-vertex to keep
+/// the buffer minimal : all vertices of a single overlay quad share the same colour.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct OverlayVertex {
+    /// World-space XYZ position of this overlay vertex.
+    pub position: [f32; 3],
+}
+
+impl OverlayVertex {
+    /// wgpu vertex buffer layout matching shader location 0 (position vec3f).
+    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            }],
+        }
+    }
+}
+
+/// Per-overlay uniform: model matrix and RGBA colour with alpha for transparency.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OverlayUniform {
+    pub(crate) model: [[f32; 4]; 4],
+    pub(crate) colour: [f32; 4], // RGBA with alpha for transparency
+}
+/// Cached GPU textures for the backdrop blur (frosted glass) effect.
+///
+/// Stored on `ViewportRenderer` and recreated when the viewport size changes.
+/// Contains a full-resolution intermediate (for rendering the scene when the
+/// output surface lacks `TEXTURE_BINDING`), two half-resolution ping-pong
+/// textures for the separable blur passes, and pre-built bind groups.
+pub(crate) struct BackdropBlurState {
+    /// Full-resolution intermediate render target. The scene is rendered here
+    /// instead of directly to the surface so the result can be sampled. Kept
+    /// alive so the matching view remains valid.
+    #[allow(dead_code)]
+    pub intermediate_texture: wgpu::Texture,
+    pub intermediate_view: wgpu::TextureView,
+    /// Half-resolution blur ping-pong texture A. Kept alive for its view.
+    #[allow(dead_code)]
+    pub blur_a_texture: wgpu::Texture,
+    pub blur_a_view: wgpu::TextureView,
+    /// Half-resolution blur ping-pong texture B. Kept alive for its view.
+    #[allow(dead_code)]
+    pub blur_b_texture: wgpu::Texture,
+    pub blur_b_view: wgpu::TextureView,
+    /// Viewport physical size the textures were created for.
+    pub size: [u32; 2],
+    /// Format the textures were created with.
+    pub format: wgpu::TextureFormat,
+}
+
+/// Uniform buffer layout for the full-screen ground plane shader.
+///
+/// Matches `GroundPlaneUniform` in `ground_plane.wgsl` exactly (256 bytes, 16-byte aligned).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GroundPlaneUniform {
+    pub view_proj: [[f32; 4]; 4], // offset   0, 64 bytes
+    pub cam_right: [f32; 4],      // offset  64, 16 bytes
+    pub cam_up: [f32; 4],         // offset  80, 16 bytes
+    pub cam_back: [f32; 4],       // offset  96, 16 bytes
+    pub eye_pos: [f32; 3],        // offset 112, 12 bytes
+    pub height: f32,              // offset 124,  4 bytes
+    pub colour: [f32; 4],         // offset 128, 16 bytes
+    pub shadow_colour: [f32; 4],  // offset 144, 16 bytes
+    pub light_vp: [[f32; 4]; 4],  // offset 160, 64 bytes
+    pub tan_half_fov: f32,        // offset 224,  4 bytes
+    pub aspect: f32,              // offset 228,  4 bytes
+    pub tile_size: f32,           // offset 232,  4 bytes
+    pub shadow_bias: f32,         // offset 236,  4 bytes
+    pub mode: u32,                // offset 240,  4 bytes
+    pub shadow_opacity: f32,      // offset 244,  4 bytes
+    pub _pad: [f32; 2],           // offset 248,  8 bytes
+    pub colour2: [f32; 4],        // offset 256, 16 bytes : second tile colour
+} // total  272 bytes
+
+/// Uniform buffer layout for the full-screen analytical grid shader.
+///
+/// Contains all data needed by `grid.wgsl`: camera matrices for ray unprojection,
+/// eye position, grid plane height, spacing for minor/major lines, and RGBA colours.
+/// Total size: 192 bytes (fits in one 256-byte UBO slot).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GridUniform {
+    /// Combined view-projection matrix for computing clip-space depth of grid hits.
+    pub view_proj: [[f32; 4]; 4], // offset   0, 64 bytes
+    /// Camera-to-world rotation matrix (3 columns as vec4 with w=0 padding, matching
+    /// WGSL mat3x3<f32> layout). Col 0 = right, Col 1 = up, Col 2 = back (camera +Z).
+    /// Used to rotate the analytical camera-space ray direction into world space,
+    /// bypassing the ill-conditioned inv(view_proj) at large camera distances.
+    pub cam_to_world: [[f32; 4]; 3], // offset  64, 48 bytes
+    /// tan(fov_y / 2) : scales NDC x/y to camera-space ray direction.
+    pub tan_half_fov: f32, // offset 112,  4 bytes
+    /// Viewport aspect ratio (width / height).
+    pub aspect: f32, // offset 116,  4 bytes
+    /// Padding to keep snap_origin at offset 152 (8-byte aligned).
+    pub _pad_ivp: [f32; 2], // offset 120,  8 bytes
+    /// Eye (camera) position in world space.
+    pub eye_pos: [f32; 3], // offset 128, 12 bytes
+    /// Z-coordinate of the horizontal grid plane (Z-up, XY ground plane).
+    pub grid_z: f32, // offset 140,  4 bytes
+    /// Minor grid line spacing (world units).
+    pub spacing_minor: f32, // offset 144,  4 bytes
+    /// Major grid line spacing (world units, typically spacing_minor * 10).
+    pub spacing_major: f32, // offset 148,  4 bytes
+    /// XZ origin used to keep `hit.xz - snap_origin` small for f32 precision.
+    /// Set to `floor(eye.xz / spacing_major) * spacing_major` each frame.
+    pub snap_origin: [f32; 2], // offset 152,  8 bytes
+    /// RGBA colour for minor grid lines.
+    pub colour_minor: [f32; 4], // offset 160, 16 bytes
+    /// RGBA colour for major grid lines.
+    pub colour_major: [f32; 4], // offset 176, 16 bytes
+                                // Total: 192 bytes
+}

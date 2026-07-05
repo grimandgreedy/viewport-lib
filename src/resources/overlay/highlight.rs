@@ -1,5 +1,5 @@
 use crate::interaction::select::sub_object::{SubObjectRef, SubSelectionRef};
-use crate::resources::types::{DeviceResources, SubHighlightGpuData, SubHighlightUniform};
+use crate::resources::types::DeviceResources;
 
 /// Recover the two world-space endpoint positions for a global polyline segment index.
 ///
@@ -595,4 +595,145 @@ impl DeviceResources {
             sprite_bind_group,
         }
     }
+}
+
+/// Per-object outline uniform for the two-pass stencil outline effect.
+///
+/// Layout (112 bytes):
+/// - model:        [[f32;4];4] = 64 bytes
+/// - colour:         [f32;4]   = 16 bytes  (outline RGBA)
+/// - pixel_offset:  f32       =  4 bytes  (outline ring width in pixels)
+/// - _pad:          [f32;3]   = 12 bytes
+/// - deform_flags:  u32       =  4 bytes  (bit i set when deformer slot i is active for this draw)
+/// - _deform_pad:   [u32;3]   = 12 bytes
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OutlineUniform {
+    pub(crate) model: [[f32; 4]; 4],  //  64 bytes
+    pub(crate) colour: [f32; 4],      //  16 bytes
+    pub(crate) pixel_offset: f32,     //   4 bytes
+    pub(crate) _pad: [f32; 3],        //  12 bytes
+    pub(crate) deform_flags: u32,     //   4 bytes
+    pub(crate) _deform_pad: [u32; 3], //  12 bytes
+}
+
+pub(crate) struct OutlineObjectBuffers {
+    pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    pub two_sided: bool,
+    /// Per-instance deformer id for the picked node, or `None` when the node
+    /// has no per-instance deformer data. When `Some` and the renderer has
+    /// per-instance data for `(mesh_id, instance_id)`, the outline mask is
+    /// drawn with that bind group so the selection halo tracks the deformed
+    /// silhouette.
+    pub deform_instance: Option<u32>,
+    pub _mask_uniform_buf: wgpu::Buffer,
+    pub mask_bind_group: wgpu::BindGroup,
+}
+
+/// Per-item uniform for the Gaussian splat outline mask pass (112 bytes).
+///
+/// Padded to 112 bytes to match `OutlineUniform`. Both structs share the same
+/// bind group layout (`outline_bgl`) and wgpu enforces the maximum required
+/// size across all pipelines using that layout.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct SplatOutlineMaskUniform {
+    pub(crate) model: [[f32; 4]; 4], // 64 bytes
+    pub(crate) viewport_w: f32,      //  4 bytes
+    pub(crate) viewport_h: f32,      //  4 bytes
+    pub(crate) pixel_radius: f32,    //  4 bytes
+    pub(crate) _pad: [f32; 9],       // 36 bytes  (total: 112)
+}
+
+/// Per-frame GPU buffers for one selected Gaussian splat set's outline mask draw.
+pub(crate) struct SplatOutlineBuffers {
+    /// Object-space positions as `[f32; 3]` per splat, instance-stepped.
+    pub(crate) position_buf: wgpu::Buffer,
+    /// Per-instance pixel radius as `f32`, instance-stepped.
+    pub(crate) size_buf: wgpu::Buffer,
+    /// Number of splats (= instance count).
+    pub(crate) instance_count: u32,
+    /// Uniform buffer kept alive for the duration of the frame.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    /// Bind group for group 1 (SplatOutlineMaskUniform).
+    pub(crate) bind_group: wgpu::BindGroup,
+}
+
+/// Inline geometry outline buffers for flat world-space quads (image slices).
+///
+/// Unlike `OutlineObjectBuffers`, the vertex/index data is owned here rather than
+/// looked up via a `MeshId`.
+pub(crate) struct RawGeomOutlineBuffers {
+    pub vertex_buf: wgpu::Buffer,
+    pub index_buf: wgpu::Buffer,
+    pub index_count: u32,
+    pub two_sided: bool,
+    pub _uniform_buf: wgpu::Buffer,
+    pub mask_bind_group: wgpu::BindGroup,
+}
+
+/// Per-frame outline item for a tube/streamtube/ribbon mesh.
+///
+/// Holds an index into the per-frame gpu_data array and a mask bind group
+/// that supplies an identity model matrix to the outline_mask shader.
+pub(crate) struct CurveMeshOutlineItem {
+    pub index: usize,
+    pub two_sided: bool,
+    pub _mask_uniform_buf: wgpu::Buffer,
+    pub mask_bind_group: wgpu::BindGroup,
+}
+
+/// NDC-space rect outline for screen image overlays.
+pub(crate) struct ScreenRectOutlineBuffers {
+    pub _uniform_buf: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+}
+
+/// Uniform for the fullscreen outline edge-detection pass (32 bytes).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OutlineEdgeUniform {
+    pub(crate) colour: [f32; 4], // 16 bytes
+    pub(crate) radius: f32,      //  4 bytes
+    pub(crate) viewport_w: f32,  //  4 bytes
+    pub(crate) viewport_h: f32,  //  4 bytes
+    pub(crate) _pad: f32,        //  4 bytes
+}
+
+/// Per-frame uniform for the sub-object highlight pass (48 bytes).
+///
+/// Shared by the fill, edge, and sprite draw calls.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct SubHighlightUniform {
+    pub(crate) fill_colour: [f32; 4], // 16 bytes
+    pub(crate) edge_colour: [f32; 4], // 16 bytes
+    pub(crate) edge_width: f32,       //  4 bytes (pixels)
+    pub(crate) vertex_size: f32,      //  4 bytes (pixels)
+    pub(crate) viewport_width: f32,   //  4 bytes
+    pub(crate) viewport_height: f32,  //  4 bytes
+                                      // total 48 bytes
+}
+
+/// GPU buffers for one frame of sub-object highlight rendering.
+///
+/// Rebuilt whenever [`InteractionFrame::sub_selection`] version changes.
+/// All three passes (fill, edges, sprites) share a single
+/// [`SubHighlightUniform`] buffer bound at group 1.
+pub(crate) struct SubHighlightGpuData {
+    // Face fill : flat triangle vertex list (xyz f32, 12 bytes each, non-indexed).
+    pub(crate) fill_vertex_buf: wgpu::Buffer,
+    pub(crate) fill_vertex_count: u32,
+    // Edge lines : segment instances (pos_a xyz + pos_b xyz, 24 bytes each).
+    pub(crate) edge_vertex_buf: wgpu::Buffer,
+    pub(crate) edge_segment_count: u32,
+    // Vertex / point sprites : positions (xyz padded to 16 bytes).
+    pub(crate) sprite_vertex_buf: wgpu::Buffer,
+    pub(crate) sprite_point_count: u32,
+    // Shared uniform buffer.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    // Per-pass bind groups (group 1: SubHighlightUniform).
+    pub(crate) fill_bind_group: wgpu::BindGroup,
+    pub(crate) edge_bind_group: wgpu::BindGroup,
+    pub(crate) sprite_bind_group: wgpu::BindGroup,
 }

@@ -920,3 +920,34 @@ impl DeviceResources {
         }
     }
 }
+
+/// Per-frame GPU data for one sprite batch item, created in `prepare()`.
+#[derive(Clone)]
+pub struct SpriteGpuData {
+    /// Position vertex buffer: one `vec3` per sprite, instance-stepped.
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    /// Number of sprites (= draw instance count).
+    pub(crate) sprite_count: u32,
+    /// Bind group (group 1): uniform + texture + sampler + instance storage buffer.
+    pub(crate) bind_group: wgpu::BindGroup,
+    /// Whether this batch was submitted with `depth_write: true`.
+    pub(crate) depth_write: bool,
+    /// Blend mode requested by the host for this batch.
+    pub(crate) blend: crate::renderer::SpriteBlend,
+    /// When true, skip the billboard draw; the wireframe overlay polyline is rendered instead.
+    pub(crate) wireframe: bool,
+    /// Refractive distortion strength in NDC pixels; `0.0` means a regular
+    /// sprite. Routes the draw through the sprite refraction post-pass
+    /// instead of the normal sprite pass.
+    pub(crate) refraction_strength: f32,
+    /// When true, this batch was submitted with `SpriteItem::lit = true` and
+    /// is drawn through the lit sprite pipeline.
+    pub(crate) lit: bool,
+    /// Group 3 bind group for the lit normal-map binding. Always populated for
+    /// lit batches: a fallback texture is bound when no normal map is supplied
+    /// so the same pipeline layout is honoured.
+    pub(crate) lit_normal_bg: Option<wgpu::BindGroup>,
+    // Keep buffers alive for the lifetime of this struct.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _instance_buf: wgpu::Buffer,
+}

@@ -3,7 +3,8 @@
 pub(crate) mod builders;
 /// Screen-space decal pipeline (D1).
 pub(crate) mod decal;
-mod extra_impls;
+/// `DeviceResources` and its content, scope, and feature-resource structs.
+pub(crate) mod device_resources;
 /// GPU compute resources: clustered shading, hierarchical-Z, particles, and dynamic resolution.
 pub mod gpu;
 /// Shared generational handle primitive and the `ContentHandle` interface.
@@ -11,6 +12,8 @@ pub mod handle;
 mod init;
 /// Texture, matcap, colourmap, and environment/IBL resources.
 pub mod material;
+/// GPU memory accounting and the hardware VRAM budget query.
+mod memory;
 /// Mesh storage, instancing, level-of-detail, and mesh-family pipelines.
 pub mod mesh;
 pub(crate) mod mesh_sidecar;
@@ -23,17 +26,17 @@ mod types;
 pub mod upload_jobs;
 /// Volume, implicit-surface, marching-cubes, and unstructured volume-mesh resources.
 pub mod volume;
-mod vram;
 
-pub use self::extra_impls::{ComputeFilterResult, lerp_attributes};
-use self::extra_impls::{
-    build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
-};
+pub use self::gpu::compute_filter::ComputeFilterResult;
 pub use self::gpu::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 pub use self::handle::ContentHandle;
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
+use self::mesh::geometry::{
+    build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
+};
 pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
+pub use self::mesh::meshes::lerp_attributes;
 pub use self::mesh_sidecar::deform::{
     DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, deform_slot_params_byte_offset,
 };
@@ -59,6 +62,10 @@ pub use self::types::ClipVolumeUniform;
 pub(crate) use self::types::ScatterViewportState;
 #[allow(deprecated)]
 pub use self::types::ViewportGpuResources;
+pub use self::memory::vram_budget;
+// GlyphBaseMesh and OverlayUniform are re-exported for crate-internal use even
+// though their current consumers reference them through their domain modules.
+#[allow(unused_imports)]
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ContactShadowUniform,
     CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
@@ -92,6 +99,5 @@ pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
 };
-pub use self::vram::vram_budget;
 pub use crate::renderer::GpuImplicitItem;
 pub use crate::renderer::GpuMarchingCubesJob;

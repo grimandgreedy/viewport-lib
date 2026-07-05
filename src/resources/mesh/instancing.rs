@@ -1054,3 +1054,237 @@ impl DeviceResources {
         })
     }
 }
+
+/// Per-object uniform: world transform, material properties, selection state, and wireframe mode.
+///
+/// Layout (256 bytes, 16-byte aligned):
+/// - model:                    [[f32;4];4] = 64 bytes  offset   0
+/// - colour:                     [f32;4]   = 16 bytes  offset  64  (base_colour.xyz + opacity)
+/// - selected:                   u32      =  4 bytes  offset  80
+/// - wireframe:                  u32      =  4 bytes  offset  84
+/// - ambient:                    f32      =  4 bytes  offset  88
+/// - diffuse:                    f32      =  4 bytes  offset  92
+/// - specular:                   f32      =  4 bytes  offset  96
+/// - shininess:                  f32      =  4 bytes  offset 100
+/// - has_texture:                u32      =  4 bytes  offset 104
+/// - use_pbr:                    u32      =  4 bytes  offset 108
+/// - metallic:                   f32      =  4 bytes  offset 112
+/// - roughness:                  f32      =  4 bytes  offset 116
+/// - has_normal_map:             u32      =  4 bytes  offset 120
+/// - has_ao_map:                 u32      =  4 bytes  offset 124
+/// - has_attribute:              u32      =  4 bytes  offset 128
+/// - scalar_min:                 f32      =  4 bytes  offset 132
+/// - scalar_max:                 f32      =  4 bytes  offset 136
+/// - _pad_scalar:                u32      =  4 bytes  offset 140
+/// - nan_colour:                 [f32;4]   = 16 bytes  offset 144
+/// - use_nan_colour:              u32      =  4 bytes  offset 160
+/// - use_matcap:                 u32      =  4 bytes  offset 164
+/// - matcap_blendable:           u32      =  4 bytes  offset 168
+/// - unlit:                      u32      =  4 bytes  offset 172
+/// - use_face_colour:             u32      =  4 bytes  offset 176
+/// - uv_vis_mode:                u32      =  4 bytes  offset 180  (0=off 1=checker 2=grid 3=localcheck 4=localrad)
+/// - uv_vis_scale:               f32      =  4 bytes  offset 184
+/// - backface_policy:            u32      =  4 bytes  offset 188  (0=Cull 1=Identical 2=DifferentColour)
+/// - backface_colour:            [f32;4]   = 16 bytes  offset 192
+/// - has_warp:                   u32      =  4 bytes  offset 208
+/// - warp_scale:                 f32      =  4 bytes  offset 212
+/// - has_position_override:      u32      =  4 bytes  offset 216
+/// - has_normal_override:        u32      =  4 bytes  offset 220
+/// - emissive:                   [f32;3]  = 12 bytes  offset 224
+/// - use_flat:                   u32      =  4 bytes  offset 236  (1=flat shading, recover N from world_pos derivatives)
+/// - alpha_mode:                 u32      =  4 bytes  offset 240  (0=Opaque, 1=Mask, 2=Blend)
+/// - alpha_cutoff:               f32      =  4 bytes  offset 244
+/// - has_metallic_roughness_tex: u32      =  4 bytes  offset 248
+/// - has_emissive_tex:           u32      =  4 bytes  offset 252
+/// - uv_transform:               [f32;4]  = 16 bytes  offset 256  (offset.xy, scale.xy)
+/// - deform_flags:               u32      =  4 bytes  offset 272  (bit i = deformer slot i active)
+/// - _pad_after_deform:          u32      =  4 bytes  offset 276  (align next vec2 to 8)
+/// - ao_range:                   [f32;2]  =  8 bytes  offset 280
+/// - metallic_range:             [f32;2]  =  8 bytes  offset 288
+/// - roughness_range:            [f32;2]  =  8 bytes  offset 296
+/// Total: 304 bytes
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ObjectUniform {
+    pub(crate) model: [[f32; 4]; 4], //  64 bytes, offset   0
+    pub(crate) colour: [f32; 4],     //  16 bytes, offset  64
+    pub(crate) selected: u32,        //   4 bytes, offset  80
+    pub(crate) wireframe: u32,       //   4 bytes, offset  84
+    pub(crate) ambient: f32,         //   4 bytes, offset  88
+    pub(crate) diffuse: f32,         //   4 bytes, offset  92
+    pub(crate) specular: f32,        //   4 bytes, offset  96
+    pub(crate) shininess: f32,       //   4 bytes, offset 100
+    pub(crate) has_texture: u32,     //   4 bytes, offset 104
+    pub(crate) use_pbr: u32,         //   4 bytes, offset 108
+    pub(crate) metallic: f32,        //   4 bytes, offset 112
+    pub(crate) roughness: f32,       //   4 bytes, offset 116
+    pub(crate) has_normal_map: u32,  //   4 bytes, offset 120
+    pub(crate) has_ao_map: u32,      //   4 bytes, offset 124
+    pub(crate) has_attribute: u32,   //   4 bytes, offset 128
+    pub(crate) scalar_min: f32,      //   4 bytes, offset 132
+    pub(crate) scalar_max: f32,      //   4 bytes, offset 136
+    /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
+    /// Wired from `ItemSettings.receive_shadows`.
+    pub(crate) receive_shadows: u32, //   4 bytes, offset 140
+    pub(crate) nan_colour: [f32; 4], //  16 bytes, offset 144
+    pub(crate) use_nan_colour: u32,  //   4 bytes, offset 160
+    pub(crate) use_matcap: u32,      //   4 bytes, offset 164
+    pub(crate) matcap_blendable: u32, //   4 bytes, offset 168
+    pub(crate) unlit: u32,           //   4 bytes, offset 172
+    pub(crate) use_face_colour: u32, //   4 bytes, offset 176
+    pub(crate) uv_vis_mode: u32,     //   4 bytes, offset 180
+    pub(crate) uv_vis_scale: f32,    //   4 bytes, offset 184
+    pub(crate) backface_policy: u32, //   4 bytes, offset 188  (0=Cull 1=Identical 2=DifferentColour)
+    pub(crate) backface_colour: [f32; 4], //  16 bytes, offset 192
+    pub(crate) has_warp: u32,        //   4 bytes, offset 208
+    pub(crate) warp_scale: f32,      //   4 bytes, offset 212
+    /// 1 when a per-vertex position storage buffer is bound at group 1 binding 13.
+    /// Wired from `GpuMesh::position_override_buffer.is_some()`.
+    pub(crate) has_position_override: u32, //   4 bytes, offset 216
+    /// 1 when a per-vertex normal storage buffer is bound at group 1 binding 14.
+    pub(crate) has_normal_override: u32, //   4 bytes, offset 220
+    pub(crate) emissive: [f32; 3],   //  12 bytes, offset 224
+    /// 1 = recover the shading normal from screen-space derivatives of
+    /// `world_pos` (`ShadingModel::Flat`); 0 = use the interpolated vertex
+    /// normal (or TBN normal map when bound).
+    pub(crate) use_flat: u32, //   4 bytes, offset 236
+    pub(crate) alpha_mode: u32,      //   4 bytes, offset 240  (0=Opaque, 1=Mask, 2=Blend)
+    pub(crate) alpha_cutoff: f32,    //   4 bytes, offset 244
+    pub(crate) has_metallic_roughness_tex: u32, //   4 bytes, offset 248
+    pub(crate) has_emissive_tex: u32, //   4 bytes, offset 252
+    /// Per-material UV transform applied to every texture sample.
+    /// `[offset_x, offset_y, scale_x, scale_y]`. Defaults to `(0, 0, 1, 1)`
+    /// (identity). Lets atlas-packed materials share one mesh instance.
+    pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 256
+    /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
+    /// no deformer registry has attached data for this mesh.
+    pub(crate) deform_flags: u32, //   4 bytes, offset 272
+    pub(crate) _pad_after_deform: u32, //   4 bytes, offset 276 (align next vec2 to 8)
+    /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
+    /// Mirrors `Material::ao_range`.
+    pub(crate) ao_range: [f32; 2], //   8 bytes, offset 280
+    /// Min/max remap applied to the metallic sample (B channel of the MR
+    /// texture). Identity `[0, 1]`. Mirrors `Material::metallic_range`.
+    pub(crate) metallic_range: [f32; 2], //   8 bytes, offset 288
+    /// Min/max remap applied to the roughness sample (G channel of the MR
+    /// texture). Identity `[0, 1]`. Mirrors `Material::roughness_range`.
+    pub(crate) roughness_range: [f32; 2], //   8 bytes, offset 296
+}
+
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 304);
+/// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
+///
+/// Layout: 176 bytes.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct InstanceData {
+    pub(crate) model: [[f32; 4]; 4], //  64 bytes, offset   0
+    pub(crate) colour: [f32; 4],     //  16 bytes, offset  64
+    pub(crate) selected: u32,        //   4 bytes, offset  80
+    pub(crate) wireframe: u32,       //   4 bytes, offset  84
+    pub(crate) ambient: f32,         //   4 bytes, offset  88
+    pub(crate) diffuse: f32,         //   4 bytes, offset  92
+    pub(crate) specular: f32,        //   4 bytes, offset  96
+    pub(crate) shininess: f32,       //   4 bytes, offset 100
+    pub(crate) has_texture: u32,     //   4 bytes, offset 104
+    pub(crate) use_pbr: u32,         //   4 bytes, offset 108
+    pub(crate) metallic: f32,        //   4 bytes, offset 112
+    pub(crate) roughness: f32,       //   4 bytes, offset 116
+    pub(crate) has_normal_map: u32,  //   4 bytes, offset 120
+    pub(crate) has_ao_map: u32,      //   4 bytes, offset 124
+    pub(crate) unlit: u32,           //   4 bytes, offset 128
+    /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
+    pub(crate) receive_shadows: u32, //   4 bytes, offset 132
+    /// 1 = recover the shading normal from screen-space derivatives of
+    /// `world_pos` (`ShadingModel::Flat`).
+    pub(crate) use_flat: u32, //   4 bytes, offset 136
+    pub(crate) _pad_inst: u32,       //   4 bytes, offset 140
+    /// Per-material UV transform; mirrors `ObjectUniform::uv_transform`.
+    /// `[offset_x, offset_y, scale_x, scale_y]`.
+    pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 144
+    /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
+    /// Mirrors `Material::ao_range`. The instanced mesh shaders do not sample
+    /// the MR texture today, so `metallic_range` / `roughness_range` are
+    /// intentionally absent from `InstanceData`.
+    pub(crate) ao_range: [f32; 2], //   8 bytes, offset 160
+    pub(crate) _pad_ao_range: [f32; 2], //  8 bytes, offset 168 (struct stride to 16B)
+}
+
+const _: () = assert!(std::mem::size_of::<InstanceData>() == 176);
+/// Per-instance GPU data for the object-ID pick pass.
+///
+/// Stores only the model matrix and a sentinel object ID : none of the material
+/// fields needed by the full [`InstanceData`] struct.
+///
+/// Layout (80 bytes):
+/// - model_c0..model_c3: vec4<f32> x 4 = 64 bytes (model matrix, column-major)
+/// - object_id: u32                     =  4 bytes  (sentinel: scene_items_index + 1)
+/// - _pad: [u32; 3]                     = 12 bytes  (align to 16)
+/// Total: 80 bytes
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct PickInstance {
+    pub(crate) model_c0: [f32; 4],
+    pub(crate) model_c1: [f32; 4],
+    pub(crate) model_c2: [f32; 4],
+    pub(crate) model_c3: [f32; 4],
+    pub(crate) object_id: u32,
+    pub(crate) _pad: [u32; 3],
+}
+
+const _: () = assert!(std::mem::size_of::<PickInstance>() == 80);
+/// Per-instance world-space AABB, uploaded to GPU for the compute cull pass.
+///
+/// Layout (32 bytes):
+/// - min:         [f32; 3] = 12 bytes, offset  0
+/// - batch_index: u32      =  4 bytes, offset 12 (index into batch_meta_buf)
+/// - max:         [f32; 3] = 12 bytes, offset 16
+/// - _pad:        u32      =  4 bytes, offset 28
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct InstanceAabb {
+    pub(crate) min: [f32; 3],
+    pub(crate) batch_index: u32,
+    pub(crate) max: [f32; 3],
+    /// 1 = item participates in shadow casting, 0 = skipped during shadow cull.
+    pub(crate) cast_shadows: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);
+/// Per-batch metadata read by the GPU cull pass.
+///
+/// One entry per batch in the `batch_meta` storage buffer attached to a
+/// [`CullSubmission`](crate::plugin_api::CullSubmission). Layout (32 bytes,
+/// 16-byte aligned):
+///
+/// - `index_count`:     `u32` - index range used by this batch's draw
+/// - `first_index`:     `u32` - index buffer offset (typically 0)
+/// - `instance_offset`: `u32` - first instance for this batch in the AABB buffer
+/// - `instance_count`:  `u32` - number of instances belonging to this batch
+/// - `vis_offset`:      `u32` - first slot in the visibility output buffer
+/// - `is_transparent`:  `u32` - `1` marks a transparent batch
+/// - `_pad`:            `[u32; 2]`
+///
+/// `vis_offset` is a prefix sum of `instance_count` across batches; for a
+/// scene where instances are laid out contiguously per batch it equals
+/// `instance_offset`.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct BatchMeta {
+    /// Mesh index count for one instance.
+    pub index_count: u32,
+    /// First index offset into the bound index buffer.
+    pub first_index: u32,
+    /// Offset into the instance AABB buffer where this batch begins.
+    pub instance_offset: u32,
+    /// Number of instances in the batch.
+    pub instance_count: u32,
+    /// First slot in the visibility output buffer this batch writes to.
+    pub vis_offset: u32,
+    /// `1` if the batch is transparent, `0` for opaque.
+    pub is_transparent: u32,
+    /// Padding to keep the struct 16-byte aligned.
+    pub _pad: [u32; 2],
+}
+
+const _: () = assert!(std::mem::size_of::<BatchMeta>() == 32);

@@ -542,3 +542,21 @@ mod tests {
         ));
     }
 }
+
+/// Per-frame GPU data for one point cloud item, created in `prepare()`.
+#[derive(Clone)]
+pub struct PointCloudGpuData {
+    /// Vertex buffer: one entry per point, packed as `[position: vec3, _pad: f32]` (16 bytes).
+    /// The shader reads colour/scalar from storage buffers indexed by `vertex_index`.
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    /// Number of points (= draw count).
+    pub(crate) point_count: u32,
+    /// Bind group (group 1): uniform + LUT + sampler + scalar + colour + radius + transparency.
+    pub(crate) bind_group: wgpu::BindGroup,
+    // Keep the buffers alive for the lifetime of this struct.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _scalar_buf: wgpu::Buffer,
+    pub(crate) _colour_buf: wgpu::Buffer,
+    pub(crate) _radius_buf: wgpu::Buffer,
+    pub(crate) _transparency_buf: wgpu::Buffer,
+}

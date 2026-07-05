@@ -1,9 +1,6 @@
 //! Lazy pipeline creation for SDF overlay shapes.
 
 use crate::renderer::OverlayTextureId;
-use crate::resources::types::{
-    OverlayShapeTexVertex, OverlayShapeTextureEntry, OverlayShapeVertex,
-};
 
 /// SDF overlay shape pipelines (solid + textured fill) and their shared sampler.
 /// Lazily built on the first frame with non-empty shapes.
@@ -329,13 +326,14 @@ impl crate::resources::DeviceResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut crate::resources::DeviceResources| {
-                        let id = resources
-                            .content
-                            .overlay_textures
-                            .push(OverlayShapeTextureEntry {
-                                _texture: texture,
-                                view,
-                            });
+                        let id =
+                            resources
+                                .content
+                                .overlay_textures
+                                .push(OverlayShapeTextureEntry {
+                                    _texture: texture,
+                                    view,
+                                });
                         slot_for_apply.set(OverlayTextureId(id as u64));
                     }),
                 ))
@@ -450,4 +448,359 @@ impl crate::resources::DeviceResources {
         self.backdrop_blur.sampler = Some(sampler);
         self.backdrop_blur.pipeline = Some(pipeline);
     }
+}
+
+/// Per-vertex data for SDF overlay shapes.
+///
+/// Each shape is a bounding quad (6 vertices). The fragment shader uses
+/// `local_pos` and `half_size` to evaluate a signed-distance function,
+/// producing anti-aliased fill and border.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OverlayShapeVertex {
+    /// NDC position (xy).
+    pub position: [f32; 2],
+    /// Position relative to shape centre, in logical pixels.
+    pub local_pos: [f32; 2],
+    /// RGBA fill colour (pre-multiplied opacity).
+    pub fill_colour: [f32; 4],
+    /// RGBA border colour (pre-multiplied opacity).
+    pub border_colour: [f32; 4],
+    /// Half-extents of the shape bounding box in logical pixels.
+    pub half_size: [f32; 2],
+    /// Shape-specific radii. For RoundedRect: [top-left, top-right,
+    /// bottom-right, bottom-left]. For Rect: uniform radius in [0].
+    /// Unused components are zero.
+    pub radii: [f32; 4],
+    /// Border thickness in logical pixels.
+    pub border_width: f32,
+    /// Encoded shape type: 0 = Rect/RoundedRect, 1 = Circle, 2 = Ellipse, 3 = Capsule.
+    pub shape_type: f32,
+    /// RGBA end colour for linear gradient (equals fill_colour for solid fill).
+    pub fill_colour2: [f32; 4],
+    /// Gradient parameters: `[type, angle, stop_count, _pad]`.
+    /// `type` selects solid/linear/radial/conical; `stop_count` is the
+    /// number of active gradient stops (0 for solid, 2..4 otherwise).
+    pub gradient_params: [f32; 4],
+    /// RGBA shadow colour (pre-multiplied opacity).
+    pub shadow_colour: [f32; 4],
+    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y.
+    pub shadow_params: [f32; 4],
+    /// Clip rectangle in framebuffer pixels (x0, y0, x1, y1). All-zero means
+    /// no clipping. Fragments outside the rect are discarded.
+    pub clip_rect: [f32; 4],
+    /// Rotation around the shape centre in radians. Applied to `local_pos`
+    /// before SDF evaluation so the shape rotates inside its axis-aligned
+    /// bounding box.
+    pub rotation: f32,
+    /// Third gradient colour stop. Unused for 2-stop and solid fills.
+    pub stop_colour_c: [f32; 4],
+    /// Fourth gradient colour stop. Unused for 2-stop and solid fills.
+    pub stop_colour_d: [f32; 4],
+    /// Stop positions in `[0, 1]` along the gradient axis, sorted ascending.
+    /// For 2-stop fills only `[0]` and `[1]` are valid; remaining entries
+    /// are 1.0 sentinels. The active stop count lives in
+    /// `gradient_params[2]`.
+    pub stop_positions: [f32; 4],
+}
+
+impl OverlayShapeVertex {
+    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayShapeVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                // location 0: position vec2f
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 1: local_pos vec2f
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 2: fill_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 3: border_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 4: half_size vec2f
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 5: radii vec4f
+                wgpu::VertexAttribute {
+                    offset: 56,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 6: shape_meta vec2f (border_width, shape_type) -- combined
+                wgpu::VertexAttribute {
+                    offset: 72,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 7: stop_positions vec4f (gradient stop positions)
+                wgpu::VertexAttribute {
+                    offset: 196,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 8: fill_colour2 vec4f (end colour for gradient)
+                wgpu::VertexAttribute {
+                    offset: 80,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 9: gradient_params vec4f (type, angle, stop_count, pad)
+                wgpu::VertexAttribute {
+                    offset: 96,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 10: shadow_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 112,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 11: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
+                wgpu::VertexAttribute {
+                    offset: 128,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 12: clip_rect vec4f (x0, y0, x1, y1 in framebuffer pixels)
+                wgpu::VertexAttribute {
+                    offset: 144,
+                    shader_location: 12,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 13: rotation f32 (radians)
+                wgpu::VertexAttribute {
+                    offset: 160,
+                    shader_location: 13,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // location 14: stop_colour_c vec4f
+                wgpu::VertexAttribute {
+                    offset: 164,
+                    shader_location: 14,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 15: stop_colour_d vec4f
+                wgpu::VertexAttribute {
+                    offset: 180,
+                    shader_location: 15,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+            ],
+        }
+    }
+}
+
+/// Per-vertex data for SDF textured overlay shapes.
+///
+/// Same layout as `OverlayShapeVertex` with an additional UV field at the end.
+/// Used by the texture pipeline; `fill_colour` acts as a tint multiplied with
+/// the sampled texel.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OverlayShapeTexVertex {
+    /// NDC position (xy).
+    pub position: [f32; 2],
+    /// Position relative to shape centre, in logical pixels.
+    pub local_pos: [f32; 2],
+    /// RGBA tint colour (pre-multiplied opacity). Multiplied with texture sample.
+    pub fill_colour: [f32; 4],
+    /// RGBA border colour (pre-multiplied opacity).
+    pub border_colour: [f32; 4],
+    /// Half-extents of the shape bounding box in logical pixels.
+    pub half_size: [f32; 2],
+    /// Shape-specific radii (same encoding as `OverlayShapeVertex`).
+    pub radii: [f32; 4],
+    /// Border thickness in logical pixels.
+    pub border_width: f32,
+    /// Encoded shape type (same values as `OverlayShapeVertex`).
+    pub shape_type: f32,
+    /// Texture UV coordinates. (0,0) = top-left of image, (1,1) = bottom-right.
+    /// Slightly outside [0,1] in the border/AA padding region.
+    pub uv: [f32; 2],
+    /// RGBA shadow colour (pre-multiplied opacity).
+    pub shadow_colour: [f32; 4],
+    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y, w = border_mode.
+    pub shadow_params: [f32; 4],
+    /// Per-shape flags.
+    /// - `x` = is_backdrop_blur (0.0 = regular tinted sample; 1.0 = the bound
+    ///   texture is the scene-blur output composited under the tint).
+    /// - `y` = nine-slice centre tile mode (0 = stretch, 1 = tile).
+    /// - `z` = nine-slice edge tile mode (0 = stretch, 1 = tile).
+    /// - `w` = nine-slice enabled flag (0 = disabled, 1 = enabled).
+    pub extras: [f32; 4],
+    /// Nine-slice insets in texture UV space, `[top, right, bottom, left]`.
+    /// Unused when `extras.w == 0`.
+    pub nine_slice_uv: [f32; 4],
+    /// Nine-slice insets as fractions of the shape's bounding box,
+    /// `[top, right, bottom, left]`. Unused when `extras.w == 0`.
+    pub nine_slice_frac: [f32; 4],
+    /// Texture transform part A: `[offset_x, offset_y, scale_x, scale_y]`.
+    /// `scale = 1.0` is 1:1. Applies when 9-slice is disabled.
+    pub texture_transform_a: [f32; 4],
+    /// Texture transform part B:
+    /// `[rotation_radians, tile_mode (0/1/2), flip_x (0/1), flip_y (0/1)]`.
+    pub texture_transform_b: [f32; 4],
+}
+
+impl OverlayShapeTexVertex {
+    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayShapeTexVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                // location 0: position vec2f
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 1: local_pos vec2f
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 2: fill_colour vec4f (tint)
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 3: border_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 4: half_size vec2f
+                wgpu::VertexAttribute {
+                    offset: 48,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 5: radii vec4f
+                wgpu::VertexAttribute {
+                    offset: 56,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 6: border_width f32
+                wgpu::VertexAttribute {
+                    offset: 72,
+                    shader_location: 6,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // location 7: shape_type f32
+                wgpu::VertexAttribute {
+                    offset: 76,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                // location 8: uv vec2f
+                wgpu::VertexAttribute {
+                    offset: 80,
+                    shader_location: 8,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                // location 9: shadow_colour vec4f
+                wgpu::VertexAttribute {
+                    offset: 88,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 10: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
+                wgpu::VertexAttribute {
+                    offset: 104,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 11: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
+                wgpu::VertexAttribute {
+                    offset: 120,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 12: nine_slice_uv vec4f
+                wgpu::VertexAttribute {
+                    offset: 136,
+                    shader_location: 12,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 13: nine_slice_frac vec4f
+                wgpu::VertexAttribute {
+                    offset: 152,
+                    shader_location: 13,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 14: texture_transform_a vec4f (offset.xy, scale.xy)
+                wgpu::VertexAttribute {
+                    offset: 168,
+                    shader_location: 14,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // location 15: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
+                wgpu::VertexAttribute {
+                    offset: 184,
+                    shader_location: 15,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+            ],
+        }
+    }
+}
+
+/// One batch of textured SDF overlay shapes sharing a single texture.
+pub(crate) struct OverlayShapeTexBatch {
+    pub vertex_buf: wgpu::Buffer,
+    pub vertex_count: u32,
+    pub bind_group: wgpu::BindGroup,
+}
+
+/// Persistent texture entry for an overlay shape texture fill.
+///
+/// Stored in `DeviceResources::overlay_textures`.
+pub(crate) struct OverlayShapeTextureEntry {
+    pub _texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
+
+/// Per-frame GPU data for batched SDF overlay shape rendering.
+pub(crate) struct OverlayShapeGpuData {
+    /// Vertex buffer for solid (non-textured) shapes. `None` when all shapes are textured.
+    pub vertex_buf: Option<wgpu::Buffer>,
+    /// Number of solid vertices. Zero when all shapes are textured.
+    pub vertex_count: u32,
+    /// One batch per unique texture, drawn after solid shapes.
+    pub tex_batches: Vec<OverlayShapeTexBatch>,
+    /// Vertex buffer for backdrop-blur shapes (frosted glass). Uses the same
+    /// vertex layout as `OverlayShapeTexVertex` with screen-space UVs.
+    /// The bind group is created at render time once the blurred scene texture
+    /// is available.
+    pub blur_vertex_buf: Option<wgpu::Buffer>,
+    /// Number of blur backdrop vertices.
+    pub blur_vertex_count: u32,
+    /// Maximum `backdrop_blur` value across all blur shapes this frame.
+    /// Used as the spread parameter for the Gaussian blur passes.
+    pub max_blur_radius: f32,
 }

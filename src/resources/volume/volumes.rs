@@ -866,3 +866,37 @@ mod tests {
             .expect("upload ok");
     }
 }
+
+/// Per-frame GPU data for one volume item, created in `prepare()`.
+pub struct VolumeGpuData {
+    /// Bind group (group 1): volume uniform + 3D texture + sampler + colour LUT + opacity LUT.
+    pub(crate) bind_group: wgpu::BindGroup,
+    /// Vertex buffer for the unit cube bounding box proxy.
+    pub(crate) vertex_buffer: wgpu::Buffer,
+    /// Index buffer for the unit cube (36 indices).
+    pub(crate) index_buffer: wgpu::Buffer,
+    /// Grid dimensions (stored for reference).
+    pub(crate) _dims: [u32; 3],
+    // Keep the uniform buffer alive.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    /// When true, skip the volume ray-march draw; an OBB wireframe polyline is rendered instead.
+    pub(crate) wireframe: bool,
+}
+
+/// Per-frame GPU data for one image slice item, created in `prepare()`.
+pub(crate) struct ImageSliceGpuData {
+    /// Bind group (group 1): uniform + 3D texture + sampler + LUT + LUT sampler.
+    pub(crate) bind_group: wgpu::BindGroup,
+    // Keep buffers/samplers alive.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+}
+
+/// Per-frame GPU data for one volume surface slice item, created in `prepare()`.
+pub(crate) struct VolumeSurfaceSliceGpuData {
+    /// Bind group (group 1): uniform + 3D texture + sampler + LUT + LUT sampler.
+    pub(crate) bind_group: wgpu::BindGroup,
+    // Keep uniform buffer alive.
+    pub(crate) _uniform_buf: wgpu::Buffer,
+    /// Mesh to draw (vertex + index buffers looked up from mesh_store at render time).
+    pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
+}
