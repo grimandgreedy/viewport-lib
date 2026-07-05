@@ -990,6 +990,62 @@ impl ViewportRenderer {
             }
         }
 
+        // 13. Decal rect picks (OBJECT only): project the decal projection box
+        // (unit cube [-0.5, 0.5]^3 mapped by `transform`) and test its corners
+        // and edges against the selection rect. Mirrors the ray-versus-box test
+        // used by the single-item pick so box-select and click agree.
+        if wants_object {
+            // Unit-box corners in (x, y, z) bit order, and the 12 edges joining
+            // corners that differ in exactly one axis.
+            const CORNERS: [[f32; 3]; 8] = [
+                [-0.5, -0.5, -0.5],
+                [0.5, -0.5, -0.5],
+                [-0.5, 0.5, -0.5],
+                [0.5, 0.5, -0.5],
+                [-0.5, -0.5, 0.5],
+                [0.5, -0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+                [0.5, 0.5, 0.5],
+            ];
+            const EDGES: [(usize, usize); 12] = [
+                (0, 1),
+                (0, 2),
+                (0, 4),
+                (1, 3),
+                (1, 5),
+                (2, 3),
+                (2, 6),
+                (3, 7),
+                (4, 5),
+                (4, 6),
+                (5, 7),
+                (6, 7),
+            ];
+            for item in &self.pick_decal_items {
+                if item.settings.hidden || item.settings.pick_id == PickId::NONE {
+                    continue;
+                }
+                let model = glam::Mat4::from_cols_array_2d(&item.transform);
+                if model.determinant().abs() < 1e-12 {
+                    continue;
+                }
+                let mvp = view_proj * model;
+                let sc: [Option<glam::Vec2>; 8] = std::array::from_fn(|i| {
+                    project(mvp, glam::Vec3::from(CORNERS[i])).map(|(x, y)| glam::Vec2::new(x, y))
+                });
+                let hit = sc.iter().any(|p| p.map_or(false, |p| in_rect(p.x, p.y)))
+                    || EDGES.iter().any(|&(a, b)| match (sc[a], sc[b]) {
+                        (Some(a), Some(b)) => segment_in_rect(a, b, rect_min, rect_max),
+                        (Some(a), None) => in_rect(a.x, a.y),
+                        (None, Some(b)) => in_rect(b.x, b.y),
+                        (None, None) => false,
+                    });
+                if hit {
+                    result.objects.push(item.settings.pick_id.0);
+                }
+            }
+        }
+
         result
     }
 }
