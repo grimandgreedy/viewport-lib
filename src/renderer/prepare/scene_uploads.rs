@@ -550,7 +550,11 @@ impl ViewportRenderer {
                 let key = crate::resources::decal::hash_decal_item(&effective);
                 match decal_cache.entry(key) {
                     std::collections::hash_map::Entry::Occupied(e) => {
-                        decal_gpu_data.push(e.get().clone());
+                        // `selected` is not part of the cache key, so refresh it
+                        // on the reused clone to reflect this frame's selection.
+                        let mut gpu = e.get().clone();
+                        gpu.selected = effective.settings.selected;
+                        decal_gpu_data.push(gpu);
                         decal_stats.reused += 1;
                     }
                     std::collections::hash_map::Entry::Vacant(e) => {

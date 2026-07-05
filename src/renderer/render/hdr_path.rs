@@ -294,6 +294,7 @@ impl ViewportRenderer {
         self.hdr_sprite_passes(&ctx, &mut encoder);
         self.hdr_ssaa_refraction(&ctx, &mut encoder);
         self.hdr_decals(&ctx, &mut encoder);
+        self.hdr_decal_outline(&ctx, &mut encoder);
         self.hdr_sub_highlight(&ctx, &mut encoder);
         self.hdr_oit(&ctx, &mut encoder);
         self.hdr_scatter(&ctx, &mut encoder);
@@ -1712,6 +1713,166 @@ impl ViewportRenderer {
                     }
                 }
             }
+        }
+    }
+
+    /// Trace an anti-aliased ring around the footprint of selected decals.
+    ///
+    /// Runs after the decal colour pass so the scene depth the decal projects
+    /// against already exists. Selected decals are stamped into a transient R8
+    /// mask (reusing the colour pass's coverage math and bind groups), then a
+    /// fullscreen edge-detect blends the outline ring onto the HDR target. Does
+    /// nothing when no decal is selected, so the common case pays no cost.
+    fn hdr_decal_outline(&mut self, ctx: &HdrFrameCtx, encoder: &mut wgpu::CommandEncoder) {
+        if !self.decal_gpu_data.iter().any(|g| g.selected) {
+            return;
+        }
+
+        let vp_idx = ctx.vp_idx;
+        let device = ctx.device;
+
+        let (target_w, target_h) = {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            (
+                slot_hdr.hdr_texture.width().max(1),
+                slot_hdr.hdr_texture.height().max(1),
+            )
+        };
+
+        self.resources.ensure_decal_outline_pipelines(device);
+        self.resources
+            .ensure_decal_outline_targets(device, target_w, target_h);
+
+        let (Some(mask_pl), Some(edge_pl), Some(targets)) = (
+            self.resources.decal.outline_mask_pipeline.as_ref(),
+            self.resources.decal.outline_edge_pipeline.as_ref(),
+            self.resources.decal.outline_targets.as_ref(),
+        ) else {
+            return;
+        };
+
+        // Refresh the edge uniform in place; the target set (mask texture, view,
+        // buffer, bind group) is reused frame to frame and rebuilt only when the
+        // viewport size changes, so the pass allocates nothing per frame.
+        let edge_uniform = crate::resources::OutlineEdgeUniform {
+            colour: ctx.frame.interaction.outline_colour,
+            radius: ctx.frame.interaction.outline_width_px,
+            viewport_w: target_w as f32,
+            viewport_h: target_h as f32,
+            _pad: 0.0,
+        };
+        ctx.queue.write_buffer(
+            &targets.edge_uniform_buf,
+            0,
+            bytemuck::cast_slice(&[edge_uniform]),
+        );
+
+        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+        let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
+        let depth_bg = &slot_hdr.decal_depth_bg;
+
+        // Accumulate the selected decals' screen AABB while stamping the mask, so
+        // the edge pass runs only over that region instead of the whole frame.
+        let mut union: Option<(i32, i32, i32, i32)> = None;
+        let mut any_full = false;
+
+        // Mask pass: stamp each selected decal's footprint.
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("decal_outline_mask_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &targets.mask_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(mask_pl);
+            pass.set_bind_group(0, camera_bg, &[]);
+            pass.set_bind_group(1, depth_bg, &[]);
+            let view_proj = ctx.frame.camera.render_camera.view_proj();
+            for gpu in &self.decal_gpu_data {
+                if !gpu.selected {
+                    continue;
+                }
+                match decal_scissor(&gpu.model, &view_proj, target_w, target_h) {
+                    DecalScissor::Skip => continue,
+                    DecalScissor::Full => {
+                        any_full = true;
+                        pass.set_scissor_rect(0, 0, target_w, target_h);
+                    }
+                    DecalScissor::Rect(x, y, w, h) => {
+                        let (x0, y0, x1, y1) = (x as i32, y as i32, (x + w) as i32, (y + h) as i32);
+                        union = Some(match union {
+                            Some((ux0, uy0, ux1, uy1)) => {
+                                (ux0.min(x0), uy0.min(y0), ux1.max(x1), uy1.max(y1))
+                            }
+                            None => (x0, y0, x1, y1),
+                        });
+                        pass.set_scissor_rect(x, y, w, h);
+                    }
+                }
+                pass.set_bind_group(2, &gpu.bind_group, &[]);
+                pass.draw(0..6, 0..1);
+            }
+        }
+
+        // Every selected decal projected off screen: nothing to outline.
+        if !any_full && union.is_none() {
+            return;
+        }
+        // Bound the edge pass to the decals' screen AABB, expanded by the outline
+        // width. A decal straddling the near plane (Full) falls back to fullscreen.
+        let edge_rect = if any_full {
+            None
+        } else {
+            union.map(|(x0, y0, x1, y1)| {
+                let m = ctx.frame.interaction.outline_width_px.ceil() as i32 + 2;
+                let cx0 = (x0 - m).clamp(0, target_w as i32);
+                let cy0 = (y0 - m).clamp(0, target_h as i32);
+                let cx1 = (x1 + m).clamp(0, target_w as i32);
+                let cy1 = (y1 + m).clamp(0, target_h as i32);
+                (
+                    cx0 as u32,
+                    cy0 as u32,
+                    (cx1 - cx0).max(0) as u32,
+                    (cy1 - cy0).max(0) as u32,
+                )
+            })
+        };
+
+        // Edge pass: ring edge-detect blended onto the HDR colour target.
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("decal_outline_edge_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &slot_hdr.hdr_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(edge_pl);
+            pass.set_bind_group(0, &targets.edge_bind_group, &[]);
+            if let Some((x, y, w, h)) = edge_rect {
+                if w == 0 || h == 0 {
+                    return;
+                }
+                pass.set_scissor_rect(x, y, w, h);
+            }
+            pass.draw(0..3, 0..1);
         }
     }
 

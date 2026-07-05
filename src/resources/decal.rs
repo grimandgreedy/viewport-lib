@@ -54,6 +54,9 @@ pub(crate) struct DecalGpuItem {
     /// to compute a per-decal scissor rect so the fullscreen decal quad only
     /// shades the decal's screen footprint instead of the whole framebuffer.
     pub model: glam::Mat4,
+    /// Whether this decal is selected. Selected decals contribute to the decal
+    /// outline mask so a ring is traced around their footprint.
+    pub selected: bool,
 }
 
 /// Per-draw GPU data for one non-receiver surface in the decal exclude pass (D5).
@@ -175,6 +178,34 @@ pub(crate) struct DecalResources {
     pub(crate) exclude_pipeline: Option<wgpu::RenderPipeline>,
     /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
     pub(crate) exclude_obj_bgl: Option<wgpu::BindGroupLayout>,
+    /// Pipeline that stamps a selected decal's footprint into the R8 outline
+    /// mask. Reuses the decal colour pass's bind groups (camera, depth+stencil,
+    /// per-decal uniform). None until first selected decal is submitted.
+    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    /// Fullscreen edge-detect pipeline that traces the outline ring from the
+    /// decal outline mask onto the HDR colour target with alpha blending.
+    pub(crate) outline_edge_pipeline: Option<wgpu::RenderPipeline>,
+    /// BGL for the edge-detect pass: mask texture + sampler + edge uniform.
+    pub(crate) outline_edge_bgl: Option<wgpu::BindGroupLayout>,
+    /// Cached outline-mask target and edge bind group, rebuilt only when the
+    /// viewport size changes so the outline pass allocates nothing per frame.
+    pub(crate) outline_targets: Option<DecalOutlineTargets>,
+}
+
+/// Persistent GPU resources for the decal outline pass, keyed by viewport size.
+/// Only the edge uniform contents change per frame (refreshed with
+/// `queue.write_buffer`); the texture, view, buffer, and bind group are reused.
+pub(crate) struct DecalOutlineTargets {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    /// R8 mask the selected decals stamp their footprint into.
+    pub(crate) mask_view: wgpu::TextureView,
+    /// Retained so the view stays valid; not read directly.
+    pub(crate) _mask_tex: wgpu::Texture,
+    /// Edge-detect uniform (outline colour, width, viewport size).
+    pub(crate) edge_uniform_buf: wgpu::Buffer,
+    /// Edge-detect bind group: mask view + sampler + edge uniform.
+    pub(crate) edge_bind_group: wgpu::BindGroup,
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +343,143 @@ impl DeviceResources {
         });
     }
 
+    /// Lazily create the decal outline mask + edge-detect pipelines.
+    ///
+    /// No-op if already created. Requires `ensure_decal_pipeline` to have run
+    /// first (it creates `item_bgl`) and `depth_bgl` to exist (created by
+    /// `ensure_hdr_shared`). The mask pipeline reuses the decal colour pass's
+    /// three bind groups, so no new per-decal resources are needed.
+    pub(crate) fn ensure_decal_outline_pipelines(&mut self, device: &wgpu::Device) {
+        if self.decal.outline_mask_pipeline.is_some() {
+            return;
+        }
+
+        let (Some(depth_bgl), Some(item_bgl)) =
+            (self.decal.depth_bgl.as_ref(), self.decal.item_bgl.as_ref())
+        else {
+            return;
+        };
+
+        // Mask pipeline: stamp the decal footprint into an R8 mask.
+        let mask_shader = crate::resources::builders::wgsl_module(
+            device,
+            "decal_outline_mask_shader",
+            crate::resources::builders::wgsl_source!("decal_outline_mask"),
+        );
+        let mask_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("decal_outline_mask_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, depth_bgl, item_bgl],
+            push_constant_ranges: &[],
+        });
+        let mask_pipeline = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "decal_outline_mask_pipeline",
+            &mask_layout,
+            &mask_shader,
+            crate::resources::MASK_COLOR_FORMAT,
+            None,
+        );
+
+        // Edge pipeline: ring edge-detect over the mask, blended onto HDR.
+        let edge_shader = crate::resources::builders::wgsl_module(
+            device,
+            "decal_outline_edge_shader",
+            crate::resources::builders::wgsl_source!("outline_edge"),
+        );
+        let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("decal_outline_edge_bgl"),
+            entries: &[
+                crate::resources::builders::texture_entry(0, wgpu::ShaderStages::FRAGMENT),
+                crate::resources::builders::sampler_entry(1, wgpu::ShaderStages::FRAGMENT),
+                crate::resources::builders::uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
+            ],
+        });
+        let edge_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("decal_outline_edge_layout"),
+            bind_group_layouts: &[&edge_bgl],
+            push_constant_ranges: &[],
+        });
+        let edge_pipeline = crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            "decal_outline_edge_pipeline",
+            &edge_layout,
+            &edge_shader,
+            wgpu::TextureFormat::Rgba16Float,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+        );
+
+        self.decal.outline_mask_pipeline = Some(mask_pipeline);
+        self.decal.outline_edge_pipeline = Some(edge_pipeline);
+        self.decal.outline_edge_bgl = Some(edge_bgl);
+    }
+
+    /// Ensure the persistent decal-outline mask target and edge bind group exist
+    /// at `(w, h)`, rebuilding only when the size changes. This keeps the outline
+    /// pass allocation-free per frame: only the edge uniform contents are
+    /// refreshed (by the caller, via `queue.write_buffer`). Call after
+    /// `ensure_decal_outline_pipelines`.
+    pub(crate) fn ensure_decal_outline_targets(&mut self, device: &wgpu::Device, w: u32, h: u32) {
+        if let Some(t) = &self.decal.outline_targets {
+            if t.width == w && t.height == h {
+                return;
+            }
+        }
+        let (Some(edge_bgl), Some(sampler)) = (
+            self.decal.outline_edge_bgl.as_ref(),
+            self.decal.sampler.as_ref(),
+        ) else {
+            return;
+        };
+
+        let mask_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("decal_outline_mask_tex"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: crate::resources::MASK_COLOR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let mask_view = mask_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let edge_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("decal_outline_edge_uniform_buf"),
+            size: std::mem::size_of::<crate::resources::OutlineEdgeUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let edge_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("decal_outline_edge_bg"),
+            layout: edge_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&mask_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: edge_uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.decal.outline_targets = Some(DecalOutlineTargets {
+            width: w,
+            height: h,
+            mask_view,
+            _mask_tex: mask_tex,
+            edge_uniform_buf,
+            edge_bind_group,
+        });
+    }
+
     /// Create the per-viewport depth+stencil bind group used by the decal pass.
     ///
     /// Must be called after `ensure_hdr_shared` (which creates `decal_depth_bgl`).
@@ -429,6 +597,7 @@ impl DeviceResources {
             _uniform_buf: uniform_buf,
             bind_group,
             model,
+            selected: item.settings.selected,
         }
     }
 
