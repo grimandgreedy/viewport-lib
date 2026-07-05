@@ -1800,6 +1800,26 @@ impl ResidentBytes {
     }
 }
 
+/// Hardware VRAM figures for the GPU a viewport runs on, from
+/// [`vram_budget`](crate::resources::vram_budget).
+///
+/// Pair this with [`ResidentBytes`] to drive an eviction budget: pick a ceiling
+/// as a fraction of `total_bytes` and free resources (`free_mesh` /
+/// `free_texture` / `free_lod_group`) as [`ResidentBytes::total`] approaches it.
+///
+/// `total_bytes` is the total device-local VRAM the backend reports and is
+/// available everywhere. `available_bytes` is the backend's live free-memory
+/// estimate: `Some` on Metal, and `None` on Vulkan, whose live figure needs
+/// `VK_EXT_memory_budget`, which wgpu does not enable. When it is `None`, size
+/// the budget against `total_bytes` and track usage with `ResidentBytes`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VramBudget {
+    /// Total device-local VRAM in bytes.
+    pub total_bytes: u64,
+    /// Backend-reported free VRAM in bytes, where available.
+    pub available_bytes: Option<u64>,
+}
+
 // ---------------------------------------------------------------------------
 // GpuMesh: per-object GPU buffers
 // ---------------------------------------------------------------------------
@@ -2095,7 +2115,8 @@ pub(crate) struct GaussianSplatDrawData {
 /// rather than aliasing the set now in its slot. An entry's byte charge is its
 /// [`GaussianSplatGpuSet::gpu_bytes`].
 pub(crate) struct GaussianSplatStore {
-    store: crate::resources::handle::SlotStore<GaussianSplatGpuSet, crate::renderer::GaussianSplatId>,
+    store:
+        crate::resources::handle::SlotStore<GaussianSplatGpuSet, crate::renderer::GaussianSplatId>,
 }
 
 impl GaussianSplatStore {

@@ -256,8 +256,8 @@ pub use resources::{
     ComputeFilterResult, DeviceResources, FontError, FontHandle, GpuImplicitItem,
     GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId,
     LightUniform, LightsUniform, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes,
-    SingleLightUniform, TextureId, TextureMemoryStats, UploadStatus, VolumeId, lerp_attributes,
-    supports_texture_format,
+    SingleLightUniform, TextureId, TextureMemoryStats, UploadStatus, VolumeId, VramBudget,
+    lerp_attributes, supports_texture_format, vram_budget,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,

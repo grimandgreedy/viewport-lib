@@ -27,6 +27,14 @@ thiserror = "2.0"
 tracing = { version = "0.1", features = ["log"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 
+# Native handles for the hardware VRAM budget query (`resources::vram_budget`).
+# Versions must match the ones wgpu-hal 27 resolves so the raw types are identical.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+metal = "0.32"
+
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+ash = "0.38"
+
 [features]
 default = ["serde"]
 serde = ["dep:serde", "glam/serde", "bitflags/serde"]

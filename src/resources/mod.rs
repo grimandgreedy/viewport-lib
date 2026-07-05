@@ -23,6 +23,7 @@ mod types;
 pub mod upload_jobs;
 /// Volume, implicit-surface, marching-cubes, and unstructured volume-mesh resources.
 pub mod volume;
+mod vram;
 
 pub use self::extra_impls::{ComputeFilterResult, lerp_attributes};
 use self::extra_impls::{
@@ -77,7 +78,7 @@ pub use self::types::{
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, DeviceResources, GpuMesh,
     GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
     PointCloudGpuData, PolylineGpuData, ProjectedTetId, ResidentBytes, ScreenImageGpuData,
-    SingleLightUniform, TextureMemoryStats, Vertex, VolumeGpuData, VolumeId,
+    SingleLightUniform, TextureMemoryStats, Vertex, VolumeGpuData, VolumeId, VramBudget,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
@@ -91,5 +92,6 @@ pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{
     CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
 };
+pub use self::vram::vram_budget;
 pub use crate::renderer::GpuImplicitItem;
 pub use crate::renderer::GpuMarchingCubesJob;

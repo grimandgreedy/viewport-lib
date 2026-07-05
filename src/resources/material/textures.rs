@@ -391,6 +391,22 @@ impl DeviceResources {
         }
     }
 
+    /// Query the GPU's device-local VRAM budget for `device`.
+    ///
+    /// A thin wrapper over [`vram_budget`](crate::resources::vram_budget) so the
+    /// hardware total sits next to [`resident_bytes`](Self::resident_bytes): a
+    /// policy sizes an eviction budget as a fraction of `total_bytes` and
+    /// compares [`ResidentBytes::total`](crate::resources::ResidentBytes::total)
+    /// against it. Returns `None` on backends that cannot be introspected. See
+    /// [`VramBudget`](crate::resources::VramBudget) for what `available_bytes`
+    /// reports per backend.
+    pub fn vram_budget(
+        &self,
+        device: &wgpu::Device,
+    ) -> Option<crate::resources::types::VramBudget> {
+        crate::resources::vram::vram_budget(device)
+    }
+
     /// Release a user-uploaded texture, reclaiming its slot and GPU memory.
     ///
     /// Drops the `GpuTexture` (wgpu defers the real free until in-flight
