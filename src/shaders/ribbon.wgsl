@@ -69,31 +69,7 @@ struct ClipVolumeUB {
 @group(1) @binding(1) var          ribbon_texture: texture_2d<f32>;
 @group(1) @binding(2) var          ribbon_sampler: sampler;
 
-fn clip_volume_test(p: vec3<f32>) -> bool {
-    for (var i = 0u; i < clip_volume.count; i = i + 1u) {
-        let e = clip_volume.volumes[i];
-        if e.volume_type == 2u {
-            let d = p - e.center;
-            let local = vec3<f32>(dot(d, e.col0), dot(d, e.col1), dot(d, e.col2));
-            if abs(local.x) > e.half_extents.x
-                || abs(local.y) > e.half_extents.y
-                || abs(local.z) > e.half_extents.z {
-                return false;
-            }
-        } else if e.volume_type == 3u {
-            let ds = p - e.center;
-            if dot(ds, ds) > e.radius * e.radius { return false; }
-        } else if e.volume_type == 4u {
-            let axis = e.col0;
-            let d = p - e.center;
-            let along = dot(d, axis);
-            if abs(along) > e.half_extents.x { return false; }
-            let radial = d - axis * along;
-            if dot(radial, radial) > e.radius * e.radius { return false; }
-        }
-    }
-    return true;
-}
+// #include "clip_volume_test.wgsl"
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
