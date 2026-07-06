@@ -317,26 +317,31 @@ impl ViewportRenderer {
                 self.ts_resolve_buf.as_ref(),
                 self.ts_staging_buf.as_ref(),
             ) {
-                let ts_count = 2 * crate::renderer::GPU_TS_SLOTS;
                 let written = self
                     .ts_written_mask
                     .load(std::sync::atomic::Ordering::Relaxed);
-                // Resolving a timestamp query no pass wrote this frame is
-                // undefined in Vulkan and corrupts the command stream on some
-                // drivers (NVIDIA Linux). Fill skipped slots so the whole range
-                // is valid; the reader masks by ts_pending_mask.
-                if self.ts_can_fill_gaps {
-                    for slot in 0..crate::renderer::GPU_TS_SLOTS {
-                        if written & (1 << slot) == 0 {
-                            encoder.write_timestamp(qs, slot * 2);
-                            encoder.write_timestamp(qs, slot * 2 + 1);
-                        }
-                    }
+                // Resolve only the contiguous run of slots starting at the scene
+                // slot (slot 0, always written this frame). Resolving a slot no
+                // pass wrote is undefined in Vulkan and corrupts the command
+                // stream on some drivers (NVIDIA Linux); the previous fix filled
+                // skipped slots with extra write_timestamp calls between passes,
+                // but that hangs Apple Metal, whose stage-boundary counters
+                // cannot sample inside encoders and route the deferred writes
+                // through a broken blit path. A contiguous prefix sidesteps both:
+                // the scene time behind gpu_frame_ms is always covered, and any
+                // leading breakdown slots come along for free. The reader masks
+                // results by ts_pending_mask, so trailing skipped slots read 0.
+                let mut prefix = 0u32;
+                while prefix < crate::renderer::GPU_TS_SLOTS && written & (1 << prefix) != 0 {
+                    prefix += 1;
                 }
-                encoder.resolve_query_set(qs, 0..ts_count, res_buf, 0);
-                encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, ts_count as u64 * 8);
-                self.ts_pending_mask = written;
-                self.ts_data_ready = true;
+                if prefix > 0 {
+                    let ts_count = prefix * 2;
+                    encoder.resolve_query_set(qs, 0..ts_count, res_buf, 0);
+                    encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, ts_count as u64 * 8);
+                    self.ts_pending_mask = (1 << prefix) - 1;
+                    self.ts_data_ready = true;
+                }
             }
         }
 

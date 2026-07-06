@@ -708,12 +708,6 @@ impl ViewportRenderer {
                 mapped_at_creation: false,
             }));
             self.ts_period = queue.get_timestamp_period();
-            // Gap-filling skipped slots before resolve needs encoder-level
-            // timestamp writes. Without it we fall back to resolving the whole
-            // range, which is undefined for unwritten queries on some drivers.
-            self.ts_can_fill_gaps = device
-                .features()
-                .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
         }
 
         let cmd_buf = if !frame.effects.post_process.enabled {

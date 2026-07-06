@@ -504,10 +504,6 @@ pub struct ViewportRenderer {
     ts_pending_mask: u32,
     /// Nanoseconds per GPU timestamp tick, from `queue.get_timestamp_period()`.
     ts_period: f32,
-    /// True when `TIMESTAMP_QUERY_INSIDE_ENCODERS` is available, allowing skipped
-    /// timestamp slots to be filled before resolve (avoids resolving undefined,
-    /// never-written queries, which corrupts the command stream on some drivers).
-    ts_can_fill_gaps: bool,
     /// True when the staging buffer holds resolved timestamps that have not yet
     /// been mapped for readback.
     ts_data_ready: bool,
@@ -692,7 +688,6 @@ impl ViewportRenderer {
             ts_map_status: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             ts_written_mask: std::sync::atomic::AtomicU32::new(0),
             ts_pending_mask: 0,
-            ts_can_fill_gaps: false,
             degradation_tier: 0,
             degradation_shadows_skipped: false,
             degradation_volume_quality_reduced: false,
