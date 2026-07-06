@@ -950,6 +950,7 @@ impl crate::resources::DeviceResources {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         items: &[crate::renderer::GpuParticleSystemItem],
+        sink: &mut crate::renderer::SubmitSink,
     ) -> Vec<ParticleFrameData> {
         if items.is_empty() {
             return Vec::new();
@@ -1097,7 +1098,7 @@ impl crate::resources::DeviceResources {
             });
         }
 
-        queue.submit(std::iter::once(encoder.finish()));
+        sink.push(encoder.finish());
         frame_data
     }
 }

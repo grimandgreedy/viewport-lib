@@ -736,6 +736,32 @@ impl ViewportRenderer {
         queue.submit(std::iter::once(cmd_buf));
     }
 
+    /// Encode the scene pass into a command buffer without submitting it, the
+    /// deferred-submit counterpart of [`render_to_texture`](Self::render_to_texture).
+    ///
+    /// A render worker can call this (and
+    /// [`prepare_deferred`](Self::prepare_deferred)) off the device-driving thread,
+    /// then hand the buffers back for the driving thread to submit via
+    /// [`submit_frame`](Self::submit_frame). Submitting from a non-driving thread
+    /// corrupts some drivers (see [`crate::renderer::SubmitSink`]).
+    pub fn render_to_texture_deferred(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        output_view: &wgpu::TextureView,
+        frame: &FrameData,
+    ) -> wgpu::CommandBuffer {
+        self.render(device, queue, output_view, frame)
+    }
+
+    /// Submit a batch of command buffers produced by the `*_deferred` encoders,
+    /// in order, on the device-driving thread. A no-op for an empty batch.
+    pub fn submit_frame(queue: &wgpu::Queue, buffers: Vec<wgpu::CommandBuffer>) {
+        if !buffers.is_empty() {
+            queue.submit(buffers);
+        }
+    }
+
     /// Render a frame to an offscreen texture and return raw RGBA bytes.
     ///
     /// Creates a temporary [`wgpu::Texture`] render target of the given dimensions,

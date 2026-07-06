@@ -328,6 +328,7 @@ impl ViewportRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         if !instancing.gpu_culling_enabled
             || !instancing.use_instancing
@@ -467,7 +468,7 @@ impl ViewportRenderer {
                     );
                 }
             }
-            queue.submit(std::iter::once(encoder.finish()));
+            sink.push(encoder.finish());
             if do_readback {
                 instancing.indirect_readback_batch_count = batch_count;
                 instancing.indirect_readback_pending = true;

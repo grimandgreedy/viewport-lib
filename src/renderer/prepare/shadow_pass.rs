@@ -25,6 +25,7 @@ impl ViewportRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         // Shadow-pass instrumentation. The stall reported on some mobile backends
         // shows up at `present` because the shadow depth work is GPU-bound and only
@@ -64,7 +65,7 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            queue.submit(std::iter::once(enc.finish()));
+            sink.push(enc.finish());
         }
 
         if lighting.shadows_enabled && !scene_items.is_empty() && !skip_shadows {
@@ -149,7 +150,7 @@ impl ViewportRenderer {
                             );
                         }
                     }
-                    queue.submit(std::iter::once(shadow_cull_encoder.finish()));
+                    sink.push(shadow_cull_encoder.finish());
                 }
             }
 
@@ -588,7 +589,7 @@ impl ViewportRenderer {
                 drop(shadow_pass);
                 last_stats.shadow_draw_calls = shadow_draws;
             }
-            queue.submit(std::iter::once(encoder.finish()));
+            sink.push(encoder.finish());
         }
 
         // ----------------------------------------------------------------
@@ -690,7 +691,7 @@ impl ViewportRenderer {
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
-            queue.submit(std::iter::once(enc.finish()));
+            sink.push(enc.finish());
         }
 
         if shadow_instrument && lighting.shadows_enabled {

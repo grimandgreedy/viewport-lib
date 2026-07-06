@@ -153,6 +153,7 @@ impl ViewportRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         // ------------------------------------------------------------------
         // point cloud and glyph GPU data upload.
@@ -281,8 +282,12 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         particle_gpu_data.clear();
         if !frame.scene.gpu_particle_systems.is_empty() {
-            *particle_gpu_data =
-                resources.run_particle_jobs(device, queue, &frame.scene.gpu_particle_systems);
+            *particle_gpu_data = resources.run_particle_jobs(
+                device,
+                queue,
+                &frame.scene.gpu_particle_systems,
+                sink,
+            );
         }
 
         // ------------------------------------------------------------------

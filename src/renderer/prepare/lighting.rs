@@ -20,6 +20,7 @@ impl ViewportRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
     ) -> LightingFrame {
         let lighting = scene_fx.lighting;
         // Compute scene center / extent for shadow framing.
@@ -798,7 +799,7 @@ impl ViewportRenderer {
             resources
                 .clustered
                 .dispatch_frame(&mut encoder, build_count);
-            queue.submit(std::iter::once(encoder.finish()));
+            sink.push(encoder.finish());
 
             // Optional host readback for the debug stats panel. Synchronous;
             // off by default.

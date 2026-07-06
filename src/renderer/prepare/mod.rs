@@ -141,6 +141,7 @@ impl ViewportRenderer {
         queue: &wgpu::Queue,
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         // Start of frame: clear the GPU-timestamp written mask. Passes set their
         // slot bit as they encode (shadow here in prepare, scene/oit/post later in
@@ -223,6 +224,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            sink,
         );
         let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
 
@@ -301,6 +303,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            sink,
         );
         let (inst_resolved, inst_switches, inst_culled, inst_reduced) = Self::upload_mesh_instances(
             resources,
@@ -719,6 +722,7 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            sink,
         );
         let shadow_ms = shadow_start.elapsed().as_secs_f32() * 1000.0;
 
@@ -755,6 +759,7 @@ impl ViewportRenderer {
         queue: &wgpu::Queue,
         frame: &FrameData,
         viewport_fx: &ViewportEffects<'_>,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         // Ensure a per-viewport camera slot exists for this viewport index.
         self.ensure_viewport_slot(device, frame.camera.viewport_index);
@@ -771,11 +776,12 @@ impl ViewportRenderer {
             device,
             queue,
             frame,
+            sink,
         );
 
         self.prepare_clip_uniforms(queue, frame, viewport_fx);
         self.prepare_interaction_state(device, queue, frame, viewport_fx);
-        self.prepare_outline_pass(device, queue, frame);
+        self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 
         self.prepare_overlay_labels(device, queue, frame);
@@ -794,11 +800,48 @@ impl ViewportRenderer {
     /// Call before `paint()`.
     ///
     /// Returns [`crate::FrameStats`] with per-frame timing and upload metrics.
+    /// Submits every prepare pass on `queue` inline, as before; use
+    /// [`prepare_deferred`](Self::prepare_deferred) to collect the buffers and
+    /// submit them on the device-driving thread instead.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
+    ) -> crate::renderer::stats::FrameStats {
+        let mut sink = crate::renderer::SubmitSink::inline(queue);
+        self.prepare_into(device, queue, frame, &mut sink)
+    }
+
+    /// As [`prepare`](Self::prepare), but the prepare passes push their command
+    /// buffers into a returned `Vec` rather than submitting them. The caller must
+    /// submit the buffers, in order, on the device-driving thread. Intended for a
+    /// render worker that encodes off-thread (see the `SubmitSink` docs for why
+    /// submission cannot leave the driving thread).
+    ///
+    /// Pair with [`render_to_texture_deferred`](Self::render_to_texture_deferred)
+    /// for the scene pass and [`submit_frame`](Self::submit_frame) to submit the
+    /// combined batch in order.
+    pub fn prepare_deferred(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+    ) -> (crate::renderer::stats::FrameStats, Vec<wgpu::CommandBuffer>) {
+        let mut sink = crate::renderer::SubmitSink::deferred();
+        let stats = self.prepare_into(device, queue, frame, &mut sink);
+        (stats, sink.into_buffers())
+    }
+
+    /// The shared prepare body. `sink` decides whether each pass submits inline or
+    /// is collected for a later main-thread submit; `queue` is still needed for
+    /// non-submitting queue work (buffer writes, upload-job polling, readbacks).
+    fn prepare_into(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = std::time::Instant::now();
         self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
@@ -809,7 +852,7 @@ impl ViewportRenderer {
         // the plugin produces are visible to the rest of `prepare`.
         let plugin_bufs = self.dispatch_plugin_prepare(device, queue, frame);
         if !plugin_bufs.is_empty() {
-            queue.submit(plugin_bufs);
+            sink.extend(plugin_bufs);
         }
 
         // Run plugin culling for the current camera frustum so subsequent
@@ -1113,10 +1156,10 @@ impl ViewportRenderer {
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();
-        self.prepare_scene_internal(device, queue, frame, &scene_fx);
+        self.prepare_scene_internal(device, queue, frame, &scene_fx, sink);
 
         let viewport_start = std::time::Instant::now();
-        self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
+        self.prepare_viewport_internal(device, queue, frame, &viewport_fx, sink);
         self.prepare_breakdown.viewport_ms = viewport_start.elapsed().as_secs_f32() * 1000.0;
 
         let cpu_prepare_ms = prepare_start.elapsed().as_secs_f32() * 1000.0;

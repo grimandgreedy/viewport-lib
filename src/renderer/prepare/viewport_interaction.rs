@@ -1456,6 +1456,7 @@ impl ViewportRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &FrameData,
+        sink: &mut crate::renderer::SubmitSink,
     ) {
         let vp_idx = frame.camera.viewport_index;
 
@@ -1988,7 +1989,7 @@ impl ViewportRenderer {
                 pass.draw(0..3, 0..1);
             }
 
-            queue.submit(std::iter::once(encoder.finish()));
+            sink.push(encoder.finish());
         }
     }
 

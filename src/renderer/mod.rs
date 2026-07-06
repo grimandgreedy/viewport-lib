@@ -20,6 +20,8 @@ pub use picking::PickRectResult;
 mod point_shadow_pool;
 mod prepare;
 mod render;
+mod submit;
+pub use submit::SubmitSink;
 pub mod shader_hashes;
 mod shadow_debug_stats;
 mod shadows;
@@ -2067,7 +2069,8 @@ impl ViewportRenderer {
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) {
-        self.prepare_scene_internal(device, queue, frame, scene_effects);
+        let mut sink = SubmitSink::inline(queue);
+        self.prepare_scene_internal(device, queue, frame, scene_effects, &mut sink);
     }
 
     /// Prepare per-viewport GPU state (camera, clip planes, overlays, axes).
@@ -2091,7 +2094,8 @@ impl ViewportRenderer {
             frame.camera.viewport_index, id.0,
         );
         let (_, viewport_fx) = frame.effects.split();
-        self.prepare_viewport_internal(device, queue, frame, &viewport_fx);
+        let mut sink = SubmitSink::inline(queue);
+        self.prepare_viewport_internal(device, queue, frame, &viewport_fx, &mut sink);
     }
 
     /// Issue draw calls for `id` into a render pass with any lifetime.
