@@ -606,6 +606,28 @@ impl ViewportRenderer {
         )
     }
 
+    /// Deferred-submit counterpart of [`render`](Self::render): runs prepare in
+    /// deferred mode, encodes the scene pass, and returns every command buffer
+    /// (prepare passes first, scene pass last) without submitting. The caller
+    /// submits them, in order, on the device-driving thread.
+    pub(crate) fn render_deferred(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        output_view: &wgpu::TextureView,
+        frame: &FrameData,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let (_stats, mut buffers) = self.prepare_deferred(device, queue, frame);
+        buffers.push(self.render_frame_internal(
+            device,
+            queue,
+            output_view,
+            frame.camera.viewport_index,
+            frame,
+        ));
+        buffers
+    }
+
     /// Render-only path shared by `render()` and `render_viewport()`.
     ///
     /// `vp_idx` selects the per-viewport slot to use for camera/HDR state,
@@ -736,12 +758,13 @@ impl ViewportRenderer {
         queue.submit(std::iter::once(cmd_buf));
     }
 
-    /// Encode the scene pass into a command buffer without submitting it, the
-    /// deferred-submit counterpart of [`render_to_texture`](Self::render_to_texture).
+    /// Encode a full frame (prepare passes + scene pass) into command buffers
+    /// without submitting any of them: the deferred-submit counterpart of
+    /// [`render_to_texture`](Self::render_to_texture). Buffers are returned in
+    /// submission order (prepare first, scene pass last).
     ///
-    /// A render worker can call this (and
-    /// [`prepare_deferred`](Self::prepare_deferred)) off the device-driving thread,
-    /// then hand the buffers back for the driving thread to submit via
+    /// A render worker can call this off the device-driving thread, then hand the
+    /// buffers back for the driving thread to submit via
     /// [`submit_frame`](Self::submit_frame). Submitting from a non-driving thread
     /// corrupts some drivers (see [`crate::renderer::SubmitSink`]).
     pub fn render_to_texture_deferred(
@@ -750,8 +773,8 @@ impl ViewportRenderer {
         queue: &wgpu::Queue,
         output_view: &wgpu::TextureView,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
-        self.render(device, queue, output_view, frame)
+    ) -> Vec<wgpu::CommandBuffer> {
+        self.render_deferred(device, queue, output_view, frame)
     }
 
     /// Submit a batch of command buffers produced by the `*_deferred` encoders,
