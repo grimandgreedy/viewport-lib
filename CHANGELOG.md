@@ -14,6 +14,12 @@ An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that 
 
 ### Improvements
 
+- **Transform gizmo snapping**: `ManipulationController::set_snap` / `with_snap` take a `SnapConfig` (translation in world units, rotation in radians, scale as a fraction) applied while dragging. Snapping rounds the cumulative transform rather than the per-frame delta, so an object clicks cleanly between grid stops without accumulating drift, and the increment can be changed mid-drag (e.g. bound to a held key). Rotation snapping applies to single-axis rotations. Additive and off by default: a controller that never sets a `SnapConfig` behaves exactly as before.
+
+- **Gizmo plane and screen handles now drag correctly**: dragging a plane handle (XY / XZ / YZ) moves or scales in that plane, and the screen handle does a camera-plane translate or uniform scale. Previously every non-cardinal handle fell through to the Z axis, so plane and screen drags moved along Z.
+
+- **Numeric rotation input**: typing a value during a rotate (with Tab to move between axes) now produces a `TransformDelta::rotation_override`, matching the position and scale overrides. Whether numeric input is applied as absolute or relative to the drag-start transform stays an app-side choice.
+
 - **New primitives**: `torus_ellipse` and `torus_stadium`.
 
 - **`FrameStats::lod_items_reduced`**: how many objects are drawn at reduced detail this frame because they are far away, so you can confirm distant geometry is actually being simplified rather than everything drawing at full detail.
@@ -22,7 +28,12 @@ An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that 
 
 - **Per-plugin timing**: the runtime now records how long each registered plugin spends in `step`, `pre_prepare`, and `post_paint`, keyed by `RuntimePlugin::type_name` / `GpuPlugin::type_name` (both new, defaulting to the concrete type name). Read it via `ViewportRuntime::last_stats() -> &RuntimeStats`. This is how a host attributes frame time to a named plugin (wind, terrain, physics) without the renderer's `FrameStats`, which does not see plugin work.
 
+
+- **`vram_budget(&Device) -> Option<VramBudget>`** (also `DeviceResources::vram_budget`) reports the GPU's total device-local VRAM, and the live free amount where the backend exposes it: Metal returns both, Vulkan returns the total with no live figure (that needs `VK_EXT_memory_budget`, which wgpu does not enable). Pair it with `resident_bytes` to size an eviction budget against real hardware capacity instead of a hardcoded ceiling. Returns `None` on backends it cannot introspect.
+
 ### Breaking changes
+
+- **`TransformDelta` is now `#[non_exhaustive]`** and gains a `rotation_override: [Option<f32>; 3]` field for numeric rotation input. Construct it with `TransformDelta::default()` and set fields afterwards rather than with a struct literal; read code is unaffected.
 
 - **`ScatterVolumeItem` is now `#[non_exhaustive]`**, matching the other scene item types, so future fields can be added without breaking callers. Construct it with `ScatterVolumeItem::new(volume)` and set fields afterwards rather than with a struct literal.
 
@@ -36,10 +47,14 @@ An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that 
 
 New residency mechanism (the policy stays with the consumer):
 
-- **`free_mesh(MeshId)`** / **`release_texture(u64)`** / **`free_lod_group(LodGroupId)`** reclaim GPU memory and free the slot. `release_texture` also evicts the cached bind groups that named the texture and invalidates the per-mesh bind groups that sampled it, so they rebind the fallback. `free_lod_group` frees each member mesh unless another live group still references it. `remove_mesh` still works and is now an alias for `free_mesh`.
+- **`free_mesh(MeshId)`** / **`free_texture(u64)`** / **`free_lod_group(LodGroupId)`** reclaim GPU memory and free the slot. `free_texture` also evicts the cached bind groups that named the texture and invalidates the per-mesh bind groups that sampled it, so they rebind the fallback. `free_lod_group` frees each member mesh unless another live group still references it. `remove_mesh` still works and is now an alias for `free_mesh`.
 - **`resident_bytes() -> ResidentBytes`** reports GPU bytes for the user-uploaded working set (meshes plus user textures) from maintained counters, cheap to poll each frame. A streaming or eviction policy compares `ResidentBytes::total()` against a byte budget it chooses and frees to stay under it. Built-in LUTs, IBL maps, and render targets are not counted.
 
 ### Bug Fixes
+
+#### Vector glyph arrows rendered inside-out and mis-aligned
+
+Arrow glyphs (the `quantities` surface-vector helpers and any `GlyphItem` using the arrow shape) were built along one axis but oriented along another, so they pointed about 90 degrees off from their vectors. The orientation matrix was also a reflection rather than a rotation, which inverted every arrow's winding and let back-face culling discard the faces that should have shown: flat arrows lying on a surface were nearly invisible from above and only showed a sliver at a grazing angle. Arrows now point along their vector and render right-side-out from every angle.
 
 #### Per-object meshes ignored their level of detail
 
