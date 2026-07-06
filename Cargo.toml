@@ -127,3 +127,7 @@ path = "examples/iced_viewport/main.rs"
 [[example]]
 name = "runtime-jobs"
 path = "examples/runtime_jobs.rs"
+
+[[example]]
+name = "offthread-submit-spike"
+path = "examples/offthread_submit_spike.rs"
