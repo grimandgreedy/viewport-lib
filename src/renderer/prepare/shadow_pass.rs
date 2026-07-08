@@ -86,6 +86,12 @@ impl ViewportRenderer {
             // All cascade dispatches share the same `batch_counter_buf`; each
             // `write_indirect_args` dispatch resets the counters for the next cascade.
             // ------------------------------------------------------------------
+            // Without GPU culling, the same per-cascade cull runs on the CPU:
+            // visible instance indices are compacted into `shadow_vis_bufs[c]`
+            // and the render pass below draws each batch's sub-range through
+            // the `vs_shadow_cull` pipeline. `cpu_cull_ranges[cascade][batch]`
+            // holds the (offset, count) of each batch's compacted run.
+            let mut cpu_cull_ranges: Option<Vec<Vec<(u32, u32)>>> = None;
             if instancing.gpu_culling_enabled
                 && instancing.use_instancing
                 && !instancing.batches.is_empty()
@@ -159,6 +165,73 @@ impl ViewportRenderer {
                         }
                     }
                     sink.push(shadow_cull_encoder.finish());
+                }
+            } else if instancing.use_instancing
+                && !instancing.batches.is_empty()
+                && instancing.cached_instance_count > 0
+                && instancing.cached_aabbs.len() == instancing.cached_instance_count
+            {
+                // CPU per-cascade shadow cull for devices without GPU-driven
+                // culling. Reuses the cull-variant shadow pipeline and the
+                // per-cascade visibility buffers; only the index compaction
+                // moves to the CPU.
+                resources.ensure_cull_instance_pipelines(device);
+                if resources.cull.shadow_pipeline.is_some() {
+                    let instance_count = instancing.cached_instance_count as u32;
+                    let batch_count = instancing.batches.len() as u32;
+                    instancing
+                        .shadow_cull
+                        .ensure_outputs(device, instance_count, batch_count);
+                    if instancing.shadow_cull.built_gen != instancing.instance_gen {
+                        instancing.shadow_cull.shadow_cull_instance_bgs = [None, None, None, None];
+                        instancing.shadow_cull.built_gen = instancing.instance_gen;
+                    }
+                    for c in 0..light.effective_cascade_count {
+                        resources.get_shadow_cull_instance_bind_group(
+                            &mut instancing.shadow_cull,
+                            device,
+                            c,
+                        );
+                    }
+
+                    let mut ranges: Vec<Vec<(u32, u32)>> =
+                        Vec::with_capacity(light.effective_cascade_count);
+                    let mut indices: Vec<u32> =
+                        Vec::with_capacity(instancing.cached_instance_count);
+                    for c in 0..light.effective_cascade_count {
+                        let frustum = crate::camera::frustum::Frustum::from_view_proj(
+                            &light.cascade_view_projs[c],
+                        );
+                        indices.clear();
+                        let mut batch_ranges: Vec<(u32, u32)> =
+                            Vec::with_capacity(instancing.batches.len());
+                        for batch in &instancing.batches {
+                            let start = indices.len() as u32;
+                            let lo = batch.instance_offset as usize;
+                            let hi = lo + batch.instance_count as usize;
+                            for (i, ia) in instancing.cached_aabbs[lo..hi].iter().enumerate() {
+                                if ia.cast_shadows == 0 {
+                                    continue;
+                                }
+                                let aabb = crate::Aabb {
+                                    min: ia.min.into(),
+                                    max: ia.max.into(),
+                                };
+                                if frustum.cull_aabb(&aabb) {
+                                    continue;
+                                }
+                                indices.push((lo + i) as u32);
+                            }
+                            batch_ranges.push((start, indices.len() as u32 - start));
+                        }
+                        if let Some(vis_buf) = instancing.shadow_cull.shadow_vis_bufs[c].as_ref() {
+                            if !indices.is_empty() {
+                                queue.write_buffer(vis_buf, 0, bytemuck::cast_slice(&indices));
+                            }
+                        }
+                        ranges.push(batch_ranges);
+                    }
+                    cpu_cull_ranges = Some(ranges);
                 }
             }
 
@@ -285,6 +358,90 @@ impl ViewportRenderer {
                                 );
                                 shadow_pass
                                     .draw_indexed_indirect(shadow_indirect_buf, bi as u64 * 20);
+                                shadow_draws += 1;
+                            }
+                        }
+                    } else if let (Some(ranges), Some(pipeline), Some(pipeline_two_sided)) = (
+                        cpu_cull_ranges.as_ref(),
+                        resources.cull.shadow_pipeline.as_ref(),
+                        resources.cull.shadow_two_sided_pipeline.as_ref(),
+                    ) {
+                        // CPU-culled direct path: same pipelines and bind groups
+                        // as the indirect path, but each batch draws the
+                        // compacted sub-range computed on the CPU above.
+                        for cascade in 0..light.effective_cascade_count {
+                            let tile_col = (cascade % 2) as f32;
+                            let tile_row = (cascade / 2) as f32;
+                            shadow_pass.set_viewport(
+                                tile_col * tile_px,
+                                tile_row * tile_px,
+                                tile_px,
+                                tile_px,
+                                0.0,
+                                1.0,
+                            );
+                            shadow_pass.set_scissor_rect(
+                                (tile_col * tile_px) as u32,
+                                (tile_row * tile_px) as u32,
+                                light.tile_size,
+                                light.tile_size,
+                            );
+
+                            queue.write_buffer(
+                                resources.instancing.shadow_cascade_bufs[cascade]
+                                    .as_ref()
+                                    .expect("shadow_instanced_cascade_bufs not allocated"),
+                                0,
+                                bytemuck::cast_slice(
+                                    &light.cascade_view_projs[cascade].to_cols_array_2d(),
+                                ),
+                            );
+
+                            let Some(cascade_bg) =
+                                resources.instancing.shadow_cascade_bgs[cascade].as_ref()
+                            else {
+                                continue;
+                            };
+                            let Some(inst_cull_bg) =
+                                instancing.shadow_cull.shadow_cull_instance_bgs[cascade].as_ref()
+                            else {
+                                continue;
+                            };
+                            shadow_pass.set_bind_group(0, cascade_bg, &[]);
+                            shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
+
+                            let mut cur_two_sided: Option<bool> = None;
+                            for (bi, batch) in instancing.batches.iter().enumerate() {
+                                if batch.is_transparent {
+                                    continue;
+                                }
+                                let Some(&(start, count)) = ranges[cascade].get(bi) else {
+                                    continue;
+                                };
+                                if count == 0 {
+                                    continue;
+                                }
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                                    continue;
+                                };
+                                if cur_two_sided != Some(batch.two_sided) {
+                                    shadow_pass.set_pipeline(if batch.two_sided {
+                                        pipeline_two_sided
+                                    } else {
+                                        pipeline
+                                    });
+                                    cur_two_sided = Some(batch.two_sided);
+                                }
+                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                shadow_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                shadow_pass.draw_indexed(
+                                    0..mesh.index_count,
+                                    0,
+                                    start..start + count,
+                                );
                                 shadow_draws += 1;
                             }
                         }

@@ -559,6 +559,30 @@ pub struct ViewportRenderer {
 }
 
 impl ViewportRenderer {
+    /// The optional device features the renderer can take advantage of,
+    /// filtered to what `adapter` supports. Pass the result as
+    /// `required_features` when requesting the device:
+    ///
+    /// - `INDIRECT_FIRST_INSTANCE` enables GPU-driven culling and the
+    ///   indirect instanced draw path.
+    /// - `TIMESTAMP_QUERY` enables `FrameStats::gpu_frame_ms` and the
+    ///   per-pass GPU breakdown.
+    ///
+    /// Everything works without them; rendering falls back to direct draws
+    /// (with CPU-side shadow-cascade culling) and GPU timings read as `None`.
+    pub fn recommended_device_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+        let mut features = wgpu::Features::empty();
+        for feature in [
+            wgpu::Features::INDIRECT_FIRST_INSTANCE,
+            wgpu::Features::TIMESTAMP_QUERY,
+        ] {
+            if adapter.features().contains(feature) {
+                features |= feature;
+            }
+        }
+        features
+    }
+
     /// Create a new renderer with default settings (no MSAA).
     /// Call once at application startup.
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {

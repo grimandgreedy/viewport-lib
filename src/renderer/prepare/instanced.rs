@@ -281,6 +281,7 @@ impl ViewportRenderer {
             }
 
             instancing.cached_instance_count = all_instances.len();
+            instancing.cached_aabbs = all_aabbs;
             instancing.cached_batches = instanced_batches;
             instancing.batches = instancing.cached_batches.clone();
 
