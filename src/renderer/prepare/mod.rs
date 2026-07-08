@@ -143,12 +143,18 @@ impl ViewportRenderer {
         scene_fx: &SceneEffects<'_>,
         sink: &mut crate::renderer::SubmitSink,
     ) {
-        // Start of frame: clear the GPU-timestamp written mask. Passes set their
-        // slot bit as they encode (shadow here in prepare, scene/oit/post later in
-        // render); the mask is snapshotted when the queries are resolved so the
-        // reader knows which slots ran this frame.
-        self.ts_written_mask
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        // Start of frame: rotate the double-buffered timestamp query sets.
+        // Passes write this frame's timestamps into `ts_query_set`, setting
+        // their slot bit as they encode (shadow here in prepare, scene/oit/post
+        // later in render). The set written last frame moves to
+        // `ts_query_set_prev` together with its written mask, and the render
+        // path resolves it from this frame's encoder: one submission after the
+        // passes that wrote it, which Metal's stage-boundary counters need to
+        // return settled end-of-pass samples for short passes.
+        std::mem::swap(&mut self.ts_query_set, &mut self.ts_query_set_prev);
+        self.ts_prev_mask = self
+            .ts_written_mask
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
 
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
@@ -907,6 +913,7 @@ impl ViewportRenderer {
                         // a real 0 ms frame.
                         if scene_ms > 0.0 {
                             self.last_stats.gpu_frame_ms = Some(scene_ms);
+                            self.last_stats.gpu_sample_generation += 1;
                         }
                         stg_buf.unmap();
                     }

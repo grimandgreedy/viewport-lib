@@ -697,6 +697,13 @@ impl ViewportRenderer {
                 ty: wgpu::QueryType::Timestamp,
                 count: ts_count,
             }));
+            // Second set of the double buffer: passes write one set while the
+            // other (written last frame) is resolved from this frame's encoder.
+            self.ts_query_set_prev = Some(device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("ts_query_set_prev"),
+                ty: wgpu::QueryType::Timestamp,
+                count: ts_count,
+            }));
             self.ts_resolve_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("ts_resolve_buf"),
                 size: ts_bytes,

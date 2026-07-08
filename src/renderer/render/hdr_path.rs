@@ -303,18 +303,20 @@ impl ViewportRenderer {
         self.hdr_tonemap_resolve(&ctx, &mut encoder);
         self.hdr_scene_overlays(&ctx, &mut encoder);
         self.hdr_final_overlay(&ctx, &mut encoder);
-        // Resolve timestamp queries -> staging buffer (HDR path). Skip while a
-        // readback is unread or in flight so the single staging buffer is not
-        // overwritten before prepare() reads it.
+        // Resolve last frame's timestamp queries -> staging buffer (HDR path).
+        // Skip while a readback is unread or in flight so the single staging
+        // buffer is not overwritten before prepare() reads it. The set resolved
+        // here was written during the previous frame; resolving it in this
+        // frame's (later) submission is what lets Metal's stage-boundary
+        // counters settle, so short passes stop yielding stale equal-timestamp
+        // samples.
         if !self.ts_data_ready && !self.ts_map_inflight {
             if let (Some(qs), Some(res_buf), Some(stg_buf)) = (
-                self.ts_query_set.as_ref(),
+                self.ts_query_set_prev.as_ref(),
                 self.ts_resolve_buf.as_ref(),
                 self.ts_staging_buf.as_ref(),
             ) {
-                let written = self
-                    .ts_written_mask
-                    .load(std::sync::atomic::Ordering::Relaxed);
+                let written = self.ts_prev_mask;
                 // Resolve only the contiguous run of slots starting at the scene
                 // slot (slot 0, always written this frame). Resolving a slot no
                 // pass wrote is undefined in Vulkan and corrupts the command
@@ -336,6 +338,9 @@ impl ViewportRenderer {
                     encoder.copy_buffer_to_buffer(res_buf, 0, stg_buf, 0, ts_count as u64 * 8);
                     self.ts_pending_mask = (1 << prefix) - 1;
                     self.ts_data_ready = true;
+                    // Consumed: keep a second render call this frame (multi-
+                    // viewport) from resolving the same set again.
+                    self.ts_prev_mask = 0;
                 }
             }
         }

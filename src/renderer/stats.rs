@@ -291,10 +291,22 @@ pub struct FrameStats {
     /// Measured with `TIMESTAMP_QUERY` around the main scene render pass.
     /// `None` on backends that do not support `TIMESTAMP_QUERY` (e.g. WebGL).
     ///
-    /// Note: this value reflects the *previous* frame's GPU cost due to async
-    /// readback. The value lags by one frame and should not be used by the
-    /// adaptation controller across mode transitions.
+    /// Note: this value reflects a recent frame's GPU cost, not the current
+    /// one: the queries are resolved one frame after the passes that wrote
+    /// them and read back asynchronously, so the value lags by about two
+    /// frames and should not be used by the adaptation controller across mode
+    /// transitions.
+    ///
+    /// Between readbacks the last measured value is carried over rather than
+    /// cleared. Compare `gpu_sample_generation` across frames to tell a fresh
+    /// measurement from a carried-over one.
     pub gpu_frame_ms: Option<f32>,
+    /// Incremented each time `gpu_frame_ms` and [`GpuBreakdown`] are refreshed
+    /// from a completed GPU timestamp readback. Unchanged between readbacks,
+    /// where `gpu_frame_ms` re-surfaces its previous value; consumers building
+    /// histograms or percentiles from `gpu_frame_ms` should drop frames whose
+    /// generation matches the previous frame's.
+    pub gpu_sample_generation: u64,
     /// Per-pass split of GPU frame time. See [`GpuBreakdown`].
     ///
     /// Populated under the same conditions as `gpu_frame_ms` (requires

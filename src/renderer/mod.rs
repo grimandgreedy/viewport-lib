@@ -485,7 +485,22 @@ pub struct ViewportRenderer {
     /// Timestamp query set with `2 * GPU_TS_SLOTS` entries: a begin/end pair per
     /// measured pass (see the `GPU_TS_*` slot constants). `None` when
     /// `TIMESTAMP_QUERY` is unavailable or not yet initialized.
+    ///
+    /// Double-buffered with `ts_query_set_prev`: passes write this frame's
+    /// timestamps here, while the set written last frame is resolved from this
+    /// frame's encoder. Resolving in the same command buffer as the pass returns
+    /// stale end-of-pass samples on Metal when the pass is short (its
+    /// stage-boundary counters have not landed yet), which made short scenes
+    /// produce zero-delta samples that were dropped, latching `gpu_frame_ms`
+    /// indefinitely. Resolving one submission later reads settled counters.
     ts_query_set: Option<wgpu::QuerySet>,
+    /// The query set written during the previous frame, resolved this frame.
+    /// Swapped with `ts_query_set` at the start of each `prepare()`.
+    ts_query_set_prev: Option<wgpu::QuerySet>,
+    /// Bitmask of `GPU_TS_*` slots written into `ts_query_set_prev` during the
+    /// previous frame. Zero when there is nothing to resolve (first frame, or
+    /// the sample was already consumed).
+    ts_prev_mask: u32,
     /// Resolve buffer: `2 * GPU_TS_SLOTS` x u64, GPU-only (`QUERY_RESOLVE | COPY_SRC`).
     ts_resolve_buf: Option<wgpu::Buffer>,
     /// Staging buffer: `2 * GPU_TS_SLOTS` x u64, CPU-readable (`COPY_DST | MAP_READ`).
@@ -498,9 +513,9 @@ pub struct ViewportRenderer {
     /// with the immutable viewport-slot borrows live during pass encoding (and
     /// to keep `ViewportRenderer: Sync`).
     ts_written_mask: std::sync::atomic::AtomicU32,
-    /// Snapshot of `ts_written_mask` taken when the queries are resolved, carried
-    /// alongside the one-frame-delayed readback so the reader knows which slots
-    /// are valid.
+    /// Snapshot of the written mask for the queries currently resolved into the
+    /// staging buffer, carried alongside the delayed readback so the reader
+    /// knows which slots are valid.
     ts_pending_mask: u32,
     /// Nanoseconds per GPU timestamp tick, from `queue.get_timestamp_period()`.
     ts_period: f32,
@@ -680,6 +695,8 @@ impl ViewportRenderer {
             pick_mc_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             ts_query_set: None,
+            ts_query_set_prev: None,
+            ts_prev_mask: 0,
             ts_resolve_buf: None,
             ts_staging_buf: None,
             ts_period: 1.0,
