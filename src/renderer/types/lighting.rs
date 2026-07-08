@@ -13,7 +13,10 @@
 pub enum LightKind {
     /// Infinitely distant light with parallel rays (e.g. the sun).
     Directional {
-        /// World-space direction the light travels toward (not the source direction).
+        /// World-space surface-to-light direction: it points from the scene
+        /// toward the light source, so an overhead sun in a Z-up scene has a
+        /// large positive Z component. Both the shading and the shadow
+        /// matrices use this convention.
         direction: [f32; 3],
     },
     /// Omnidirectional point light with distance falloff.
