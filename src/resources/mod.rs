@@ -32,9 +32,8 @@ pub use self::gpu::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId,
 pub use self::handle::ContentHandle;
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
-use self::mesh::geometry::{
-    build_glyph_arrow, build_glyph_sphere, build_unit_cube, generate_edge_indices,
-};
+pub use self::memory::vram_budget;
+use self::mesh::geometry::{build_glyph_arrow, build_glyph_sphere, build_unit_cube};
 pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::mesh::meshes::lerp_attributes;
 pub use self::mesh_sidecar::deform::{
@@ -62,7 +61,6 @@ pub use self::types::ClipVolumeUniform;
 pub(crate) use self::types::ScatterViewportState;
 #[allow(deprecated)]
 pub use self::types::ViewportGpuResources;
-pub use self::memory::vram_budget;
 // GlyphBaseMesh and OverlayUniform are re-exported for crate-internal use even
 // though their current consumers reference them through their domain modules.
 #[allow(unused_imports)]

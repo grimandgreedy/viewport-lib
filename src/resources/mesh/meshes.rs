@@ -10,9 +10,6 @@ pub(crate) struct MeshPrep {
     /// Interleaved GPU vertex stream (position + normal + uv + tangent +
     /// colour) ready for upload as `Vec<Vertex>`.
     pub vertices: Vec<Vertex>,
-    /// Per-vertex normal-line visualisation segments. Two vertices per
-    /// source vertex.
-    pub normal_line_verts: Vec<Vertex>,
     /// Tangents computed from positions, normals, UVs, and indices when the
     /// source `MeshData` did not carry its own tangents. `None` means the
     /// source tangents (if any) should be used directly.
@@ -92,8 +89,26 @@ impl DeviceResources {
         data: &MeshData,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         Self::validate_mesh_data(data)?;
+        Self::validate_mesh_size(device, data)?;
         let prep = Self::prep_mesh_data(data);
         Ok(self.assemble_mesh_data(device, data, prep))
+    }
+
+    /// Refuse meshes whose vertex or index buffer would exceed the device's
+    /// `max_buffer_size`: creating such a buffer raises a validation error
+    /// that takes the whole device down.
+    fn validate_mesh_size(
+        device: &wgpu::Device,
+        data: &MeshData,
+    ) -> crate::error::ViewportResult<()> {
+        let max = device.limits().max_buffer_size;
+        let vertex_bytes = (data.positions.len() * std::mem::size_of::<Vertex>()) as u64;
+        let index_bytes = (data.indices.len() * std::mem::size_of::<u32>()) as u64;
+        let bytes = vertex_bytes.max(index_bytes);
+        if bytes > max {
+            return Err(crate::error::ViewportError::MeshTooLarge { bytes, max });
+        }
+        Ok(())
     }
 
     /// CPU-side preparation that converts a `MeshData` into the vertex
@@ -140,11 +155,8 @@ impl DeviceResources {
             })
             .collect();
 
-        let normal_line_verts = Self::build_normal_lines(data);
-
         MeshPrep {
             vertices,
-            normal_line_verts,
             computed_tangents,
         }
     }
@@ -160,7 +172,6 @@ impl DeviceResources {
     ) -> crate::resources::mesh::mesh_store::MeshId {
         let MeshPrep {
             vertices,
-            normal_line_verts,
             computed_tangents,
         } = prep;
         let tangent_slice = data.tangents.as_deref().or(computed_tangents.as_deref());
@@ -184,9 +195,10 @@ impl DeviceResources {
             &self.fallback_emissive_texture_view,
             &vertices,
             &data.indices,
-            Some(&normal_line_verts),
+            None,
         );
         mesh.cpu_positions = Some(data.positions.clone());
+        mesh.cpu_normals = Some(data.normals.clone());
         mesh.cpu_indices = Some(data.indices.clone());
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
@@ -240,6 +252,7 @@ impl DeviceResources {
         data: MeshData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         Self::validate_mesh_data(&data)?;
+        Self::validate_mesh_size(device, &data)?;
 
         let slot =
             crate::resources::ResultSlot::<crate::resources::mesh::mesh_store::MeshId>::new();
@@ -421,35 +434,10 @@ impl DeviceResources {
             .unwrap()
             .normal_line_buffer
             .is_some();
-        let normal_line_verts: Option<Vec<Vertex>> = if has_normal_lines {
-            let normal_length = 0.1_f32;
-            let normal_colour = [0.627_f32, 0.769, 1.0, 1.0];
-            let mut verts = Vec::with_capacity(positions.len() * 2);
-            for (p, n) in positions.iter().zip(normals.iter()) {
-                let tip = [
-                    p[0] + n[0] * normal_length,
-                    p[1] + n[1] * normal_length,
-                    p[2] + n[2] * normal_length,
-                ];
-                verts.push(Vertex {
-                    position: *p,
-                    normal: *n,
-                    colour: normal_colour,
-                    uv: [0.0, 0.0],
-                    tangent: [0.0, 0.0, 0.0, 1.0],
-                });
-                verts.push(Vertex {
-                    position: tip,
-                    normal: *n,
-                    colour: normal_colour,
-                    uv: [0.0, 0.0],
-                    tangent: [0.0, 0.0, 0.0, 1.0],
-                });
-            }
-            Some(verts)
-        } else {
-            None
-        };
+        // The normal-line sidecar is built lazily; refresh it only when a
+        // normals view has already materialised it.
+        let normal_line_verts: Option<Vec<Vertex>> =
+            has_normal_lines.then(|| Self::build_normal_lines(positions, normals));
 
         let aabb = crate::scene::aabb::Aabb::from_positions(positions);
         let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
@@ -460,6 +448,9 @@ impl DeviceResources {
         mesh.aabb = aabb;
         if let Some(ref mut cp) = mesh.cpu_positions {
             *cp = positions.to_vec();
+        }
+        if let Some(ref mut cn) = mesh.cpu_normals {
+            *cn = normals.to_vec();
         }
 
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()) as u64;
@@ -632,6 +623,7 @@ impl DeviceResources {
             });
         }
         Self::validate_mesh_data(data)?;
+        Self::validate_mesh_size(device, data)?;
 
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
             data.uvs.as_ref().map(|uvs| {
@@ -680,24 +672,30 @@ impl DeviceResources {
 
             if in_place {
                 use bytemuck::cast_slice;
-                let edge_indices =
-                    crate::resources::mesh::geometry::generate_edge_indices(&data.indices);
-                let normal_line_verts = Self::build_normal_lines(data);
                 let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
 
                 let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
                 queue.write_buffer(&mesh.vertex_buffer, 0, cast_slice(&vertices));
                 queue.write_buffer(&mesh.index_buffer, 0, cast_slice(data.indices.as_slice()));
-                let edge_byte_len = (edge_indices.len() * std::mem::size_of::<u32>()) as u64;
-                if edge_byte_len <= mesh.edge_index_buffer.size() {
-                    queue.write_buffer(&mesh.edge_index_buffer, 0, cast_slice(&edge_indices));
-                    mesh.edge_index_count = edge_indices.len() as u32;
+                // Sidecars are built lazily; refresh only the ones a view has
+                // already materialised.
+                if let Some(ref edge_buf) = mesh.edge_index_buffer {
+                    let edge_indices =
+                        crate::resources::mesh::geometry::generate_edge_indices(&data.indices);
+                    let edge_byte_len = (edge_indices.len() * std::mem::size_of::<u32>()) as u64;
+                    if edge_byte_len <= edge_buf.size() {
+                        queue.write_buffer(edge_buf, 0, cast_slice(&edge_indices));
+                        mesh.edge_index_count = edge_indices.len() as u32;
+                    }
                 }
                 if let Some(ref nl_buf) = mesh.normal_line_buffer {
+                    let normal_line_verts =
+                        Self::build_normal_lines(&data.positions, &data.normals);
                     queue.write_buffer(nl_buf, 0, cast_slice(&normal_line_verts));
                 }
                 mesh.aabb = aabb;
                 mesh.cpu_positions = Some(data.positions.clone());
+                mesh.cpu_normals = Some(data.normals.clone());
                 mesh.cpu_indices = Some(data.indices.clone());
 
                 self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
@@ -712,7 +710,6 @@ impl DeviceResources {
             }
         }
 
-        let normal_line_verts = Self::build_normal_lines(data);
         let mut new_mesh = Self::create_mesh_with_normals(
             device,
             &self.object_bind_group_layout,
@@ -732,9 +729,10 @@ impl DeviceResources {
             &self.fallback_emissive_texture_view,
             &vertices,
             &data.indices,
-            Some(&normal_line_verts),
+            None,
         );
         new_mesh.cpu_positions = Some(data.positions.clone());
+        new_mesh.cpu_normals = Some(data.normals.clone());
         new_mesh.cpu_indices = Some(data.indices.clone());
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
@@ -1628,11 +1626,108 @@ impl DeviceResources {
     }
 
     /// Build per-vertex normal visualization lines from mesh data.
-    fn build_normal_lines(data: &MeshData) -> Vec<Vertex> {
+    /// Build the wireframe edge-index buffer for a mesh on first use.
+    ///
+    /// Edge extraction sorts and dedups three candidate edges per triangle,
+    /// which is far too expensive to run eagerly on every upload for a view
+    /// most meshes never show. `prepare()` calls this for wireframe items
+    /// (and the volume-mesh boundary overlay); it is a no-op when the
+    /// buffer already exists.
+    pub(crate) fn ensure_edge_indices(
+        &mut self,
+        device: &wgpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    ) {
+        let Some(mesh) = self.mesh_store.get(mesh_id) else {
+            return;
+        };
+        if mesh.edge_index_buffer.is_some() {
+            return;
+        }
+        let Some(indices) = &mesh.cpu_indices else {
+            return;
+        };
+        let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(indices);
+        let bytes = (std::mem::size_of::<u32>() * edge_indices.len().max(2)) as u64;
+        if bytes > device.limits().max_buffer_size {
+            tracing::warn!(
+                mesh_index = mesh_id.index(),
+                bytes,
+                "edge index buffer would exceed max_buffer_size; wireframe skipped"
+            );
+            return;
+        }
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("edge_index_buf"),
+            size: bytes,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut mapped = buffer.slice(..).get_mapped_range_mut();
+            let edge_bytes = bytemuck::cast_slice::<u32, u8>(&edge_indices);
+            mapped[..edge_bytes.len()].copy_from_slice(edge_bytes);
+        }
+        buffer.unmap();
+        let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
+        mesh.edge_index_buffer = Some(buffer);
+        mesh.edge_index_count = edge_indices.len() as u32;
+    }
+
+    /// Build the normal-line visualisation buffer for a mesh on first use.
+    ///
+    /// The sidecar is two 64-byte vertices per mesh vertex, so building and
+    /// uploading it eagerly on every upload costs twice the mesh's own
+    /// vertex data for a debug view most meshes never show. `prepare()`
+    /// calls this for items with `show_normals` set; it is a no-op when the
+    /// buffer already exists or when the mesh was created from raw vertex
+    /// slices (which never carried normal lines).
+    pub(crate) fn ensure_normal_lines(
+        &mut self,
+        device: &wgpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    ) {
+        let Some(mesh) = self.mesh_store.get(mesh_id) else {
+            return;
+        };
+        if mesh.normal_line_buffer.is_some() {
+            return;
+        }
+        let (Some(positions), Some(normals)) = (&mesh.cpu_positions, &mesh.cpu_normals) else {
+            return;
+        };
+        let bytes = (positions.len() * 2 * std::mem::size_of::<Vertex>()) as u64;
+        if bytes > device.limits().max_buffer_size {
+            tracing::warn!(
+                mesh_index = mesh_id.index(),
+                bytes,
+                "normal-line buffer would exceed max_buffer_size; normals view skipped"
+            );
+            return;
+        }
+        let verts = Self::build_normal_lines(positions, normals);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("normal_line_buf"),
+            size: bytes,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        buffer
+            .slice(..)
+            .get_mapped_range_mut()
+            .copy_from_slice(bytemuck::cast_slice(&verts));
+        buffer.unmap();
+        let count = verts.len() as u32;
+        let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
+        mesh.normal_line_buffer = Some(buffer);
+        mesh.normal_line_count = count;
+    }
+
+    fn build_normal_lines(positions: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<Vertex> {
         let normal_colour = [0.627_f32, 0.769, 1.0, 1.0];
         let normal_length = 0.1_f32;
-        let mut normal_line_verts: Vec<Vertex> = Vec::with_capacity(data.positions.len() * 2);
-        for (p, n) in data.positions.iter().zip(data.normals.iter()) {
+        let mut normal_line_verts: Vec<Vertex> = Vec::with_capacity(positions.len() * 2);
+        for (p, n) in positions.iter().zip(normals.iter()) {
             let tip = [
                 p[0] + n[0] * normal_length,
                 p[1] + n[1] * normal_length,
@@ -1750,21 +1845,6 @@ impl DeviceResources {
             .get_mapped_range_mut()
             .copy_from_slice(cast_slice(indices));
         index_buffer.unmap();
-
-        let edge_indices = generate_edge_indices(indices);
-        let edge_buf_size = (std::mem::size_of::<u32>() * edge_indices.len().max(2)) as u64;
-        let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("edge_index_buf"),
-            size: edge_buf_size,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        {
-            let mut mapped = edge_index_buffer.slice(..).get_mapped_range_mut();
-            let edge_bytes = cast_slice::<u32, u8>(&edge_indices);
-            mapped[..edge_bytes.len()].copy_from_slice(edge_bytes);
-        }
-        edge_index_buffer.unmap();
 
         let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
         let object_uniform = ObjectUniform {
@@ -2046,8 +2126,10 @@ impl DeviceResources {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
-            edge_index_buffer,
-            edge_index_count: edge_indices.len() as u32,
+            // Wireframe edges are built lazily on first use; the indices are
+            // retained so any mesh can materialise them.
+            edge_index_buffer: None,
+            edge_index_count: 0,
             normal_line_buffer,
             normal_line_count,
             object_uniform_buf,
@@ -2069,7 +2151,8 @@ impl DeviceResources {
             normal_bind_group,
             aabb,
             cpu_positions: None,
-            cpu_indices: None,
+            cpu_normals: None,
+            cpu_indices: Some(indices.to_vec()),
             attribute_buffers: std::collections::HashMap::new(),
             attribute_ranges: std::collections::HashMap::new(),
             face_vertex_buffer: None,

@@ -88,6 +88,15 @@ impl ViewportRenderer {
                     continue;
                 }
 
+                // Wireframe edge and normal-line buffers are built lazily on
+                // the first frame a view needs them, not at upload time.
+                if item.show_normals {
+                    resources.ensure_normal_lines(device, item.mesh_id);
+                }
+                if item.settings.wireframe || frame.viewport.wireframe_mode {
+                    resources.ensure_edge_indices(device, item.mesh_id);
+                }
+
                 if resources.mesh_store.get(item.mesh_id).is_none() {
                     tracing::warn!(
                         mesh_index = item.mesh_id.index(),

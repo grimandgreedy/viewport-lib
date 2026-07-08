@@ -510,6 +510,8 @@ impl ViewportRenderer {
             if resources.mesh_store.get(item.boundary_mesh_id).is_none() {
                 continue;
             }
+            // The edge buffer is built lazily on first wireframe use.
+            resources.ensure_edge_indices(device, item.boundary_mesh_id);
             self.mesh_uniforms
                 .tvm_wireframe_draws
                 .push(item.boundary_mesh_id);

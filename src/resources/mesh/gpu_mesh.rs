@@ -14,8 +14,10 @@ pub struct GpuMesh {
     pub index_buffer: wgpu::Buffer,
     /// Number of indices in the triangle index buffer.
     pub index_count: u32,
-    /// Edge index buffer (deduplicated pairs, for wireframe LineList rendering).
-    pub edge_index_buffer: wgpu::Buffer,
+    /// Edge index buffer (deduplicated pairs, for wireframe LineList
+    /// rendering). Built on the first frame something renders this mesh as
+    /// wireframe, not at upload time.
+    pub edge_index_buffer: Option<wgpu::Buffer>,
     /// Number of indices in the edge index buffer.
     pub edge_index_count: u32,
     /// Vertex buffer for per-vertex normal visualization lines (LineList topology).
@@ -78,6 +80,9 @@ pub struct GpuMesh {
     pub aabb: crate::scene::aabb::Aabb,
     /// CPU-side positions retained for cap geometry generation (clip plane cross-section fill).
     pub(crate) cpu_positions: Option<Vec<[f32; 3]>>,
+    /// CPU-side normals retained so the normal-line visualisation buffer can
+    /// be built on first use instead of at upload time.
+    pub(crate) cpu_normals: Option<Vec<[f32; 3]>>,
     /// CPU-side triangle indices retained for cap geometry generation.
     pub(crate) cpu_indices: Option<Vec<u32>>,
 }
@@ -99,10 +104,10 @@ impl GpuMesh {
     pub(crate) fn gpu_byte_size(&self) -> u64 {
         let mut bytes = self.vertex_buffer.size()
             + self.index_buffer.size()
-            + self.edge_index_buffer.size()
             + self.object_uniform_buf.size()
             + self.normal_uniform_buf.size();
         for buf in [
+            self.edge_index_buffer.as_ref(),
             self.normal_line_buffer.as_ref(),
             self.face_vertex_buffer.as_ref(),
             self.position_override_buffer.as_ref(),

@@ -3,23 +3,24 @@
 use crate::resources::types::*;
 
 pub(crate) fn generate_edge_indices(triangle_indices: &[u32]) -> Vec<u32> {
-    use std::collections::HashSet;
-    let mut edges: HashSet<(u32, u32)> = HashSet::new();
-    let mut result = Vec::new();
-
-    for tri in triangle_indices.chunks(3) {
-        if tri.len() < 3 {
-            continue;
+    // Canonical form: smaller index first, packed into a u64 key so
+    // (a,b) and (b,a) collapse to the same edge under sort+dedup. Sorting
+    // is several times faster than hashing every edge, and this runs for
+    // every uploaded mesh. The output is sorted rather than first-seen
+    // order, which line rendering does not care about.
+    let mut keys: Vec<u64> = Vec::with_capacity(triangle_indices.len());
+    for tri in triangle_indices.chunks_exact(3) {
+        for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+            keys.push((u64::from(lo) << 32) | u64::from(hi));
         }
-        let pairs = [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])];
-        for (a, b) in &pairs {
-            // Canonical form: smaller index first, so (a,b) and (b,a) map to the same edge.
-            let edge = if a < b { (*a, *b) } else { (*b, *a) };
-            if edges.insert(edge) {
-                result.push(*a);
-                result.push(*b);
-            }
-        }
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    let mut result = Vec::with_capacity(keys.len() * 2);
+    for k in keys {
+        result.push((k >> 32) as u32);
+        result.push(k as u32);
     }
     result
 }

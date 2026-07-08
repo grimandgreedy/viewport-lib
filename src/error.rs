@@ -22,6 +22,17 @@ pub enum ViewportError {
         normals: usize,
     },
 
+    /// A mesh's vertex or index buffer would exceed the device's maximum
+    /// buffer size. Creating it anyway raises a validation error that takes
+    /// the whole device down, so the upload is refused instead.
+    #[error("mesh needs a {bytes} byte buffer but the device maximum is {max}")]
+    MeshTooLarge {
+        /// Size of the largest buffer the mesh needs.
+        bytes: u64,
+        /// The device's `max_buffer_size` limit.
+        max: u64,
+    },
+
     /// A position/normal override buffer was bound to a mesh whose vertex
     /// count differs from the buffer's. The shader indexes the override per
     /// mesh vertex, so a smaller buffer reads out of bounds and a different

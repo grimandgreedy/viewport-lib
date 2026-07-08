@@ -2173,11 +2173,11 @@ impl ViewportRenderer {
                         render_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(
-                            mesh.edge_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                        if let Some(edge_buf) = &mesh.edge_index_buffer {
+                            render_pass
+                                .set_index_buffer(edge_buf.slice(..), wgpu::IndexFormat::Uint32);
+                            render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                        }
                     }
                 }
             }
