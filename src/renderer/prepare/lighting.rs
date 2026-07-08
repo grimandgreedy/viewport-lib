@@ -545,7 +545,18 @@ impl ViewportRenderer {
             cascade_view_projs[0] = primary_shadow_mat;
             cascade_split_distances[0] = frame.camera.render_camera.far;
         }
-        let effective_cascade_count = if use_csm { cascade_count } else { 1 };
+        // A primary light with `cast_shadows` off gets no shadow map at all:
+        // no cascades are rendered and the shader's CSM sample short-circuits
+        // on `cascade_count == 0`. Point lights manage their own cubemap slots
+        // and are unaffected.
+        let primary_casts_shadows = light_count > 0 && combined_lights[0].cast_shadows;
+        let effective_cascade_count = if !primary_casts_shadows {
+            0
+        } else if use_csm {
+            cascade_count
+        } else {
+            1
+        };
 
         // D8: cache shadow stats and log when cascade splits change.
         {

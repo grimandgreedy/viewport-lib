@@ -245,6 +245,11 @@ fn sample_shadow_csm(
     surface_normal: vec3<f32>,
     light_dir: vec3<f32>,
 ) -> ShadowSample {
+    // cascade_count == 0: the primary light casts no shadows and the atlas
+    // holds no data for it.
+    if shadow_atlas.cascade_count == 0u {
+        return ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
+    }
     let dist = dot(world_pos - eye_pos, camera.forward);
     var cascade_idx = 0u;
     for (var i = 0u; i < shadow_atlas.cascade_count; i++) {

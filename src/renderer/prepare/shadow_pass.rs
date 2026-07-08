@@ -68,7 +68,15 @@ impl ViewportRenderer {
             sink.push(enc.finish());
         }
 
-        if lighting.shadows_enabled && !scene_items.is_empty() && !skip_shadows {
+        // `effective_cascade_count == 0` means the primary light does not cast
+        // shadows; the shader skips its CSM sample entirely (the atlas uniform
+        // carries cascade_count 0), so the atlas needs neither rendering nor a
+        // clear.
+        if lighting.shadows_enabled
+            && !scene_items.is_empty()
+            && !skip_shadows
+            && light.effective_cascade_count > 0
+        {
             // ------------------------------------------------------------------
             // Shadow GPU cull dispatch
             //
