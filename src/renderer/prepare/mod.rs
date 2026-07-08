@@ -653,6 +653,18 @@ impl ViewportRenderer {
                         triangles += (mesh.index_count / 3) as u64 * batch.instance_count as u64;
                     }
                 }
+                // Items outside the batches still issue one draw each through
+                // the per-object path; count them so `draw_calls` and
+                // `triangles_submitted` cover both paths.
+                for (item, inst) in scene_items.iter().zip(instanceable.iter()) {
+                    if item.settings.hidden || *inst {
+                        continue;
+                    }
+                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                        draw_calls += 1;
+                        triangles += (mesh.index_count / 3) as u64;
+                    }
+                }
             } else {
                 for item in scene_items {
                     if item.settings.hidden {
