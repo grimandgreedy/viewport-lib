@@ -289,8 +289,6 @@ impl DeviceResources {
         let fallback_albedo_view = self.fallback_texture.view.clone();
         let fallback_normal_view = self.fallback_normal_map_view.clone();
         let fallback_ao_view = self.fallback_ao_map_view.clone();
-        let data_bytes: u64 = spec.mip_levels.iter().map(|l| l.len() as u64).sum();
-
         let TextureUploadSpec {
             width,
             height,
@@ -298,10 +296,47 @@ impl DeviceResources {
             is_normal_map,
             mip_levels,
         } = spec;
+        // Resident-byte accounting. When the worker will generate a mip chain
+        // (single uncompressed RGBA level), charge the full chain size.
+        let data_bytes: u64 = if mip_levels.len() == 1
+            && matches!(
+                format,
+                wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Rgba8Unorm
+            ) {
+            let mut total = 0u64;
+            let (mut w, mut h) = (width, height);
+            loop {
+                total += w as u64 * h as u64 * 4;
+                if w == 1 && h == 1 {
+                    break;
+                }
+                w = (w / 2).max(1);
+                h = (h / 2).max(1);
+            }
+            total
+        } else {
+            mip_levels.iter().map(|l| l.len() as u64).sum()
+        };
 
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_with_gpu(device, queue, move |dev, q, progress| {
+                // A single supplied level means an uncompressed RGBA base
+                // image: build its mip chain here on the worker so minified
+                // sampling is trilinear instead of full-resolution fetches.
+                // Compressed uploads pass their own chains and skip this.
+                let mip_levels = if mip_levels.len() == 1
+                    && matches!(
+                        format,
+                        wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Rgba8Unorm
+                    ) {
+                    let srgb = format == wgpu::TextureFormat::Rgba8UnormSrgb;
+                    let mut levels = mip_levels;
+                    let base = levels.pop().expect("one base level");
+                    build_rgba_mip_chain(base, width, height, srgb)
+                } else {
+                    mip_levels
+                };
                 progress.set(0.2);
                 let gpu_texture = build_gpu_texture(
                     dev,
@@ -404,6 +439,12 @@ impl DeviceResources {
     /// if the data length is wrong, or
     /// [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `id` does not resolve to a live texture.
+    /// Note: replaced textures are single-mip. This path is synchronous and
+    /// sized for per-frame dynamic content (video frames, procedural
+    /// updates), where building a mip chain on the caller thread every frame
+    /// would cost more than the minified sampling it saves. Static textures
+    /// uploaded through `upload_texture`/`begin_upload_texture` get a full
+    /// mip chain built on the worker.
     pub fn replace_texture(
         &mut self,
         device: &wgpu::Device,
@@ -498,6 +539,71 @@ struct TextureUploadSpec {
     is_normal_map: bool,
     /// One entry per mip level, level 0 first.
     mip_levels: Vec<Vec<u8>>,
+}
+
+/// Build a full RGBA8 mip chain from a single base level by 2x2 box
+/// filtering, down to 1x1. For sRGB textures the RGB channels are averaged
+/// in linear space (decode, average, re-encode); alpha and linear-format
+/// channels average directly. Odd dimensions clamp the second sample row or
+/// column to the edge.
+fn build_rgba_mip_chain(base: Vec<u8>, width: u32, height: u32, srgb: bool) -> Vec<Vec<u8>> {
+    // 256-entry sRGB decode table; encode goes through powf per output
+    // texel, which the halving series keeps cheap (the whole chain is one
+    // third of the base size).
+    fn srgb_to_linear(v: u8) -> f32 {
+        let f = v as f32 / 255.0;
+        if f <= 0.04045 {
+            f / 12.92
+        } else {
+            ((f + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    fn linear_to_srgb(f: f32) -> u8 {
+        let f = f.clamp(0.0, 1.0);
+        let s = if f <= 0.0031308 {
+            f * 12.92
+        } else {
+            1.055 * f.powf(1.0 / 2.4) - 0.055
+        };
+        (s * 255.0 + 0.5) as u8
+    }
+    let decode: Vec<f32> = (0..=255u32).map(|v| srgb_to_linear(v as u8)).collect();
+
+    let mut levels = vec![base];
+    let (mut w, mut h) = (width as usize, height as usize);
+    while w > 1 || h > 1 {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let src = levels.last().expect("previous level");
+        let mut dst = vec![0u8; nw * nh * 4];
+        for y in 0..nh {
+            let (sy0, sy1) = (2 * y, (2 * y + 1).min(h - 1));
+            for x in 0..nw {
+                let (sx0, sx1) = (2 * x, (2 * x + 1).min(w - 1));
+                let corners = [
+                    (sy0 * w + sx0) * 4,
+                    (sy0 * w + sx1) * 4,
+                    (sy1 * w + sx0) * 4,
+                    (sy1 * w + sx1) * 4,
+                ];
+                let o = (y * nw + x) * 4;
+                for c in 0..3 {
+                    if srgb {
+                        let sum: f32 = corners.iter().map(|&s| decode[src[s + c] as usize]).sum();
+                        dst[o + c] = linear_to_srgb(sum * 0.25);
+                    } else {
+                        let sum: u32 = corners.iter().map(|&s| src[s + c] as u32).sum();
+                        dst[o + c] = ((sum + 2) / 4) as u8;
+                    }
+                }
+                let sum_a: u32 = corners.iter().map(|&s| src[s + 3] as u32).sum();
+                dst[o + 3] = ((sum_a + 2) / 4) as u8;
+            }
+        }
+        levels.push(dst);
+        w = nw;
+        h = nh;
+    }
+    levels
 }
 
 /// Block-packed layout for a single mip level: `(bytes_per_row, rows_of_blocks,
