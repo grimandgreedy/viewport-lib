@@ -380,10 +380,13 @@ fn position_override_takes_effect_through_render_path() {
     // ---- Render 1: no override. The red plane should be visible. ----
     let baseline = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
+    // The lit red plane tone-maps to roughly [241, 34, 34]; the Khronos
+    // Neutral curve lifts the dark channels a little, so the green/blue
+    // bounds sit above that rather than near zero.
     let count_red = |pixels: &[u8]| -> usize {
         pixels
             .chunks_exact(4)
-            .filter(|rgba| rgba[0] > 50 && rgba[1] < 30 && rgba[2] < 30)
+            .filter(|rgba| rgba[0] > 100 && rgba[1] < 60 && rgba[2] < 60)
             .count()
     };
     let baseline_red = count_red(&baseline);
