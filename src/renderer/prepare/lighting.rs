@@ -394,14 +394,32 @@ impl ViewportRenderer {
             shadow
                 .point_shadow_pool
                 .begin_frame(shadow.point_shadow_frame);
-            for (i, src) in combined_lights.iter().enumerate() {
-                if !src.cast_shadows {
-                    continue;
-                }
-                let (light_pos, range) = match src.kind {
-                    LightKind::Point { position, range } => (glam::Vec3::from(position), range),
-                    _ => continue,
-                };
+            // Only as many point lights can have shadows as the cubemap pool
+            // holds. Select that many deterministically (nearest to the
+            // camera, importance-weighted) instead of letting every casting
+            // light acquire a slot: the pool evicts on overflow, so a scene
+            // with hundreds of default-constructed point lights (cast_shadows
+            // defaults to true) would otherwise queue six shadow faces per
+            // light per frame and thrash every slot. Lights beyond the pool
+            // render unshadowed, exactly as if their acquire had failed.
+            let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+            let mut point_casters: Vec<(usize, glam::Vec3, f32, f32)> = combined_lights
+                .iter()
+                .enumerate()
+                .filter(|(_, src)| src.cast_shadows)
+                .filter_map(|(i, src)| match src.kind {
+                    LightKind::Point { position, range } => {
+                        let pos = glam::Vec3::from(position);
+                        let score = pos.distance(eye) / src.importance.max(0.001);
+                        Some((i, pos, range, score))
+                    }
+                    _ => None,
+                })
+                .collect();
+            point_casters
+                .sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+            point_casters.truncate(crate::renderer::types::MAX_POINT_SHADOW_LIGHTS as usize);
+            for &(i, light_pos, range, _) in &point_casters {
                 let key = crate::renderer::point_shadow_pool::LightKey(i as u32);
                 let Some(slot) = shadow.point_shadow_pool.acquire(key) else {
                     continue;
