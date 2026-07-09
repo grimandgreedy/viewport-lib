@@ -63,7 +63,7 @@ fn khronos_neutral(colour: vec3<f32>) -> vec3<f32> {
     let desaturation: f32 = 0.15;
 
     let x = min(colour.r, min(colour.g, colour.b));
-    let offset = select(x - 6.25 * x * x, 0.04, x < 0.08);
+    let offset = select(0.04, x - 6.25 * x * x, x < 0.08);
     let c = colour - offset;
 
     let peak = max(c.r, max(c.g, c.b));
