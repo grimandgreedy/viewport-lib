@@ -151,11 +151,12 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $scene_items:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $scene_items:expr, $po_bundle:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
         let use_instancing: bool = $use_instancing;
+        let po_bundle: Option<&crate::renderer::per_object_state::PerObjectBundle> = $po_bundle;
         let _vp_slot: Option<&ViewportSlot> = $slot;
         // Compute filter results: used by per-object path to override index buffers.
         let compute_filter_results: &[crate::resources::ComputeFilterResult] = $compute_filter_results;
@@ -401,20 +402,47 @@ macro_rules! emit_draw_calls {
                     (pos - eye).length()
                 };
 
+                // When prepare cached a render bundle for this item set and
+                // this pass uses the camera bind group the bundle was recorded
+                // with, replay it instead of re-recording one draw per opaque
+                // item; only the blended items still draw immediately (their
+                // back-to-front order depends on the camera every frame).
+                let bundle_hit: Option<&crate::renderer::per_object_state::PerObjectBundle> =
+                    po_bundle.filter(|pb| pb.camera_bg == *camera_bg);
+
                 let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
                 let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
-                for (idx, item) in scene_items.iter().enumerate() {
-                    if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
-                        continue;
+                if let Some(pb) = bundle_hit {
+                    for &idx in &pb.transparent {
+                        if let Some(item) = scene_items.get(idx) {
+                            if !item.settings.hidden
+                                && resources.mesh_store.get(item.mesh_id).is_some()
+                            {
+                                transparent.push((idx, item));
+                            }
+                        }
                     }
-                    if item.settings.opacity < 1.0 {
-                        transparent.push((idx, item));
-                    } else {
-                        opaque.push((idx, item));
+                } else {
+                    for (idx, item) in scene_items.iter().enumerate() {
+                        if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
+                            continue;
+                        }
+                        if item.settings.opacity < 1.0 {
+                            transparent.push((idx, item));
+                        } else {
+                            opaque.push((idx, item));
+                        }
                     }
+                    opaque.sort_by(|a, b| dist_from_eye(a).partial_cmp(&dist_from_eye(b)).unwrap_or(std::cmp::Ordering::Equal));
                 }
-                opaque.sort_by(|a, b| dist_from_eye(a).partial_cmp(&dist_from_eye(b)).unwrap_or(std::cmp::Ordering::Equal));
                 transparent.sort_by(|a, b| dist_from_eye(b).partial_cmp(&dist_from_eye(a)).unwrap_or(std::cmp::Ordering::Equal));
+
+                if let Some(pb) = bundle_hit {
+                    render_pass.execute_bundles(std::iter::once(&pb.bundle));
+                    // Bundle execution resets all render-pass state; restore
+                    // the camera bind group for the draws and passes below.
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                }
 
                 // Re-bind pipeline, deform bind group, and geometry buffers only
                 // when they change between consecutive items; at thousands of

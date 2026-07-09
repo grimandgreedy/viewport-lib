@@ -43,6 +43,27 @@ pub(crate) struct PerObjectCacheEntry {
     pub(crate) last_frame: u64,
 }
 
+/// A pre-recorded render bundle covering the opaque per-object draws for the
+/// current item set, replayed by the paint path instead of re-recording one
+/// draw per item every frame. Built in `prepare()` when the per-object item
+/// set is stable and eligible (plain solid meshes: no wireframe, attribute,
+/// warp, or deform features); per-item transforms and colours still update
+/// every frame through the uniform buffers the bundle's bind groups reference.
+pub(crate) struct PerObjectBundle {
+    /// The recorded opaque draws.
+    pub(crate) bundle: wgpu::RenderBundle,
+    /// Hash of the item facts the recording depends on (order, mesh ids,
+    /// pipeline selection, pick ids, opacity split). A mismatch re-records.
+    pub(crate) key: u64,
+    /// The camera bind group recorded into the bundle. Paint only replays the
+    /// bundle when its pass camera bind group is this exact resource, so a
+    /// different viewport (or a rebuilt slot) falls back to immediate draws.
+    pub(crate) camera_bg: wgpu::BindGroup,
+    /// Indices (into the prepared item list) of blended items, which are
+    /// excluded from the bundle and drawn immediately, depth-sorted.
+    pub(crate) transparent: Vec<usize>,
+}
+
 pub(crate) struct PerObjectState {
     /// Per-object draw resources keyed by [`PerObjectKey`].
     pub(crate) cache: HashMap<PerObjectKey, PerObjectCacheEntry>,

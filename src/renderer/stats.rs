@@ -223,6 +223,11 @@ pub struct FrameStats {
     pub draw_calls: u32,
     /// Number of instanced batches (0 when using per-object path).
     pub instanced_batches: u32,
+    /// True when `prepare()` holds a cached render bundle for the opaque
+    /// per-object draws this frame (large all-per-object scenes on the LDR
+    /// path). The paint pass replays the bundle instead of recording one draw
+    /// per item.
+    pub per_object_bundle_cached: bool,
     /// Visible items that miss the instanced fast path and are drawn one at a
     /// time through the per-object path.
     ///

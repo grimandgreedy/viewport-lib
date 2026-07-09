@@ -884,6 +884,10 @@ impl ViewportRenderer {
         }
         self.prepare_breakdown.plugin_ms = plugin_start.elapsed().as_secs_f32() * 1000.0;
 
+        // Rebuild or drop the cached per-object render bundle now that the
+        // prepared item list, LOD resolve, and per-item bind groups are final.
+        self.update_per_object_bundle(device, frame);
+
         // Read back GPU timestamps without blocking. The staging buffer is
         // mapped on one frame and read on a later one; a non-blocking poll
         // pumps the map callback, and the value is consumed once the map

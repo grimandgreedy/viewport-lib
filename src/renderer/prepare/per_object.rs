@@ -555,4 +555,184 @@ impl ViewportRenderer {
 
         bind_groups_built
     }
+
+    /// Rebuild or drop the cached per-object render bundle for this frame.
+    ///
+    /// Eligible frames are the all-per-object case (instancing selected but no
+    /// batch formed) with plain solid meshes: no wireframe mode or per-item
+    /// wireframe/normals/attribute/warp/deform features, no compute-filter
+    /// index overrides, no registered deformers, and the LDR path (the HDR
+    /// path records its own scene pass). The bundle stores the opaque draws
+    /// in item order; blended items are listed for immediate depth-sorted
+    /// drawing after the bundle. Per-item transforms and colours flow through
+    /// the uniform buffers referenced by the recorded bind groups, so camera
+    /// and object motion do not re-record; changes to the item set, material
+    /// bind groups, or LOD-resolved meshes do (via the key hash and the
+    /// bind-groups-built counter).
+    pub(super) fn update_per_object_bundle(&mut self, device: &wgpu::Device, frame: &FrameData) {
+        /// Below this many opaque items the recording cost is not worth
+        /// caching against.
+        const MIN_BUNDLE_ITEMS: usize = 64;
+        self.last_stats.per_object_bundle_cached = false;
+        // Measurement kill-switch so the bundle can be A/B'd in one binary.
+        static DISABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *DISABLE.get_or_init(|| std::env::var_os("VIEWPORT_DISABLE_PER_OBJECT_BUNDLE").is_some())
+        {
+            self.per_object_bundle = None;
+            return;
+        }
+
+        let plan = 'plan: {
+            if frame.effects.post_process.enabled
+                || frame.viewport.wireframe_mode
+                || !self.compute_filter_results.is_empty()
+                || !self.instancing.use_instancing
+                || !self.instancing.batches.is_empty()
+                || !self.resources.deform.meshes.is_empty()
+                || self.prepared_surfaces.len() < MIN_BUNDLE_ITEMS
+            {
+                break 'plan None;
+            }
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            frame.camera.viewport_index.hash(&mut h);
+            self.prepared_surfaces.len().hash(&mut h);
+            let mut transparent: Vec<usize> = Vec::new();
+            let mut opaque = 0usize;
+            for (i, item) in self.prepared_surfaces.iter().enumerate() {
+                if item.settings.hidden {
+                    (i, 0u8).hash(&mut h);
+                    continue;
+                }
+                if item.settings.wireframe
+                    || item.show_normals
+                    || item.warp_attribute.is_some()
+                    || item.active_attribute.is_some()
+                    || item.deform_instance.is_some()
+                {
+                    break 'plan None;
+                }
+                if self.resources.mesh_store.get(item.mesh_id).is_none() {
+                    (i, 1u8).hash(&mut h);
+                    continue;
+                }
+                if item.settings.opacity < 1.0 || item.material.is_blend() {
+                    (i, 2u8).hash(&mut h);
+                    transparent.push(i);
+                    continue;
+                }
+                (
+                    i,
+                    3u8,
+                    item.mesh_id,
+                    item.material.is_two_sided(),
+                    item.settings.pick_id.0,
+                )
+                    .hash(&mut h);
+                opaque += 1;
+            }
+            if opaque < MIN_BUNDLE_ITEMS {
+                break 'plan None;
+            }
+            Some((h.finish(), transparent))
+        };
+
+        let Some((key, transparent)) = plan else {
+            self.per_object_bundle = None;
+            return;
+        };
+
+        let camera_bg = self
+            .viewport_camera_bind_group(frame.camera.viewport_index)
+            .clone();
+        // A rebuilt per-item bind group means the recorded one is stale even
+        // though the key (which hashes item facts, not resource identity)
+        // still matches.
+        let reusable = self.last_stats.per_object_bind_groups_built == 0
+            && self
+                .per_object_bundle
+                .as_ref()
+                .is_some_and(|pb| pb.key == key && pb.camera_bg == camera_bg);
+        if !reusable {
+            self.per_object_bundle =
+                Some(self.record_per_object_bundle(device, key, camera_bg, transparent));
+        }
+        self.last_stats.per_object_bundle_cached = true;
+    }
+
+    /// Record the opaque per-object draws into a render bundle. Mirrors the
+    /// plain-solid-mesh subset of the paint path's per-object loop; the
+    /// eligibility checks in `update_per_object_bundle` guarantee no item
+    /// needs the wireframe/attribute/filter/deform variants.
+    fn record_per_object_bundle(
+        &self,
+        device: &wgpu::Device,
+        key: u64,
+        camera_bg: wgpu::BindGroup,
+        transparent: Vec<usize>,
+    ) -> crate::renderer::per_object_state::PerObjectBundle {
+        let resources = &self.resources;
+        let mut enc = device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+            label: Some("per_object_bundle"),
+            color_formats: &[Some(resources.target_format)],
+            depth_stencil: Some(wgpu::RenderBundleDepthStencil {
+                format: crate::resources::SCENE_DEPTH_FORMAT,
+                depth_read_only: false,
+                // The scene passes attach the stencil aspect with
+                // `stencil_ops: None` (read-only); the bundle must declare the
+                // same or replay fails validation. The mesh pipelines never
+                // touch stencil.
+                stencil_read_only: true,
+            }),
+            sample_count: resources.sample_count,
+            multiview: None,
+        });
+        enc.set_bind_group(0, &camera_bg, &[]);
+        enc.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
+
+        let mut cur_two_sided: Option<bool> = None;
+        let mut cur_mesh = None;
+        for (i, item) in self.prepared_surfaces.iter().enumerate() {
+            if item.settings.hidden || item.settings.opacity < 1.0 || item.material.is_blend() {
+                continue;
+            }
+            let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+                continue;
+            };
+            let two_sided = item.material.is_two_sided();
+            if cur_two_sided != Some(two_sided) {
+                enc.set_pipeline(if two_sided {
+                    &resources.solid_two_sided_pipeline
+                } else {
+                    &resources.solid_pipeline
+                });
+                cur_two_sided = Some(two_sided);
+            }
+            enc.set_bind_group(
+                1,
+                self.mesh_uniforms
+                    .bind_groups
+                    .get(i)
+                    .and_then(|opt| opt.as_ref())
+                    .unwrap_or(&mesh.object_bind_group),
+                &[],
+            );
+            if cur_mesh != Some(item.mesh_id) {
+                enc.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                enc.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                cur_mesh = Some(item.mesh_id);
+            }
+            enc.draw_indexed(0..mesh.index_count, 0, 0..1);
+        }
+
+        let bundle = enc.finish(&wgpu::RenderBundleDescriptor {
+            label: Some("per_object_bundle"),
+        });
+        crate::renderer::per_object_state::PerObjectBundle {
+            bundle,
+            key,
+            camera_bg,
+            transparent,
+        }
+    }
 }
