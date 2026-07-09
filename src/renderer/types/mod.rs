@@ -318,6 +318,15 @@ macro_rules! emit_draw_calls {
                         // using the transparent (alpha-blend) pipeline. HDR instead routes
                         // transparent excluded items to the OIT pass in render_frame_internal
                         // so they composite correctly with the HDR transparency model.
+                        //
+                        // Pipeline, deform bind group, and geometry buffers are only
+                        // re-bound when they change between consecutive items: at
+                        // thousands of per-object items the redundant re-binds dominate
+                        // command-recording time (many scenes share one mesh and one
+                        // pipeline across every item).
+                        let mut cur_pipeline: Option<*const wgpu::RenderPipeline> = None;
+                        let mut cur_deform: Option<*const wgpu::BindGroup> = None;
+                        let mut cur_geometry: Option<(crate::resources::mesh::mesh_store::MeshId, bool)> = None;
                         for (item_idx, item) in &excluded_items {
                             let item_idx = *item_idx;
                             let Some(mesh) = resources
@@ -335,14 +344,17 @@ macro_rules! emit_draw_calls {
                             } else {
                                 &resources.solid_pipeline
                             };
-                            render_pass.set_pipeline(pipeline);
-                            render_pass.set_bind_group(
-                                2,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(item.mesh_id, item.deform_instance),
-                                &[],
-                            );
+                            if cur_pipeline != Some(pipeline as *const _) {
+                                render_pass.set_pipeline(pipeline);
+                                cur_pipeline = Some(pipeline as *const _);
+                            }
+                            let deform_bg = resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                            if cur_deform != Some(deform_bg as *const _) {
+                                render_pass.set_bind_group(2, deform_bg, &[]);
+                                cur_deform = Some(deform_bg as *const _);
+                            }
                             render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
 
                             let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
@@ -358,13 +370,19 @@ macro_rules! emit_draw_calls {
                                 if let Some(ref fvb) = mesh.face_vertex_buffer {
                                     render_pass.set_vertex_buffer(0, fvb.slice(..));
                                     render_pass.draw(0..mesh.index_count, 0..1);
+                                    // The face path binds no index buffer, so the
+                                    // cached geometry state no longer holds.
+                                    cur_geometry = None;
                                 }
                             } else {
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
-                                );
+                                if cur_geometry != Some((item.mesh_id, false)) {
+                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_index_buffer(
+                                        mesh.index_buffer.slice(..),
+                                        wgpu::IndexFormat::Uint32,
+                                    );
+                                    cur_geometry = Some((item.mesh_id, false));
+                                }
                                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                             }
                         }
@@ -398,6 +416,30 @@ macro_rules! emit_draw_calls {
                 opaque.sort_by(|a, b| dist_from_eye(a).partial_cmp(&dist_from_eye(b)).unwrap_or(std::cmp::Ordering::Equal));
                 transparent.sort_by(|a, b| dist_from_eye(b).partial_cmp(&dist_from_eye(a)).unwrap_or(std::cmp::Ordering::Equal));
 
+                // Re-bind pipeline, deform bind group, and geometry buffers only
+                // when they change between consecutive items; at thousands of
+                // items the redundant re-binds dominate command recording.
+                let mut cur_pipeline: Option<*const wgpu::RenderPipeline> = None;
+                let mut cur_deform: Option<*const wgpu::BindGroup> = None;
+                let mut cur_geometry: Option<(crate::resources::mesh::mesh_store::MeshId, bool)> = None;
+                macro_rules! set_pipeline_cached {
+                    ($pl:expr) => {{
+                        let pl: &wgpu::RenderPipeline = $pl;
+                        if cur_pipeline != Some(pl as *const _) {
+                            render_pass.set_pipeline(pl);
+                            cur_pipeline = Some(pl as *const _);
+                        }
+                    }};
+                }
+                macro_rules! set_deform_cached {
+                    ($bg:expr) => {{
+                        let bg: &wgpu::BindGroup = $bg;
+                        if cur_deform != Some(bg as *const _) {
+                            render_pass.set_bind_group(2, bg, &[]);
+                            cur_deform = Some(bg as *const _);
+                        }
+                    }};
+                }
                 macro_rules! draw_item {
                     ($entry:expr, $pipeline:expr) => {{
                         let (item_idx, item): (usize, &SceneRenderItem) = $entry;
@@ -422,41 +464,48 @@ macro_rules! emit_draw_calls {
 
                         if frame.viewport.wireframe_mode {
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                render_pass.set_pipeline(&resources.wireframe_pipeline);
-                                render_pass.set_bind_group(2, deform_bg, &[]);
+                                set_pipeline_cached!(&resources.wireframe_pipeline);
+                                set_deform_cached!(deform_bg);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     edge_buf.slice(..),
                                     wgpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                                cur_geometry = None;
                             }
                         } else if is_face_attr {
                             if let Some(ref fvb) = mesh.face_vertex_buffer {
-                                render_pass.set_pipeline($pipeline);
-                                render_pass.set_bind_group(2, deform_bg, &[]);
+                                set_pipeline_cached!($pipeline);
+                                set_deform_cached!(deform_bg);
                                 render_pass.set_vertex_buffer(0, fvb.slice(..));
                                 render_pass.draw(0..mesh.index_count, 0..1);
+                                cur_geometry = None;
                             }
                         } else {
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             // Check for a compute-filtered index buffer override.
                             let filter_result = compute_filter_results
                                 .iter()
                                 .find(|r| r.mesh_id == item.mesh_id);
-                            render_pass.set_pipeline($pipeline);
-                            render_pass.set_bind_group(2, deform_bg, &[]);
+                            set_pipeline_cached!($pipeline);
+                            set_deform_cached!(deform_bg);
                             if let Some(fr) = filter_result {
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     fr.index_buffer.slice(..),
                                     wgpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+                                cur_geometry = None;
                             } else {
-                                render_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
-                                );
+                                if cur_geometry != Some((item.mesh_id, false)) {
+                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_index_buffer(
+                                        mesh.index_buffer.slice(..),
+                                        wgpu::IndexFormat::Uint32,
+                                    );
+                                    cur_geometry = Some((item.mesh_id, false));
+                                }
                                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                             }
                         }
@@ -464,11 +513,12 @@ macro_rules! emit_draw_calls {
                         if item.show_normals {
                             if let Some(ref nl_buf) = mesh.normal_line_buffer {
                                 if mesh.normal_line_count > 0 {
-                                    render_pass.set_pipeline(&resources.wireframe_pipeline);
-                                    render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
+                                    set_pipeline_cached!(&resources.wireframe_pipeline);
+                                    set_deform_cached!(&resources.deform.dummy_bind_group);
                                     render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                                     render_pass.set_vertex_buffer(0, nl_buf.slice(..));
                                     render_pass.draw(0..mesh.normal_line_count, 0..1);
+                                    cur_geometry = None;
                                 }
                             }
                         }
