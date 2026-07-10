@@ -681,7 +681,9 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         }
         let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         var Lo = vec3<f32>(0.0);
-        for (var i = 0u; i < lights_uniform.count; i++) {
+        let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        for (var j = 0u; j < pbr_range.count; j++) {
+            let i = cluster_light_global(pbr_range, j);
             let l = lights_storage[i];
             var L: vec3<f32>;
             var radiance: vec3<f32>;
@@ -691,12 +693,14 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
             } else if l.light_type == 1u {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
+                if dist >= l.range { continue; }
                 L = to_light / max(dist, 0.0001);
                 let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 radiance = l.colour * l.intensity * falloff * falloff;
             } else {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
+                if dist >= l.range { continue; }
                 L = to_light / max(dist, 0.0001);
                 let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 let spot_dir = normalize(l.spot_direction);
@@ -709,6 +713,8 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
                 );
                 radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
+            // Backfacing: pbr_light_contrib returns exactly zero; skip it.
+            if dot(N, L) <= 0.0 { continue; }
             // Transparent surfaces do not cast/receive shadows (no CSM sampling).
             Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
         }
@@ -734,7 +740,9 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
         var total_colour_contrib = vec3<f32>(0.0);
-        for (var i = 0u; i < lights_uniform.count; i++) {
+        let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        for (var j = 0u; j < bp_range.count; j++) {
+            let i = cluster_light_global(bp_range, j);
             let l = lights_storage[i];
             var light_dir: vec3<f32>;
             var attenuation = 1.0;
@@ -743,12 +751,14 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
             } else if l.light_type == 1u {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
+                if dist >= l.range { continue; }
                 light_dir = to_light / max(dist, 0.0001);
                 let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 attenuation = falloff * falloff;
             } else {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
+                if dist >= l.range { continue; }
                 light_dir = to_light / max(dist, 0.0001);
                 let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 let spot_dir = normalize(l.spot_direction);

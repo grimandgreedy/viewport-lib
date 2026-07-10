@@ -895,12 +895,14 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             } else if l.light_type == 1u {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
+                if dist >= l.range { continue; }
                 L = to_light / max(dist, 0.0001);
                 let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 radiance = l.colour * l.intensity * falloff * falloff;
             } else {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
+                if dist >= l.range { continue; }
                 L = to_light / max(dist, 0.0001);
                 let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 let spot_dir = normalize(l.spot_direction);
@@ -913,6 +915,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
                 );
                 radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
+            // Backfacing: pbr_light_contrib returns exactly zero, so skip
+            // the shadow samples and the BRDF outright.
+            if dot(N, L) <= 0.0 { continue; }
 
             // Shadow factor. Directional `lights[0]` uses CSM; point lights
             // with an allocated cubemap slot sample the point shadow array.
@@ -975,12 +980,14 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             } else if l.light_type == 1u {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
+                if dist >= l.range { continue; }
                 light_dir = to_light / max(dist, 0.0001);
                 let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 attenuation = falloff * falloff;
             } else {
                 let to_light = l.pos_or_dir - in.world_pos;
                 let dist = length(to_light);
+                if dist >= l.range { continue; }
                 light_dir = to_light / max(dist, 0.0001);
                 let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 let spot_dir = normalize(l.spot_direction);

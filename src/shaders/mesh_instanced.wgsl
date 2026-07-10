@@ -536,18 +536,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let roughness = max(inst.roughness, 0.04);
         let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         var Lo = vec3<f32>(0.0);
-        for (var i = 0u; i < lights_uniform.count; i++) {
+        // Per-cluster light list (small-N scenes fall back to the full
+        // array inside cluster_light_range).
+        let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        for (var j = 0u; j < pbr_range.count; j++) {
+            let i = cluster_light_global(pbr_range, j);
             let l = lights_storage[i];
             var L: vec3<f32>; var radiance: vec3<f32>;
             if l.light_type == 0u {
                 L = normalize(l.pos_or_dir); radiance = l.colour * l.intensity;
             } else if l.light_type == 1u {
                 let to_light = l.pos_or_dir - in.world_pos; let dist = length(to_light);
+                if dist >= l.range { continue; }
                 L = to_light / max(dist, 0.0001);
                 let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 radiance = l.colour * l.intensity * falloff * falloff;
             } else {
                 let to_light = l.pos_or_dir - in.world_pos; let dist = length(to_light);
+                if dist >= l.range { continue; }
                 L = to_light / max(dist, 0.0001);
                 let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 let spot_dir = normalize(l.spot_direction);
@@ -556,6 +562,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                 let cone_att = clamp((cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001), 0.0, 1.0);
                 radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
             }
+            // Backfacing: pbr_light_contrib returns exactly zero, so skip
+            // the shadow samples and the BRDF outright.
+            if dot(N, L) <= 0.0 { continue; }
             var shadow_factor = 1.0;
             if lights_uniform.shadows_enabled != 0u && inst.receive_shadows != 0u {
                 if i == 0u && lights_storage[0].light_type != 1u {
@@ -590,18 +599,22 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
         var total_colour_contrib = vec3<f32>(0.0);
-        for (var i = 0u; i < lights_uniform.count; i++) {
+        let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
+        for (var j = 0u; j < bp_range.count; j++) {
+            let i = cluster_light_global(bp_range, j);
             let l = lights_storage[i];
             var light_dir: vec3<f32>; var attenuation = 1.0;
             if l.light_type == 0u {
                 light_dir = normalize(l.pos_or_dir);
             } else if l.light_type == 1u {
                 let to_light = l.pos_or_dir - in.world_pos; let dist = length(to_light);
+                if dist >= l.range { continue; }
                 light_dir = to_light / max(dist, 0.0001);
                 let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 attenuation = falloff * falloff;
             } else {
                 let to_light = l.pos_or_dir - in.world_pos; let dist = length(to_light);
+                if dist >= l.range { continue; }
                 light_dir = to_light / max(dist, 0.0001);
                 let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
                 let spot_dir = normalize(l.spot_direction);
