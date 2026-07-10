@@ -201,6 +201,7 @@ pub use interaction::select::sub_object::{
 pub use interaction::widgets::axes_indicator::AxisView;
 
 pub use renderer::ShadowDebugStats;
+pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,

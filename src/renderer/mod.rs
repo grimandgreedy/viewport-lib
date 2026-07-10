@@ -6,6 +6,8 @@
 
 #[macro_use]
 mod types;
+mod device_lost;
+pub use device_lost::{DeviceLostInfo, DeviceLostWatcher};
 mod indirect;
 mod instancing_state;
 use instancing_state::InstancingState;
