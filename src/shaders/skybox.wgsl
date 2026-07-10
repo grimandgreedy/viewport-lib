@@ -36,7 +36,10 @@ struct Lights {
 @group(0) @binding(11) var skybox_texture: texture_2d<f32>;
 
 struct VertexOutput {
-    @builtin(position) pos: vec4<f32>,
+    // The skybox draws with depth_compare Equal against the cleared far
+    // plane; @invariant guarantees the constant z = 1.0 written below is
+    // bit-exact so the comparison cannot artifact.
+    @builtin(position) @invariant pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
 };
 
