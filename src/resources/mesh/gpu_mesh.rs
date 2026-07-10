@@ -85,6 +85,12 @@ pub struct GpuMesh {
     pub(crate) cpu_normals: Option<Vec<[f32; 3]>>,
     /// CPU-side triangle indices retained for cap geometry generation.
     pub(crate) cpu_indices: Option<Vec<u32>>,
+    /// Monotonic counter bumped whenever the mesh's rendered geometry
+    /// changes under the same `MeshId` (`replace_mesh_data`,
+    /// `write_mesh_positions_normals`, position-override changes). Caches
+    /// keyed on mesh content (the point-shadow cubemap cache) fold this in
+    /// so an in-place vertex update invalidates them.
+    pub(crate) content_rev: u64,
 }
 
 impl GpuMesh {

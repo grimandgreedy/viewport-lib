@@ -452,6 +452,7 @@ impl DeviceResources {
         if let Some(ref mut cn) = mesh.cpu_normals {
             *cn = normals.to_vec();
         }
+        mesh.content_rev += 1;
 
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()) as u64;
         if let Some(ref nl) = normal_line_verts {
@@ -697,6 +698,7 @@ impl DeviceResources {
                 mesh.cpu_positions = Some(data.positions.clone());
                 mesh.cpu_normals = Some(data.normals.clone());
                 mesh.cpu_indices = Some(data.indices.clone());
+                mesh.content_rev += 1;
 
                 self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
                     + data.indices.len() * std::mem::size_of::<u32>())
@@ -750,6 +752,12 @@ impl DeviceResources {
         new_mesh.face_attribute_buffers = face_attr_bufs;
         new_mesh.face_colour_buffers = face_colour_bufs;
         new_mesh.vector_attribute_buffers = vector_attr_bufs;
+        // Content changed under a stable id: carry the old revision forward
+        // plus one so content-keyed caches invalidate.
+        new_mesh.content_rev = self
+            .mesh_store
+            .get(mesh_id)
+            .map_or(1, |old| old.content_rev + 1);
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>())
             as u64;
@@ -2163,6 +2171,7 @@ impl DeviceResources {
             normal_override_buffer: None,
             position_override_gen: 0,
             normal_override_gen: 0,
+            content_rev: 0,
         }
     }
 

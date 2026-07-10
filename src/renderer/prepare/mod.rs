@@ -731,6 +731,7 @@ impl ViewportRenderer {
         Self::prepare_shadow_pass(
             resources,
             &mut self.instancing,
+            &mut self.shadow,
             &self.compute_filter_results,
             &self.item_type_plugins,
             plugin_frame_index,

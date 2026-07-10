@@ -26,6 +26,12 @@ pub(crate) struct ShadowState {
     pub(crate) last_logged_cascade_splits: [f32; 4],
     /// Shadow atlas uniform from the last prepare.
     pub(crate) last_shadow_atlas_uniform: crate::resources::ShadowAtlasUniform,
+    /// Per-slot content hash of the cubemap rendered into each point-shadow
+    /// pool slot (light position/range plus every in-range caster's mesh
+    /// identity, content revision, and model matrix). A slot whose hash is
+    /// unchanged skips its six face passes; `None` means never rendered or
+    /// invalidated. Indexed by pool slot.
+    pub(crate) point_shadow_slot_hashes: Vec<Option<u64>>,
 }
 
 impl ShadowState {
@@ -41,6 +47,17 @@ impl ShadowState {
             last_contact_shadow_active: false,
             last_logged_cascade_splits: [f32::MAX; 4],
             last_shadow_atlas_uniform: bytemuck::Zeroable::zeroed(),
+            point_shadow_slot_hashes: vec![
+                None;
+                crate::renderer::types::MAX_POINT_SHADOW_LIGHTS as usize
+            ],
         }
+    }
+
+    /// Forget all cached cubemap contents so every active slot re-renders on
+    /// the next frame. Called from `force_dirty` and whenever the pool's
+    /// textures are recreated.
+    pub(crate) fn invalidate_point_shadow_cache(&mut self) {
+        self.point_shadow_slot_hashes.fill(None);
     }
 }

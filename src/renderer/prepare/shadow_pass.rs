@@ -9,6 +9,7 @@ impl ViewportRenderer {
     pub(super) fn prepare_shadow_pass(
         resources: &mut DeviceResources,
         instancing: &mut InstancingState,
+        shadow: &mut crate::renderer::shadow_state::ShadowState,
         compute_filter_results: &[crate::resources::ComputeFilterResult],
         plugins: &std::collections::HashMap<
             &'static str,
@@ -770,6 +771,97 @@ impl ViewportRenderer {
             && !scene_items.is_empty()
             && !light.point_shadow_faces.is_empty()
         {
+            // Collect the caster list once: item filter, mesh lookup, and
+            // world AABB are shared by every slot and face below instead of
+            // being recomputed per (face, item).
+            struct PointCaster<'a> {
+                item: &'a SceneRenderItem,
+                mesh: &'a crate::resources::GpuMesh,
+                world_aabb: crate::scene::aabb::Aabb,
+            }
+            let casters: Vec<PointCaster> = scene_items
+                .iter()
+                .filter(|item| {
+                    !item.settings.hidden
+                        && item.settings.cast_shadows
+                        && item.settings.opacity >= 1.0
+                })
+                .filter_map(|item| {
+                    let mesh = resources.mesh_store.get(item.mesh_id)?;
+                    let world_aabb = mesh
+                        .aabb
+                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
+                    Some(PointCaster {
+                        item,
+                        mesh,
+                        world_aabb,
+                    })
+                })
+                .collect();
+
+            // Decide per pool slot whether its cubemap must re-render this
+            // frame. A slot's content is fully determined by its light's
+            // position and range plus every in-range caster's mesh identity,
+            // content revision, and model matrix; hash those and skip the
+            // slot's six face passes when the hash matches what was rendered
+            // last time. The pool's depth layers persist between frames, so a
+            // skipped slot keeps sampling its existing cubemap. Casters with
+            // an active deform instance or a position/normal override animate
+            // without changing any hashed input, so their slots re-render
+            // every frame.
+            let closest_sq = |aabb: &crate::scene::aabb::Aabb, p: glam::Vec3| -> f32 {
+                let c = p.clamp(aabb.min, aabb.max);
+                (p - c).length_squared()
+            };
+            let mut slot_dirty = std::collections::HashMap::new();
+            for fc in light.point_shadow_faces.iter() {
+                if slot_dirty.contains_key(&fc.slot) {
+                    continue;
+                }
+                let mut hasher = crate::renderer::shader_hashes::fnv1a_hash(&[]);
+                let mut mix = |bytes: &[u8]| {
+                    for &b in bytes {
+                        hasher ^= b as u64;
+                        hasher = hasher.wrapping_mul(0x0000_0100_0000_01B3);
+                    }
+                };
+                mix(&fc.light_pos.x.to_le_bytes());
+                mix(&fc.light_pos.y.to_le_bytes());
+                mix(&fc.light_pos.z.to_le_bytes());
+                mix(&fc.range.to_le_bytes());
+                let mut cacheable = true;
+                let range_sq = fc.range * fc.range;
+                for c in casters.iter() {
+                    if closest_sq(&c.world_aabb, fc.light_pos) > range_sq {
+                        continue;
+                    }
+                    if c.item.deform_instance.is_some()
+                        || c.mesh.position_override_buffer.is_some()
+                        || c.mesh.normal_override_buffer.is_some()
+                    {
+                        cacheable = false;
+                        break;
+                    }
+                    mix(&(c.item.mesh_id.index() as u64).to_le_bytes());
+                    mix(&c.item.mesh_id.generation.to_le_bytes());
+                    mix(&c.mesh.content_rev.to_le_bytes());
+                    mix(bytemuck::cast_slice(&c.item.model));
+                }
+                let slot_idx = fc.slot as usize;
+                let dirty = !cacheable
+                    || shadow
+                        .point_shadow_slot_hashes
+                        .get(slot_idx)
+                        .copied()
+                        .flatten()
+                        != Some(hasher);
+                if let Some(entry) = shadow.point_shadow_slot_hashes.get_mut(slot_idx) {
+                    *entry = cacheable.then_some(hasher);
+                }
+                slot_dirty.insert(fc.slot, dirty);
+            }
+            let any_dirty = slot_dirty.values().any(|&d| d);
+
             // Make sure each casting item's `mesh.object_uniform_buf` carries
             // the item's current world model matrix. When instancing is on,
             // the per-item write-buffer pass earlier in `prepare_scene_internal`
@@ -780,102 +872,95 @@ impl ViewportRenderer {
             // through `shadow_point_pipeline` (non-instanced), so it needs
             // a fresh per-mesh write here. Multi-item-per-mesh scenes need a
             // dedicated per-item shadow uniform; the single-item case is the
-            // priority bug fix.
-            for item in scene_items.iter() {
-                if item.settings.hidden
-                    || !item.settings.cast_shadows
-                    || item.settings.opacity < 1.0
-                {
-                    continue;
-                }
-                let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
-                    continue;
-                };
-                // Only the model matrix (offset 0, 64 bytes) is read by
-                // `shadow_point.wgsl`. Write just that prefix so we don't
-                // clobber the rest of the per-mesh `ObjectUniform`.
-                queue.write_buffer(
-                    &mesh.object_uniform_buf,
-                    0,
-                    bytemuck::cast_slice(&item.model),
-                );
-            }
-
-            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("point_shadow_encoder"),
-            });
-            let last_face = light.point_shadow_faces.len() - 1;
-            for (face_idx, fc) in light.point_shadow_faces.iter().enumerate() {
-                let layer = fc.slot * 6 + fc.face;
-                let view = &resources.point_shadow_face_views[layer as usize];
-                // One slot spans all faces: begin on the first face pass, end
-                // on the last, so the readback sees the whole cubemap cost
-                // (up to casters x 6 depth passes) as one duration.
-                let ts_writes = ts_query_set
-                    .filter(|_| face_idx == 0 || face_idx == last_face)
-                    .map(|qs| {
-                        ts_written_mask.fetch_or(
-                            1 << crate::renderer::GPU_TS_POINT_SHADOW,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        let slot = crate::renderer::GPU_TS_POINT_SHADOW;
-                        wgpu::RenderPassTimestampWrites {
-                            query_set: qs,
-                            beginning_of_pass_write_index: (face_idx == 0).then_some(slot * 2),
-                            end_of_pass_write_index: (face_idx == last_face)
-                                .then_some(slot * 2 + 1),
-                        }
-                    });
-                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("point_shadow_face_pass"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: ts_writes,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&resources.shadow_point_pipeline);
-                let dyn_offset = layer * POINT_FACE_STRIDE as u32;
-                pass.set_bind_group(0, &resources.shadow_point_face_bind_group, &[dyn_offset]);
-
-                let face_frustum = crate::camera::frustum::Frustum::from_view_proj(&fc.view_proj);
-
-                for item in scene_items.iter() {
-                    if item.settings.hidden
-                        || !item.settings.cast_shadows
-                        || item.settings.opacity < 1.0
-                    {
-                        continue;
-                    }
-                    let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
-                        continue;
-                    };
-                    let world_aabb = mesh
-                        .aabb
-                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model));
-                    if face_frustum.cull_aabb(&world_aabb) {
-                        continue;
-                    }
-                    pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                    pass.set_bind_group(
-                        2,
-                        resources
-                            .deform
-                            .instance_bind_group_for(item.mesh_id, item.deform_instance),
-                        &[],
+            // priority bug fix. Skipped entirely when every slot's cubemap is
+            // reused this frame.
+            if any_dirty {
+                for c in casters.iter() {
+                    // Only the model matrix (offset 0, 64 bytes) is read by
+                    // `shadow_point.wgsl`. Write just that prefix so we don't
+                    // clobber the rest of the per-mesh `ObjectUniform`.
+                    queue.write_buffer(
+                        &c.mesh.object_uniform_buf,
+                        0,
+                        bytemuck::cast_slice(&c.item.model),
                     );
-                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
-            sink.push(enc.finish());
+
+            let rendered: Vec<&super::PointShadowFace> = light
+                .point_shadow_faces
+                .iter()
+                .filter(|fc| slot_dirty.get(&fc.slot).copied().unwrap_or(true))
+                .collect();
+            if !rendered.is_empty() {
+                let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("point_shadow_encoder"),
+                });
+                let last_face = rendered.len() - 1;
+                for (face_idx, fc) in rendered.iter().enumerate() {
+                    let layer = fc.slot * 6 + fc.face;
+                    let view = &resources.point_shadow_face_views[layer as usize];
+                    // One slot spans all faces: begin on the first face pass, end
+                    // on the last, so the readback sees the whole cubemap cost
+                    // (up to casters x 6 depth passes) as one duration.
+                    let ts_writes = ts_query_set
+                        .filter(|_| face_idx == 0 || face_idx == last_face)
+                        .map(|qs| {
+                            ts_written_mask.fetch_or(
+                                1 << crate::renderer::GPU_TS_POINT_SHADOW,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            let slot = crate::renderer::GPU_TS_POINT_SHADOW;
+                            wgpu::RenderPassTimestampWrites {
+                                query_set: qs,
+                                beginning_of_pass_write_index: (face_idx == 0).then_some(slot * 2),
+                                end_of_pass_write_index: (face_idx == last_face)
+                                    .then_some(slot * 2 + 1),
+                            }
+                        });
+                    let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("point_shadow_face_pass"),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: ts_writes,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(&resources.shadow_point_pipeline);
+                    let dyn_offset = layer * POINT_FACE_STRIDE as u32;
+                    pass.set_bind_group(0, &resources.shadow_point_face_bind_group, &[dyn_offset]);
+
+                    let face_frustum =
+                        crate::camera::frustum::Frustum::from_view_proj(&fc.view_proj);
+
+                    for c in casters.iter() {
+                        if face_frustum.cull_aabb(&c.world_aabb) {
+                            continue;
+                        }
+                        pass.set_bind_group(1, &c.mesh.object_bind_group, &[]);
+                        pass.set_bind_group(
+                            2,
+                            resources
+                                .deform
+                                .instance_bind_group_for(c.item.mesh_id, c.item.deform_instance),
+                            &[],
+                        );
+                        pass.set_vertex_buffer(0, c.mesh.vertex_buffer.slice(..));
+                        pass.set_index_buffer(
+                            c.mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..c.mesh.index_count, 0, 0..1);
+                    }
+                }
+                sink.push(enc.finish());
+            }
         }
 
         if shadow_instrument && lighting.shadows_enabled {

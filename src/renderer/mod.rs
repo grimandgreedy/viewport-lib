@@ -789,6 +789,7 @@ impl ViewportRenderer {
         // Also invalidate the generation cache so the next prepare is guaranteed
         // to enter the rebuild path even if the scene generation is unchanged.
         self.instancing.last_scene_generation = u64::MAX;
+        self.shadow.invalidate_point_shadow_cache();
     }
 
     /// Re-enable GPU-driven culling after a call to `disable_gpu_driven_culling`.
