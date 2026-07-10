@@ -325,15 +325,16 @@ impl ViewportRenderer {
             .collect();
         *last_frustum_culled_lights = frustum_culled;
 
-        // Apply the per-frame cap. When over the cap, keep the first directional
-        // light at slot 0 (the cascaded-shadow caster) and rank the rest by
-        // `importance * proximity_weight`, dropping the tail. Directional lights
-        // are treated as infinitely close (proximity_weight = 1).
-        let combined_lights: Vec<&LightSource> = if raw_lights.len()
-            <= crate::resources::MAX_SCENE_LIGHTS
-        {
-            raw_lights
-        } else {
+        // Rank the light array: first directional light pinned at slot 0 (the
+        // cascaded-shadow caster), the rest ordered by
+        // `importance * proximity_weight` descending (stable, so equal ranks
+        // keep submission order). The order does two jobs: over
+        // MAX_SCENE_LIGHTS the tail is dropped, and the cluster build keeps
+        // each cell's lights in array order, so a cluster that overflows its
+        // fixed slice drops the lowest-priority lights deterministically.
+        // Directional lights are treated as infinitely close
+        // (proximity_weight = 1). Shading itself is order-independent.
+        let combined_lights: Vec<&LightSource> = {
             let camera_pos = glam::Vec3::from(frame.camera.render_camera.eye_position);
             let directional_first = raw_lights
                 .iter()

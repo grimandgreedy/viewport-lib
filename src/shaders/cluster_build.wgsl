@@ -1,13 +1,17 @@
 // Cluster light assignment: builds the per-cluster light index list each frame.
 //
 // One workgroup per cluster cell, threads grid-stride over the active light
-// array. Each workgroup:
-//   1. Counts the lights intersecting its cluster AABB (workgroup-shared
-//      atomic).
-//   2. Reserves a contiguous range in `light_indices` via a single global
-//      atomicAdd.
-//   3. Re-walks the lights and scatters the intersecting indices into the
-//      reserved range.
+// array. Each cluster owns a fixed slice of `light_indices`
+// (MAX_PER_CLUSTER entries at cluster_id * MAX_PER_CLUSTER), so no cluster
+// can starve another and the same scene always produces the same lists.
+// Each workgroup:
+//   1. Marks the lights intersecting its cluster AABB in a workgroup-shared
+//      bitmask (parallel across threads).
+//   2. Thread 0 compacts the set bits into the cluster's slice in light-index
+//      order. The host orders the light array by priority (directionals
+//      first, then punctuals ranked by importance and proximity), so when a
+//      cluster holds more lights than its slice, the lowest-priority lights
+//      are the ones dropped, deterministically.
 //
 // Spot lights are tested with the conservative sphere-vs-AABB on their
 // bounding sphere. A tighter cone-vs-AABB test would be a useful follow-up if
@@ -18,10 +22,10 @@
 // z slice distribution is log-uniform: z_view(i) = -near * (far/near)^(i/Nz).
 
 struct ClusterCell {
-    offset:         u32,
-    count:          u32,
-    punctual_count: u32,
-    _pad:           u32,
+    offset:          u32,
+    count:           u32,
+    punctual_count:  u32,
+    punctual_demand: u32,
 };
 
 struct ActiveLight {
@@ -39,16 +43,17 @@ struct GridUniform {
 
 @group(0) @binding(0) var<storage, read_write> cluster_grid:  array<ClusterCell>;
 @group(0) @binding(1) var<storage, read_write> light_indices: array<u32>;
-@group(0) @binding(2) var<storage, read_write> global_offset: atomic<u32>;
 @group(0) @binding(3) var<uniform>            grid:           GridUniform;
 @group(0) @binding(4) var<storage, read>      active_lights:  array<ActiveLight>;
 
-var<workgroup> wg_count:        atomic<u32>;
-var<workgroup> wg_punctual:     atomic<u32>;
-var<workgroup> wg_write_cursor: atomic<u32>;
-var<workgroup> wg_base_offset:  u32;
-
 const WG_SIZE: u32 = 64u;
+// Fixed per-cluster capacity of the light index list. Must match
+// `clustered::MAX_LIGHTS_PER_CLUSTER` on the Rust side.
+const MAX_PER_CLUSTER: u32 = 64u;
+// Bitmask words covering MAX_SCENE_LIGHTS (512) bits.
+const MASK_WORDS: u32 = 16u;
+
+var<workgroup> wg_hits: array<atomic<u32>, 16>;
 
 fn sphere_intersects_aabb(c: vec3<f32>, r: f32, lo: vec3<f32>, hi: vec3<f32>) -> bool {
     let q = clamp(c, lo, hi);
@@ -112,26 +117,14 @@ fn cluster_aabb(cluster_id: u32) -> array<vec3<f32>, 2> {
     return array<vec3<f32>, 2>(lo, hi);
 }
 
-struct HitResult {
-    hit:        bool,
-    is_punctual: bool,
-};
-
-fn light_intersects(idx: u32, lo: vec3<f32>, hi: vec3<f32>) -> HitResult {
-    var r: HitResult;
+fn light_intersects(idx: u32, lo: vec3<f32>, hi: vec3<f32>) -> bool {
     let l = active_lights[idx];
-    let t = l.type_pad.x;
-    if t == 0u {
-        // Directional : affects every cluster but doesn't count toward the
-        // per-cluster density signal the overlay reads.
-        r.hit = true;
-        r.is_punctual = false;
-        return r;
+    if l.type_pad.x == 0u {
+        // Directional : affects every cluster.
+        return true;
     }
     // Point / spot : conservative sphere-vs-AABB on the bounding sphere.
-    r.hit = sphere_intersects_aabb(l.view_pos_range.xyz, l.view_pos_range.w, lo, hi);
-    r.is_punctual = r.hit;
-    return r;
+    return sphere_intersects_aabb(l.view_pos_range.xyz, l.view_pos_range.w, lo, hi);
 }
 
 @compute @workgroup_size(64)
@@ -147,83 +140,55 @@ fn main(
     let aabb = cluster_aabb(cluster_id);
     let lo = aabb[0];
     let hi = aabb[1];
-    let n_lights = u32(grid.depth.w);
+    // The bitmask covers MASK_WORDS * 32 = 512 lights (MAX_SCENE_LIGHTS).
+    let n_lights = min(u32(grid.depth.w), MASK_WORDS * 32u);
 
-    if lid.x == 0u {
-        atomicStore(&wg_count, 0u);
-        atomicStore(&wg_punctual, 0u);
-        atomicStore(&wg_write_cursor, 0u);
+    if lid.x < MASK_WORDS {
+        atomicStore(&wg_hits[lid.x], 0u);
     }
     workgroupBarrier();
 
-    // Pass 1 : count intersecting lights. Punctuals tracked separately for
-    // the overlay so an always-present directional doesn't flatten the
-    // density signal.
+    // Pass 1 : mark intersecting lights in the shared bitmask.
     var i = lid.x;
     loop {
         if i >= n_lights { break; }
-        let h = light_intersects(i, lo, hi);
-        if h.hit {
-            atomicAdd(&wg_count, 1u);
-            if h.is_punctual {
-                atomicAdd(&wg_punctual, 1u);
-            }
+        if light_intersects(i, lo, hi) {
+            atomicOr(&wg_hits[i / 32u], 1u << (i % 32u));
         }
         i = i + WG_SIZE;
     }
     workgroupBarrier();
 
-    // Thread 0 reserves a contiguous slot in the global list.
+    // Pass 2 : thread 0 compacts set bits into the cluster's fixed slice in
+    // light-index order. Array order is the host's priority order, so slice
+    // overflow drops the lowest-priority lights.
     if lid.x == 0u {
-        let n = atomicLoad(&wg_count);
-        let np = atomicLoad(&wg_punctual);
-        var base = 0u;
-        if n > 0u {
-            base = atomicAdd(&global_offset, n);
-            // If the global list is exhausted, drop this cluster's entries by
-            // clamping the reservation to zero. The fragment shader will read
-            // count = 0 and fall through with hemisphere ambient only for
-            // these clusters.
-            let limit = arrayLength(&light_indices);
-            if base >= limit {
-                base = 0u;
-                cluster_grid[cluster_id].offset         = 0u;
-                cluster_grid[cluster_id].count          = 0u;
-                cluster_grid[cluster_id].punctual_count = 0u;
-                wg_base_offset = limit; // sentinel : block writes below.
-            } else {
-                let writable = min(n, limit - base);
-                cluster_grid[cluster_id].offset         = base;
-                cluster_grid[cluster_id].count          = writable;
-                cluster_grid[cluster_id].punctual_count = np;
-                wg_base_offset = base;
+        let base = cluster_id * MAX_PER_CLUSTER;
+        var written = 0u;
+        var punctual_kept = 0u;
+        var punctual_demand = 0u;
+        var j = 0u;
+        loop {
+            if j >= n_lights { break; }
+            let hit = (atomicLoad(&wg_hits[j / 32u]) & (1u << (j % 32u))) != 0u;
+            if hit {
+                let is_punctual = active_lights[j].type_pad.x != 0u;
+                if is_punctual {
+                    punctual_demand = punctual_demand + 1u;
+                }
+                if written < MAX_PER_CLUSTER {
+                    light_indices[base + written] = j;
+                    written = written + 1u;
+                    if is_punctual {
+                        punctual_kept = punctual_kept + 1u;
+                    }
+                }
             }
-        } else {
-            cluster_grid[cluster_id].offset         = 0u;
-            cluster_grid[cluster_id].count          = 0u;
-            cluster_grid[cluster_id].punctual_count = 0u;
-            wg_base_offset = 0u;
+            j = j + 1u;
         }
-    }
-    workgroupBarrier();
-
-    let cell_count = cluster_grid[cluster_id].count;
-    let cell_offset = wg_base_offset;
-    if cell_count == 0u || cell_offset >= arrayLength(&light_indices) {
-        return;
-    }
-
-    // Pass 2 : scatter. Re-test and write into the reserved range, capped at
-    // cell_count to handle the global-list-cap fallback.
-    var j = lid.x;
-    loop {
-        if j >= n_lights { break; }
-        if light_intersects(j, lo, hi).hit {
-            let slot = atomicAdd(&wg_write_cursor, 1u);
-            if slot < cell_count {
-                light_indices[cell_offset + slot] = j;
-            }
-        }
-        j = j + WG_SIZE;
+        cluster_grid[cluster_id].offset          = base;
+        cluster_grid[cluster_id].count           = written;
+        cluster_grid[cluster_id].punctual_count  = punctual_kept;
+        cluster_grid[cluster_id].punctual_demand = punctual_demand;
     }
 }

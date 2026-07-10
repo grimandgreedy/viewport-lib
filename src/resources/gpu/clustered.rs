@@ -3,8 +3,12 @@
 //! The cluster grid partitions screen space into `X_TILES * Y_TILES * Z_SLICES`
 //! view-frustum cells. Each frame the build compute pass tags each cell with
 //! the list of lights whose volume of influence intersects it; lit pipelines
-//! then read just their cell's slice of the global index list instead of
-//! scanning every active light per fragment.
+//! then read just their cell's slice of the index list instead of scanning
+//! every active light per fragment. Every cluster owns a fixed
+//! `MAX_LIGHTS_PER_CLUSTER` slice of the index list, written in the host's
+//! priority order (directionals, then punctuals ranked by importance and
+//! proximity), so a crowded cluster degrades by dropping its lowest-priority
+//! lights and never disturbs any other cluster.
 //!
 //! Bindings 14, 15, and 16 of the camera bind group expose the grid uniform,
 //! the per-cell offsets, and the global index list to every lit pipeline. The
@@ -20,10 +24,15 @@ pub const CLUSTER_Y_TILES: u32 = 9;
 pub const CLUSTER_Z_SLICES: u32 = 24;
 /// Total cluster cell count (`16 * 9 * 24 = 3456`).
 pub const CLUSTER_COUNT: u32 = CLUSTER_X_TILES * CLUSTER_Y_TILES * CLUSTER_Z_SLICES;
-/// Maximum total light-index references shared across all clusters. At 4 bytes
-/// per index this caps the global list at 128 KB. The build pass drops the
-/// low-importance tail for any clusters that would push past this cap.
-pub const MAX_LIGHT_INDICES: u32 = 32 * 1024;
+/// Fixed light-index capacity per cluster cell. Each cluster owns its own
+/// slice of the index list, so a crowded cluster can never starve another,
+/// and overflow within a cluster drops the lowest-priority lights (the host
+/// orders the light array by importance and proximity). Must match
+/// `MAX_PER_CLUSTER` in `cluster_build.wgsl`.
+pub const MAX_LIGHTS_PER_CLUSTER: u32 = 64;
+/// Total light-index list capacity: one fixed slice per cluster
+/// (`3456 * 64` entries, 864 KB at 4 bytes per index).
+pub const MAX_LIGHT_INDICES: u32 = CLUSTER_COUNT * MAX_LIGHTS_PER_CLUSTER;
 /// Below this active-light count the build pass is skipped and the fragment
 /// shader iterates the full light array directly. Straight iteration is
 /// cheaper than cluster lookup overhead for small light counts.
@@ -116,20 +125,26 @@ pub struct ClusterStats {
     pub total_cells: u32,
     /// Cells with at least one punctual (point or spot) light assigned.
     pub non_empty_cells: u32,
-    /// Maximum punctual count across all cells.
+    /// Maximum punctual demand across all cells (lights intersecting the
+    /// cell, before the per-cluster capacity cap).
     pub max_punctual: u32,
-    /// Median punctual count across cells with at least one punctual.
+    /// Median punctual demand across cells with at least one punctual.
     pub median_punctual: u32,
-    /// 99th-percentile punctual count across cells with at least one
+    /// 99th-percentile punctual demand across cells with at least one
     /// punctual.
     pub p99_punctual: u32,
-    /// Mean punctual count across non-empty cells.
+    /// Mean punctual demand across non-empty cells.
     pub mean_punctual: f32,
-    /// Sum of `cell.count` across all cells : how much of the global light
-    /// index list the build pass actually used this frame.
+    /// Sum of `cell.count` across all cells : how many light-index slots the
+    /// build pass actually wrote this frame.
     pub total_index_slots_used: u32,
-    /// Capacity of the global light index list.
+    /// Capacity of the light index list (one fixed
+    /// `MAX_LIGHTS_PER_CLUSTER` slice per cluster).
     pub max_index_slots: u32,
+    /// Punctual lights dropped by per-cluster capacity this frame, summed
+    /// over all cells (`punctual_demand - punctual_count`). Zero means no
+    /// cluster overflowed its slice.
+    pub dropped_punctual_slots: u32,
     /// Active light count after the CPU frustum cull.
     pub active_light_count: u32,
     /// True if the frame ran the small-N or force-fallback path. In that
@@ -154,8 +169,10 @@ pub struct ClusterCell {
     /// overlay reads this so the ever-present directional fill doesn't drown
     /// out the per-cluster light density signal.
     pub punctual_count: u32,
-    /// Pad to 16 bytes.
-    pub _pad: u32,
+    /// Punctual lights that intersect this cluster, before the per-cluster
+    /// capacity cap. `punctual_demand - punctual_count` is how many lights
+    /// this cluster dropped.
+    pub punctual_demand: u32,
 }
 
 /// All clustered-shading state owned by `DeviceResources`.
@@ -169,8 +186,9 @@ pub struct ClusteredResources {
     /// View-space data for the active (post-cull) light set, uploaded each
     /// frame and consumed by the build pass.
     pub active_lights_buf: wgpu::Buffer,
-    /// Single u32 atomic counter used by the build pass to reserve contiguous
-    /// regions of `light_index_buf`. Reset to zero each frame by the clear.
+    /// Single u32 counter from the old shared-allocator scheme. The build
+    /// pass no longer touches it (clusters own fixed slices); it stays
+    /// allocated and zeroed so the clear bind group layout is unchanged.
     pub global_offset_buf: wgpu::Buffer,
     /// CPU-readable staging buffer that mirrors `cluster_grid_buf`. Populated
     /// only when the host calls `read_stats`.
@@ -487,16 +505,18 @@ fn compute_stats(
 ) -> ClusterStats {
     let total_cells = cells.len() as u32;
     let mut total_index_slots_used: u32 = 0;
+    let mut dropped: u32 = 0;
     let mut punctuals: Vec<u32> = Vec::with_capacity(cells.len());
     let mut max_punctual: u32 = 0;
     let mut non_empty: u32 = 0;
     for c in cells {
         total_index_slots_used = total_index_slots_used.saturating_add(c.count);
-        if c.punctual_count > 0 {
+        dropped = dropped.saturating_add(c.punctual_demand.saturating_sub(c.punctual_count));
+        if c.punctual_demand > 0 {
             non_empty += 1;
-            punctuals.push(c.punctual_count);
-            if c.punctual_count > max_punctual {
-                max_punctual = c.punctual_count;
+            punctuals.push(c.punctual_demand);
+            if c.punctual_demand > max_punctual {
+                max_punctual = c.punctual_demand;
             }
         }
     }
@@ -529,6 +549,7 @@ fn compute_stats(
         mean_punctual: mean,
         total_index_slots_used,
         max_index_slots: MAX_LIGHT_INDICES,
+        dropped_punctual_slots: dropped,
         active_light_count,
         fallback_active,
     }
