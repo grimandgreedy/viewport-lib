@@ -85,15 +85,10 @@ impl ApplicationHandler for App {
             ..Default::default()
         }))
         .expect("adapter");
-        let required_features = if adapter
-            .features()
-            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
-        {
-            wgpu::Features::INDIRECT_FIRST_INSTANCE
-        } else {
+        let required_features = ViewportRenderer::recommended_device_features(&adapter);
+        if !required_features.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) {
             eprintln!("INDIRECT_FIRST_INSTANCE not supported -- GPU culling will be disabled");
-            wgpu::Features::empty()
-        };
+        }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features,
             ..Default::default()

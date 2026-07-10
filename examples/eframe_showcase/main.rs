@@ -88,8 +88,9 @@ fn main() -> eframe::Result {
             wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
                 wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
                     eframe::egui_wgpu::WgpuSetupCreateNew {
-                        // Request INDIRECT_FIRST_INSTANCE when the adapter supports it so
-                        // GPU-driven culling is available on Metal (Apple Silicon) and Vulkan.
+                        // Request the features the renderer can use when the adapter has
+                        // them (GPU-driven culling, GPU frame timings); eframe does not
+                        // request any by default.
                         device_descriptor: std::sync::Arc::new(|adapter| {
                             use eframe::wgpu;
                             let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
@@ -99,8 +100,10 @@ fn main() -> eframe::Result {
                             };
                             wgpu::DeviceDescriptor {
                                 label: Some("viewport-lib showcase device"),
-                                required_features: adapter.features()
-                                    & wgpu::Features::INDIRECT_FIRST_INSTANCE,
+                                required_features:
+                                    viewport_lib::ViewportRenderer::recommended_device_features(
+                                        adapter,
+                                    ),
                                 required_limits: wgpu::Limits {
                                     max_texture_dimension_2d: 8192,
                                     ..base_limits

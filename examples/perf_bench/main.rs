@@ -813,16 +813,9 @@ fn init_device() -> Option<(wgpu::Device, wgpu::Queue, bool, bool)> {
     }))
     .ok()?;
 
-    let avail = adapter.features();
-    let has_ts = avail.contains(wgpu::Features::TIMESTAMP_QUERY);
-    let has_indirect = avail.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
-    let mut wanted = wgpu::Features::empty();
-    if has_ts {
-        wanted |= wgpu::Features::TIMESTAMP_QUERY;
-    }
-    if has_indirect {
-        wanted |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
-    }
+    let wanted = ViewportRenderer::recommended_device_features(&adapter);
+    let has_ts = wanted.contains(wgpu::Features::TIMESTAMP_QUERY);
+    let has_indirect = wanted.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
 
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("perf-bench"),

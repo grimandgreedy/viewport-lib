@@ -96,9 +96,9 @@ fn main() -> eframe::Result {
             viewport: egui::ViewportBuilder::default().with_inner_size([1600.0, 900.0]),
             depth_buffer: 24,
             stencil_buffer: 8,
-            // Request INDIRECT_FIRST_INSTANCE when the adapter supports it, so the
-            // GPU-driven culling path is available (eframe does not request it by
-            // default, which leaves is_gpu_culling_supported() == false).
+            // Request the features the renderer can use when the adapter has them
+            // (eframe does not request any by default, which leaves
+            // is_gpu_culling_supported() == false and gpu_frame_ms == None).
             wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
                 wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
                     eframe::egui_wgpu::WgpuSetupCreateNew {
@@ -111,8 +111,10 @@ fn main() -> eframe::Result {
                             };
                             wgpu::DeviceDescriptor {
                                 label: Some("viewport-lib render-paths device"),
-                                required_features: adapter.features()
-                                    & wgpu::Features::INDIRECT_FIRST_INSTANCE,
+                                required_features:
+                                    viewport_lib::ViewportRenderer::recommended_device_features(
+                                        adapter,
+                                    ),
                                 required_limits: wgpu::Limits {
                                     max_texture_dimension_2d: 8192,
                                     ..base_limits
