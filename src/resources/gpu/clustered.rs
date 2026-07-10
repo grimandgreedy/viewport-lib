@@ -20,7 +20,10 @@ use wgpu::util::DeviceExt;
 pub const CLUSTER_X_TILES: u32 = 16;
 /// Y (screen-tile) count of the cluster grid.
 pub const CLUSTER_Y_TILES: u32 = 9;
-/// Z (depth-slice) count. Log-uniform from near to far in the build pass.
+/// Z (depth-slice) count. Log-uniform from the camera near plane to a far
+/// bound fitted per frame to the punctual lights' reach (max view depth +
+/// range, clamped to the camera far), so slices concentrate where lights
+/// exist; fragments beyond the fitted far clamp to the last slice.
 pub const CLUSTER_Z_SLICES: u32 = 24;
 /// Total cluster cell count (`16 * 9 * 24 = 3456`).
 pub const CLUSTER_COUNT: u32 = CLUSTER_X_TILES * CLUSTER_Y_TILES * CLUSTER_Z_SLICES;

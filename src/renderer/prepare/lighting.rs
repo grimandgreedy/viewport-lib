@@ -752,6 +752,35 @@ impl ViewportRenderer {
             let near = frame.camera.render_camera.near.max(0.01);
             let far = frame.camera.render_camera.far.max(near + 0.01);
 
+            // Fit the cluster depth range to the punctual lights' actual
+            // reach instead of the camera far plane. With the default
+            // far of 1000 the log-uniform slices are hundreds of metres
+            // deep at distance, so every distant cluster intersects most
+            // of the scene's lights and far fragments iterate lights that
+            // cannot reach them. Clamping far to max(light depth + range)
+            // concentrates all slices where lights exist. Fragments
+            // beyond the fitted far clamp to the last slice (see
+            // cluster_index_for), whose lights all attenuate to zero at
+            // that distance, so shading is unchanged; only the list
+            // tightness improves.
+            let mut light_far = 0.0f32;
+            for l in combined_lights.iter() {
+                let (position, range) = match l.kind {
+                    LightKind::Point { position, range } => (position, range),
+                    LightKind::Spot {
+                        position, range, ..
+                    } => (position, range),
+                    LightKind::Directional { .. } => continue,
+                };
+                let view_depth = -view_mat.transform_point3(glam::Vec3::from(position)).z;
+                light_far = light_far.max(view_depth + range);
+            }
+            let far = if light_far > 0.0 {
+                light_far.clamp(near * 2.0, far)
+            } else {
+                far
+            };
+
             let active_count = lights_packed.len() as u32;
             // Skip the cluster build entirely for scenes with only a handful
             // of lights : straight per-fragment iteration is cheaper than the
