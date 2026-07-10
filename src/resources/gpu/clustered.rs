@@ -467,7 +467,12 @@ impl ClusteredResources {
     /// Encode the per-frame clear + build dispatches. Always runs the clear so
     /// the cluster grid and global reservation counter return to a known zero
     /// state; the build is skipped when no active lights survive the CPU cull.
-    pub fn dispatch_frame(&self, encoder: &mut wgpu::CommandEncoder, active_light_count: u32) {
+    pub fn dispatch_frame(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        active_light_count: u32,
+        ts_query_set: Option<&wgpu::QuerySet>,
+    ) {
         {
             let clear_workgroups = MAX_LIGHT_INDICES.max(CLUSTER_COUNT).div_ceil(64);
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -482,9 +487,15 @@ impl ClusteredResources {
             return;
         }
         {
+            let slot = crate::renderer::GPU_TS_CLUSTER;
+            let ts_writes = ts_query_set.map(|qs| wgpu::ComputePassTimestampWrites {
+                query_set: qs,
+                beginning_of_pass_write_index: Some(slot * 2),
+                end_of_pass_write_index: Some(slot * 2 + 1),
+            });
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("cluster_build_pass"),
-                timestamp_writes: None,
+                timestamp_writes: ts_writes,
             });
             pass.set_pipeline(&self.build_pipeline);
             pass.set_bind_group(0, &self.build_bind_group, &[]);

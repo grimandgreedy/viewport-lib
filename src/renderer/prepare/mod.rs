@@ -231,6 +231,8 @@ impl ViewportRenderer {
             queue,
             frame,
             sink,
+            self.ts_query_set.as_ref(),
+            &self.ts_written_mask,
         );
         let lighting_ms = lighting_start.elapsed().as_secs_f32() * 1000.0;
 
@@ -904,31 +906,52 @@ impl ViewportRenderer {
                         // set in the resolved mask hold valid data this frame; the
                         // rest are passes that did not run, left at 0 ms.
                         let mask = self.ts_pending_mask;
-                        let slot_ms = |slot: u32| -> f32 {
+                        let slot_pair = |slot: u32| -> Option<(u64, u64)> {
                             if mask & (1 << slot) == 0 {
-                                return 0.0;
+                                return None;
                             }
-                            let base = slot as usize * 16;
+                            // 256-byte stride per slot (resolve alignment).
+                            let base = slot as usize * 256;
                             let t0 = u64::from_le_bytes(data[base..base + 8].try_into().unwrap());
                             let t1 =
                                 u64::from_le_bytes(data[base + 8..base + 16].try_into().unwrap());
-                            // ts_period is nanoseconds/tick; convert delta to ms.
-                            t1.saturating_sub(t0) as f32 * self.ts_period / 1_000_000.0
+                            // Metal can report equal (or unsettled zero)
+                            // timestamps at pass boundaries; treat those as no
+                            // sample rather than real values.
+                            (t0 > 0 && t1 > t0).then_some((t0, t1))
                         };
-                        let scene_ms = slot_ms(crate::renderer::GPU_TS_SCENE);
+                        let to_ms =
+                            |ticks: u64| ticks as f32 * self.ts_period / 1_000_000.0;
+                        let slot_ms = |slot: u32| -> f32 {
+                            slot_pair(slot).map_or(0.0, |(t0, t1)| to_ms(t1 - t0))
+                        };
                         self.last_stats.gpu_breakdown = crate::renderer::stats::GpuBreakdown {
-                            scene_ms,
+                            scene_ms: slot_ms(crate::renderer::GPU_TS_SCENE),
                             shadow_ms: slot_ms(crate::renderer::GPU_TS_SHADOW),
                             oit_ms: slot_ms(crate::renderer::GPU_TS_OIT),
                             post_ms: slot_ms(crate::renderer::GPU_TS_POST),
                             cull_ms: slot_ms(crate::renderer::GPU_TS_CULL),
+                            point_shadow_ms: slot_ms(crate::renderer::GPU_TS_POINT_SHADOW),
+                            cluster_ms: slot_ms(crate::renderer::GPU_TS_CLUSTER),
                         };
+                        // GPU frame time: the span from the first to the last
+                        // measured pass. All slots were written on the same
+                        // queue in one frame, so min(begin)..max(end) covers
+                        // the measured passes and everything submitted between
+                        // them (previously this reported only the scene pass,
+                        // badly under-reporting shadow/compute-heavy frames).
+                        let mut span: Option<(u64, u64)> = None;
+                        for slot in 0..crate::renderer::GPU_TS_SLOTS {
+                            if let Some((t0, t1)) = slot_pair(slot) {
+                                span = Some(match span {
+                                    None => (t0, t1),
+                                    Some((lo, hi)) => (lo.min(t0), hi.max(t1)),
+                                });
+                            }
+                        }
                         drop(data);
-                        // Metal can report equal begin/end timestamps at pass
-                        // boundaries; treat a zero delta as no sample rather than
-                        // a real 0 ms frame.
-                        if scene_ms > 0.0 {
-                            self.last_stats.gpu_frame_ms = Some(scene_ms);
+                        if let Some((lo, hi)) = span {
+                            self.last_stats.gpu_frame_ms = Some(to_ms(hi - lo));
                             self.last_stats.gpu_sample_generation += 1;
                         }
                         stg_buf.unmap();

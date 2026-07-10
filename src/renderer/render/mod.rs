@@ -690,9 +690,12 @@ impl ViewportRenderer {
         if self.ts_query_set.is_none()
             && device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
         {
-            // One begin/end timestamp pair per measured pass.
+            // One begin/end timestamp pair per measured pass. The resolve
+            // buffer gives each slot its own 256-byte region because
+            // `resolve_query_set` destination offsets must be 256-aligned and
+            // written slots are resolved individually (see the resolve blocks).
             let ts_count = 2 * super::GPU_TS_SLOTS;
-            let ts_bytes = ts_count as u64 * 8;
+            let ts_bytes = super::GPU_TS_SLOTS as u64 * 256;
             self.ts_query_set = Some(device.create_query_set(&wgpu::QuerySetDescriptor {
                 label: Some("ts_query_set"),
                 ty: wgpu::QueryType::Timestamp,

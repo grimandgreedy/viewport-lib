@@ -21,6 +21,8 @@ impl ViewportRenderer {
         queue: &wgpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
+        ts_query_set: Option<&wgpu::QuerySet>,
+        ts_written_mask: &std::sync::atomic::AtomicU32,
     ) -> LightingFrame {
         let lighting = scene_fx.lighting;
         // Compute scene center / extent for shadow framing.
@@ -826,9 +828,20 @@ impl ViewportRenderer {
             // Pass 0 when below threshold so dispatch_frame runs the clear
             // (keeping the buffers in a defined state) but skips the build.
             let build_count = if use_clusters { active_count } else { 0 };
+            let cluster_ts = if build_count > 0 {
+                if ts_query_set.is_some() {
+                    ts_written_mask.fetch_or(
+                        1 << crate::renderer::GPU_TS_CLUSTER,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                }
+                ts_query_set
+            } else {
+                None
+            };
             resources
                 .clustered
-                .dispatch_frame(&mut encoder, build_count);
+                .dispatch_frame(&mut encoder, build_count, cluster_ts);
             sink.push(encoder.finish());
 
             // Optional host readback for the debug stats panel. Synchronous;

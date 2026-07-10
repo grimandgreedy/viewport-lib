@@ -193,8 +193,7 @@ pub struct PrepareBreakdown {
 /// time; treat the remainder as those un-instrumented passes plus present.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GpuBreakdown {
-    /// Main opaque HDR scene pass. This is the same span as
-    /// [`FrameStats::gpu_frame_ms`].
+    /// Main opaque HDR scene pass.
     pub scene_ms: f32,
     /// Directional shadow depth pass (all cascades rendered into the atlas).
     pub shadow_ms: f32,
@@ -208,6 +207,14 @@ pub struct GpuBreakdown {
     /// included here. Useful for checking whether the cull pass costs more than it
     /// saves on a given scene.
     pub cull_ms: f32,
+    /// Point-light cubemap shadow faces, spanning the first to the last face
+    /// pass rendered this frame (up to casters x 6 depth passes). This work
+    /// used to be invisible to the breakdown and can dominate frames with
+    /// several shadow-casting point lights over heavy geometry.
+    pub point_shadow_ms: f32,
+    /// Clustered-lighting build compute pass. `0.0` when the frame ran the
+    /// small-N fallback (under 16 active lights).
+    pub cluster_ms: f32,
 }
 
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
@@ -291,9 +298,15 @@ pub struct FrameStats {
     /// multi-viewport rendering this reflects the most recently painted
     /// viewport, not the sum.
     pub cpu_paint_ms: f32,
-    /// GPU scene-pass time in milliseconds, if timestamp queries are available.
+    /// GPU frame time in milliseconds, if timestamp queries are available.
     ///
-    /// Measured with `TIMESTAMP_QUERY` around the main scene render pass.
+    /// The span from the first to the last measured pass this frame (shadow
+    /// cascades, point-shadow cubemap faces, cluster build, cull, scene, OIT,
+    /// and post; see [`GpuBreakdown`] for the split). Work between and around
+    /// those passes on the same queue is included in the span; passes with no
+    /// timestamp slot that run outside it are not. Previously this field
+    /// reported only the scene pass, which badly under-reported frames
+    /// dominated by shadow or compute work.
     /// `None` on backends that do not support `TIMESTAMP_QUERY` (e.g. WebGL).
     ///
     /// Note: this value reflects a recent frame's GPU cost, not the current
@@ -315,8 +328,7 @@ pub struct FrameStats {
     /// Per-pass split of GPU frame time. See [`GpuBreakdown`].
     ///
     /// Populated under the same conditions as `gpu_frame_ms` (requires
-    /// `TIMESTAMP_QUERY`); all fields are `0.0` otherwise. `scene_ms` matches
-    /// `gpu_frame_ms`.
+    /// `TIMESTAMP_QUERY`); all fields are `0.0` otherwise.
     pub gpu_breakdown: GpuBreakdown,
     /// Wall-clock duration since the previous `prepare()` call, in milliseconds.
     ///

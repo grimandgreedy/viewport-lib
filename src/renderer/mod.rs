@@ -271,9 +271,14 @@ pub(crate) const GPU_TS_POST: u32 = 3;
 /// `cull_instances` + `write_indirect_args` compute passes). Only the main
 /// camera cull is timed; shadow-cascade and single-mesh culls are not.
 pub(crate) const GPU_TS_CULL: u32 = 4;
+/// Point-light cubemap shadow faces: begin on the first face pass, end on the
+/// last, so the slot spans every face rendered this frame.
+pub(crate) const GPU_TS_POINT_SHADOW: u32 = 5;
+/// Clustered-lighting build compute pass.
+pub(crate) const GPU_TS_CLUSTER: u32 = 6;
 /// Number of measured GPU passes; the query set holds `2 * GPU_TS_SLOTS` entries
 /// (a begin/end pair per slot).
-pub(crate) const GPU_TS_SLOTS: u32 = 5;
+pub(crate) const GPU_TS_SLOTS: u32 = 7;
 
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to

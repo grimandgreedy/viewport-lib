@@ -804,9 +804,28 @@ impl ViewportRenderer {
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("point_shadow_encoder"),
             });
-            for fc in &light.point_shadow_faces {
+            let last_face = light.point_shadow_faces.len() - 1;
+            for (face_idx, fc) in light.point_shadow_faces.iter().enumerate() {
                 let layer = fc.slot * 6 + fc.face;
                 let view = &resources.point_shadow_face_views[layer as usize];
+                // One slot spans all faces: begin on the first face pass, end
+                // on the last, so the readback sees the whole cubemap cost
+                // (up to casters x 6 depth passes) as one duration.
+                let ts_writes = ts_query_set
+                    .filter(|_| face_idx == 0 || face_idx == last_face)
+                    .map(|qs| {
+                        ts_written_mask.fetch_or(
+                            1 << crate::renderer::GPU_TS_POINT_SHADOW,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        let slot = crate::renderer::GPU_TS_POINT_SHADOW;
+                        wgpu::RenderPassTimestampWrites {
+                            query_set: qs,
+                            beginning_of_pass_write_index: (face_idx == 0).then_some(slot * 2),
+                            end_of_pass_write_index: (face_idx == last_face)
+                                .then_some(slot * 2 + 1),
+                        }
+                    });
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("point_shadow_face_pass"),
                     color_attachments: &[],
@@ -818,7 +837,7 @@ impl ViewportRenderer {
                         }),
                         stencil_ops: None,
                     }),
-                    timestamp_writes: None,
+                    timestamp_writes: ts_writes,
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&resources.shadow_point_pipeline);
