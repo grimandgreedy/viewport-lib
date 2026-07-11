@@ -62,7 +62,8 @@ struct InstanceData {
     _pad_inst1: u32,
     uv_transform: vec4<f32>,
     ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
-    _pad_ao_range: vec2<f32>,
+    alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
+    alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
 };
 
 struct ClipVolumeEntry {

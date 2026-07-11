@@ -24,6 +24,10 @@ pub(crate) struct InstancedBatch {
     /// `true` when the batch's material uses the `Identical` backface policy, so
     /// it must be drawn with the two-sided (`cull_mode: None`) instanced pipeline.
     pub two_sided: bool,
+    /// `true` when the batch's material is `AlphaMode::Mask`, so its shadow pass
+    /// must sample the albedo alpha and discard cut-out fragments instead of
+    /// casting a solid silhouette.
+    pub is_cutout: bool,
 }
 
 mod clip;

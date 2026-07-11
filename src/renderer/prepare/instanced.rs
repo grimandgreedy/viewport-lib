@@ -153,7 +153,8 @@ impl ViewportRenderer {
                                 _pad_inst: 0,
                                 uv_transform: cm.uv_transform,
                                 ao_range: cm.ao_range,
-                                _pad_ao_range: [0.0, 0.0],
+                                alpha_cutoff: cm.alpha_cutoff,
+                                alpha_flag: cm.alpha_flag,
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -189,6 +190,10 @@ impl ViewportRenderer {
                             instance_count: batch_items.len() as u32,
                             is_transparent,
                             two_sided: rep.material.is_two_sided(),
+                            is_cutout: matches!(
+                                rep.material.alpha_mode,
+                                crate::scene::material::AlphaMode::Mask(_)
+                            ),
                         });
 
                         batch_start = i;

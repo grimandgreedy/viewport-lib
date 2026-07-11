@@ -115,6 +115,7 @@ impl ViewportRenderer {
                 // resized shadow-vis buffer.
                 if instancing.shadow_cull.built_gen != instancing.instance_gen {
                     instancing.shadow_cull.shadow_cull_instance_bgs = [None, None, None, None];
+                    instancing.shadow_cull.shadow_cutout_cull_bgs.clear();
                     instancing.shadow_cull.built_gen = instancing.instance_gen;
                 }
                 for c in 0..light.effective_cascade_count {
@@ -185,6 +186,7 @@ impl ViewportRenderer {
                         .ensure_outputs(device, instance_count, batch_count);
                     if instancing.shadow_cull.built_gen != instancing.instance_gen {
                         instancing.shadow_cull.shadow_cull_instance_bgs = [None, None, None, None];
+                        instancing.shadow_cull.shadow_cutout_cull_bgs.clear();
                         instancing.shadow_cull.built_gen = instancing.instance_gen;
                     }
                     for c in 0..light.effective_cascade_count {
@@ -305,6 +307,26 @@ impl ViewportRenderer {
                                 ),
                             );
 
+                            // Build the per-batch alpha-cutout bind groups for this
+                            // cascade up front so the draw loop can look them up with
+                            // immutable borrows only.
+                            let cutout_keys: Vec<_> = instancing
+                                .batches
+                                .iter()
+                                .filter(|b| b.is_cutout && !b.is_transparent)
+                                .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id))
+                                .collect();
+                            for (t, n, a) in cutout_keys {
+                                resources.get_shadow_cutout_cull_bind_group(
+                                    &mut instancing.shadow_cull,
+                                    device,
+                                    cascade,
+                                    t,
+                                    n,
+                                    a,
+                                );
+                            }
+
                             let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
                                 continue;
                             };
@@ -313,6 +335,9 @@ impl ViewportRenderer {
                             else {
                                 continue;
                             };
+                            let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
+                            let cutout_pipeline_two_sided =
+                                resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
                             let Some(cascade_bg) =
                                 resources.instancing.shadow_cascade_bgs[cascade].as_ref()
                             else {
@@ -330,13 +355,13 @@ impl ViewportRenderer {
                             };
 
                             shadow_pass.set_bind_group(0, cascade_bg, &[]);
-                            shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
 
-                            // Batches are sorted with two_sided in the key, so one- and
-                            // two-sided runs are contiguous; switch the pipeline only when
-                            // the flag changes. Two-sided batches use the `cull_mode: None`
-                            // pipeline so foliage casters are not Front-culled away.
-                            let mut cur_two_sided: Option<bool> = None;
+                            // Track the currently bound (pipeline, group-1) state. Cutout
+                            // batches swap to the cutout pipeline and rebind group 1 to a
+                            // bind group that carries the batch albedo texture; opaque
+                            // batches use the depth-only pipeline and the shared group 1.
+                            let mut cur_pipe: Option<(bool, bool)> = None; // (two_sided, cutout)
+                            let mut cur_group1_opaque = false;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
                                 if batch.is_transparent {
                                     continue;
@@ -344,13 +369,39 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
-                                if cur_two_sided != Some(batch.two_sided) {
-                                    shadow_pass.set_pipeline(if batch.two_sided {
-                                        pipeline_two_sided
-                                    } else {
-                                        pipeline
-                                    });
-                                    cur_two_sided = Some(batch.two_sided);
+                                // Resolve the cutout bind group; fall back to the opaque
+                                // path if the cutout pipeline or bind group is missing.
+                                let cutout_bg = if batch.is_cutout {
+                                    let key = (
+                                        cascade,
+                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    );
+                                    instancing.shadow_cull.shadow_cutout_cull_bgs.get(&key)
+                                } else {
+                                    None
+                                };
+                                let use_cutout = cutout_bg.is_some()
+                                    && cutout_pipeline.is_some()
+                                    && cutout_pipeline_two_sided.is_some();
+
+                                if cur_pipe != Some((batch.two_sided, use_cutout)) {
+                                    let pipe = match (use_cutout, batch.two_sided) {
+                                        (true, true) => cutout_pipeline_two_sided.unwrap(),
+                                        (true, false) => cutout_pipeline.unwrap(),
+                                        (false, true) => pipeline_two_sided,
+                                        (false, false) => pipeline,
+                                    };
+                                    shadow_pass.set_pipeline(pipe);
+                                    cur_pipe = Some((batch.two_sided, use_cutout));
+                                }
+                                if use_cutout {
+                                    shadow_pass.set_bind_group(1, cutout_bg.unwrap(), &[]);
+                                    cur_group1_opaque = false;
+                                } else if !cur_group1_opaque {
+                                    shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
+                                    cur_group1_opaque = true;
                                 }
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
@@ -398,6 +449,26 @@ impl ViewportRenderer {
                                 ),
                             );
 
+                            let cutout_keys: Vec<_> = instancing
+                                .batches
+                                .iter()
+                                .filter(|b| b.is_cutout && !b.is_transparent)
+                                .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id))
+                                .collect();
+                            for (t, n, a) in cutout_keys {
+                                resources.get_shadow_cutout_cull_bind_group(
+                                    &mut instancing.shadow_cull,
+                                    device,
+                                    cascade,
+                                    t,
+                                    n,
+                                    a,
+                                );
+                            }
+                            let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
+                            let cutout_pipeline_two_sided =
+                                resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
+
                             let Some(cascade_bg) =
                                 resources.instancing.shadow_cascade_bgs[cascade].as_ref()
                             else {
@@ -409,9 +480,9 @@ impl ViewportRenderer {
                                 continue;
                             };
                             shadow_pass.set_bind_group(0, cascade_bg, &[]);
-                            shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
 
-                            let mut cur_two_sided: Option<bool> = None;
+                            let mut cur_pipe: Option<(bool, bool)> = None;
+                            let mut cur_group1_opaque = false;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
                                 if batch.is_transparent {
                                     continue;
@@ -425,13 +496,37 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
-                                if cur_two_sided != Some(batch.two_sided) {
-                                    shadow_pass.set_pipeline(if batch.two_sided {
-                                        pipeline_two_sided
-                                    } else {
-                                        pipeline
-                                    });
-                                    cur_two_sided = Some(batch.two_sided);
+                                let cutout_bg = if batch.is_cutout {
+                                    let key = (
+                                        cascade,
+                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    );
+                                    instancing.shadow_cull.shadow_cutout_cull_bgs.get(&key)
+                                } else {
+                                    None
+                                };
+                                let use_cutout = cutout_bg.is_some()
+                                    && cutout_pipeline.is_some()
+                                    && cutout_pipeline_two_sided.is_some();
+
+                                if cur_pipe != Some((batch.two_sided, use_cutout)) {
+                                    let pipe = match (use_cutout, batch.two_sided) {
+                                        (true, true) => cutout_pipeline_two_sided.unwrap(),
+                                        (true, false) => cutout_pipeline.unwrap(),
+                                        (false, true) => pipeline_two_sided,
+                                        (false, false) => pipeline,
+                                    };
+                                    shadow_pass.set_pipeline(pipe);
+                                    cur_pipe = Some((batch.two_sided, use_cutout));
+                                }
+                                if use_cutout {
+                                    shadow_pass.set_bind_group(1, cutout_bg.unwrap(), &[]);
+                                    cur_group1_opaque = false;
+                                } else if !cur_group1_opaque {
+                                    shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
+                                    cur_group1_opaque = true;
                                 }
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
@@ -489,12 +584,16 @@ impl ViewportRenderer {
                             let cascade_bg = resources.instancing.shadow_cascade_bgs[cascade]
                                 .as_ref()
                                 .expect("shadow_instanced_cascade_bgs not allocated");
+                            let cutout_pipeline =
+                                resources.instancing.shadow_cutout_pipeline.as_ref();
+                            let cutout_pipeline_two_sided = resources
+                                .instancing
+                                .shadow_cutout_two_sided_pipeline
+                                .as_ref();
                             shadow_pass.set_bind_group(0, cascade_bg, &[]);
-                            shadow_pass.set_bind_group(1, instance_bg, &[]);
 
-                            // See the indirect path above: switch the pipeline only when
-                            // the contiguous-sorted two_sided flag changes.
-                            let mut cur_two_sided: Option<bool> = None;
+                            let mut cur_pipe: Option<(bool, bool)> = None;
+                            let mut cur_group1_opaque = false;
                             for batch in &instancing.batches {
                                 if batch.is_transparent {
                                     continue;
@@ -502,13 +601,38 @@ impl ViewportRenderer {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
-                                if cur_two_sided != Some(batch.two_sided) {
-                                    shadow_pass.set_pipeline(if batch.two_sided {
-                                        pipeline_two_sided
-                                    } else {
-                                        pipeline
-                                    });
-                                    cur_two_sided = Some(batch.two_sided);
+                                // Cutout batches sample the albedo alpha, so they need the
+                                // batch's own texture bind group (not the shared first-batch
+                                // one) at group 1.
+                                let cutout_bg = if batch.is_cutout {
+                                    resources.instancing.bind_groups.get(&(
+                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    ))
+                                } else {
+                                    None
+                                };
+                                let use_cutout = cutout_bg.is_some()
+                                    && cutout_pipeline.is_some()
+                                    && cutout_pipeline_two_sided.is_some();
+
+                                if cur_pipe != Some((batch.two_sided, use_cutout)) {
+                                    let pipe = match (use_cutout, batch.two_sided) {
+                                        (true, true) => cutout_pipeline_two_sided.unwrap(),
+                                        (true, false) => cutout_pipeline.unwrap(),
+                                        (false, true) => pipeline_two_sided,
+                                        (false, false) => pipeline,
+                                    };
+                                    shadow_pass.set_pipeline(pipe);
+                                    cur_pipe = Some((batch.two_sided, use_cutout));
+                                }
+                                if use_cutout {
+                                    shadow_pass.set_bind_group(1, cutout_bg.unwrap(), &[]);
+                                    cur_group1_opaque = false;
+                                } else if !cur_group1_opaque {
+                                    shadow_pass.set_bind_group(1, instance_bg, &[]);
+                                    cur_group1_opaque = true;
                                 }
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(

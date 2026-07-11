@@ -30,6 +30,12 @@ pub(crate) struct InstancingResources {
     /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
     /// `shadow_pipeline` for `Identical` backface-policy batches.
     pub(crate) shadow_two_sided_pipeline: Option<wgpu::RenderPipeline>,
+    /// Alpha-cutout (`AlphaMode::Mask`) shadow pipeline: adds a fragment stage
+    /// that samples the albedo alpha and discards below the cutoff, so leaf
+    /// gaps do not cast solid shadows. Direct-draw path.
+    pub(crate) shadow_cutout_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided variant of `shadow_cutout_pipeline`.
+    pub(crate) shadow_cutout_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// Per-cascade uniform buffers for the shadow pipeline (64 bytes each, one mat4x4).
     pub(crate) shadow_cascade_bufs: [Option<wgpu::Buffer>; 4],
     /// Per-cascade bind groups for the shadow pipeline group 0.
@@ -75,6 +81,12 @@ pub(crate) struct CullResources {
     /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
     /// `shadow_pipeline` for `Identical` backface-policy batches.
     pub(crate) shadow_two_sided_pipeline: Option<wgpu::RenderPipeline>,
+    /// Alpha-cutout shadow cull pipeline: like `shadow_pipeline` but with a
+    /// fragment stage that discards on albedo alpha. Uses the full cull BGL
+    /// (`bind_group_layout`) so the albedo texture is available in group 1.
+    pub(crate) shadow_cutout_pipeline: Option<wgpu::RenderPipeline>,
+    /// Two-sided variant of `shadow_cutout_pipeline`.
+    pub(crate) shadow_cutout_two_sided_pipeline: Option<wgpu::RenderPipeline>,
     /// BGL for shadow cull instance group: binding 0 (instances) + binding 5 (visibility_indices).
     pub(crate) shadow_bgl: Option<wgpu::BindGroupLayout>,
 }
@@ -245,6 +257,55 @@ impl DeviceResources {
             crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
         );
 
+        // Alpha-cutout shadow pipelines: same depth-only setup but with a fragment
+        // stage (`fs_cutout`) that samples the albedo alpha and discards below the
+        // material cutoff. `vs_cutout` carries the UV. Group 1 is the full
+        // `instance_bgl`, so the batch's albedo texture (bindings 1-2) is available.
+        let make_shadow_cutout =
+            |label: &str, cull_mode: Option<wgpu::Face>, bias: wgpu::DepthBiasState| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&shadow_instanced_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shadow_instanced_shader,
+                        entry_point: Some("vs_cutout"),
+                        buffers: &[Vertex::buffer_layout()],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shadow_instanced_shader,
+                        entry_point: Some("fs_cutout"),
+                        targets: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth32Float,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias,
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            };
+        let shadow_cutout = make_shadow_cutout(
+            "shadow_instanced_cutout_pipeline",
+            Some(wgpu::Face::Front),
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
+        );
+        let shadow_cutout_two_sided = make_shadow_cutout(
+            "shadow_instanced_cutout_two_sided_pipeline",
+            None,
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+        );
+
         // Allocate 4 per-cascade uniform buffers (64 bytes each = one mat4x4) and
         // create bind groups for shadow_instanced_pipeline group 0.
         // Each cascade has its own small buffer so we can write_buffer(buf, 0, ...) without
@@ -276,6 +337,8 @@ impl DeviceResources {
         self.instancing.transparent_pipeline = Some(transparent_instanced);
         self.instancing.shadow_pipeline = Some(shadow_instanced);
         self.instancing.shadow_two_sided_pipeline = Some(shadow_instanced_two_sided);
+        self.instancing.shadow_cutout_pipeline = Some(shadow_cutout);
+        self.instancing.shadow_cutout_two_sided_pipeline = Some(shadow_cutout_two_sided);
     }
 
     /// Ensure the HDR instanced pipelines exist. Called after
@@ -620,7 +683,6 @@ impl DeviceResources {
             "vs_main_cull",
         );
 
-        self.cull.bind_group_layout = Some(cull_bgl);
         self.cull.hdr_solid_pipeline = Some(hdr_solid_cull);
         self.cull.hdr_solid_two_sided_pipeline = Some(hdr_solid_cull_two_sided);
         self.cull.oit_pipeline = Some(oit_cull);
@@ -713,6 +775,62 @@ impl DeviceResources {
         self.cull.shadow_pipeline = Some(shadow_instanced_cull);
         self.cull.shadow_two_sided_pipeline = Some(shadow_instanced_cull_two_sided);
         self.cull.shadow_bgl = Some(shadow_cull_bgl);
+
+        // Alpha-cutout shadow cull pipelines: `vs_cutout_cull` + `fs_cutout`. Group 1
+        // uses the full `cull_bgl` (storage + albedo/sampler + visibility), so the
+        // fragment can sample the batch albedo and discard leaf-gap fragments.
+        let shadow_cutout_cull_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("shadow_instanced_cutout_cull_pipeline_layout"),
+                bind_group_layouts: &[&shadow_bgl_for_cull, &cull_bgl],
+                push_constant_ranges: &[],
+            });
+        let make_shadow_cutout_cull =
+            |label: &str, cull_mode: Option<wgpu::Face>, bias: wgpu::DepthBiasState| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&shadow_cutout_cull_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shadow_cull_shader,
+                        entry_point: Some("vs_cutout_cull"),
+                        buffers: &[Vertex::buffer_layout()],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shadow_cull_shader,
+                        entry_point: Some("fs_cutout"),
+                        targets: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth32Float,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias,
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            };
+        self.cull.shadow_cutout_pipeline = Some(make_shadow_cutout_cull(
+            "shadow_instanced_cutout_cull_pipeline",
+            Some(wgpu::Face::Front),
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS,
+        ));
+        self.cull.shadow_cutout_two_sided_pipeline = Some(make_shadow_cutout_cull(
+            "shadow_instanced_cutout_cull_two_sided_pipeline",
+            None,
+            crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+        ));
+
+        self.cull.bind_group_layout = Some(cull_bgl);
     }
 
     /// Get or create the shadow cull instance bind group for a given cascade index.
@@ -746,6 +864,84 @@ impl DeviceResources {
             shadow_cull.shadow_cull_instance_bgs[cascade_idx] = Some(bg);
         }
         shadow_cull.shadow_cull_instance_bgs[cascade_idx].as_ref()
+    }
+
+    /// Get or create the alpha-cutout shadow cull bind group for a cascade and
+    /// material texture key. Binds the instance storage (0), albedo/sampler/normal/AO
+    /// (1-4, from the full cull BGL) and this cascade's visibility buffer (5), so the
+    /// `fs_cutout` fragment can sample the albedo alpha and discard cut-out fragments.
+    pub(crate) fn get_shadow_cutout_cull_bind_group<'a>(
+        &self,
+        shadow_cull: &'a mut crate::resources::ShadowCullState,
+        device: &wgpu::Device,
+        cascade_idx: usize,
+        albedo_id: Option<crate::resources::TextureId>,
+        normal_map_id: Option<crate::resources::TextureId>,
+        ao_map_id: Option<crate::resources::TextureId>,
+    ) -> Option<&'a wgpu::BindGroup> {
+        let key = (
+            cascade_idx,
+            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+        );
+        if !shadow_cull.shadow_cutout_cull_bgs.contains_key(&key) {
+            let bgl = self.cull.bind_group_layout.as_ref()?;
+            let inst_buf = self.instancing.storage_buf.as_ref()?;
+            let vis_buf = shadow_cull.shadow_vis_bufs[cascade_idx].as_ref()?;
+
+            let albedo_view = match albedo_id {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.fallback_texture.view,
+            };
+            let normal_view = match normal_map_id {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.fallback_normal_map_view,
+            };
+            let ao_view = match ao_map_id {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.fallback_ao_map_view,
+            };
+
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shadow_cutout_cull_bg"),
+                layout: bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: inst_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(albedo_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(normal_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(ao_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: vis_buf.as_entire_binding(),
+                    },
+                ],
+            });
+            shadow_cull.shadow_cutout_cull_bgs.insert(key, bg);
+        }
+        shadow_cull.shadow_cutout_cull_bgs.get(&key)
     }
 
     /// Get or create a cull-path bind group for the instanced cull pipeline.
@@ -1217,7 +1413,11 @@ pub(crate) struct InstanceData {
     /// the MR texture today, so `metallic_range` / `roughness_range` are
     /// intentionally absent from `InstanceData`.
     pub(crate) ao_range: [f32; 2], //   8 bytes, offset 160
-    pub(crate) _pad_ao_range: [f32; 2], //  8 bytes, offset 168 (struct stride to 16B)
+    /// `AlphaMode::Mask` cutoff. Fragments whose albedo alpha is below this are
+    /// discarded when `alpha_flag == 1`. Mirrors `ObjectUniform::alpha_cutoff`.
+    pub(crate) alpha_cutoff: f32, //   4 bytes, offset 168
+    /// 1 = alpha-test (`Mask`) enabled, 0 = no cutout.
+    pub(crate) alpha_flag: u32, //   4 bytes, offset 172 (struct stride to 16B)
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 176);

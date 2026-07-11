@@ -58,6 +58,10 @@ With `PIPELINE_CACHE` enabled, `pipeline_cache_data()` returns bytes you can sav
 
 ### Bug Fixes
 
+#### Alpha-cutout foliage rendered as opaque cards on the instanced path
+
+A two-sided `AlphaMode::Mask` material batches through the instanced path, but that path never carried or applied the cutoff, so alpha-test foliage (leaf cards, chain-link, grates) drew every quad in full including the transparent gaps. The instance data now carries the cutoff, and the instanced colour and shadow shaders discard fragments below it, so cut-out geometry matches the per-object path. Leaf shadows take the cut-out silhouette instead of casting solid rectangles. Opaque batches are unaffected and stay on the depth-only shadow path.
+
 #### Khronos Neutral tone mapping darkened saturated colours
 
 Two branches in the tone mapper were swapped, so strongly tinted pixels were darkened by an offset meant for brighter ones. Large uniform surfaces (terrain, walls) show the correction most: they read slightly brighter and more saturated now, which is the curve working as specified.

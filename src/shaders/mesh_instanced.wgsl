@@ -62,7 +62,8 @@ struct InstanceData {
     _pad_inst1: u32,
     uv_transform: vec4<f32>,
     ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
-    _pad_ao_range: vec2<f32>,
+    alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
+    alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
 };
 
 struct ClipVolumeEntry {
@@ -479,6 +480,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if inst.has_texture == 1u { tex_colour = textureSample(obj_texture, obj_sampler, mat_uv); }
     let obj_colour = vec4<f32>(inst.colour.rgb * in.colour.rgb * tex_colour.rgb,
                                inst.colour.a   * in.colour.a   * tex_colour.a);
+
+    // Alpha MASK: discard fragments whose albedo alpha is below the cutoff.
+    if inst.alpha_flag == 1u && inst.has_texture == 1u && obj_colour.a < inst.alpha_cutoff {
+        discard;
+    }
+
     let base_colour = obj_colour.rgb;
 
     // Unlit: skip all lighting, return raw colour directly.

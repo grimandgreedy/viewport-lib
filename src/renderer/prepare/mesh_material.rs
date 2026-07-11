@@ -76,6 +76,8 @@ pub(super) struct CommonMaterial {
     pub(super) use_flat: u32,
     pub(super) uv_transform: [f32; 4],
     pub(super) ao_range: [f32; 2],
+    pub(super) alpha_cutoff: f32,
+    pub(super) alpha_flag: u32,
 }
 
 pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
@@ -104,5 +106,47 @@ pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
         use_flat: if m.is_flat() { 1 } else { 0 },
         uv_transform: [m.uv_offset[0], m.uv_offset[1], m.uv_scale[0], m.uv_scale[1]],
         ao_range: m.ao_range,
+        alpha_cutoff: match m.alpha_mode {
+            crate::scene::material::AlphaMode::Mask(c) => c,
+            _ => 0.5,
+        },
+        alpha_flag: match m.alpha_mode {
+            crate::scene::material::AlphaMode::Mask(_) => 1,
+            _ => 0,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::material::{AlphaMode, BackfacePolicy};
+
+    /// A two-sided alpha-test (`Mask`) card is opaque and must stay on the
+    /// instanced path: `backface_needs_per_object` only forces per-object for
+    /// transparent (blend / opacity < 1) two-sided items, not for `Mask`.
+    #[test]
+    fn two_sided_mask_stays_instanceable() {
+        let mut item = SceneRenderItem::default();
+        item.material.backface_policy = BackfacePolicy::Identical;
+        item.material.alpha_mode = AlphaMode::Mask(0.45);
+        assert!(item.material.is_two_sided());
+        assert!(!backface_needs_per_object(&item));
+    }
+
+    /// The shared material mapping carries the cutoff and enable flag that the
+    /// instanced shader reads. A `Mask` item enables the discard; anything else
+    /// disables it.
+    #[test]
+    fn common_material_carries_alpha_cutout() {
+        let mut item = SceneRenderItem::default();
+        item.material.alpha_mode = AlphaMode::Mask(0.45);
+        let cm = common_material(&item);
+        assert_eq!(cm.alpha_flag, 1);
+        assert!((cm.alpha_cutoff - 0.45).abs() < 1e-6);
+
+        item.material.alpha_mode = AlphaMode::Opaque;
+        let cm = common_material(&item);
+        assert_eq!(cm.alpha_flag, 0);
     }
 }

@@ -1022,6 +1022,12 @@ pub(crate) struct ShadowCullState {
     /// Per-cascade instance+visibility bind groups. Invalidated when
     /// `shadow_vis_bufs` are reallocated.
     pub(crate) shadow_cull_instance_bgs: [Option<wgpu::BindGroup>; 4],
+    /// Per-(cascade, albedo, normal, ao) bind groups for the alpha-cutout shadow
+    /// cull pipeline: like `shadow_cull_instance_bgs` but also carries the batch's
+    /// albedo texture (from the full cull BGL) so the fragment can discard leaf
+    /// gaps. Invalidated with `shadow_cull_instance_bgs`.
+    pub(crate) shadow_cutout_cull_bgs:
+        std::collections::HashMap<(usize, u64, u64, u64), wgpu::BindGroup>,
     /// Capacity (in instances) of `shadow_vis_bufs`.
     pub(crate) vis_capacity: usize,
     /// Capacity (in batches) of the counter and indirect-args buffers.
@@ -1040,6 +1046,7 @@ impl ShadowCullState {
             shadow_vis_bufs: [None, None, None, None],
             shadow_indirect_bufs: [None, None, None, None],
             shadow_cull_instance_bgs: [None, None, None, None],
+            shadow_cutout_cull_bgs: std::collections::HashMap::new(),
             vis_capacity: 0,
             batch_output_capacity: 0,
             built_gen: u64::MAX,
@@ -1072,6 +1079,7 @@ impl ShadowCullState {
             self.vis_capacity = new_cap;
             // The shadow cull bind groups bind these vis buffers at binding 5.
             self.shadow_cull_instance_bgs = [None, None, None, None];
+            self.shadow_cutout_cull_bgs.clear();
         }
 
         let max_batches = (device.limits().max_storage_buffer_binding_size as usize)
