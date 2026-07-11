@@ -36,6 +36,7 @@ impl DeviceResources {
         if self.sub_highlight.fill_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = crate::resources::builders::uniform_bgl(
             device,

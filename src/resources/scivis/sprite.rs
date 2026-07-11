@@ -58,6 +58,7 @@ impl DeviceResources {
         if self.sprite.bgl.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sprite_bgl"),
@@ -671,6 +672,7 @@ impl DeviceResources {
         if self.sprite.outline_mask_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let bgl = self
             .sprite
             .bgl

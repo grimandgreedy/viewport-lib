@@ -921,8 +921,7 @@ impl ViewportRenderer {
                             // sample rather than real values.
                             (t0 > 0 && t1 > t0).then_some((t0, t1))
                         };
-                        let to_ms =
-                            |ticks: u64| ticks as f32 * self.ts_period / 1_000_000.0;
+                        let to_ms = |ticks: u64| ticks as f32 * self.ts_period / 1_000_000.0;
                         let slot_ms = |slot: u32| -> f32 {
                             slot_pair(slot).map_or(0.0, |(t0, t1)| to_ms(t1 - t0))
                         };
@@ -1051,6 +1050,8 @@ impl ViewportRenderer {
         // Snapshot geometry upload bytes accumulated since the last frame, then reset.
         let upload_bytes = self.resources.frame_upload_bytes;
         self.resources.frame_upload_bytes = 0;
+        let pipelines_built_this_frame = self.resources.frame_pipelines_built;
+        self.resources.frame_pipelines_built = 0;
 
         // Resolve effective scale bounds and degradation flags.
         // When a preset is set it overrides the individual fields; the individual
@@ -1269,6 +1270,7 @@ impl ViewportRenderer {
             render_scale: reported_render_scale,
             missed_budget,
             upload_bytes,
+            pipelines_built_this_frame,
             shadows_skipped: self.degradation_shadows_skipped,
             volume_quality_reduced: self.degradation_volume_quality_reduced,
             // effects_throttled is set by the render path; carry forward here so

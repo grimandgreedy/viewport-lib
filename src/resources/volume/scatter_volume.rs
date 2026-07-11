@@ -384,6 +384,7 @@ impl crate::resources::DeviceResources {
         if self.scatter.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.ensure_scatter_per_volume_bgl(device);
         self.ensure_scatter_per_volume_tex_bgl(device);
         self.ensure_scatter_frame_bgl(device);
@@ -463,6 +464,7 @@ impl crate::resources::DeviceResources {
         if self.scatter.composite_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let bgl = crate::resources::builders::texture_sampler_bgl(
             device,
             "scatter_composite_bgl",
@@ -509,6 +511,7 @@ impl crate::resources::DeviceResources {
         if self.scatter.temporal_resolve_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.ensure_scatter_temporal_resolve_bgl(device);
         let bgl = self.scatter.temporal_resolve_bgl.as_ref().unwrap();
         let shader = crate::resources::builders::wgsl_module(
@@ -927,6 +930,7 @@ impl crate::resources::DeviceResources {
         if self.scatter.refraction_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.ensure_scatter_refraction_per_volume_bgl(device);
         self.ensure_scatter_refraction_source_bgl(device);
         self.ensure_scatter_composite_pipeline(device, colour_format);
@@ -972,6 +976,7 @@ impl crate::resources::DeviceResources {
         if self.scatter.refraction_blit_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.ensure_scatter_composite_pipeline(device, colour_format);
         let bgl = self.scatter.composite_bgl.as_ref().unwrap();
         let shader = crate::resources::builders::wgsl_module(

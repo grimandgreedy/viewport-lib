@@ -35,6 +35,7 @@ impl DeviceResources {
         if self.post.dyn_res_upscale_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = crate::resources::builders::texture_sampler_bgl(
             device,
@@ -82,6 +83,7 @@ impl DeviceResources {
         if self.post.dyn_res_upscale_ds_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = self
             .post

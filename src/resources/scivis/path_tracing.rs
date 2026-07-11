@@ -9,6 +9,7 @@ impl DeviceResources {
         if self.pt.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         self.ensure_pt_bind_group_layout(device);
         let bgl = self

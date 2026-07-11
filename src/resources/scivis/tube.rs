@@ -36,6 +36,7 @@ impl DeviceResources {
         if self.streamtube.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let streamtube_bgl = crate::resources::builders::uniform_bgl(
             device,

@@ -18,6 +18,7 @@ impl crate::resources::DeviceResources {
         if self.compute_filter_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // Build bind group layout.
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

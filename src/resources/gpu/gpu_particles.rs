@@ -619,6 +619,7 @@ impl crate::resources::DeviceResources {
         if self.particle.sim_bgl.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // Group 0: emit/sim params (uniform).
         let params_bgl = crate::resources::builders::uniform_bgl(

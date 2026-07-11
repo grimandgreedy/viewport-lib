@@ -26,6 +26,7 @@ impl DeviceResources {
         if self.polyline.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let pl_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
@@ -165,6 +166,7 @@ impl DeviceResources {
         if self.polyline.wireframe_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let wf_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("polyline_wireframe_bgl"),
@@ -608,6 +610,7 @@ impl DeviceResources {
         if self.polyline.no_clip_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         // The regular pipeline (and its BGL) must exist first.
         self.ensure_polyline_pipeline(device);
 
@@ -731,6 +734,7 @@ impl DeviceResources {
         if self.polyline.outline_mask_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.ensure_polyline_pipeline(device);
 
         let pl_bgl = self

@@ -37,6 +37,7 @@ impl crate::resources::DeviceResources {
         if self.overlay_shape.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("overlay_shape_layout"),
@@ -107,6 +108,7 @@ impl crate::resources::DeviceResources {
         if self.overlay_shape.tex_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = crate::resources::builders::texture_sampler_bgl(
             device,
@@ -384,6 +386,7 @@ impl crate::resources::DeviceResources {
         if self.backdrop_blur.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("backdrop_blur_bgl"),

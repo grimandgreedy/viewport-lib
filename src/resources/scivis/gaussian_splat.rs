@@ -192,6 +192,7 @@ impl DeviceResources {
         if self.gaussian_splat.bgl.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // ---------------------------------------------------------------
         // Render pipeline
@@ -523,6 +524,9 @@ impl DeviceResources {
         data: &crate::renderer::GaussianSplatData,
     ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
         validate_gaussian_splat_data(data)?;
+        // Build the splat pipelines now so a load-time upload also pays the
+        // pipeline compile, not the first frame that draws the splat.
+        self.ensure_gaussian_splat_pipelines(device);
         let gpu_set = build_gaussian_splat_set(device, queue, data);
         Ok(self.content.gaussian_splat_store.insert(gpu_set))
     }

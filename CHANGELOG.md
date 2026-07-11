@@ -40,7 +40,9 @@ With `PIPELINE_CACHE` enabled, `pipeline_cache_data()` returns bytes you can sav
 
 - **Shadow casters are culled per cascade on the CPU** when the device lacks `INDIRECT_FIRST_INSTANCE`, matching what the GPU path already did.
 
-- **Mesh uploads are several times faster.** The wireframe and normal-line debug buffers are now built the first time something displays them instead of on every upload. The first wireframe toggle on a large mesh pays a one-time build.
+- **Mesh uploads are several times faster.** The wireframe and normal-line debug buffers are now built the first time something displays them instead of on every upload. The first wireframe toggle on a large mesh pays a one-time build, or call `prebuild_mesh_debug_sidecars` after upload to pay it at load time.
+
+- **The first decal no longer hitches.** The decal pipelines compiled on the first frame that showed a decal, which cost about 8 ms mid-game; they now build at renderer creation. Volume, gaussian splat, marching cubes, and projected-tet uploads likewise compile their pipelines inside the upload call instead of on first draw. `FrameStats::pipelines_built_this_frame` reports any remaining lazy compiles, so a hitch caused by one is visible in the stats.
 
 - **`FrameStats::gpu_frame_ms` measures the whole frame**: shadows, compute, transparency, and post are included instead of just the main scene pass. Expect the number to jump on upgrade; the old value was under-reporting. The breakdown gains `point_shadow_ms` and `cluster_ms`, and `FrameStats::gpu_sample_generation` lets you deduplicate timing samples when building percentiles.
 

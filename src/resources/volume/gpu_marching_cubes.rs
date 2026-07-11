@@ -231,6 +231,7 @@ impl DeviceResources {
         if self.mc.classify_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // ----------------------------------------------------------------
         // Shared lookup buffers (uploaded once).
@@ -482,6 +483,9 @@ impl DeviceResources {
         queue: &wgpu::Queue,
         vol: &VolumeData,
     ) -> crate::ViewportResult<McVolumeId> {
+        // Build the MC compute and render pipelines now so a load-time upload
+        // also pays the pipeline compiles, not the first frame that runs a job.
+        self.ensure_mc_pipelines(device);
         let gpu_data = build_mc_volume_gpu_data(device, queue, vol)?;
         Ok(self.insert_mc_volume_gpu_data(gpu_data))
     }
@@ -777,6 +781,7 @@ impl DeviceResources {
         if self.mc.outline_mask_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(
             device,

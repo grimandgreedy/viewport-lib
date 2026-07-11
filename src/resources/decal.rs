@@ -213,14 +213,59 @@ pub(crate) struct DecalOutlineTargets {
 // ---------------------------------------------------------------------------
 
 impl DeviceResources {
-    /// Lazily create the decal render pipelines and item bind group layout.
+    /// Create the decal depth bind group layout and sampler if missing. These
+    /// carry no target-size state, so they can be built at renderer creation.
+    pub(crate) fn ensure_decal_shared(&mut self, device: &wgpu::Device) {
+        if self.decal.depth_bgl.is_none() {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("decal_depth_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Uint,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+            self.decal.depth_bgl = Some(bgl);
+        }
+        if self.decal.sampler.is_none() {
+            // Repeat address mode so UV scroll animation tiles correctly.
+            let sampler = crate::resources::builders::repeat_linear_sampler(
+                device,
+                "decal_sampler",
+                wgpu::FilterMode::Nearest,
+            );
+            self.decal.sampler = Some(sampler);
+        }
+    }
+
+    /// Create the decal render pipelines and item bind group layout.
     ///
-    /// No-op if already created.  Requires `decal_depth_bgl` to exist (created
-    /// by `ensure_hdr_shared`).
+    /// No-op if already created. Requires `decal_depth_bgl` to exist (created
+    /// by [`ensure_decal_shared`](Self::ensure_decal_shared)). Called at
+    /// renderer creation so the first decal in a scene does not pay a pipeline
+    /// compile mid-session.
     pub(crate) fn ensure_decal_pipeline(&mut self, device: &wgpu::Device) {
         if self.decal.replace_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -354,6 +399,10 @@ impl DeviceResources {
             return;
         }
 
+        if self.decal.depth_bgl.is_none() || self.decal.item_bgl.is_none() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let (Some(depth_bgl), Some(item_bgl)) =
             (self.decal.depth_bgl.as_ref(), self.decal.item_bgl.as_ref())
         else {
@@ -608,6 +657,7 @@ impl DeviceResources {
         if self.decal.exclude_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(
             device,

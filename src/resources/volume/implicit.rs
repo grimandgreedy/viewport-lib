@@ -125,6 +125,7 @@ impl DeviceResources {
         if self.implicit.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -178,6 +179,7 @@ impl DeviceResources {
         if self.implicit.outline_mask_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let implicit_bgl = self.implicit.bgl.as_ref().expect(
             "ensure_implicit_pipeline must be called before ensure_implicit_outline_mask_pipeline",

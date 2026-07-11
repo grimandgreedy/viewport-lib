@@ -282,12 +282,8 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         particle_gpu_data.clear();
         if !frame.scene.gpu_particle_systems.is_empty() {
-            *particle_gpu_data = resources.run_particle_jobs(
-                device,
-                queue,
-                &frame.scene.gpu_particle_systems,
-                sink,
-            );
+            *particle_gpu_data =
+                resources.run_particle_jobs(device, queue, &frame.scene.gpu_particle_systems, sink);
         }
 
         // ------------------------------------------------------------------

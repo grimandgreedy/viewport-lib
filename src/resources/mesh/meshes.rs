@@ -1731,6 +1731,27 @@ impl DeviceResources {
         mesh.normal_line_count = count;
     }
 
+    /// Pre-build the wireframe edge-index and normal-line debug buffers for a
+    /// mesh.
+    ///
+    /// Both buffers normally build on the first frame that draws the mesh in
+    /// wireframe or with `show_normals`, which can stall that frame on large
+    /// meshes (tens of milliseconds at a few hundred thousand triangles).
+    /// Call this after upload for meshes the user is likely to toggle into
+    /// those views, so the cost lands at load time instead.
+    ///
+    /// No-op for buffers that already exist. Meshes uploaded without CPU-side
+    /// index or normal data keep the corresponding view unavailable, exactly
+    /// as if this had not been called.
+    pub fn prebuild_mesh_debug_sidecars(
+        &mut self,
+        device: &wgpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    ) {
+        self.ensure_edge_indices(device, mesh_id);
+        self.ensure_normal_lines(device, mesh_id);
+    }
+
     fn build_normal_lines(positions: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<Vertex> {
         let normal_colour = [0.627_f32, 0.769, 1.0, 1.0];
         let normal_length = 0.1_f32;
@@ -2314,6 +2335,9 @@ impl DeviceResources {
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
         self.ensure_pt_bind_group_layout(device);
+        // Build the projected-tet pipeline now so a load-time upload also pays
+        // the pipeline compile, not the first frame drawn in transparent mode.
+        self.ensure_pt_pipeline(device);
 
         let (pending, scalar_range, uniform_buffer) =
             Self::decompose_into_chunks(device, data, scalar_attribute);

@@ -38,6 +38,9 @@ impl DeviceResources {
         data: &[f32],
         dims: [u32; 3],
     ) -> VolumeId {
+        // Build the ray-march pipeline now so a load-time upload also pays the
+        // pipeline compile, not the first frame that draws the volume.
+        self.ensure_volume_pipeline(device);
         let expected = (dims[0] as usize) * (dims[1] as usize) * (dims[2] as usize);
         assert_eq!(
             data.len(),
@@ -219,6 +222,7 @@ impl DeviceResources {
         if self.volume.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("volume_bgl"),
@@ -337,6 +341,7 @@ impl DeviceResources {
         if self.volume.outline_mask_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let bgl = self.volume.bgl.as_ref().expect(
             "ensure_volume_pipeline must be called before ensure_volume_outline_mask_pipeline",
         );

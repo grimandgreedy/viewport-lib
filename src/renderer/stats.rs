@@ -353,6 +353,14 @@ pub struct FrameStats {
     /// via `upload_mesh_data` / `upload_mesh`. Uniform buffer writes are not
     /// counted.
     pub upload_bytes: u64,
+    /// GPU pipelines compiled lazily since the previous `prepare()` call.
+    ///
+    /// Most pipelines are built at renderer creation or when a resource is
+    /// uploaded; the rest compile on the first frame that uses a feature. A
+    /// non-zero value on a frame that hitched points at one of those compiles.
+    /// Counts calls to the internal pipeline builders, so one increment can
+    /// cover a small family of pipeline variants built together.
+    pub pipelines_built_this_frame: u32,
     /// True when GPU-driven culling is active this frame.
     ///
     /// False when the device does not support `INDIRECT_FIRST_INSTANCE` or

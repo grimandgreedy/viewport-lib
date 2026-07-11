@@ -21,6 +21,7 @@ impl crate::resources::DeviceResources {
         if self.overlay_text.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // binding 0: glyph atlas texture, binding 1: sampler.
         let bgl = crate::resources::builders::texture_sampler_bgl(

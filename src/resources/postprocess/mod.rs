@@ -71,6 +71,7 @@ impl DeviceResources {
         if self.outline.target_size == [w, h] && self.outline.colour_texture.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.outline.target_size = [w, h];
 
         // Offscreen RGBA colour texture (transparent clear).
@@ -273,6 +274,7 @@ impl DeviceResources {
         {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // --- Fallback textures (one-time uploads) ---
         if !self.fallback_textures_uploaded {
@@ -1441,43 +1443,7 @@ impl DeviceResources {
         }
 
         // --- Decal shared resources (D1) ---
-        if self.decal.depth_bgl.is_none() {
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("decal_depth_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Uint,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-            self.decal.depth_bgl = Some(bgl);
-        }
-        if self.decal.sampler.is_none() {
-            // Repeat address mode so UV scroll animation tiles correctly.
-            let sampler = crate::resources::builders::repeat_linear_sampler(
-                device,
-                "decal_sampler",
-                wgpu::FilterMode::Nearest,
-            );
-            self.decal.sampler = Some(sampler);
-        }
+        self.ensure_decal_shared(device);
     }
 
     /// Create a fresh [`ViewportHdrState`] for the given viewport dimensions.

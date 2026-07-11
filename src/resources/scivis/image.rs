@@ -13,6 +13,7 @@ impl DeviceResources {
         if self.image_slice.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("image_slice_bgl"),
@@ -234,6 +235,7 @@ impl DeviceResources {
         if self.screen_image.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -309,6 +311,7 @@ impl DeviceResources {
         if self.screen_image.dc_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -840,6 +843,7 @@ impl DeviceResources {
         if self.volume.surface_slice_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("volume_surface_slice_bgl"),
@@ -1055,6 +1059,7 @@ impl DeviceResources {
         if self.screen_image.rect_outline_mask_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let bgl = crate::resources::builders::uniform_bgl(
             device,

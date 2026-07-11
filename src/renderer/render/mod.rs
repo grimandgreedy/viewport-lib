@@ -742,6 +742,11 @@ impl ViewportRenderer {
         // CPU time spent encoding the paint pass (draw-call recording), separate
         // from prepare. Latched so last_frame_stats() reflects it after render.
         self.last_stats.cpu_paint_ms = paint_start.elapsed().as_secs_f32() * 1000.0;
+        // Pipelines compiled during the render phase (e.g. the shared HDR set on
+        // the first HDR frame) land after prepare() snapshotted the counter; fold
+        // them into this frame's stats rather than the next frame's.
+        self.last_stats.pipelines_built_this_frame += self.resources.frame_pipelines_built;
+        self.resources.frame_pipelines_built = 0;
         cmd_buf
     }
 

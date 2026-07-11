@@ -45,6 +45,7 @@ impl DeviceResources {
         if self.glyph.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let glyph_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
@@ -406,6 +407,7 @@ impl DeviceResources {
         if self.tensor_glyph.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let tg_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
@@ -729,6 +731,7 @@ impl DeviceResources {
         if self.glyph.outline_mask_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let glyph_bgl = self
             .glyph
             .bgl
@@ -778,6 +781,7 @@ impl DeviceResources {
         if self.tensor_glyph.outline_mask_pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let tg_bgl = self
             .tensor_glyph
             .bgl

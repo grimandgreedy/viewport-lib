@@ -86,6 +86,7 @@ impl DeviceResources {
         if self.instancing.bind_group_layout.is_some() {
             return; // Already initialized.
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // Instanced bind group layout (group 1 for instanced pipelines).
         // binding 0: instance storage buffer
@@ -285,6 +286,10 @@ impl DeviceResources {
         if self.instancing.hdr_solid_pipeline.is_some() {
             return;
         }
+        if self.instancing.bind_group_layout.is_none() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let Some(ref instance_bgl) = self.instancing.bind_group_layout else {
             return;
         };
@@ -326,6 +331,10 @@ impl DeviceResources {
         if self.oit.instanced_pipeline.is_some() {
             return;
         }
+        if self.instancing.bind_group_layout.is_none() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let Some(ref instance_bgl) = self.instancing.bind_group_layout else {
             return;
         };
@@ -484,6 +493,7 @@ impl DeviceResources {
         let Some(ref _instance_bgl) = self.instancing.bind_group_layout else {
             return; // ensure_instanced_pipelines must be called first.
         };
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // Cull BGL = instance_bgl bindings 0-4 + binding 5: visibility_indices (read, VERTEX).
         let cull_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

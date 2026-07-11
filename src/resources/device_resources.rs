@@ -870,6 +870,12 @@ pub struct DeviceResources {
     /// Read and reset at the start of each `prepare()` call to populate
     /// `FrameStats::upload_bytes`.
     pub frame_upload_bytes: u64,
+    /// GPU pipelines built lazily since the last `prepare()` reset.
+    ///
+    /// Incremented by the `ensure_*` pipeline builders when they actually
+    /// create pipelines (not on their no-op early returns). Read and reset
+    /// each `prepare()` call to populate `FrameStats::pipelines_built_this_frame`.
+    pub frame_pipelines_built: u32,
 
     // --- Screen-space decal pipelines (D1 + D5, lazily created) ---
     /// Decal render/exclude pipelines and their bind group layouts.
@@ -1217,6 +1223,16 @@ impl DeviceResources {
 }
 
 impl DeviceResources {
+    /// Record a lazy pipeline build for `FrameStats::pipelines_built_this_frame`.
+    ///
+    /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
+    /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
+    /// compile can be attributed to the exact builder.
+    pub(crate) fn note_pipeline_built(&mut self, site: &'static str) {
+        self.frame_pipelines_built += 1;
+        tracing::debug!(target: "viewport_lib::pipelines", site, "lazy pipeline build");
+    }
+
     /// Lazily create the GPU pick pipeline and associated bind group layouts.
     ///
     /// No-op if already created. Called from `ViewportRenderer::pick_scene_gpu`
@@ -1225,6 +1241,7 @@ impl DeviceResources {
         if self.pick.pipeline.is_some() {
             return;
         }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // --- group 0: pick camera bind group layout ---
         // Includes binding 0 (CameraUniform) and binding 6 (ClipVolumesUniform).

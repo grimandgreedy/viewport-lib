@@ -2229,7 +2229,7 @@ impl DeviceResources {
 
         // `deform` is constructed earlier (before the mesh pipeline layout).
 
-        let resources = Self {
+        let mut resources = Self {
             target_format,
             sample_count,
             pipeline_cache,
@@ -2423,9 +2423,20 @@ impl DeviceResources {
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(
             ),
             frame_upload_bytes: 0,
+            frame_pipelines_built: 0,
             occlusion_culling_enabled: false,
             decal: crate::resources::decal::DecalResources::default(),
         };
+        // Decal pipelines are built here rather than on the first frame that
+        // submits a decal: decals tend to appear mid-session (impact marks,
+        // scorches), and a lazy build would stall that frame by the compile
+        // cost (~8 ms measured on a desktop GPU).
+        resources.ensure_decal_shared(device);
+        resources.ensure_decal_pipeline(device);
+        mark("decal_pipelines");
+        // Pipelines built during construction are load-time cost, not a frame
+        // hitch; keep them out of the first frame's stats.
+        resources.frame_pipelines_built = 0;
         // GPU skinning is opt-in: hosts call
         // `viewport_lib::plugins::skinning::SkinningPlugin::install(&mut resources, &device)`
         // before uploading any skin data. The renderer otherwise carries no
