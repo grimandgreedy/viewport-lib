@@ -579,14 +579,21 @@ impl ViewportRenderer {
     ///   indirect instanced draw path.
     /// - `TIMESTAMP_QUERY` enables `FrameStats::gpu_frame_ms` and the
     ///   per-pass GPU breakdown.
+    /// - `PIPELINE_CACHE` enables
+    ///   [`pipeline_cache_data`](Self::pipeline_cache_data) /
+    ///   [`new_with_pipeline_cache`](Self::new_with_pipeline_cache), so
+    ///   pipeline compilation from a previous run can be reused instead of
+    ///   redone (startup and first-use hitches).
     ///
     /// Everything works without them; rendering falls back to direct draws
-    /// (with CPU-side shadow-cascade culling) and GPU timings read as `None`.
+    /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
+    /// and `pipeline_cache_data` returns `None`.
     pub fn recommended_device_features(adapter: &wgpu::Adapter) -> wgpu::Features {
         let mut features = wgpu::Features::empty();
         for feature in [
             wgpu::Features::INDIRECT_FIRST_INSTANCE,
             wgpu::Features::TIMESTAMP_QUERY,
+            wgpu::Features::PIPELINE_CACHE,
         ] {
             if adapter.features().contains(feature) {
                 features |= feature;
