@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.20.0]
+
+Performance release focused on scenes with many lights. A game-scale test scene (3251 instances, 251 point lights) went from 2.3 to 10.5 fps facing its densest area, and from 30 to 79 fps looking away, on an RTX 3080. GPU frame timing also now measures the whole frame instead of just the main pass. Upgrade notes are in `docs/migration-guides/v0.20.0-render-performance.md`.
+
+### Features
+
+#### Deferred-submit mode
+
+`prepare_deferred`, `render_deferred`, and `render_to_texture_deferred` return command buffers instead of submitting them, and `submit_frame` submits the batch. This lets an app encode a frame on a worker thread and submit it from the main thread, which some drivers require. Nothing changes for existing callers: the default mode submits inline exactly as before.
+
+#### Device-loss detection
+
+`DeviceLostWatcher::install(&device)` gives you a flag to poll once per frame that tells you the GPU device was lost. Without something like this, a lost device (a driver reset, or the OS killing a submission that ran too long) produces no error anywhere: the app just freezes while appearing to run. `info()` carries the reason and the driver's message.
+
+#### `recommended_device_features`
+
+`ViewportRenderer::recommended_device_features(&adapter)` returns the optional wgpu features the renderer can use, filtered to what the adapter supports, so you can pass it as `required_features` at device creation instead of hand-rolling the checks. Currently: `INDIRECT_FIRST_INSTANCE` (GPU culling), `TIMESTAMP_QUERY` (GPU frame timing), and `PIPELINE_CACHE` (reusable pipeline compilation, see below). The examples all use it.
+
+#### Pipeline cache
+
+With `PIPELINE_CACHE` enabled, `pipeline_cache_data()` returns bytes you can save to disk and pass back through `new_with_pipeline_cache` on the next launch, so shaders compile once per machine rather than once per run.
+
+#### Mip chains for uploaded textures
+
+`upload_texture`, `begin_upload_texture`, and `begin_upload_normal_map` now build a full mip chain and sample trilinear, so textures viewed at a distance filter smoothly instead of shimmering. Textures take about a third more VRAM. `replace_texture` stays single-mip since it is the path for per-frame dynamic content.
+
+### Improvements
+
+- **Scenes with many lights are much faster on the instanced path.** Instanced draws previously lit every pixel with every light in the scene; they now use the same per-cluster light lists the per-object path uses, so each pixel only pays for the lights that can actually reach it. Scenes with 16 or fewer lights are unchanged.
+
+- **Point-light shadows are cached.** A shadow cubemap re-renders only when its light moves or something in its range changes; a static scene pays for its shadow maps once instead of every frame. Meshes animated through the deform or position-override paths still re-render their shadows every frame, so nothing goes stale.
+
+- **Crowded lighting no longer flickers.** When many lights overlapped, whole screen regions used to randomly lose their lights from one frame to the next. Each region now keeps its most important lights and drops the least important ones, the same way every frame. If a specific light must never be dropped in a dense area, raise its `importance`.
+
+- **At most 8 point lights cast shadows per frame**, chosen by distance to the camera weighted by `importance`. Lights default to `cast_shadows = true`, so a scene with hundreds of default-constructed lights used to render hundreds of shadow maps per frame and crawl. The rest render unshadowed.
+
+- **The per-object path is cheaper.** Opaque per-object draws are recorded once into a render bundle and replayed until the item set changes, and the draw loops skip redundant binds. `FrameStats::per_object_bundle_cached` reports when the bundle is in use.
+
+- **Shadow casters are culled per cascade on the CPU** when the device lacks `INDIRECT_FIRST_INSTANCE`, matching what the GPU path already did.
+
+- **Mesh uploads are several times faster.** The wireframe and normal-line debug buffers are now built the first time something displays them instead of on every upload. The first wireframe toggle on a large mesh pays a one-time build.
+
+- **`FrameStats::gpu_frame_ms` measures the whole frame**: shadows, compute, transparency, and post are included instead of just the main scene pass. Expect the number to jump on upgrade; the old value was under-reporting. The breakdown gains `point_shadow_ms` and `cluster_ms`, and `FrameStats::gpu_sample_generation` lets you deduplicate timing samples when building percentiles.
+
+### Breaking changes
+
+- **`cast_shadows = false` is now honoured on the primary directional light.** If your scene sets the flag but relied on shadows rendering anyway, set it back to `true`.
+
+- **Oversized meshes are refused up front.** `upload_mesh_data` and friends return `ViewportError::MeshTooLarge` for meshes that exceed the device's buffer limit, instead of losing the device to a validation error.
+
+- **`draw_calls` and `triangles_submitted` now count per-object draws too.** They previously read 0 for all-per-object scenes; dashboards keyed on them will see higher, correct numbers.
+
+- **`ClusterCell::_pad` is now `punctual_demand`**, and the `ClusterStats` per-cluster light counts report how many lights wanted each cluster rather than how many were kept; `dropped_punctual_slots` is new.
+
+### Bug Fixes
+
+#### Khronos Neutral tone mapping darkened saturated colours
+
+Two branches in the tone mapper were swapped, so strongly tinted pixels were darkened by an offset meant for brighter ones. Large uniform surfaces (terrain, walls) show the correction most: they read slightly brighter and more saturated now, which is the curve working as specified.
+
+#### Skybox could drop out on some hardware
+
+The skybox depth test compared against a value the driver was allowed to compute slightly differently each frame. Its depth is now pinned exactly, so sky pixels cannot flicker or drop out.
+
+#### GPU timing hang on Apple Metal
+
+Reading GPU timestamps could hang the frame on Metal; timestamps now resolve one submission later, which Metal requires.
+
+#### Directional light `direction` doc corrected
+
+The field was documented as the direction light travels; the shaders have always treated it as the surface-to-light vector. The doc now says so. No behaviour change.
+
 ## [0.19.0]
 
 ### Features
