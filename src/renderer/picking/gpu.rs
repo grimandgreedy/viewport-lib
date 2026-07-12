@@ -3,6 +3,38 @@
 
 use super::*;
 
+/// Item types the GPU pick pass can draw.
+///
+/// Each variant owns a pipeline and knows which pick masks it can answer. Only
+/// surfaces are wired today; other types are added as variants here as their
+/// pick pipelines land, which keeps "make a type GPU-pickable" to registering a
+/// pipeline and a draw rather than editing the pass.
+#[derive(Clone, Copy)]
+enum PickItemType {
+    Surface,
+}
+
+impl PickItemType {
+    /// Every type the pass can draw, in draw order.
+    const ALL: &'static [PickItemType] = &[PickItemType::Surface];
+
+    /// Whether this type answers any level requested in `mask`. A type is drawn
+    /// only when the caller asked for something it can resolve, so the mask
+    /// selects which pipelines run rather than filtering the read-back id.
+    fn satisfies(self, mask: crate::interaction::select::pick_mask::PickMask) -> bool {
+        use crate::interaction::select::pick_mask::PickMask;
+        match self {
+            PickItemType::Surface => mask.intersects(
+                PickMask::OBJECT
+                    | PickMask::FACE
+                    | PickMask::VERTEX
+                    | PickMask::EDGE
+                    | PickMask::CELL,
+            ),
+        }
+    }
+}
+
 impl ViewportRenderer {
     // -----------------------------------------------------------------------
     // GPU object-ID picking
@@ -164,6 +196,25 @@ impl ViewportRenderer {
         });
         let pick_id_view = pick_id_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Primitive-id target. The pick pipelines write a sub-object index here
+        // (0 for now); it is attached so the pipeline's location-1 output has a
+        // target, but it is not read back until sub-object picking uses it.
+        let pick_prim_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("pick_prim_texture"),
+            size: wgpu::Extent3d {
+                width: vp_w,
+                height: vp_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Uint,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let pick_prim_view = pick_prim_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let pick_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("pick_depth_colour_texture"),
             size: wgpu::Extent3d {
@@ -221,6 +272,20 @@ impl ViewportRenderer {
                         },
                     }),
                     Some(wgpu::RenderPassColorAttachment {
+                        view: &pick_prim_view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 0.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
                         view: &pick_depth_view,
                         resolve_target: None,
                         depth_slice: None,
@@ -247,26 +312,44 @@ impl ViewportRenderer {
                 occlusion_query_set: None,
             });
 
-            pick_pass.set_pipeline(
-                self.resources
-                    .pick
-                    .pipeline
-                    .as_ref()
-                    .expect("ensure_pick_pipeline must be called first"),
-            );
             pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
-            pick_pass.set_bind_group(1, &pick_instance_bg, &[]);
 
-            // Draw each pickable item with its instance slot.
-            // Instance index in the storage buffer = position in pick_instances vec.
-            for (instance_slot, item) in pickable_items.iter().enumerate() {
-                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+            // Pick pass registry: draw every item type that answers the mask.
+            // Only surfaces are wired today; other types register as variants of
+            // PickItemType as their pick pipelines land. The mask defaults to
+            // "everything" here; the type filter narrows to the requested types
+            // once the object entry points thread a mask through.
+            let pick_mask = crate::interaction::select::pick_mask::PickMask::all();
+            for item_type in PickItemType::ALL {
+                if !item_type.satisfies(pick_mask) {
                     continue;
-                };
-                pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                pick_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                let slot = instance_slot as u32;
-                pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
+                }
+                match item_type {
+                    PickItemType::Surface => {
+                        pick_pass.set_pipeline(
+                            self.resources
+                                .pick
+                                .pipeline
+                                .as_ref()
+                                .expect("ensure_pick_pipeline must be called first"),
+                        );
+                        pick_pass.set_bind_group(1, &pick_instance_bg, &[]);
+
+                        // Instance index in the storage buffer = position in pick_instances.
+                        for (instance_slot, item) in pickable_items.iter().enumerate() {
+                            let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+                                continue;
+                            };
+                            pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            pick_pass.set_index_buffer(
+                                mesh.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            let slot = instance_slot as u32;
+                            pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
+                        }
+                    }
+                }
             }
         }
 

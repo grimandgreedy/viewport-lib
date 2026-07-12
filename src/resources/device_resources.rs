@@ -1343,7 +1343,13 @@ impl DeviceResources {
                         blend: None, // replace : no blending for integer targets
                         write_mask: wgpu::ColorWrites::ALL,
                     }),
-                    // location 1: R32Float depth
+                    // location 1: R32Uint primitive ID (sub-object; written as 0 for now)
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    // location 2: R32Float depth
                     Some(wgpu::ColorTargetState {
                         format: wgpu::TextureFormat::R32Float,
                         blend: None,

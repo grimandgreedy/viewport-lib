@@ -82,7 +82,10 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
 
 struct FragOut {
     @location(0) object_id: u32,
-    @location(1) depth: f32,
+    // Primitive index for sub-object picking. Written as 0 until sub-object
+    // picking reads it back and maps it to a face, cell, or instance.
+    @location(1) primitive_id: u32,
+    @location(2) depth: f32,
 };
 
 @fragment
@@ -90,6 +93,7 @@ fn fs_main(in: VertexOut) -> FragOut {
     if !clip_volume_test(in.world_pos) { discard; }
     var out: FragOut;
     out.object_id = in.object_id;
+    out.primitive_id = 0u;
     // clip_pos.z in the fragment stage is the depth buffer value in [0, 1].
     out.depth = in.clip_pos.z;
     return out;

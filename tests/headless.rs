@@ -4,7 +4,7 @@
 //! resource APIs. Requires a GPU adapter (software or hardware).
 
 use viewport_lib::{
-    BackfacePolicy, Camera, Material, MeshId, Scene, Selection,
+    BackfacePolicy, Camera, Material, MeshId, PickId, Scene, Selection,
     error::ViewportError,
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
@@ -723,4 +723,47 @@ fn lod_culled_per_object_item_is_not_drawn() {
         culled, empty,
         "a culled per-object LOD item must be skipped in the paint pass",
     );
+}
+
+#[test]
+fn gpu_pick_returns_object_id_under_cursor() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // A single box at the origin with a nonzero pick id.
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.settings.pick_id = PickId(7);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    // Cursor at the viewport centre lands on the box. This exercises the
+    // multi-target pick pass (object id + primitive id + depth).
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(7)));
 }
