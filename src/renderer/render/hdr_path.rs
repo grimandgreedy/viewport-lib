@@ -69,6 +69,27 @@ fn decal_scissor(model: &glam::Mat4, view_proj: &glam::Mat4, vp_w: u32, vp_h: u3
 }
 
 impl ViewportRenderer {
+    /// Timestamp writes for one measured pass. `begin` and `end` select
+    /// which boundary of the slot's begin/end pair this pass writes, so a
+    /// multi-pass effect can begin on its first pass and end on its last
+    /// (each query index must be written at most once per frame).
+    fn ts_writes_for(
+        &self,
+        slot: u32,
+        begin: bool,
+        end: bool,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        self.ts_query_set.as_ref().map(|qs| {
+            self.ts_written_mask
+                .fetch_or(1 << slot, std::sync::atomic::Ordering::Relaxed);
+            wgpu::RenderPassTimestampWrites {
+                query_set: qs,
+                beginning_of_pass_write_index: begin.then_some(slot * 2),
+                end_of_pass_write_index: end.then_some(slot * 2 + 1),
+            }
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_frame_hdr(
         &mut self,
@@ -2932,7 +2953,11 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         if pp.ssao && !throttle_effects {
             if let Some(ssao_pipeline) = &self.resources.post.ssao_pipeline {
+                // The SSAO slot begins on the occlusion pass and ends on the
+                // blur pass (or on the occlusion pass when there is no blur).
+                let has_blur = self.resources.post.ssao_blur_pipeline.is_some();
                 {
+                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_SSAO, true, !has_blur);
                     let mut ssao_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("ssao_pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2945,7 +2970,7 @@ impl ViewportRenderer {
                             depth_slice: None,
                         })],
                         depth_stencil_attachment: None,
-                        timestamp_writes: None,
+                        timestamp_writes: ts,
                         occlusion_query_set: None,
                     });
                     ssao_pass.set_pipeline(ssao_pipeline);
@@ -2955,6 +2980,7 @@ impl ViewportRenderer {
 
                 // SSAO blur pass.
                 if let Some(ssao_blur_pipeline) = &self.resources.post.ssao_blur_pipeline {
+                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_SSAO, false, true);
                     let mut ssao_blur_pass =
                         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("ssao_blur_pass"),
@@ -2968,7 +2994,7 @@ impl ViewportRenderer {
                                 depth_slice: None,
                             })],
                             depth_stencil_attachment: None,
-                            timestamp_writes: None,
+                            timestamp_writes: ts,
                             occlusion_query_set: None,
                         });
                     ssao_blur_pass.set_pipeline(ssao_blur_pipeline);
@@ -3010,7 +3036,11 @@ impl ViewportRenderer {
         if pp.bloom && !throttle_effects {
             // Threshold pass: extract bright pixels into bloom_threshold_texture.
             if let Some(bloom_threshold_pipeline) = &self.resources.post.bloom_threshold_pipeline {
+                // The bloom slot begins on the threshold pass and ends on the
+                // last blur pass (or here when there is no blur pipeline).
+                let has_blur = self.resources.post.bloom_blur_pipeline.is_some();
                 {
+                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_BLOOM, true, !has_blur);
                     let mut threshold_pass =
                         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("bloom_threshold_pass"),
@@ -3024,7 +3054,7 @@ impl ViewportRenderer {
                                 depth_slice: None,
                             })],
                             depth_stencil_attachment: None,
-                            timestamp_writes: None,
+                            timestamp_writes: ts,
                             occlusion_query_set: None,
                         });
                     threshold_pass.set_pipeline(bloom_threshold_pipeline);
@@ -3065,8 +3095,14 @@ impl ViewportRenderer {
                             h_pass.set_bind_group(0, h_bg, &[]);
                             h_pass.draw(0..3, 0..1);
                         }
-                        // V pass: ping -> pong.
+                        // V pass: ping -> pong. The last iteration closes the
+                        // bloom timing slot.
                         {
+                            let ts = (i == BLUR_ITERATIONS - 1)
+                                .then(|| {
+                                    self.ts_writes_for(crate::renderer::GPU_TS_BLOOM, false, true)
+                                })
+                                .flatten();
                             let mut v_pass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                     label: Some("bloom_blur_v_pass"),
@@ -3080,7 +3116,7 @@ impl ViewportRenderer {
                                         depth_slice: None,
                                     })],
                                     depth_stencil_attachment: None,
-                                    timestamp_writes: None,
+                                    timestamp_writes: ts,
                                     occlusion_query_set: None,
                                 });
                             v_pass.set_pipeline(blur_pipeline);
@@ -3184,6 +3220,7 @@ impl ViewportRenderer {
                 } else {
                     output_view
                 };
+                let ts = self.ts_writes_for(crate::renderer::GPU_TS_FXAA, true, true);
                 let mut fxaa_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("fxaa_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3196,7 +3233,7 @@ impl ViewportRenderer {
                         depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: ts,
                     occlusion_query_set: None,
                 });
                 fxaa_pass.set_pipeline(fxaa_pipeline);

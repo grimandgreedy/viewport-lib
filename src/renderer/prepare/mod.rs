@@ -933,6 +933,9 @@ impl ViewportRenderer {
                             cull_ms: slot_ms(crate::renderer::GPU_TS_CULL),
                             point_shadow_ms: slot_ms(crate::renderer::GPU_TS_POINT_SHADOW),
                             cluster_ms: slot_ms(crate::renderer::GPU_TS_CLUSTER),
+                            ssao_ms: slot_ms(crate::renderer::GPU_TS_SSAO),
+                            bloom_ms: slot_ms(crate::renderer::GPU_TS_BLOOM),
+                            fxaa_ms: slot_ms(crate::renderer::GPU_TS_FXAA),
                         };
                         // GPU frame time: the span from the first to the last
                         // measured pass. All slots were written on the same

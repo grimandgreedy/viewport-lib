@@ -215,6 +215,12 @@ pub struct GpuBreakdown {
     /// Clustered-lighting build compute pass. `0.0` when the frame ran the
     /// small-N fallback (under 16 active lights).
     pub cluster_ms: f32,
+    /// SSAO passes (occlusion + blur). `0.0` when SSAO is off.
+    pub ssao_ms: f32,
+    /// Bloom passes (threshold extract + blur chain). `0.0` when bloom is off.
+    pub bloom_ms: f32,
+    /// FXAA fullscreen pass. `0.0` when FXAA is off.
+    pub fxaa_ms: f32,
 }
 
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].

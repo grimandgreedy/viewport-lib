@@ -54,7 +54,7 @@ Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin:
 
 - **Re-showing a hidden set no longer spikes.** The per-object draw cache used to drop an item's GPU resources after 60 frames of absence, so hiding a large set for over a second and showing it again rebuilt everything in one frame (11 ms at 1k items). The cache now keeps stale entries until a capacity budget forces the oldest out, so the re-show frame costs the same as any other. Freeing a texture or mesh still reclaims its memory immediately.
 
-- **`FrameStats::gpu_frame_ms` measures the whole frame**: shadows, compute, transparency, and post are included instead of just the main scene pass. Expect the number to jump on upgrade; the old value was under-reporting. The breakdown gains `point_shadow_ms` and `cluster_ms`, and `FrameStats::gpu_sample_generation` lets you deduplicate timing samples when building percentiles.
+- **`FrameStats::gpu_frame_ms` measures the whole frame**: shadows, compute, transparency, and post are included instead of just the main scene pass. Expect the number to jump on upgrade; the old value was under-reporting. The breakdown gains `point_shadow_ms`, `cluster_ms`, `ssao_ms`, `bloom_ms`, and `fxaa_ms` (previously the post effects were invisible to pass attribution; only the tone-map pass was timed), and `FrameStats::gpu_sample_generation` lets you deduplicate timing samples when building percentiles.
 
 ### Breaking changes
 

@@ -278,9 +278,15 @@ pub(crate) const GPU_TS_CULL: u32 = 4;
 pub(crate) const GPU_TS_POINT_SHADOW: u32 = 5;
 /// Clustered-lighting build compute pass.
 pub(crate) const GPU_TS_CLUSTER: u32 = 6;
+/// SSAO passes (occlusion + blur), begin on the first and end on the last.
+pub(crate) const GPU_TS_SSAO: u32 = 7;
+/// Bloom passes (extract + blur chain), begin on the first and end on the last.
+pub(crate) const GPU_TS_BLOOM: u32 = 8;
+/// FXAA fullscreen pass.
+pub(crate) const GPU_TS_FXAA: u32 = 9;
 /// Number of measured GPU passes; the query set holds `2 * GPU_TS_SLOTS` entries
 /// (a begin/end pair per slot).
-pub(crate) const GPU_TS_SLOTS: u32 = 7;
+pub(crate) const GPU_TS_SLOTS: u32 = 10;
 
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
