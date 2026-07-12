@@ -249,6 +249,7 @@ impl ViewportRenderer {
                                 batch.instance_offset as u64 * inst_stride,
                                 new_bytes,
                             );
+                            resources.frame_upload_bytes += new_bytes.len() as u64;
                         }
                         if let Some(aabb_buf) = resources.cull.aabb_buf.as_ref() {
                             let aabb_bytes =
@@ -258,6 +259,7 @@ impl ViewportRenderer {
                                 batch.instance_offset as u64 * aabb_stride,
                                 aabb_bytes,
                             );
+                            resources.frame_upload_bytes += aabb_bytes.len() as u64;
                         }
                         instancing.cached_instance_hashes[bi] = new_hash;
                         batches_reuploaded += 1;

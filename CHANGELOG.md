@@ -64,6 +64,8 @@ Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin:
 
 - **`draw_calls` and `triangles_submitted` now count per-object draws too.** They previously read 0 for all-per-object scenes; dashboards keyed on them will see higher, correct numbers.
 
+- **`FrameStats::upload_bytes` now counts instance-buffer and per-object uniform writes**, not just mesh data. Dynamic scenes that previously read 0 will report their real per-frame transfer volume; static scenes still read 0 on steady frames.
+
 - **`ClusterCell::_pad` is now `punctual_demand`**, and the `ClusterStats` per-cluster light counts report how many lights wanted each cluster rather than how many were kept; `dropped_punctual_slots` is new.
 
 ### Bug Fixes

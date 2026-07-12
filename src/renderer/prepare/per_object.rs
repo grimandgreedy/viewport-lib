@@ -371,6 +371,7 @@ impl ViewportRenderer {
                             bytemuck::cast_slice(&[obj_uniform]),
                         );
                         entry.last_uniform = Some(obj_uniform);
+                        let mut written = uniform_size;
                         // Keep the mesh's shared object uniform in sync too. It
                         // feeds the fallback bind group and the point-shadow
                         // pass; per-object items draw via their own bind group,
@@ -382,7 +383,9 @@ impl ViewportRenderer {
                                 0,
                                 bytemuck::cast_slice(&[obj_uniform]),
                             );
+                            written += uniform_size;
                         }
+                        resources.frame_upload_bytes += written;
                     }
 
                     // Pass the cached key so the build skips create_bind_group

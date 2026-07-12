@@ -345,13 +345,16 @@ pub struct FrameStats {
     /// Requires `target_fps` to be set in the [`PerformancePolicy`]. Always
     /// `false` when no target is configured.
     pub missed_budget: bool,
-    /// Bytes of geometry data uploaded to the GPU since the previous
+    /// Bytes written to GPU buffers for scene content since the previous
     /// `prepare()` call.
     ///
-    /// Counts full buffer reallocations triggered by
-    /// [`crate::DeviceResources::replace_mesh_data`] and initial uploads
-    /// via `upload_mesh_data` / `upload_mesh`. Uniform buffer writes are not
-    /// counted.
+    /// Counts mesh data (initial uploads via `upload_mesh_data` /
+    /// `upload_mesh` and reallocations via
+    /// [`crate::DeviceResources::replace_mesh_data`]), instanced batch
+    /// data (instance/AABB/batch-meta writes, full and partial), and
+    /// per-object uniform writes for items whose transform or material
+    /// changed. A steady frame over a static scene reads 0; a non-zero
+    /// value attributes frame cost to CPU-to-GPU transfer.
     pub upload_bytes: u64,
     /// GPU pipelines compiled lazily since the previous `prepare()` call.
     ///

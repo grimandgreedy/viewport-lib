@@ -477,6 +477,7 @@ impl DeviceResources {
             0,
             bytemuck::cast_slice(data),
         );
+        self.frame_upload_bytes += std::mem::size_of_val(data) as u64;
     }
 
     /// Upload the shared cull inputs: per-instance AABBs and per-batch metadata.
@@ -515,6 +516,7 @@ impl DeviceResources {
                 0,
                 bytemuck::cast_slice(aabbs),
             );
+            self.frame_upload_bytes += std::mem::size_of_val(aabbs) as u64;
         }
 
         // --- Batch meta buffer (per-batch) ---
@@ -542,6 +544,7 @@ impl DeviceResources {
                 0,
                 bytemuck::cast_slice(metas),
             );
+            self.frame_upload_bytes += std::mem::size_of_val(metas) as u64;
         }
     }
 
