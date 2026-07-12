@@ -4,12 +4,16 @@
 //! resource APIs. Requires a GPU adapter (software or hardware).
 
 use viewport_lib::{
-    BackfacePolicy, Camera, GlyphItem, GlyphType, Material, MeshId, PickBackend, PickId, PickMask,
-    PickPoll, PolylineItem, RibbonItem, Scene, Selection, SpriteItem, SpriteSizeMode,
-    VolumeMeshItem,
+    BackfacePolicy, Camera, GlyphItem, GlyphType, ItemSettings, Material, MeshId, PickBackend,
+    PickId, PickMask, PickPoll, PolylineItem, RibbonItem, Scene, Selection, SpriteItem,
+    SpriteSizeMode, VolumeMeshItem,
     error::ViewportError,
+    plugin_api::{
+        ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
+        shared_wgsl::SHARED_PICK_WGSL,
+    },
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
-    resources::MeshData,
+    resources::{MeshData, PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, SCENE_DEPTH_FORMAT},
 };
 
 /// Create a headless wgpu device + queue for testing.
@@ -1187,4 +1191,288 @@ fn gpu_pick_hits_polyline() {
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(888)));
+}
+
+// ---------------------------------------------------------------------------
+// GPU pick: item-type plugin hook (render_pick)
+// ---------------------------------------------------------------------------
+
+/// Minimal plugin collection carrying a single pickable item's settings.
+struct MockPickCollection {
+    settings: ItemSettings,
+}
+
+impl MockPickCollection {
+    fn new(pick_id: PickId) -> Self {
+        let mut settings = ItemSettings::default();
+        settings.pick_id = pick_id;
+        Self { settings }
+    }
+}
+
+impl PluginItemCollection for MockPickCollection {
+    fn len(&self) -> usize {
+        1
+    }
+    fn item_settings(&self, _index: usize) -> &ItemSettings {
+        &self.settings
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Vertex stage: a fullscreen triangle that reads its pick id from a group-1
+/// uniform and forwards it flat. Concatenated with `SHARED_PICK_WGSL`, whose
+/// `viewport_pick_fs` writes the three pick channels.
+const MOCK_PICK_VS: &str = r#"
+@group(1) @binding(0) var<uniform> mock_pick_id: vec4<u32>;
+
+struct MockVsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) @interpolate(flat) pick_id: u32,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) vi: u32) -> MockVsOut {
+    var verts = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -3.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(3.0, 1.0),
+    );
+    var out: MockVsOut;
+    out.pos = vec4<f32>(verts[vi], 0.0, 1.0);
+    out.pick_id = mock_pick_id.x;
+    return out;
+}
+"#;
+
+/// Plugin that rasterises a fullscreen triangle into the pick pass, tagging it
+/// with its item's pick id. Hand-rolls the pipeline the way a real plugin does
+/// (plugins get `SharedBindings`, not `DeviceResources`, at `init_gpu`).
+struct MockPickPlugin {
+    pipeline: Option<wgpu::RenderPipeline>,
+    id_bgl: Option<wgpu::BindGroupLayout>,
+    id_bg: Option<wgpu::BindGroup>,
+}
+
+impl MockPickPlugin {
+    fn new() -> Self {
+        Self {
+            pipeline: None,
+            id_bgl: None,
+            id_bg: None,
+        }
+    }
+}
+
+impl ItemTypePlugin for MockPickPlugin {
+    fn type_name(&self) -> &'static str {
+        "mock_pick"
+    }
+
+    fn init_gpu(&mut self, device: &wgpu::Device, shared: &SharedBindings<'_>) {
+        let id_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mock_pick_id_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let source = format!("{MOCK_PICK_VS}\n{SHARED_PICK_WGSL}");
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mock_pick_shader"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mock_pick_layout"),
+            bind_group_layouts: &[shared.group0_layout, &id_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let color = |format| {
+            Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+        };
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mock_pick_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("viewport_pick_fs"),
+                targets: &[
+                    color(PICK_COLOR_FORMAT),
+                    color(PICK_COLOR_FORMAT),
+                    color(PICK_DEPTH_CHANNEL_FORMAT),
+                ],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: SCENE_DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        self.id_bgl = Some(id_bgl);
+        self.pipeline = Some(pipeline);
+    }
+
+    fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
+        items: &dyn PluginItemCollection,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+            return Vec::new();
+        };
+        let Some(id_bgl) = self.id_bgl.as_ref() else {
+            return Vec::new();
+        };
+        let id = [coll.settings.pick_id.0 as u32, 0, 0, 0];
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mock_pick_id_buf"),
+            size: std::mem::size_of_val(&id) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, bytemuck::cast_slice(&id));
+        self.id_bg = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mock_pick_id_bg"),
+            layout: id_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buf.as_entire_binding(),
+            }],
+        }));
+        Vec::new()
+    }
+
+    fn render_pick<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+        _ctx: &PickPassContext<'a>,
+        items: &'a dyn PluginItemCollection,
+    ) {
+        let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
+            return;
+        };
+        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+            return;
+        };
+        if coll.settings.hidden || coll.settings.pick_id == PickId::NONE {
+            return;
+        }
+        // Group 0 (camera) is already bound by the lib.
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(1, id_bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
+fn plugin_pick_frame() -> FrameData {
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    frame
+}
+
+#[test]
+fn gpu_pick_returns_plugin_item_id() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.with_item_type_plugin(&device, Box::new(MockPickPlugin::new()));
+
+    let mut frame = plugin_pick_frame();
+    frame
+        .scene
+        .submit_plugin_items("mock_pick", MockPickCollection::new(PickId(321)));
+
+    // prepare runs the plugin's `prepare` (builds its id bind group) and updates
+    // the shared camera bind group the pick pass binds at group 0.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::all(),
+    );
+    assert_eq!(hit.map(|h| h.id), Some(321));
+}
+
+#[test]
+fn gpu_pick_skips_hidden_plugin_item() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.with_item_type_plugin(&device, Box::new(MockPickPlugin::new()));
+
+    let mut frame = plugin_pick_frame();
+    let mut coll = MockPickCollection::new(PickId(321));
+    coll.settings.hidden = true;
+    frame.scene.submit_plugin_items("mock_pick", coll);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::all(),
+    );
+    assert!(hit.is_none(), "hidden plugin item must not be pickable");
 }

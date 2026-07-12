@@ -162,6 +162,29 @@ pub struct OutlineMaskContext<'a> {
     pub frame_index: u64,
 }
 
+/// Information forwarded to a plugin's `render_pick`.
+///
+/// The lib's pick-id render pass is already begun on entry, scissored to the
+/// query region, with the shared group-0 camera bind group bound. The pass has
+/// three colour targets (object id, primitive id, depth) plus the scene depth
+/// format; the plugin builds its pipeline against
+/// [`pick_target_desc`](crate::resources::DeviceResources::pick_target_desc)
+/// (via [`build_pick_pipeline`](crate::resources::DeviceResources::build_pick_pipeline))
+/// and writes each item's `PickId` at `@location(0)`. On read-back the lib maps
+/// that id straight to a hit, so the plugin's items become GPU-pickable without
+/// the CPU [`pick`](ItemTypePlugin::pick) fallback.
+#[non_exhaustive]
+pub struct PickPassContext<'a> {
+    /// Active render-camera snapshot.
+    pub camera: &'a crate::RenderCamera,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+}
+
 /// A new scene item category supplied by a plugin.
 ///
 /// Implementations are stored on the renderer via
@@ -346,11 +369,42 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// pick happens out-of-band with prepare and the plugin already has
     /// the data it needs.
     ///
-    /// Plugins that prefer GPU picking can skip this method and instead
-    /// render their pick-ids into the standard pick-id pass (a future
-    /// hook), at which point the lib's GPU pick path returns plugin
-    /// items transparently.
+    /// Plugins that prefer GPU picking can skip this method and implement
+    /// [`render_pick`](Self::render_pick) instead, drawing their pick-ids
+    /// into the shared pick pass so the lib's GPU pick path
+    /// ([`pick_object`](crate::renderer::ViewportRenderer::pick_object) with
+    /// [`PickBackend::Gpu`](crate::renderer::PickBackend::Gpu)) returns their
+    /// items with no CPU ray-cast.
     fn pick(&self, _ray: &PickRay) -> Option<(f32, PickHit)> {
         None
+    }
+
+    /// Issue draw calls into the lib's pick-id pass.
+    ///
+    /// Called inside the pick render pass after the built-in geometry, with the
+    /// shared group-0 camera bind group bound and the pass scissored to the
+    /// query region. The plugin draws each pickable item with a pipeline whose
+    /// three colour targets match the pass:
+    /// [`pick_target_desc`](crate::resources::DeviceResources::pick_target_desc)
+    /// spells them out, and
+    /// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL)'s
+    /// `viewport_pick_fs` writes the item's `pick_id` at `@location(0)` and the
+    /// other two channels. A plugin with access to
+    /// [`DeviceResources`](crate::resources::DeviceResources) can build the
+    /// pipeline with `build_pick_pipeline`; one that only has `SharedBindings`
+    /// (as at [`init_gpu`](Self::init_gpu)) hand-rolls it against those formats,
+    /// the way the built-in pick pipelines do.
+    ///
+    /// Implementations skip hidden items and items whose
+    /// [`pick_id`](PluginItemCollection::pick_id) is [`PickId::NONE`] (the clear
+    /// value, which reads back as no hit). This is the GPU counterpart to
+    /// [`pick`](Self::pick); a plugin implements whichever fits, or both.
+    /// Default no-op: plugins relying on the CPU path leave this empty.
+    fn render_pick<'a>(
+        &'a self,
+        _pass: &mut wgpu::RenderPass<'a>,
+        _ctx: &PickPassContext<'a>,
+        _items: &'a dyn PluginItemCollection,
+    ) {
     }
 }

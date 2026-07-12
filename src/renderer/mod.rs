@@ -1281,6 +1281,47 @@ impl ViewportRenderer {
         }
     }
 
+    /// `true` when at least one registered plugin has a non-empty collection
+    /// submitted this frame, so the pick pass has plugin geometry to draw. Does
+    /// not inspect per-item `pick_id`; `render_pick` skips non-pickable items.
+    pub(crate) fn any_plugin_pick_items(&self, frame: &FrameData) -> bool {
+        !self.item_type_plugins.is_empty()
+            && self.item_type_plugins.keys().any(|name| {
+                frame
+                    .scene
+                    .plugin_items
+                    .get(*name)
+                    .is_some_and(|items| !items.is_empty())
+            })
+    }
+
+    /// Walk registered plugins and invoke `render_pick` for each one whose
+    /// collection is on `frame.scene`.
+    ///
+    /// Called from inside the GPU pick pass after the built-in draws. The
+    /// caller has bound the shared group-0 camera bind group; plugins that
+    /// rebind group 0 must restore it.
+    pub(crate) fn dispatch_plugin_pick<'rp>(
+        &'rp self,
+        pass: &mut wgpu::RenderPass<'rp>,
+        frame: &'rp FrameData,
+    ) {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        let ctx = crate::plugin_api::PickPassContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                plugin.render_pick(pass, &ctx, items.as_ref());
+            }
+        }
+    }
+
     /// Walk registered plugins and invoke `paint_transparent` for each
     /// one whose collection is on `frame.scene`.
     ///

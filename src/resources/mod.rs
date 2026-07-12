@@ -44,8 +44,8 @@ pub use self::mesh_sidecar::registry::{
 };
 pub use self::overlay::font::{FontError, FontHandle};
 pub use self::plugin_builders::{
-    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
-    SHADOW_DEPTH_FORMAT,
+    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT,
+    PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
 };
 pub use self::scivis::curve_store::{
     GlyphSetId, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,

@@ -78,7 +78,7 @@ pub mod target_desc;
 
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use item_type::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickRay,
+    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickPassContext, PickRay,
     PluginItemCollection, ShadowCastContext,
 };
 pub use target_desc::{

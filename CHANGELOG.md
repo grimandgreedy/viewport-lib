@@ -26,6 +26,14 @@ With `PIPELINE_CACHE` enabled, `pipeline_cache_data()` returns bytes you can sav
 
 `upload_texture`, `begin_upload_texture`, and `begin_upload_normal_map` now build a full mip chain and sample trilinear, so textures viewed at a distance filter smoothly instead of shimmering. Textures take about a third more VRAM. `replace_texture` stays single-mip since it is the path for per-frame dynamic content.
 
+#### GPU object picking
+
+`pick_object(PickBackend::Gpu, ...)` rasterises object ids into an offscreen target and reads back the pixel under the cursor, so a pick costs one render pass instead of a CPU ray-cast against every item. This is the backend for large scenes, where the CPU path's per-click cost grows with the item count. It covers scene surfaces, volume-mesh boundaries, the tube family (streamtubes, tubes, ribbons), glyphs, tensor glyphs, sprites, and polylines, and honours a `PickMask` to restrict which item types answer. It returns object identity only; for sub-object detail (face, vertex, edge, cell) run the CPU backend on the object it returns.
+
+For picking during continuous rendering, `pick_object_begin` and `pick_object_poll` split submit from read-back: the pass is submitted now and its result read a frame later, without blocking the calling thread on the GPU queue. The blocking `pick_object` path also no longer drains the whole queue; it waits only on the pick's own submission.
+
+Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin::render_pick`, so a registered plugin's items become GPU-pickable without the CPU `pick` fallback.
+
 ### Improvements
 
 - **Scenes with many lights are much faster on the instanced path.** Instanced draws previously lit every pixel with every light in the scene; they now use the same per-cluster light lists the per-object path uses, so each pixel only pays for the lights that can actually reach it. Scenes with 16 or fewer lights are unchanged.

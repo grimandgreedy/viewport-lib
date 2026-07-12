@@ -22,8 +22,14 @@ pub const SHADOW_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth3
 /// Outline-mask colour format.
 pub const MASK_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-/// Pick-id colour format.
+/// Pick-id colour format, shared by the object-id (`@location(0)`) and
+/// primitive-id (`@location(1)`) pick targets.
 pub const PICK_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+
+/// Pick depth-channel format (`@location(2)`): the fragment framebuffer `z`
+/// written as a float so the renderer can reconstruct world position on
+/// read-back.
+pub const PICK_DEPTH_CHANNEL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 impl DeviceResources {
     // ------------------------------------------------------------------
@@ -71,8 +77,10 @@ impl DeviceResources {
     /// Render-target descriptor for the pick-id pass.
     pub fn pick_target_desc(&self) -> PickTargetDesc {
         PickTargetDesc {
-            color_format: PICK_COLOR_FORMAT,
-            depth_format: SCENE_DEPTH_FORMAT,
+            object_id_format: PICK_COLOR_FORMAT,
+            primitive_id_format: PICK_COLOR_FORMAT,
+            depth_channel_format: PICK_DEPTH_CHANNEL_FORMAT,
+            depth_stencil_format: SCENE_DEPTH_FORMAT,
             sample_count: 1,
         }
     }
@@ -313,10 +321,15 @@ impl DeviceResources {
         })
     }
 
-    /// Build a pipeline for the pick-id pass (R32Uint target).
+    /// Build a pipeline for the pick-id pass.
     ///
-    /// Fragment shader must write the item's `PickId` value at
-    /// `@location(0)`; use [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL).
+    /// The pass has three colour targets (object id, primitive id, depth) plus a
+    /// depth-stencil attachment; this matches the pipeline to all of them. The
+    /// fragment shader must write all three: the item's `PickId` at
+    /// `@location(0)`, a sub-object index (or 0) at `@location(1)`, and the
+    /// framebuffer `z` at `@location(2)`. Use
+    /// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL),
+    /// whose `viewport_pick_fs` produces exactly that output.
     pub fn build_pick_pipeline(
         &self,
         device: &wgpu::Device,
@@ -324,6 +337,16 @@ impl DeviceResources {
     ) -> wgpu::RenderPipeline {
         let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
         let desc = self.pick_target_desc();
+        // Integer and float single-channel targets, no blending: a fragment
+        // either writes an exact id/depth or leaves the attachment at its clear
+        // value. Order and formats mirror the internal pick pipeline.
+        let color_target = |format| {
+            Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+        };
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: opts.label,
             layout: Some(&layout),
@@ -336,16 +359,16 @@ impl DeviceResources {
             fragment: Some(wgpu::FragmentState {
                 module: opts.shader,
                 entry_point: Some(opts.fs_entry),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: desc.color_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::RED,
-                })],
+                targets: &[
+                    color_target(desc.object_id_format),
+                    color_target(desc.primitive_id_format),
+                    color_target(desc.depth_channel_format),
+                ],
                 compilation_options: Default::default(),
             }),
             primitive: opts.primitive,
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: desc.depth_format,
+                format: desc.depth_stencil_format,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),

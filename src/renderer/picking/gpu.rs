@@ -514,10 +514,19 @@ impl ViewportRenderer {
             }
         }
 
+        // Registered plugins draw their own pick-ids into the pass. Treat them
+        // as object-level: run the pass for them when the mask asks for OBJECT
+        // and a plugin has a non-empty collection this frame. Their draws are not
+        // in `draws`/`glyph_draws`/etc.; they are issued via `dispatch_plugin_pick`.
+        let has_plugin_pick = mask
+            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+            && self.any_plugin_pick_items(frame);
+
         if draws.is_empty()
             && glyph_draws.is_empty()
             && sprite_draws.is_empty()
             && polyline_draws.is_empty()
+            && !has_plugin_pick
         {
             return PickBegin::Miss;
         }
@@ -806,6 +815,15 @@ impl ViewportRenderer {
                         pick_pass.draw(0..6, 0..pd.segment_count);
                     }
                 }
+            }
+
+            // Item-type plugins render their own pick-ids last. They build their
+            // pipelines against the full shared group-0 layout, so bind the full
+            // camera bind group (the same one the sprite draws use) before
+            // handing them the pass.
+            if has_plugin_pick {
+                pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                self.dispatch_plugin_pick(&mut pick_pass, frame);
             }
         }
 

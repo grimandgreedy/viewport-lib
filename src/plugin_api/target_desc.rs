@@ -59,14 +59,27 @@ pub struct MaskTargetDesc {
 
 /// Targets used by the pick-id pass.
 ///
-/// Items rasterise their assigned `PickId` value into an `R32Uint` target;
-/// the renderer reads back the pixel under the cursor to resolve picks.
+/// The pass has three colour attachments plus a depth-stencil attachment. A
+/// pipeline drawn into it must declare all three colour targets in order, even
+/// if it only writes the object id: a fragment shader whose output struct omits
+/// a location still leaves that attachment at its clear value. Use
+/// [`SHARED_PICK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_WGSL), which
+/// writes all three.
+///
+/// The renderer reads back the object-id pixel (and, for sub-object picking, the
+/// primitive-id pixel) under the cursor to resolve the hit.
 #[derive(Clone, Copy, Debug)]
 pub struct PickTargetDesc {
-    /// `R32Uint` pick target.
-    pub color_format: wgpu::TextureFormat,
-    /// Depth attachment.
-    pub depth_format: wgpu::TextureFormat,
+    /// `@location(0)`: `R32Uint` object id (the item's `PickId`).
+    pub object_id_format: wgpu::TextureFormat,
+    /// `@location(1)`: `R32Uint` sub-object primitive index. Write 0 unless the
+    /// pipeline resolves sub-objects.
+    pub primitive_id_format: wgpu::TextureFormat,
+    /// `@location(2)`: `R32Float` depth channel, written as the fragment's
+    /// framebuffer-space `z` so the renderer can reconstruct world position.
+    pub depth_channel_format: wgpu::TextureFormat,
+    /// Depth-stencil attachment used for occlusion within the pass.
+    pub depth_stencil_format: wgpu::TextureFormat,
     /// MSAA sample count. Pick runs at sample count 1.
     pub sample_count: u32,
 }
