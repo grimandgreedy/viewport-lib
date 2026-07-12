@@ -192,6 +192,13 @@ impl ViewportRenderer {
             return None;
         }
 
+        // Physical pixel under the cursor. Used both to scissor the pass to a
+        // single pixel and to read that pixel back, so the two always agree.
+        // Clamp to the last valid texel: rounding can push the cursor's logical
+        // edge one past the texture extent.
+        let px = ((cursor.x * ppp).round() as u32).min(vp_w - 1);
+        let py = ((cursor.y * ppp).round() as u32).min(vp_h - 1);
+
         // --- lazy pipeline init ---
         self.resources.ensure_pick_pipeline(device);
         let glyph_wanted = PickItemType::Glyph.satisfies(mask);
@@ -666,6 +673,15 @@ impl ViewportRenderer {
                 occlusion_query_set: None,
             });
 
+            // Only the pixel under the cursor is read back, so scissor the pass to
+            // that one pixel. Rasterisation still visits every triangle, but the
+            // fragment stage runs only inside the scissor, collapsing fragment and
+            // depth-test work to a single pixel regardless of object count or
+            // overdraw. The clear applies to the full attachment (it is not
+            // scissored), so pixels outside the region stay at the "no hit" clear
+            // value; nothing outside the region is ever read.
+            pick_pass.set_scissor_rect(px, py, 1, 1);
+
             // Surface-pipeline draws: scene surfaces, volume-mesh boundaries, and
             // tube-family geometry all rasterise with the shared pick pipeline.
             // Type-level mask filtering already happened while building `draws`,
@@ -771,10 +787,8 @@ impl ViewportRenderer {
             mapped_at_creation: false,
         });
 
-        // Convert logical cursor to physical pixel coordinates for the pick texture readback.
-        let px = (cursor.x * ppp).round() as u32;
-        let py = (cursor.y * ppp).round() as u32;
-
+        // `px` / `py`: physical pixel under the cursor, computed above and shared
+        // with the scissor so the pass and the read-back target the same texel.
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &pick_id_texture,
