@@ -18,7 +18,7 @@ use shadow_state::ShadowState;
 mod paths;
 pub use paths::{OwnedPath, PassPath, PassView};
 mod picking;
-pub use picking::PickRectResult;
+pub use picking::{PickBackend, PickRectResult};
 mod point_shadow_pool;
 mod prepare;
 mod render;

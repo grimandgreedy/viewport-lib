@@ -141,6 +141,33 @@ pub struct GpuPickHit {
     pub depth: f32,
 }
 
+impl GpuPickHit {
+    /// Convert to an object-level [`PickHit`] so a caller can treat a GPU hit
+    /// the same as a CPU one.
+    ///
+    /// The world position is reconstructed from the read-back depth and the
+    /// cursor position. The object-id buffer carries no sub-object identity and
+    /// no scalar, so `sub_object` and `scalar_value` are `None`. The normal
+    /// points back toward the camera: it is a stand-in, not the surface normal,
+    /// which the GPU pick does not know.
+    ///
+    /// `cursor` is in viewport-local pixels (top-left origin) and `view_proj` is
+    /// the same combined matrix used to render the frame.
+    pub fn to_pick_hit(
+        &self,
+        cursor: glam::Vec2,
+        viewport_size: glam::Vec2,
+        view_proj: glam::Mat4,
+    ) -> PickHit {
+        let view_proj_inv = view_proj.inverse();
+        let ndc_x = (cursor.x / viewport_size.x) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (cursor.y / viewport_size.y) * 2.0;
+        let world_pos = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, self.depth));
+        let (_, ray_dir) = screen_to_ray(cursor, viewport_size, view_proj_inv);
+        PickHit::object_hit(self.object_id.0, world_pos, -ray_dir)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -1422,6 +1449,25 @@ mod tests {
     use super::*;
     use crate::scene::traits::ViewportObject;
     use std::collections::HashMap;
+
+    #[test]
+    fn gpu_pick_hit_converts_to_object_level_pick_hit() {
+        // Identity view_proj means NDC coordinates map straight to world, so the
+        // reconstructed position is easy to check.
+        let hit = GpuPickHit {
+            object_id: crate::renderer::PickId(42),
+            depth: 0.5,
+        };
+        let viewport_size = glam::Vec2::new(800.0, 600.0);
+        // Cursor at the viewport centre -> NDC (0, 0).
+        let cursor = glam::Vec2::new(400.0, 300.0);
+        let pick = hit.to_pick_hit(cursor, viewport_size, glam::Mat4::IDENTITY);
+
+        assert_eq!(pick.id, 42);
+        assert!(pick.sub_object.is_none());
+        assert!(pick.scalar_value.is_none());
+        assert!((pick.world_pos - glam::Vec3::new(0.0, 0.0, 0.5)).length() < 1e-5);
+    }
 
     struct TestObject {
         id: u64,

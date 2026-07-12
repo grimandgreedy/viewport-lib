@@ -201,7 +201,6 @@ pub use interaction::select::sub_object::{
 pub use interaction::widgets::axes_indicator::AxisView;
 
 pub use renderer::ShadowDebugStats;
-pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
@@ -218,7 +217,7 @@ pub use renderer::{
     NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing,
     OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
     OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, ParticleMeshAlign, PassPath,
-    PassView, PathTrack, PickId, PickRectResult, PointCloudItem, PointCloudRefItem,
+    PassView, PathTrack, PickBackend, PickId, PickRectResult, PointCloudItem, PointCloudRefItem,
     PointRenderMode, PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode,
     RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
     ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
@@ -230,6 +229,7 @@ pub use renderer::{
     VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
     aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
+pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 
 pub use quantities::{
     edge_one_form_to_glyphs, face_intrinsic_to_glyphs, polyline_edge_vectors_to_glyphs,
