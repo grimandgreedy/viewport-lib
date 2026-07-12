@@ -605,7 +605,7 @@ pub(crate) fn render_bundle_encoder<'a>(
 /// to a minimum size), in which case only the leading `bytes.len()` are
 /// written. This is the one place the crate maps a buffer for writing, so the
 /// mapped-view API change across wgpu versions is audited here.
-pub(crate) fn write_mapped(slice: crate::gpu::BufferSlice, bytes: &[u8]) {
+pub fn write_mapped(slice: crate::gpu::BufferSlice, bytes: &[u8]) {
     // 27's mapped view derefs to `[u8]` and is indexed directly; 29's
     // `BufferViewMut` is write-only and exposes a `slice(..)` -> `WriteOnly`.
     #[cfg(feature = "wgpu27")]

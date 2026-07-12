@@ -52,5 +52,5 @@ pub fn default_instance() -> Instance {
 #[doc(hidden)]
 pub use crate::resources::builders::{
     RenderPipelineDesc, dcompare, depth_stencil, dmipmap, dwrite, pipeline_layout, render_pipeline,
-    scene_depth_stencil,
+    scene_depth_stencil, write_mapped,
 };
