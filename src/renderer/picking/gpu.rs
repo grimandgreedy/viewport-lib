@@ -25,6 +25,9 @@ enum PickItemType {
     /// Sprite sets: camera-facing quads expanded in the vertex shader, drawn with
     /// a dedicated pick pipeline that reuses the render expansion. Object-level.
     Sprite,
+    /// Polylines: screen-space thick lines expanded per segment in the vertex
+    /// shader, drawn with a dedicated pick pipeline. Object-level.
+    Polyline,
 }
 
 impl PickItemType {
@@ -50,6 +53,11 @@ impl PickItemType {
             PickItemType::Glyph | PickItemType::Sprite => {
                 mask.intersects(PickMask::OBJECT | PickMask::INSTANCE)
             }
+            // Polylines are object-level; they answer the whole object mask plus
+            // the node/segment/strip levels a curve query may ask.
+            PickItemType::Polyline => mask.intersects(
+                PickMask::OBJECT | PickMask::POLY_NODE | PickMask::SEGMENT | PickMask::STRIP,
+            ),
         }
     }
 }
@@ -75,6 +83,17 @@ struct SpritePickDraw<'a> {
     sprite_bind_group: &'a wgpu::BindGroup,
     vertex_buffer: &'a wgpu::Buffer,
     sprite_count: u32,
+}
+
+/// One polyline to draw into the pick pass. Same shape as [`SpritePickDraw`]:
+/// the group-2 pick-id bind group is owned, the render bind group and segment
+/// buffer are borrowed. The pipeline and group-0 pick camera bind group are
+/// shared across polylines.
+struct PolylinePickDraw<'a> {
+    id_bind_group: wgpu::BindGroup,
+    render_bind_group: &'a wgpu::BindGroup,
+    vertex_buffer: &'a wgpu::Buffer,
+    segment_count: u32,
 }
 
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
@@ -199,6 +218,14 @@ impl ViewportRenderer {
                 .any(|g| g.pick_id != PickId::NONE && g.sprite_count > 0);
         if has_pickable_sprites {
             self.resources.ensure_sprite_pick_pipeline(device);
+        }
+        let has_pickable_polylines = PickItemType::Polyline.satisfies(mask)
+            && self
+                .polyline_gpu_data
+                .iter()
+                .any(|g| g.pick_id != PickId::NONE && g.segment_count > 0);
+        if has_pickable_polylines {
+            self.resources.ensure_polyline_pick_pipeline(device);
         }
 
         // --- build PickInstance data ---
@@ -400,7 +427,52 @@ impl ViewportRenderer {
             }
         }
 
-        if draws.is_empty() && glyph_draws.is_empty() && sprite_draws.is_empty() {
+        // Polylines draw with their own pipeline: group 0 is the shared minimal
+        // pick camera, group 1 is the polyline render bind group (uniform + LUT),
+        // group 2 is the per-draw object id.
+        let mut polyline_draws: Vec<PolylinePickDraw> = Vec::new();
+        if has_pickable_polylines {
+            let id_bgl = self
+                .resources
+                .pick
+                .polyline_pick_id_bgl
+                .as_ref()
+                .expect("polyline pick id bgl");
+            for gpu in self
+                .polyline_gpu_data
+                .iter()
+                .filter(|g| g.pick_id != PickId::NONE && g.segment_count > 0)
+            {
+                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("polyline_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("polyline_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                polyline_draws.push(PolylinePickDraw {
+                    id_bind_group,
+                    render_bind_group: &gpu.bind_group,
+                    vertex_buffer: &gpu.vertex_buffer,
+                    segment_count: gpu.segment_count,
+                });
+            }
+        }
+
+        if draws.is_empty()
+            && glyph_draws.is_empty()
+            && sprite_draws.is_empty()
+            && polyline_draws.is_empty()
+        {
             return None;
         }
 
@@ -662,6 +734,21 @@ impl ViewportRenderer {
                         pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
                         pick_pass.set_vertex_buffer(0, sd.vertex_buffer.slice(..));
                         pick_pass.draw(0..6, 0..sd.sprite_count);
+                    }
+                }
+            }
+
+            // Polylines: screen-space thick lines, one draw per polyline of its
+            // segment quads. Group 0 is the shared minimal pick camera.
+            if let Some(polyline_pipeline) = self.resources.pick.polyline_pipeline.as_ref() {
+                if !polyline_draws.is_empty() {
+                    pick_pass.set_pipeline(polyline_pipeline);
+                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
+                    for pd in &polyline_draws {
+                        pick_pass.set_bind_group(1, pd.render_bind_group, &[]);
+                        pick_pass.set_bind_group(2, &pd.id_bind_group, &[]);
+                        pick_pass.set_vertex_buffer(0, pd.vertex_buffer.slice(..));
+                        pick_pass.draw(0..6, 0..pd.segment_count);
                     }
                 }
             }

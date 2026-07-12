@@ -265,6 +265,11 @@ pub(crate) struct PickResources {
     /// Group 1 layout shared by the glyph and tensor glyph pick pipelines: the
     /// set's uniform (binding 0) plus the object-id uniform (binding 3).
     pub(crate) glyph_pick_id_bgl: Option<wgpu::BindGroupLayout>,
+    /// Pick pipeline for polylines. Reuses the polyline render vertex expansion
+    /// and writes the item's object id.
+    pub(crate) polyline_pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 2 layout for the polyline pick pipeline (per-draw object-id uniform).
+    pub(crate) polyline_pick_id_bgl: Option<wgpu::BindGroupLayout>,
 }
 
 /// GPU implicit-surface ray-march pipeline and layout. Lazily built.
@@ -1612,6 +1617,140 @@ impl DeviceResources {
 
         self.sprite.pick_id_bgl = Some(pick_id_bgl);
         self.sprite.pick_pipeline = Some(pipeline);
+    }
+
+    /// Lazily create the polyline pick pipeline. The vertex stage copies the
+    /// polyline render expansion, reading the same 112-byte per-segment instance
+    /// buffer, so the picked ribbon is exactly the screen-space thick line the
+    /// render path draws (the viewport size driving the expansion lives in the
+    /// polyline uniform, group 1). Group 0 is the minimal pick camera layout;
+    /// group 2 is a per-draw object-id uniform.
+    pub(crate) fn ensure_polyline_pick_pipeline(&mut self, device: &wgpu::Device) {
+        if self.pick.polyline_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        self.ensure_polyline_pipeline(device);
+
+        let pick_id_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("polyline_pick_id_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let camera_bgl = self
+            .pick
+            .camera_bgl
+            .as_ref()
+            .expect("ensure_pick_pipeline built the pick camera layout");
+        let polyline_bgl = self
+            .polyline
+            .bgl
+            .as_ref()
+            .expect("ensure_polyline_pipeline built the polyline group-1 layout");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "polyline_pick_shader",
+            crate::resources::builders::wgsl_source!("polyline_pick"),
+        );
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("polyline_pick_pipeline_layout"),
+            bind_group_layouts: &[camera_bgl, polyline_bgl, &pick_id_bgl],
+            push_constant_ranges: &[],
+        });
+
+        // Same 112-byte per-segment instance layout as the polyline render pipeline.
+        let attrs = [
+            (0u64, 0u32, wgpu::VertexFormat::Float32x3),
+            (12, 1, wgpu::VertexFormat::Float32x3),
+            (24, 2, wgpu::VertexFormat::Float32x3),
+            (36, 3, wgpu::VertexFormat::Float32x3),
+            (48, 4, wgpu::VertexFormat::Float32),
+            (52, 5, wgpu::VertexFormat::Float32),
+            (56, 6, wgpu::VertexFormat::Uint32),
+            (60, 7, wgpu::VertexFormat::Uint32),
+            (64, 8, wgpu::VertexFormat::Float32x4),
+            (80, 9, wgpu::VertexFormat::Float32x4),
+            (96, 10, wgpu::VertexFormat::Float32),
+            (100, 11, wgpu::VertexFormat::Float32),
+            (104, 12, wgpu::VertexFormat::Uint32),
+        ];
+        let vert_attrs: Vec<wgpu::VertexAttribute> = attrs
+            .iter()
+            .map(|&(offset, shader_location, format)| wgpu::VertexAttribute {
+                offset,
+                shader_location,
+                format,
+            })
+            .collect();
+        let vertex_buffers = [wgpu::VertexBufferLayout {
+            array_stride: 112,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &vert_attrs,
+        }];
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("polyline_pick_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &vertex_buffers,
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.pick.polyline_pick_id_bgl = Some(pick_id_bgl);
+        self.pick.polyline_pipeline = Some(pipeline);
     }
 }
 

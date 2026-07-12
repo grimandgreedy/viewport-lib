@@ -473,6 +473,7 @@ impl DeviceResources {
         });
 
         PolylineGpuData {
+            pick_id: item.settings.pick_id,
             vertex_buffer,
             segment_count: seg_count,
             bind_group,
@@ -993,6 +994,9 @@ mod tests {
 /// Per-frame GPU data for one polyline item, created in `prepare()`.
 #[derive(Clone)]
 pub struct PolylineGpuData {
+    /// Object-level pick id for this polyline (from the item's `settings.pick_id`);
+    /// `PickId::NONE` when not pickable.
+    pub(crate) pick_id: crate::PickId,
     /// Instance buffer: `[xa, ya, za, xb, yb, zb, scalar_a, scalar_b]` per segment (32 bytes).
     pub(crate) vertex_buffer: wgpu::Buffer,
     /// Number of line segments (instances).  Draw call: `draw(0..6, 0..segment_count)`.

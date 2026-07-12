@@ -5,7 +5,7 @@
 
 use viewport_lib::{
     BackfacePolicy, Camera, GlyphItem, GlyphType, Material, MeshId, PickBackend, PickId, PickMask,
-    RibbonItem, Scene, Selection, SpriteItem, SpriteSizeMode, VolumeMeshItem,
+    PolylineItem, RibbonItem, Scene, Selection, SpriteItem, SpriteSizeMode, VolumeMeshItem,
     error::ViewportError,
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
@@ -998,4 +998,45 @@ fn gpu_pick_hits_sprite_set() {
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(777)));
+}
+
+#[test]
+fn gpu_pick_hits_polyline() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // A thick polyline through the origin. Polylines expand to screen-space
+    // ribbons in the render vertex stage, which the pick pipeline reuses, so
+    // prepare must run first to build the segment buffer.
+    let mut polyline = PolylineItem::default();
+    polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+    polyline.strip_lengths = vec![2];
+    polyline.line_width = 20.0;
+    polyline.settings.pick_id = PickId(888);
+    frame.scene.polylines.push(polyline);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(888)));
 }
