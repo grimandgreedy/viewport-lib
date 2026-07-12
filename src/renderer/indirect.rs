@@ -82,11 +82,8 @@ impl CullResources {
             crate::resources::builders::wgsl_source!("cull"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("cull_pipeline_layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout =
+            crate::resources::builders::pipeline_layout(device, "cull_pipeline_layout", &[&bgl]);
 
         let cull_instances_pipeline = crate::resources::builders::compute_pipeline(
             device,

@@ -22,59 +22,56 @@ pub(crate) fn build_ldr_mesh_pipelines(
     sample_count: u32,
     cache: Option<&wgpu::PipelineCache>,
 ) -> LdrMeshPipelines {
-    let depth_stencil = wgpu::DepthStencilState {
-        format: wgpu::TextureFormat::Depth24PlusStencil8,
-        depth_write_enabled: true,
-        depth_compare: wgpu::CompareFunction::Less,
-        stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState::default(),
-    };
+    let depth_stencil =
+        crate::resources::builders::scene_depth_stencil(true, wgpu::CompareFunction::Less);
 
     let make = |label: &str,
                 cull: Option<wgpu::Face>,
                 blend: Option<wgpu::BlendState>,
                 topo: wgpu::PrimitiveTopology,
                 depth_write: bool| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label,
+                layout,
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: topo,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: cull,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    depth_write_enabled: depth_write,
+                    ..depth_stencil.clone()
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                cache,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: topo,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: cull,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                depth_write_enabled: depth_write,
-                ..depth_stencil.clone()
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache,
-        })
+        )
     };
 
     LdrMeshPipelines {
@@ -139,44 +136,43 @@ pub(crate) fn build_hdr_mesh_pipelines(
                 blend: Option<wgpu::BlendState>,
                 topo: wgpu::PrimitiveTopology,
                 depth_write: bool| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label,
+                layout,
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: topo,
+                    cull_mode: cull,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    depth_write,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: topo,
-                cull_mode: cull,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: depth_write,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        })
+        )
     };
 
     HdrMeshPipelines {
@@ -242,52 +238,49 @@ pub(crate) fn build_oit_pipeline(
             operation: wgpu::BlendOperation::Add,
         },
     };
-    let depth_stencil = wgpu::DepthStencilState {
-        format: wgpu::TextureFormat::Depth24PlusStencil8,
-        depth_write_enabled: false,
-        depth_compare: wgpu::CompareFunction::LessEqual,
-        stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState::default(),
-    };
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("oit_pipeline"),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main"),
-            buffers: &[Vertex::buffer_layout()],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    let depth_stencil =
+        crate::resources::builders::scene_depth_stencil(false, wgpu::CompareFunction::LessEqual);
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label: "oit_pipeline",
+            layout,
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_oit_main"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(accum_blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: Some(reveal_blend),
+                        write_mask: wgpu::ColorWrites::RED,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(depth_stencil),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            cache: None,
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_oit_main"),
-            targets: &[
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: Some(accum_blend),
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R8Unorm,
-                    blend: Some(reveal_blend),
-                    write_mask: wgpu::ColorWrites::RED,
-                }),
-            ],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: Some(wgpu::Face::Back),
-            ..Default::default()
-        },
-        depth_stencil: Some(depth_stencil),
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            ..Default::default()
-        },
-        multiview: None,
-        cache: None,
-    })
+    )
 }
 
 /// Depth bias values used by every CSM shadow caster pipeline (the per-item
@@ -357,44 +350,46 @@ pub(crate) fn build_shadow_pipeline(
         Some(wgpu::Face::Back) => "shadow_pipeline_cull_back",
         None => "shadow_pipeline_two_sided",
     };
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main"),
-            buffers: &[Vertex::buffer_layout()],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: None,
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode,
-            unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: if cull_mode.is_none() {
-                CSM_SHADOW_BIAS_TWO_SIDED
-            } else {
-                CSM_SHADOW_BIAS
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
-        }),
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: if cull_mode.is_none() {
+                    CSM_SHADOW_BIAS_TWO_SIDED
+                } else {
+                    CSM_SHADOW_BIAS
+                },
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            cache,
         },
-        multiview: None,
-        cache,
-    })
+    )
 }
 
 /// `shadow_point.wgsl`: depth + fragment pipeline for point-light cubemap
@@ -413,50 +408,50 @@ pub(crate) fn build_shadow_point_pipeline(
     shader: &wgpu::ShaderModule,
     cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("shadow_point_pipeline"),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main"),
-            buffers: &[Vertex::buffer_layout()],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label: "shadow_point_pipeline",
+            layout,
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                // Y-flipped projection reverses triangle winding in screen space:
+                // a triangle that's CCW in world space rasterises as CW after the
+                // flip. Treating CW as the front face keeps back-face culling
+                // (cull_mode: Back) working in the original sense: the surfaces
+                // facing the light are kept, the surfaces facing away are culled.
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(crate::resources::builders::depth_stencil(
+                wgpu::TextureFormat::Depth32Float,
+                true,
+                wgpu::CompareFunction::Less,
+            )),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            cache,
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_main"),
-            targets: &[],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            // Y-flipped projection reverses triangle winding in screen space:
-            // a triangle that's CCW in world space rasterises as CW after the
-            // flip. Treating CW as the front face keeps back-face culling
-            // (cull_mode: Back) working in the original sense: the surfaces
-            // facing the light are kept, the surfaces facing away are culled.
-            front_face: wgpu::FrontFace::Cw,
-            cull_mode: Some(wgpu::Face::Back),
-            unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview: None,
-        cache,
-    })
+    )
 }
 
 /// `outline_mask.wgsl`: two pipelines that rasterise the selection
@@ -474,45 +469,44 @@ pub(crate) fn build_outline_mask_pipelines(
     cache: Option<&wgpu::PipelineCache>,
 ) -> OutlineMaskPipelines {
     let make = |label: &str, cull: Option<wgpu::Face>| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label,
+                layout,
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: mask_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: cull,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                cache,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: mask_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: cull,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache,
-        })
+        )
     };
     OutlineMaskPipelines {
         mask: make("outline_mask_pipeline", Some(wgpu::Face::Back)),
@@ -542,44 +536,43 @@ pub(crate) fn build_ldr_instanced_mesh_pipelines(
                 cull: Option<wgpu::Face>,
                 blend: Option<wgpu::BlendState>,
                 depth_write: bool| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label,
+                layout,
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: cull,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    depth_write,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: cull,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: depth_write,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        })
+        )
     };
     LdrInstancedMeshPipelines {
         solid: make(
@@ -643,44 +636,43 @@ pub(crate) fn build_hdr_instanced_mesh_pipelines(
                 cull: Option<wgpu::Face>,
                 blend: Option<wgpu::BlendState>,
                 depth_write: bool| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label,
+                layout,
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: cull,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    depth_write,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: cull,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: depth_write,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        })
+        )
     };
     HdrInstancedMeshPipelines {
         solid: make(
@@ -751,44 +743,43 @@ fn build_hdr_instanced_cull_pipeline_with(
     label: &str,
     cull_mode: Option<wgpu::Face>,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main_cull"),
-            buffers: &[Vertex::buffer_layout()],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main_cull"),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                true,
+                wgpu::CompareFunction::Less,
+            )),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            cache: None,
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba16Float,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            ..Default::default()
-        },
-        multiview: None,
-        cache: None,
-    })
+    )
 }
 
 /// OIT instanced pipeline shared between the non-cull (`vs_main`) and
@@ -825,51 +816,50 @@ pub(crate) fn build_oit_instanced_pipeline(
             operation: wgpu::BlendOperation::Add,
         },
     };
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some(vs_entry),
-            buffers: &[Vertex::buffer_layout()],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some(vs_entry),
+                buffers: &[Vertex::buffer_layout()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_oit_main"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(accum_blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: Some(reveal_blend),
+                        write_mask: wgpu::ColorWrites::RED,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                false,
+                wgpu::CompareFunction::LessEqual,
+            )),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            cache: None,
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_oit_main"),
-            targets: &[
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: Some(accum_blend),
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R8Unorm,
-                    blend: Some(reveal_blend),
-                    write_mask: wgpu::ColorWrites::RED,
-                }),
-            ],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: Some(wgpu::Face::Back),
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            ..Default::default()
-        },
-        multiview: None,
-        cache: None,
-    })
+    )
 }
 
 /// Build a pipeline layout for instanced mesh-family pipelines.
@@ -887,11 +877,7 @@ pub(crate) fn instanced_pipeline_layout(
     } else {
         vec![camera_bgl, instance_bgl]
     };
-    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: &layouts,
-        push_constant_ranges: &[],
-    })
+    crate::resources::builders::pipeline_layout(device, label, &layouts)
 }
 
 /// Build the shared mesh pipeline layout used by both LDR and HDR mesh
@@ -909,9 +895,5 @@ pub(crate) fn mesh_pipeline_layout(
     } else {
         vec![camera_bgl, object_bgl]
     };
-    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: &layouts,
-        push_constant_ranges: &[],
-    })
+    crate::resources::builders::pipeline_layout(device, label, &layouts)
 }

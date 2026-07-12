@@ -196,11 +196,8 @@ fn build_irradiance_pipeline(
         "ibl_irradiance_shader",
         crate::resources::builders::wgsl_source!("ibl_irradiance"),
     );
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("ibl_irradiance_layout"),
-        bind_group_layouts: &[bgl],
-        push_constant_ranges: &[],
-    });
+    let layout =
+        crate::resources::builders::pipeline_layout(device, "ibl_irradiance_layout", &[bgl]);
     crate::resources::builders::compute_pipeline(
         device,
         "ibl_irradiance_pipeline",
@@ -219,11 +216,8 @@ fn build_prefilter_pipeline(
         "ibl_prefilter_shader",
         crate::resources::builders::wgsl_source!("ibl_prefilter"),
     );
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("ibl_prefilter_layout"),
-        bind_group_layouts: &[bgl],
-        push_constant_ranges: &[],
-    });
+    let layout =
+        crate::resources::builders::pipeline_layout(device, "ibl_prefilter_layout", &[bgl]);
     crate::resources::builders::compute_pipeline(
         device,
         "ibl_prefilter_pipeline",
@@ -242,11 +236,7 @@ fn build_brdf_pipeline(
         "ibl_brdf_lut_shader",
         crate::resources::builders::wgsl_source!("ibl_brdf_lut"),
     );
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("ibl_brdf_lut_layout"),
-        bind_group_layouts: &[bgl],
-        push_constant_ranges: &[],
-    });
+    let layout = crate::resources::builders::pipeline_layout(device, "ibl_brdf_lut_layout", &[bgl]);
     crate::resources::builders::compute_pipeline(
         device,
         "ibl_brdf_lut_pipeline",

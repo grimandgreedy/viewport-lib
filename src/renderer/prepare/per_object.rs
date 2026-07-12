@@ -782,17 +782,17 @@ impl ViewportRenderer {
                 &resources.solid_two_sided_pipeline,
             )
         };
-        let mut enc = device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-            label: Some("per_object_bundle"),
-            color_formats: &[Some(colour_format)],
-            depth_stencil: Some(wgpu::RenderBundleDepthStencil {
+        let mut enc = crate::resources::builders::render_bundle_encoder(
+            device,
+            "per_object_bundle",
+            &[Some(colour_format)],
+            Some(wgpu::RenderBundleDepthStencil {
                 format: crate::resources::SCENE_DEPTH_FORMAT,
                 depth_read_only: false,
                 stencil_read_only: true,
             }),
             sample_count,
-            multiview: None,
-        });
+        );
         enc.set_bind_group(0, &camera_bg, &[]);
         enc.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
 

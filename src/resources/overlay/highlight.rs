@@ -44,11 +44,11 @@ impl DeviceResources {
             wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sub_highlight_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "sub_highlight_layout",
+            &[&self.camera_bind_group_layout, &bgl],
+        );
 
         let fill_shader = crate::resources::builders::wgsl_module(
             device,
@@ -68,145 +68,145 @@ impl DeviceResources {
 
         // Inline helper: build one fill pipeline for the given colour format.
         let make_fill = |label: &'static str, fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &fill_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: 12,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                    }],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &fill_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: -2,
-                        slope_scale: -1.0,
-                        clamp: 0.0,
+            crate::resources::builders::render_pipeline(
+                device,
+                crate::resources::builders::RenderPipelineDesc {
+                    label,
+                    layout: &layout,
+                    vertex: wgpu::VertexState {
+                        module: &fill_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: 12,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                        }],
                     },
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fill_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: fmt,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth24PlusStencil8,
+                        depth_write_enabled: false,
+                        depth_compare: wgpu::CompareFunction::LessEqual,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState {
+                            constant: -2,
+                            slope_scale: -1.0,
+                            clamp: 0.0,
+                        },
+                    }),
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    cache: None,
                 },
-                multiview: None,
-                cache: None,
-            })
+            )
         };
         let make_edge = |label: &'static str, fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &edge_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: 24,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                    }],
+            crate::resources::builders::render_pipeline(
+                device,
+                crate::resources::builders::RenderPipelineDesc {
+                    label,
+                    layout: &layout,
+                    vertex: wgpu::VertexState {
+                        module: &edge_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: 24,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                        }],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &edge_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: fmt,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    // Always pass depth so edge lines are visible even when the
+                    // geometry they belong to is a 3D solid (e.g. tube/streamtube
+                    // where the control curve sits inside the rendered mesh).
+                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        false,
+                        wgpu::CompareFunction::Always,
+                    )),
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    cache: None,
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: &edge_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                // Always pass depth so edge lines are visible even when the
-                // geometry they belong to is a 3D solid (e.g. tube/streamtube
-                // where the control curve sits inside the rendered mesh).
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
+            )
         };
         let make_sprite = |label: &'static str, fmt: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &sprite_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: 12,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                    }],
+            crate::resources::builders::render_pipeline(
+                device,
+                crate::resources::builders::RenderPipelineDesc {
+                    label,
+                    layout: &layout,
+                    vertex: wgpu::VertexState {
+                        module: &sprite_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: 12,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                        }],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &sprite_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: fmt,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    // Always pass depth so point sprites are visible even when
+                    // the control point is inside a 3D solid (e.g. tube/streamtube).
+                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        false,
+                        wgpu::CompareFunction::Always,
+                    )),
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    cache: None,
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: &sprite_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: fmt,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                // Always pass depth so point sprites are visible even when
-                // the control point is inside a 3D solid (e.g. tube/streamtube).
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            })
+            )
         };
 
         let ldr_fmt = self.target_format;

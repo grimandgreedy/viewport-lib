@@ -393,9 +393,9 @@ pub(crate) fn validate_with_wgpu(
     label: &str,
     source: &str,
 ) -> ViewportResult<wgpu::ShaderModule> {
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let module = crate::resources::builders::wgsl_module(device, label, source);
-    let captured = block_on_simple(device.pop_error_scope());
+    let (module, captured) = crate::resources::builders::capture_validation(device, || {
+        crate::resources::builders::wgsl_module(device, label, source)
+    });
     if let Some(err) = captured {
         return Err(ViewportError::DeformShaderInvalid {
             reason: format!("{label}: {err}"),
@@ -408,32 +408,6 @@ pub(crate) fn validate_with_wgpu(
 /// shader names (callers treat this as an internal error).
 pub(crate) fn lookup_source(name: &str) -> Option<&'static str> {
     shader_source(name)
-}
-
-/// Tiny sync executor that polls a future until it resolves. wgpu's
-/// `pop_error_scope` resolves on the next driver poll, which the device
-/// itself drives; spinning here is fine because validation completes
-/// without going through the device's command queue.
-fn block_on_simple<F: std::future::Future>(mut fut: F) -> F::Output {
-    use std::pin::Pin;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(
-        |_| RawWaker::new(std::ptr::null(), &VTABLE),
-        |_| {},
-        |_| {},
-        |_| {},
-    );
-    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
-    let mut cx = Context::from_waker(&waker);
-    // SAFETY: we own `fut` on the stack and never move it after this point.
-    let mut fut = unsafe { Pin::new_unchecked(&mut fut) };
-    loop {
-        if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
-            return v;
-        }
-        std::thread::yield_now();
-    }
 }
 
 // ---------------------------------------------------------------------------

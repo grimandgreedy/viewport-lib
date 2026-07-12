@@ -52,11 +52,8 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("dyn_res_upscale"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("dyn_res_upscale_layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout =
+            crate::resources::builders::pipeline_layout(device, "dyn_res_upscale_layout", &[&bgl]);
 
         let pipeline = crate::resources::builders::build_fullscreen_pipeline(
             device,
@@ -95,45 +92,44 @@ impl DeviceResources {
             "dyn_res_upscale_ds_shader",
             crate::resources::builders::wgsl_source!("dyn_res_upscale"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("dyn_res_upscale_ds_layout"),
-            bind_group_layouts: &[bgl],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("dyn_res_upscale_ds_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "dyn_res_upscale_ds_layout",
+            &[bgl],
+        );
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "dyn_res_upscale_ds_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.target_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Always,
+                )),
+                multisample: wgpu::MultisampleState::default(),
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: self.target_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        );
         self.post.dyn_res_upscale_ds_pipeline = Some(pipeline);
     }
 

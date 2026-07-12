@@ -325,11 +325,11 @@ impl DeviceResources {
             .as_ref()
             .expect("decal_depth_bgl must exist before ensure_decal_pipeline");
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("decal_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, depth_bgl, &item_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "decal_pipeline_layout",
+            &[&self.camera_bind_group_layout, depth_bgl, &item_bgl],
+        );
 
         // No depth attachment: decals read depth as a texture, they do not write
         // to the depth buffer. Blend mode is the only thing that varies.
@@ -415,11 +415,11 @@ impl DeviceResources {
             "decal_outline_mask_shader",
             crate::resources::builders::wgsl_source!("decal_outline_mask"),
         );
-        let mask_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("decal_outline_mask_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, depth_bgl, item_bgl],
-            push_constant_ranges: &[],
-        });
+        let mask_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "decal_outline_mask_layout",
+            &[&self.camera_bind_group_layout, depth_bgl, item_bgl],
+        );
         let mask_pipeline = crate::resources::builders::build_fullscreen_pipeline(
             device,
             "decal_outline_mask_pipeline",
@@ -443,11 +443,11 @@ impl DeviceResources {
                 crate::resources::builders::uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
             ],
         });
-        let edge_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("decal_outline_edge_layout"),
-            bind_group_layouts: &[&edge_bgl],
-            push_constant_ranges: &[],
-        });
+        let edge_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "decal_outline_edge_layout",
+            &[&edge_bgl],
+        );
         let edge_pipeline = crate::resources::builders::build_fullscreen_pipeline(
             device,
             "decal_outline_edge_pipeline",
@@ -690,61 +690,63 @@ impl DeviceResources {
             }],
         };
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("decal_exclude_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[vertex_layout],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState {
-                    front: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    },
-                    back: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    },
-                    read_mask: 0xff,
-                    write_mask: 0xff,
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "decal_exclude_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[vertex_layout],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-                // Slight negative bias so the re-projected geometry reliably passes
-                // the LessEqual depth test against values written by the opaque pass.
-                // Without this, floating-point rounding differences between two
-                // separate render passes of the same geometry can cause the depth
-                // test to fail intermittently, leaving stencil un-written.
-                bias: wgpu::DepthBiasState {
-                    constant: -2,
-                    slope_scale: 0.0,
-                    clamp: 0.0,
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
                 },
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        },
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        },
+                        read_mask: 0xff,
+                        write_mask: 0xff,
+                    },
+                    // Slight negative bias so the re-projected geometry reliably passes
+                    // the LessEqual depth test against values written by the opaque pass.
+                    // Without this, floating-point rounding differences between two
+                    // separate render passes of the same geometry can cause the depth
+                    // test to fail intermittently, leaving stencil un-written.
+                    bias: wgpu::DepthBiasState {
+                        constant: -2,
+                        slope_scale: 0.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                cache: None,
+            },
+        );
 
         self.decal.exclude_obj_bgl = Some(obj_bgl);
         self.decal.exclude_pipeline = Some(pipeline);

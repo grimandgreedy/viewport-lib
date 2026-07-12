@@ -241,11 +241,7 @@ impl HizState {
 
         let pipeline =
             |label: &str, bgl: &wgpu::BindGroupLayout, module: &wgpu::ShaderModule, ep: &str| {
-                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some(label),
-                    bind_group_layouts: &[bgl],
-                    push_constant_ranges: &[],
-                });
+                let layout = crate::resources::builders::pipeline_layout(device, label, &[bgl]);
                 crate::resources::builders::compute_pipeline(device, label, &layout, module, ep)
             };
         let copy_pipeline = pipeline("hiz_copy_pipeline", &copy_bgl, &copy_shader, "copy_depth");

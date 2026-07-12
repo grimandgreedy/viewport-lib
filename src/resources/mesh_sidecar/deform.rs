@@ -1071,15 +1071,15 @@ impl DeviceResources {
             let composed = compose_shader(base, &registrations);
             let shader =
                 crate::resources::builders::wgsl_module(device, "shadow_shader_composed", composed);
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("shadow_pipeline_layout"),
-                bind_group_layouts: &[
+            let layout = crate::resources::builders::pipeline_layout(
+                device,
+                "shadow_pipeline_layout",
+                &[
                     &self.shadow_camera_bind_group_layout,
                     &self.object_bind_group_layout,
                     &self.deform.bind_group_layout,
                 ],
-                push_constant_ranges: &[],
-            });
+            );
             self.shadow_pipeline = crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
                 device,
                 &layout,
@@ -1101,15 +1101,15 @@ impl DeviceResources {
                 "outline_mask_shader_composed",
                 composed,
             );
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("outline_pipeline_layout"),
-                bind_group_layouts: &[
+            let layout = crate::resources::builders::pipeline_layout(
+                device,
+                "outline_pipeline_layout",
+                &[
                     &self.camera_bind_group_layout,
                     &self.outline.bind_group_layout,
                     &self.deform.bind_group_layout,
                 ],
-                push_constant_ranges: &[],
-            });
+            );
             let masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
                 device,
                 &layout,

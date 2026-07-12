@@ -1326,11 +1326,11 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("pick_id"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pick_pipeline_layout"),
-            bind_group_layouts: &[&pick_camera_bgl, &pick_instance_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "pick_pipeline_layout",
+            &[&pick_camera_bgl, &pick_instance_bgl],
+        );
 
         // Vertex layout: reuse the 64-byte Vertex stride but only declare position (location 0).
         let pick_vertex_layout = wgpu::VertexBufferLayout {
@@ -1343,60 +1343,59 @@ impl DeviceResources {
             }],
         };
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("pick_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[pick_vertex_layout],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "pick_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[pick_vertex_layout],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        // location 0: R32Uint object ID
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Uint,
+                            blend: None, // replace : no blending for integer targets
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        // location 1: R32Uint primitive ID (sub-object; written as 0 for now)
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        // location 2: R32Float depth
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None, // No culling: 3D meshes are often rendered two-sided; pick both faces.
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: 1, // pick pass is always 1x (no MSAA)
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[
-                    // location 0: R32Uint object ID
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None, // replace : no blending for integer targets
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    // location 1: R32Uint primitive ID (sub-object; written as 0 for now)
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    // location 2: R32Float depth
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                ],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // No culling: 3D meshes are often rendered two-sided; pick both faces.
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1, // pick pass is always 1x (no MSAA)
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        );
 
         self.pick.camera_bgl = Some(pick_camera_bgl);
         self.pick.bind_group_layout_1 = Some(pick_instance_bgl);
@@ -1468,11 +1467,11 @@ impl DeviceResources {
             "glyph_pick_shader",
             crate::resources::builders::wgsl_source!("glyph_pick"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("glyph_pick_pipeline_layout"),
-            bind_group_layouts: &[camera_bgl, id_bgl, instance_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "glyph_pick_pipeline_layout",
+            &[camera_bgl, id_bgl, instance_bgl],
+        );
         let pipeline = build_glyph_pick_pipeline(device, "glyph_pick_pipeline", &layout, &shader);
         self.pick.glyph_pipeline = Some(pipeline);
     }
@@ -1505,11 +1504,11 @@ impl DeviceResources {
             "tensor_glyph_pick_shader",
             crate::resources::builders::wgsl_source!("tensor_glyph_pick"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tensor_glyph_pick_pipeline_layout"),
-            bind_group_layouts: &[camera_bgl, id_bgl, instance_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "tensor_glyph_pick_pipeline_layout",
+            &[camera_bgl, id_bgl, instance_bgl],
+        );
         let pipeline =
             build_glyph_pick_pipeline(device, "tensor_glyph_pick_pipeline", &layout, &shader);
         self.pick.tensor_glyph_pipeline = Some(pipeline);
@@ -1551,11 +1550,11 @@ impl DeviceResources {
             "sprite_pick_shader",
             crate::resources::builders::wgsl_source!("sprite_pick"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sprite_pick_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, sprite_bgl, &pick_id_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "sprite_pick_pipeline_layout",
+            &[&self.camera_bind_group_layout, sprite_bgl, &pick_id_bgl],
+        );
 
         // Position vertex buffer: one vec3 per sprite, instance-stepped, exactly
         // as the sprite render pipeline binds it.
@@ -1570,56 +1569,55 @@ impl DeviceResources {
             attributes: &vert_attrs,
         }];
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sprite_pick_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &vertex_buffers,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "sprite_pick_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffers,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                ],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        );
 
         self.sprite.pick_id_bgl = Some(pick_id_bgl);
         self.sprite.pick_pipeline = Some(pipeline);
@@ -1667,11 +1665,11 @@ impl DeviceResources {
             "polyline_pick_shader",
             crate::resources::builders::wgsl_source!("polyline_pick"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("polyline_pick_pipeline_layout"),
-            bind_group_layouts: &[camera_bgl, polyline_bgl, &pick_id_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "polyline_pick_pipeline_layout",
+            &[camera_bgl, polyline_bgl, &pick_id_bgl],
+        );
 
         // Same 112-byte per-segment instance layout as the polyline render pipeline.
         let attrs = [
@@ -1703,57 +1701,56 @@ impl DeviceResources {
             attributes: &vert_attrs,
         }];
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("polyline_pick_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &vertex_buffers,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "polyline_pick_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffers,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                ],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        );
 
         self.pick.polyline_pick_id_bgl = Some(pick_id_bgl);
         self.pick.polyline_pipeline = Some(pipeline);
@@ -1798,11 +1795,11 @@ impl DeviceResources {
             "volume_pick_shader",
             crate::resources::builders::wgsl_source!("volume_pick"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("volume_pick_pipeline_layout"),
-            bind_group_layouts: &[camera_bgl, volume_bgl, &pick_id_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "volume_pick_pipeline_layout",
+            &[camera_bgl, volume_bgl, &pick_id_bgl],
+        );
 
         // Position-only unit-cube vertex buffer, matching the volume render cube.
         let vert_layout = wgpu::VertexBufferLayout {
@@ -1815,62 +1812,61 @@ impl DeviceResources {
             }],
         };
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("volume_pick_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[vert_layout],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "volume_pick_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[vert_layout],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_pick"),
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                // Draw both cube faces (like the volume render): the eye ray march is
+                // identical from either face, and back faces keep the volume pickable
+                // when the camera is inside the box.
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                // The fragment writes `frag_depth` at the hit voxel, so the volume
+                // occludes and is occluded by other pick geometry per voxel.
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_pick"),
-                targets: &[
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                ],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            // Draw both cube faces (like the volume render): the eye ray march is
-            // identical from either face, and back faces keep the volume pickable
-            // when the camera is inside the box.
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                ..Default::default()
-            },
-            // The fragment writes `frag_depth` at the hit voxel, so the volume
-            // occludes and is occluded by other pick geometry per voxel.
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        );
 
         self.pick.volume_pick_id_bgl = Some(pick_id_bgl);
         self.pick.volume_pipeline = Some(pipeline);
@@ -1890,57 +1886,56 @@ fn build_glyph_pick_pipeline(
     // Reuse the full 64-byte Vertex layout so the glyph base mesh binds as-is and
     // the shader reads position + normal like the render path.
     let vertex_layout = Vertex::buffer_layout();
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main"),
-            buffers: &[vertex_layout],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    crate::resources::builders::render_pipeline(
+        device,
+        crate::resources::builders::RenderPipelineDesc {
+            label,
+            layout,
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[vertex_layout],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                // Glyphs are viewed from any direction; pick both faces like the
+                // surface pick pipeline does.
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                true,
+                wgpu::CompareFunction::Less,
+            )),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            cache: None,
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_main"),
-            targets: &[
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R32Uint,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R32Uint,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R32Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-            ],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
-            // Glyphs are viewed from any direction; pick both faces like the
-            // surface pick pipeline does.
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            ..Default::default()
-        },
-        multiview: None,
-        cache: None,
-    })
+    )
 }

@@ -621,13 +621,11 @@ impl DeviceResources {
         let shadow_map_view =
             shadow_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("shadow_sampler"),
-            compare: Some(wgpu::CompareFunction::LessEqual),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let shadow_sampler = crate::resources::builders::comparison_sampler(
+            device,
+            "shadow_sampler",
+            wgpu::CompareFunction::LessEqual,
+        );
 
         // ------------------------------------------------------------------
         // Point-light cubemap shadow texture array.
@@ -876,12 +874,11 @@ impl DeviceResources {
         } else {
             vec![&shadow_camera_bgl, &object_bgl]
         };
-        let shadow_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("shadow_pipeline_layout"),
-                bind_group_layouts: &shadow_pl_bgls,
-                push_constant_ranges: &[],
-            });
+        let shadow_pipeline_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "shadow_pipeline_layout",
+            &shadow_pl_bgls,
+        );
 
         // Depth-only pass through the shared factory so register_deformer
         // can rebuild it from composed source. Two variants:
@@ -970,12 +967,11 @@ impl DeviceResources {
         } else {
             vec![&shadow_point_face_bgl, &object_bgl]
         };
-        let shadow_point_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("shadow_point_pipeline_layout"),
-                bind_group_layouts: &shadow_point_pl_bgls,
-                push_constant_ranges: &[],
-            });
+        let shadow_point_pipeline_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "shadow_point_pipeline_layout",
+            &shadow_point_pl_bgls,
+        );
         let shadow_point_pipeline =
             crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
                 device,
@@ -1032,61 +1028,59 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Gizmo pipeline layout
         // ------------------------------------------------------------------
-        let gizmo_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("gizmo_pipeline_layout"),
-                bind_group_layouts: &[&camera_bgl, &gizmo_bgl],
-                push_constant_ranges: &[],
-            });
+        let gizmo_pipeline_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "gizmo_pipeline_layout",
+            &[&camera_bgl, &gizmo_bgl],
+        );
 
         // ------------------------------------------------------------------
         // Gizmo render pipeline
         // depth_compare: Always : gizmo always renders on top of scene (Pitfall 8).
         // depth_write_enabled: false : do not corrupt depth buffer.
         // ------------------------------------------------------------------
-        let gizmo_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("gizmo_pipeline"),
-            layout: Some(&gizmo_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &gizmo_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let gizmo_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "gizmo_pipeline",
+                layout: &gizmo_pipeline_layout,
+                vertex: wgpu::VertexState {
+                    module: &gizmo_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &gizmo_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None, // No culling: gizmo geometry is viewed from all angles.
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Always, // Always on top.
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                cache: pipeline_cache.as_ref(),
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &gizmo_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // No culling: gizmo geometry is viewed from all angles.
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always, // Always on top.
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: pipeline_cache.as_ref(),
-        });
+        );
 
         // ------------------------------------------------------------------
         // Gizmo vertex/index buffers (initial mesh: no hover highlight)
@@ -1104,10 +1098,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        gizmo_vertex_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::cast_slice(&gizmo_verts));
+        crate::resources::builders::write_mapped(
+            gizmo_vertex_buffer.slice(..),
+            bytemuck::cast_slice(&gizmo_verts),
+        );
         gizmo_vertex_buffer.unmap();
 
         let gizmo_index_count = gizmo_indices.len() as u32;
@@ -1117,10 +1111,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        gizmo_index_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::cast_slice(&gizmo_indices));
+        crate::resources::builders::write_mapped(
+            gizmo_index_buffer.slice(..),
+            bytemuck::cast_slice(&gizmo_indices),
+        );
         gizmo_index_buffer.unmap();
 
         // ------------------------------------------------------------------
@@ -1136,10 +1130,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        gizmo_uniform_buf
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::cast_slice(&[gizmo_uniform]));
+        crate::resources::builders::write_mapped(
+            gizmo_uniform_buf.slice(..),
+            bytemuck::cast_slice(&[gizmo_uniform]),
+        );
         gizmo_uniform_buf.unmap();
 
         let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1172,12 +1166,11 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Overlay pipeline layout (group 0: camera, group 1: overlay uniform)
         // ------------------------------------------------------------------
-        let overlay_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("overlay_pipeline_layout"),
-                bind_group_layouts: &[&camera_bgl, &overlay_bgl],
-                push_constant_ranges: &[],
-            });
+        let overlay_pipeline_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "overlay_pipeline_layout",
+            &[&camera_bgl, &overlay_bgl],
+        );
 
         // ------------------------------------------------------------------
         // Overlay render pipeline
@@ -1186,49 +1179,48 @@ impl DeviceResources {
         // depth_compare: Less : overlays respect depth (hidden by geometry in front).
         // cull_mode: None : quads viewed from both sides.
         // ------------------------------------------------------------------
-        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("overlay_pipeline"),
-            layout: Some(&overlay_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &overlay_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[OverlayVertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let overlay_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "overlay_pipeline",
+                layout: &overlay_pipeline_layout,
+                vertex: wgpu::VertexState {
+                    module: &overlay_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[OverlayVertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &overlay_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None, // BC quads are visible from both sides.
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false, // Do not write to depth buffer.
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                cache: pipeline_cache.as_ref(),
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &overlay_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // BC quads are visible from both sides.
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false, // Do not write to depth buffer.
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: pipeline_cache.as_ref(),
-        });
+        );
 
         // ------------------------------------------------------------------
         // Overlay line pipeline (LineList)
@@ -1236,10 +1228,11 @@ impl DeviceResources {
         // No alpha blending needed for line overlays.
         // depth_write_enabled: false : overlay lines don't corrupt depth buffer.
         // ------------------------------------------------------------------
-        let overlay_line_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("overlay_line_pipeline"),
-                layout: Some(&overlay_pipeline_layout),
+        let overlay_line_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "overlay_line_pipeline",
+                layout: &overlay_pipeline_layout,
                 vertex: wgpu::VertexState {
                     module: &overlay_shader,
                     entry_point: Some("vs_main"),
@@ -1265,21 +1258,18 @@ impl DeviceResources {
                     polygon_mode: wgpu::PolygonMode::Fill,
                     conservative: false,
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Less,
+                )),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                multiview: None,
                 cache: pipeline_cache.as_ref(),
-            });
+            },
+        );
 
         // ------------------------------------------------------------------
         // Full-screen analytical grid pipeline
@@ -1300,57 +1290,59 @@ impl DeviceResources {
             "grid_bgl",
             wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
         );
-        let grid_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("grid_pipeline_layout"),
-            bind_group_layouts: &[&grid_bgl],
-            push_constant_ranges: &[],
-        });
-        let grid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("grid_pipeline"),
-            layout: Some(&grid_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &grid_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[], // no vertex buffer : positions hardcoded in shader
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &grid_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    // Push grid depth slightly behind coplanar geometry to prevent
-                    // z-fighting when object faces coincide with the grid plane.
-                    // 4 x the minimum representable Depth24 unit ~ 2.4e-7 : invisible
-                    // at any distance but reliably loses the depth test to geometry.
-                    constant: 4,
-                    slope_scale: 0.0,
-                    clamp: 0.0,
+        let grid_pipeline_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "grid_pipeline_layout",
+            &[&grid_bgl],
+        );
+        let grid_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "grid_pipeline",
+                layout: &grid_pipeline_layout,
+                vertex: wgpu::VertexState {
+                    module: &grid_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[], // no vertex buffer : positions hardcoded in shader
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
+                fragment: Some(wgpu::FragmentState {
+                    module: &grid_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState {
+                        // Push grid depth slightly behind coplanar geometry to prevent
+                        // z-fighting when object faces coincide with the grid plane.
+                        // 4 x the minimum representable Depth24 unit ~ 2.4e-7 : invisible
+                        // at any distance but reliably loses the depth test to geometry.
+                        constant: 4,
+                        slope_scale: 0.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                cache: pipeline_cache.as_ref(),
             },
-            multiview: None,
-            cache: pipeline_cache.as_ref(),
-        });
+        );
         // Default-zero uniform : overwritten every frame in prepare().
         let grid_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("grid_uniform_buf"),
@@ -1425,16 +1417,16 @@ impl DeviceResources {
                 },
             ],
         });
-        let ground_plane_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("ground_plane_pipeline_layout"),
-                bind_group_layouts: &[&ground_plane_bgl],
-                push_constant_ranges: &[],
-            });
-        let ground_plane_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ground_plane_pipeline"),
-                layout: Some(&ground_plane_pipeline_layout),
+        let ground_plane_pipeline_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "ground_plane_pipeline_layout",
+            &[&ground_plane_bgl],
+        );
+        let ground_plane_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "ground_plane_pipeline",
+                layout: &ground_plane_pipeline_layout,
                 vertex: wgpu::VertexState {
                     module: &ground_plane_shader,
                     entry_point: Some("vs_main"),
@@ -1456,21 +1448,18 @@ impl DeviceResources {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    wgpu::CompareFunction::LessEqual,
+                )),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                multiview: None,
                 cache: pipeline_cache.as_ref(),
-            });
+            },
+        );
         let ground_plane_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ground_plane_uniform_buf"),
             size: std::mem::size_of::<GroundPlaneUniform>() as u64,
@@ -1539,11 +1528,11 @@ impl DeviceResources {
                 },
             ],
         });
-        let atlas_blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("atlas_blit_layout"),
-            bind_group_layouts: &[&atlas_blit_bgl],
-            push_constant_ranges: &[],
-        });
+        let atlas_blit_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "atlas_blit_layout",
+            &[&atlas_blit_bgl],
+        );
         let shadow_atlas_viewer_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow_atlas_viewer_buf"),
             size: std::mem::size_of::<AtlasBlitUniform>() as u64,
@@ -1568,10 +1557,11 @@ impl DeviceResources {
                 },
             ],
         });
-        let shadow_atlas_viewer_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("shadow_atlas_viewer_pipeline"),
-                layout: Some(&atlas_blit_layout),
+        let shadow_atlas_viewer_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "shadow_atlas_viewer_pipeline",
+                layout: &atlas_blit_layout,
                 vertex: wgpu::VertexState {
                     module: &atlas_blit_shader,
                     entry_point: Some("vs_main"),
@@ -1593,21 +1583,18 @@ impl DeviceResources {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Always,
+                )),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                multiview: None,
                 cache: pipeline_cache.as_ref(),
-            });
+            },
+        );
 
         // ------------------------------------------------------------------
         // Axes indicator pipeline (screen-space, no camera, no depth)
@@ -1618,57 +1605,53 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("axes_overlay"),
         );
 
-        let axes_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("axes_pipeline_layout"),
-            bind_group_layouts: &[],
-            push_constant_ranges: &[],
-        });
+        let axes_pipeline_layout =
+            crate::resources::builders::pipeline_layout(device, "axes_pipeline_layout", &[]);
 
-        let axes_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("axes_pipeline"),
-            layout: Some(&axes_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &axes_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[
-                    crate::interaction::widgets::axes_indicator::AxesVertex::buffer_layout(),
-                ],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let axes_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "axes_pipeline",
+                layout: &axes_pipeline_layout,
+                vertex: wgpu::VertexState {
+                    module: &axes_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[
+                        crate::interaction::widgets::axes_indicator::AxesVertex::buffer_layout(),
+                    ],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &axes_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Always,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                cache: pipeline_cache.as_ref(),
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &axes_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: pipeline_cache.as_ref(),
-        });
+        );
 
         // Pre-allocate vertex buffer (resized in prepare if needed).
         let axes_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1856,10 +1839,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = fallback_scalar_buf.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(&[0u8; 4]);
-        }
+        crate::resources::builders::write_mapped(fallback_scalar_buf.slice(..), &[0u8; 4]);
         fallback_scalar_buf.unmap();
 
         let fallback_face_colour_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1868,10 +1848,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = fallback_face_colour_buf.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(&[0u8; 16]);
-        }
+        crate::resources::builders::write_mapped(fallback_face_colour_buf.slice(..), &[0u8; 16]);
         fallback_face_colour_buf.unmap();
 
         let fallback_warp_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1880,10 +1857,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = fallback_warp_buf.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(&[0u8; 12]);
-        }
+        crate::resources::builders::write_mapped(fallback_warp_buf.slice(..), &[0u8; 12]);
         fallback_warp_buf.unmap();
 
         let fallback_position_override_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1892,12 +1866,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = fallback_position_override_buf
-                .slice(..)
-                .get_mapped_range_mut();
-            view.copy_from_slice(&[0u8; 12]);
-        }
+        crate::resources::builders::write_mapped(
+            fallback_position_override_buf.slice(..),
+            &[0u8; 12],
+        );
         fallback_position_override_buf.unmap();
 
         let fallback_normal_override_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1906,12 +1878,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = fallback_normal_override_buf
-                .slice(..)
-                .get_mapped_range_mut();
-            view.copy_from_slice(&[0u8; 12]);
-        }
+        crate::resources::builders::write_mapped(
+            fallback_normal_override_buf.slice(..),
+            &[0u8; 12],
+        );
         fallback_normal_override_buf.unmap();
 
         // ------------------------------------------------------------------
@@ -1963,12 +1933,11 @@ impl DeviceResources {
         } else {
             vec![&camera_bgl, &outline_bgl]
         };
-        let outline_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("outline_pipeline_layout"),
-                bind_group_layouts: &outline_pl_bgls,
-                push_constant_ranges: &[],
-            });
+        let outline_pipeline_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "outline_pipeline_layout",
+            &outline_pl_bgls,
+        );
 
         // Mask-write pipeline: renders selected objects as r=1.0 to an R8 mask
         // texture with depth testing, replacing the old stencil-based approach.
@@ -2020,10 +1989,11 @@ impl DeviceResources {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &splat_outline_size_attrs,
         };
-        let splat_outline_mask_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("splat_outline_mask_pipeline"),
-                layout: Some(&outline_pipeline_layout),
+        let splat_outline_mask_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "splat_outline_mask_pipeline",
+                layout: &outline_pipeline_layout,
                 vertex: wgpu::VertexState {
                     module: &splat_outline_mask_shader,
                     entry_point: Some("vs_main"),
@@ -2045,21 +2015,18 @@ impl DeviceResources {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Less,
+                )),
                 multisample: wgpu::MultisampleState {
                     count: 1,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
-                multiview: None,
                 cache: pipeline_cache.as_ref(),
-            });
+            },
+        );
 
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
         // outputs an anti-aliased outline ring to the outline colour texture.
@@ -2099,15 +2066,16 @@ impl DeviceResources {
                 },
             ],
         });
-        let outline_edge_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("outline_edge_layout"),
-            bind_group_layouts: &[&outline_edge_bgl],
-            push_constant_ranges: &[],
-        });
-        let outline_edge_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("outline_edge_pipeline"),
-                layout: Some(&outline_edge_layout),
+        let outline_edge_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "outline_edge_layout",
+            &[&outline_edge_bgl],
+        );
+        let outline_edge_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "outline_edge_pipeline",
+                layout: &outline_edge_layout,
                 vertex: wgpu::VertexState {
                     module: &outline_edge_shader,
                     entry_point: Some("vs_main"),
@@ -2131,50 +2099,49 @@ impl DeviceResources {
                 },
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
                 cache: pipeline_cache.as_ref(),
-            });
+            },
+        );
 
         // X-ray pipeline: render selected objects through all geometry as a semi-transparent tint.
-        let xray_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("xray_pipeline"),
-            layout: Some(&outline_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &xray_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let xray_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "xray_pipeline",
+                layout: &outline_pipeline_layout,
+                vertex: wgpu::VertexState {
+                    module: &xray_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &xray_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Always,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                cache: pipeline_cache.as_ref(),
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &xray_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: pipeline_cache.as_ref(),
-        });
+        );
 
         // Skybox pipeline: fullscreen triangle that samples the equirect environment map.
         let skybox_shader = crate::resources::builders::wgsl_module(
@@ -2182,48 +2149,46 @@ impl DeviceResources {
             "skybox_shader",
             crate::resources::builders::wgsl_source!("skybox"),
         );
-        let skybox_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("skybox_pipeline_layout"),
-                bind_group_layouts: &[&camera_bgl],
-                push_constant_ranges: &[],
-            });
-        let skybox_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("skybox_pipeline"),
-            layout: Some(&skybox_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &skybox_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &skybox_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
+        let skybox_pipeline_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "skybox_pipeline_layout",
+            &[&camera_bgl],
+        );
+        let skybox_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "skybox_pipeline",
+                layout: &skybox_pipeline_layout,
+                vertex: wgpu::VertexState {
+                    module: &skybox_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &skybox_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
                 // Drawn after opaques: only sky pixels (depth == 1.0) pass.
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Equal,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: pipeline_cache.as_ref(),
-        });
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Equal,
+                )),
+                multisample: wgpu::MultisampleState::default(),
+                cache: pipeline_cache.as_ref(),
+            },
+        );
 
         mark("misc_pipelines");
 

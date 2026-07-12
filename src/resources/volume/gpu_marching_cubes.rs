@@ -307,11 +307,11 @@ impl DeviceResources {
             "mc_classify_shader",
             crate::resources::builders::wgsl_source!("mc_classify"),
         );
-        let classify_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mc_classify_layout"),
-            bind_group_layouts: &[&classify_bgl],
-            push_constant_ranges: &[],
-        });
+        let classify_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "mc_classify_layout",
+            &[&classify_bgl],
+        );
         let classify_pipeline = crate::resources::builders::compute_pipeline(
             device,
             "mc_classify_pipeline",
@@ -325,11 +325,11 @@ impl DeviceResources {
             "mc_prefix_sum_shader",
             crate::resources::builders::wgsl_source!("mc_prefix_sum"),
         );
-        let prefix_sum_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mc_prefix_sum_layout"),
-            bind_group_layouts: &[&prefix_sum_bgl],
-            push_constant_ranges: &[],
-        });
+        let prefix_sum_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "mc_prefix_sum_layout",
+            &[&prefix_sum_bgl],
+        );
         let prefix_sum_pipeline = crate::resources::builders::compute_pipeline(
             device,
             "mc_prefix_sum_pipeline",
@@ -343,11 +343,11 @@ impl DeviceResources {
             "mc_generate_shader",
             crate::resources::builders::wgsl_source!("mc_generate"),
         );
-        let generate_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mc_generate_layout"),
-            bind_group_layouts: &[&generate_bgl],
-            push_constant_ranges: &[],
-        });
+        let generate_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "mc_generate_layout",
+            &[&generate_bgl],
+        );
         let generate_pipeline = crate::resources::builders::compute_pipeline(
             device,
             "mc_generate_pipeline",
@@ -789,14 +789,14 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("outline_mask"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mc_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "mc_outline_mask_pipeline_layout",
+            &[
                 &self.camera_bind_group_layout,
                 &self.outline.bind_group_layout,
             ],
-            push_constant_ranges: &[],
-        });
+        );
 
         let vert_attrs = [wgpu::VertexAttribute {
             offset: 0,

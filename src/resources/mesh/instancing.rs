@@ -206,12 +206,11 @@ impl DeviceResources {
             wgpu::ShaderStages::VERTEX,
         );
 
-        let shadow_instanced_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("shadow_instanced_pipeline_layout"),
-                bind_group_layouts: &[&shadow_bgl, &instance_bgl],
-                push_constant_ranges: &[],
-            });
+        let shadow_instanced_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "shadow_instanced_pipeline_layout",
+            &[&shadow_bgl, &instance_bgl],
+        );
 
         // Front-cull for closed solids; `cull_mode: None` + the two-sided bias for
         // two-sided (`Identical`) batches, so a single-winding foliage card still
@@ -219,32 +218,34 @@ impl DeviceResources {
         // per-object `shadow_pipeline` / `shadow_pipeline_two_sided` split.
         let make_shadow_instanced =
             |label: &str, cull_mode: Option<wgpu::Face>, bias: wgpu::DepthBiasState| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&shadow_instanced_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shadow_instanced_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                crate::resources::builders::render_pipeline(
+                    device,
+                    crate::resources::builders::RenderPipelineDesc {
+                        label,
+                        layout: &shadow_instanced_layout,
+                        vertex: wgpu::VertexState {
+                            module: &shadow_instanced_shader,
+                            entry_point: Some("vs_main"),
+                            buffers: &[Vertex::buffer_layout()],
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        },
+                        fragment: None,
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            cull_mode,
+                            ..Default::default()
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: wgpu::TextureFormat::Depth32Float,
+                            depth_write_enabled: true,
+                            depth_compare: wgpu::CompareFunction::Less,
+                            stencil: wgpu::StencilState::default(),
+                            bias,
+                        }),
+                        multisample: wgpu::MultisampleState::default(),
+                        cache: None,
                     },
-                    fragment: None,
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias,
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
-                })
+                )
             };
         let shadow_instanced = make_shadow_instanced(
             "shadow_instanced_pipeline",
@@ -263,37 +264,39 @@ impl DeviceResources {
         // `instance_bgl`, so the batch's albedo texture (bindings 1-2) is available.
         let make_shadow_cutout =
             |label: &str, cull_mode: Option<wgpu::Face>, bias: wgpu::DepthBiasState| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&shadow_instanced_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shadow_instanced_shader,
-                        entry_point: Some("vs_cutout"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                crate::resources::builders::render_pipeline(
+                    device,
+                    crate::resources::builders::RenderPipelineDesc {
+                        label,
+                        layout: &shadow_instanced_layout,
+                        vertex: wgpu::VertexState {
+                            module: &shadow_instanced_shader,
+                            entry_point: Some("vs_cutout"),
+                            buffers: &[Vertex::buffer_layout()],
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        },
+                        fragment: Some(wgpu::FragmentState {
+                            module: &shadow_instanced_shader,
+                            entry_point: Some("fs_cutout"),
+                            targets: &[],
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        }),
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            cull_mode,
+                            ..Default::default()
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: wgpu::TextureFormat::Depth32Float,
+                            depth_write_enabled: true,
+                            depth_compare: wgpu::CompareFunction::Less,
+                            stencil: wgpu::StencilState::default(),
+                            bias,
+                        }),
+                        multisample: wgpu::MultisampleState::default(),
+                        cache: None,
                     },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shadow_instanced_shader,
-                        entry_point: Some("fs_cutout"),
-                        targets: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias,
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
-                })
+                )
             };
         let shadow_cutout = make_shadow_cutout(
             "shadow_instanced_cutout_pipeline",
@@ -724,11 +727,11 @@ impl DeviceResources {
             "shadow_bgl_for_cull",
             wgpu::ShaderStages::VERTEX,
         );
-        let shadow_cull_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shadow_instanced_cull_pipeline_layout"),
-            bind_group_layouts: &[&shadow_bgl_for_cull, &shadow_cull_bgl],
-            push_constant_ranges: &[],
-        });
+        let shadow_cull_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "shadow_instanced_cull_pipeline_layout",
+            &[&shadow_bgl_for_cull, &shadow_cull_bgl],
+        );
         let shadow_cull_shader = crate::resources::builders::wgsl_module(
             device,
             "shadow_instanced_cull_shader",
@@ -738,32 +741,34 @@ impl DeviceResources {
         // two-sided (`Identical`) batches (see the direct-path shadow pipelines above).
         let make_shadow_cull =
             |label: &str, cull_mode: Option<wgpu::Face>, bias: wgpu::DepthBiasState| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&shadow_cull_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shadow_cull_shader,
-                        entry_point: Some("vs_shadow_cull"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                crate::resources::builders::render_pipeline(
+                    device,
+                    crate::resources::builders::RenderPipelineDesc {
+                        label,
+                        layout: &shadow_cull_layout,
+                        vertex: wgpu::VertexState {
+                            module: &shadow_cull_shader,
+                            entry_point: Some("vs_shadow_cull"),
+                            buffers: &[Vertex::buffer_layout()],
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        },
+                        fragment: None,
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            cull_mode,
+                            ..Default::default()
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: wgpu::TextureFormat::Depth32Float,
+                            depth_write_enabled: true,
+                            depth_compare: wgpu::CompareFunction::Less,
+                            stencil: wgpu::StencilState::default(),
+                            bias,
+                        }),
+                        multisample: wgpu::MultisampleState::default(),
+                        cache: None,
                     },
-                    fragment: None,
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias,
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
-                })
+                )
             };
         let shadow_instanced_cull = make_shadow_cull(
             "shadow_instanced_cull_pipeline",
@@ -782,45 +787,46 @@ impl DeviceResources {
         // Alpha-cutout shadow cull pipelines: `vs_cutout_cull` + `fs_cutout`. Group 1
         // uses the full `cull_bgl` (storage + albedo/sampler + visibility), so the
         // fragment can sample the batch albedo and discard leaf-gap fragments.
-        let shadow_cutout_cull_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("shadow_instanced_cutout_cull_pipeline_layout"),
-                bind_group_layouts: &[&shadow_bgl_for_cull, &cull_bgl],
-                push_constant_ranges: &[],
-            });
+        let shadow_cutout_cull_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "shadow_instanced_cutout_cull_pipeline_layout",
+            &[&shadow_bgl_for_cull, &cull_bgl],
+        );
         let make_shadow_cutout_cull =
             |label: &str, cull_mode: Option<wgpu::Face>, bias: wgpu::DepthBiasState| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&shadow_cutout_cull_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shadow_cull_shader,
-                        entry_point: Some("vs_cutout_cull"),
-                        buffers: &[Vertex::buffer_layout()],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                crate::resources::builders::render_pipeline(
+                    device,
+                    crate::resources::builders::RenderPipelineDesc {
+                        label,
+                        layout: &shadow_cutout_cull_layout,
+                        vertex: wgpu::VertexState {
+                            module: &shadow_cull_shader,
+                            entry_point: Some("vs_cutout_cull"),
+                            buffers: &[Vertex::buffer_layout()],
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        },
+                        fragment: Some(wgpu::FragmentState {
+                            module: &shadow_cull_shader,
+                            entry_point: Some("fs_cutout"),
+                            targets: &[],
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        }),
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            cull_mode,
+                            ..Default::default()
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: wgpu::TextureFormat::Depth32Float,
+                            depth_write_enabled: true,
+                            depth_compare: wgpu::CompareFunction::Less,
+                            stencil: wgpu::StencilState::default(),
+                            bias,
+                        }),
+                        multisample: wgpu::MultisampleState::default(),
+                        cache: None,
                     },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shadow_cull_shader,
-                        entry_point: Some("fs_cutout"),
-                        targets: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias,
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
-                })
+                )
             };
         self.cull.shadow_cutout_pipeline = Some(make_shadow_cutout_cull(
             "shadow_instanced_cutout_cull_pipeline",

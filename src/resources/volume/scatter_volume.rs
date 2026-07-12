@@ -399,11 +399,11 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::wgsl_source!("scatter_volume"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scatter_volume_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, per_vol, per_tex, frame_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "scatter_volume_pipeline_layout",
+            &[&self.camera_bind_group_layout, per_vol, per_tex, frame_bgl],
+        );
 
         // Premultiplied alpha-over: per-volume draws composite into the
         // (cleared) raw_current target in back-to-front order.
@@ -420,38 +420,40 @@ impl crate::resources::DeviceResources {
             },
         };
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter_volume_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "scatter_volume_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: colour_format,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: colour_format,
-                    blend: Some(blend),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        );
 
         self.scatter.pipeline = Some(pipeline);
     }
@@ -477,11 +479,11 @@ impl crate::resources::DeviceResources {
             "scatter_composite_shader",
             crate::resources::builders::wgsl_source!("scatter_composite"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scatter_composite_pipeline_layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "scatter_composite_pipeline_layout",
+            &[&bgl],
+        );
         let blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -519,11 +521,11 @@ impl crate::resources::DeviceResources {
             "scatter_temporal_resolve_shader",
             crate::resources::builders::wgsl_source!("scatter_temporal_resolve"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scatter_temporal_resolve_pipeline_layout"),
-            bind_group_layouts: &[bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "scatter_temporal_resolve_pipeline_layout",
+            &[bgl],
+        );
         // History textures are RGBA16F. Blend is None: this pass owns the new
         // history fully and overwrites it.
         let pipeline = crate::resources::builders::build_fullscreen_pipeline(
@@ -944,11 +946,11 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::wgsl_source!("scatter_refraction"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scatter_refraction_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, per_vol, source_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "scatter_refraction_pipeline_layout",
+            &[&self.camera_bind_group_layout, per_vol, source_bgl],
+        );
 
         // Replace blend: the distorted sample overwrites the HDR pixel before
         // the scatter pass composites on top.
@@ -984,11 +986,11 @@ impl crate::resources::DeviceResources {
             "scatter_refraction_blit_shader",
             crate::resources::builders::wgsl_source!("scatter_composite"),
         );
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scatter_refraction_blit_pipeline_layout"),
-            bind_group_layouts: &[bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "scatter_refraction_blit_pipeline_layout",
+            &[bgl],
+        );
         let pipeline = crate::resources::builders::build_fullscreen_pipeline(
             device,
             "scatter_refraction_blit_pipeline",

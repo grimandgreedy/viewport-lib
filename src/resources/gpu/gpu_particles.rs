@@ -710,11 +710,11 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::wgsl_source!("particle_sim"),
         );
 
-        let compute_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("particle_compute_layout"),
-            bind_group_layouts: &[&params_bgl, &sim_bgl],
-            push_constant_ranges: &[],
-        });
+        let compute_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "particle_compute_layout",
+            &[&params_bgl, &sim_bgl],
+        );
 
         let emit_pipeline = crate::resources::builders::compute_pipeline(
             device,
@@ -796,11 +796,11 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::wgsl_source!("particle_sprite_lit"),
         );
 
-        let lit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("particle_draw_lit_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &draw_bgl, &lit_bgl],
-            push_constant_ranges: &[],
-        });
+        let lit_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "particle_draw_lit_layout",
+            &[&self.camera_bind_group_layout, &draw_bgl, &lit_bgl],
+        );
 
         let make_lit_draw = |blend: wgpu::BlendState, label: &str| {
             crate::resources::builders::build_dual_pipeline(

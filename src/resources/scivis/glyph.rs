@@ -75,15 +75,15 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("glyph"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("glyph_pipeline_layout"),
-            bind_group_layouts: &[
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "glyph_pipeline_layout",
+            &[
                 &self.camera_bind_group_layout,
                 &glyph_bgl,
                 &glyph_instance_bgl,
             ],
-            push_constant_ranges: &[],
-        });
+        );
 
         self.glyph.bgl = Some(glyph_bgl);
         self.glyph.instance_bgl = Some(glyph_instance_bgl);
@@ -354,9 +354,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        vbuf.slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::cast_slice(&verts));
+        crate::resources::builders::write_mapped(vbuf.slice(..), bytemuck::cast_slice(&verts));
         vbuf.unmap();
 
         let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -365,9 +363,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        ibuf.slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::cast_slice(&indices));
+        crate::resources::builders::write_mapped(ibuf.slice(..), bytemuck::cast_slice(&indices));
         ibuf.unmap();
 
         let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
@@ -378,11 +374,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut mapped = edge_ibuf.slice(..).get_mapped_range_mut();
-            let bytes = bytemuck::cast_slice::<u32, u8>(&edge_indices);
-            mapped[..bytes.len()].copy_from_slice(bytes);
-        }
+        crate::resources::builders::write_mapped(
+            edge_ibuf.slice(..),
+            bytemuck::cast_slice::<u32, u8>(&edge_indices),
+        );
         edge_ibuf.unmap();
 
         let mesh = GlyphBaseMesh {
@@ -437,11 +432,11 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("tensor_glyph"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tensor_glyph_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &tg_bgl, &tg_instance_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "tensor_glyph_pipeline_layout",
+            &[&self.camera_bind_group_layout, &tg_bgl, &tg_instance_bgl],
+        );
 
         self.tensor_glyph.bgl = Some(tg_bgl);
         self.tensor_glyph.instance_bgl = Some(tg_instance_bgl);
@@ -751,15 +746,15 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("glyph_outline_mask"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("glyph_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "glyph_outline_mask_pipeline_layout",
+            &[
                 &self.camera_bind_group_layout,
                 glyph_bgl,
                 glyph_instance_bgl,
             ],
-            push_constant_ranges: &[],
-        });
+        );
 
         self.glyph.outline_mask_pipeline =
             Some(crate::resources::builders::build_outline_mask_pipeline(
@@ -801,11 +796,11 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("tensor_glyph_outline_mask"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tensor_glyph_outline_mask_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, tg_bgl, tg_instance_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "tensor_glyph_outline_mask_pipeline_layout",
+            &[&self.camera_bind_group_layout, tg_bgl, tg_instance_bgl],
+        );
 
         self.tensor_glyph.outline_mask_pipeline =
             Some(crate::resources::builders::build_outline_mask_pipeline(

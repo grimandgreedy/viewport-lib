@@ -1973,12 +1973,10 @@ impl ViewportRenderer {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
-            shadow_info_buf
-                .slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&[self
-                    .shadow
-                    .last_shadow_atlas_uniform]));
+            crate::resources::builders::write_mapped(
+                shadow_info_buf.slice(..),
+                bytemuck::cast_slice(&[self.shadow.last_shadow_atlas_uniform]),
+            );
             shadow_info_buf.unmap();
             let grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("vp_grid_buf"),
@@ -2020,10 +2018,10 @@ impl ViewportRenderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
-            gizmo_vertex_buffer
-                .slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&gizmo_verts));
+            crate::resources::builders::write_mapped(
+                gizmo_vertex_buffer.slice(..),
+                bytemuck::cast_slice(&gizmo_verts),
+            );
             gizmo_vertex_buffer.unmap();
             let gizmo_index_count = gizmo_indices.len() as u32;
             let gizmo_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2032,10 +2030,10 @@ impl ViewportRenderer {
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
-            gizmo_index_buffer
-                .slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&gizmo_indices));
+            crate::resources::builders::write_mapped(
+                gizmo_index_buffer.slice(..),
+                bytemuck::cast_slice(&gizmo_indices),
+            );
             gizmo_index_buffer.unmap();
             let gizmo_uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
                 model: glam::Mat4::IDENTITY.to_cols_array_2d(),
@@ -2047,10 +2045,10 @@ impl ViewportRenderer {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
-            gizmo_uniform_buf
-                .slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&[gizmo_uniform]));
+            crate::resources::builders::write_mapped(
+                gizmo_uniform_buf.slice(..),
+                bytemuck::cast_slice(&[gizmo_uniform]),
+            );
             gizmo_uniform_buf.unmap();
             let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("vp_gizmo_bind_group"),

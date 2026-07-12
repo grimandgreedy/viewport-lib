@@ -349,18 +349,20 @@ impl DeviceResources {
                         loop {
                             if voff < vsrc.len() {
                                 let end = (voff + MESH_CHUNK_BYTES).min(vsrc.len());
-                                vbuf.slice(voff as u64..end as u64)
-                                    .get_mapped_range_mut()
-                                    .copy_from_slice(&vsrc[voff..end]);
+                                crate::resources::builders::write_mapped(
+                                    vbuf.slice(voff as u64..end as u64),
+                                    &vsrc[voff..end],
+                                );
                                 voff = end;
                             } else if ioff < indices_bytes {
                                 let isrc: &[u8] = cast_slice(
                                     &payload.as_ref().expect("payload present").0.indices,
                                 );
                                 let end = (ioff + MESH_CHUNK_BYTES).min(isrc.len());
-                                ibuf.slice(ioff as u64..end as u64)
-                                    .get_mapped_range_mut()
-                                    .copy_from_slice(&isrc[ioff..end]);
+                                crate::resources::builders::write_mapped(
+                                    ibuf.slice(ioff as u64..end as u64),
+                                    &isrc[ioff..end],
+                                );
                                 ioff = end;
                             } else {
                                 break;
@@ -1457,10 +1459,10 @@ impl DeviceResources {
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: true,
                     });
-                    {
-                        let mut view = buf.slice(..).get_mapped_range_mut();
-                        view.copy_from_slice(bytemuck::cast_slice(&expanded));
-                    }
+                    crate::resources::builders::write_mapped(
+                        buf.slice(..),
+                        bytemuck::cast_slice(&expanded),
+                    );
                     buf.unmap();
                     face_colour_bufs.insert(name.clone(), buf);
                 }
@@ -1516,10 +1518,10 @@ impl DeviceResources {
                             | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: true,
                     });
-                    {
-                        let mut view = buf.slice(..).get_mapped_range_mut();
-                        view.copy_from_slice(bytemuck::cast_slice(&flat));
-                    }
+                    crate::resources::builders::write_mapped(
+                        buf.slice(..),
+                        bytemuck::cast_slice(&flat),
+                    );
                     buf.unmap();
                     vector_attr_bufs.insert(name.clone(), buf);
                 }
@@ -1543,10 +1545,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = buf.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(bytemuck::cast_slice(data));
-        }
+        crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(data));
         buf.unmap();
         buf
     }
@@ -1585,10 +1584,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = buf.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(bytemuck::cast_slice(&verts));
-        }
+        crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(&verts));
         buf.unmap();
         buf
     }
@@ -1860,11 +1856,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut mapped = buffer.slice(..).get_mapped_range_mut();
-            let edge_bytes = bytemuck::cast_slice::<u32, u8>(&edge_indices);
-            mapped[..edge_bytes.len()].copy_from_slice(edge_bytes);
-        }
+        crate::resources::builders::write_mapped(
+            buffer.slice(..),
+            bytemuck::cast_slice::<u32, u8>(&edge_indices),
+        );
         buffer.unmap();
         let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
         mesh.edge_index_buffer = Some(buffer);
@@ -1909,10 +1904,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::cast_slice(&verts));
+        crate::resources::builders::write_mapped(buffer.slice(..), bytemuck::cast_slice(&verts));
         buffer.unmap();
         let count = verts.len() as u32;
         let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
@@ -2044,10 +2036,7 @@ impl DeviceResources {
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: true,
         });
-        vertex_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(vertices));
+        crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(vertices));
         vertex_buffer.unmap();
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2058,10 +2047,7 @@ impl DeviceResources {
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: true,
         });
-        index_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(indices));
+        crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(indices));
         index_buffer.unmap();
 
         let aabb = crate::scene::aabb::Aabb::from_positions(
@@ -2098,9 +2084,7 @@ impl DeviceResources {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
-            buf.slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(cast_slice(nl_verts));
+            crate::resources::builders::write_mapped(buf.slice(..), cast_slice(nl_verts));
             buf.unmap();
             mesh.normal_line_count = nl_verts.len() as u32;
             mesh.normal_line_buffer = Some(buf);
@@ -2193,10 +2177,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        object_uniform_buf
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&[object_uniform]));
+        crate::resources::builders::write_mapped(
+            object_uniform_buf.slice(..),
+            cast_slice(&[object_uniform]),
+        );
         object_uniform_buf.unmap();
 
         let object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2318,10 +2302,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        normal_uniform_buf
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&[normal_override_uniform]));
+        crate::resources::builders::write_mapped(
+            normal_uniform_buf.slice(..),
+            cast_slice(&[normal_override_uniform]),
+        );
         normal_uniform_buf.unmap();
 
         let normal_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2841,9 +2825,7 @@ impl DeviceResources {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
-            buf.slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(raw));
+            crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(raw));
             buf.unmap();
             pending.push((buf, tet_count));
             raw.clear();
@@ -2896,10 +2878,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        uniform_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(bytemuck::bytes_of(&initial_uniform));
+        crate::resources::builders::write_mapped(
+            uniform_buffer.slice(..),
+            bytemuck::bytes_of(&initial_uniform),
+        );
         uniform_buffer.unmap();
 
         (pending, scalar_range, uniform_buffer)

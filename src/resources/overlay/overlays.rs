@@ -114,10 +114,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        vertex_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&vertices));
+        crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
         vertex_buffer.unmap();
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -126,10 +123,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        index_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&indices));
+        crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&indices));
         index_buffer.unmap();
 
         let uniform_data = OverlayUniform {
@@ -142,10 +136,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        uniform_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&[uniform_data]));
+        crate::resources::builders::write_mapped(
+            uniform_buffer.slice(..),
+            cast_slice(&[uniform_data]),
+        );
         uniform_buffer.unmap();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -210,10 +204,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        vertex_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&vertices));
+        crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
         vertex_buffer.unmap();
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -222,10 +213,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        index_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&indices));
+        crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&indices));
         index_buffer.unmap();
 
         let uniform_data = OverlayUniform {
@@ -238,10 +226,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        uniform_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&[uniform_data]));
+        crate::resources::builders::write_mapped(
+            uniform_buffer.slice(..),
+            cast_slice(&[uniform_data]),
+        );
         uniform_buffer.unmap();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -339,10 +327,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        vertex_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&vertices));
+        crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
         vertex_buffer.unmap();
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -351,10 +336,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        index_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&indices));
+        crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&indices));
         index_buffer.unmap();
 
         let uniform_data = OverlayUniform {
@@ -367,10 +349,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        uniform_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&[uniform_data]));
+        crate::resources::builders::write_mapped(
+            uniform_buffer.slice(..),
+            cast_slice(&[uniform_data]),
+        );
         uniform_buffer.unmap();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -420,10 +402,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        vertex_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&vertices));
+        crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
         vertex_buffer.unmap();
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -432,10 +411,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        index_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&cap.indices));
+        crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&cap.indices));
         index_buffer.unmap();
 
         let uniform_data = OverlayUniform {
@@ -448,10 +424,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        uniform_buffer
-            .slice(..)
-            .get_mapped_range_mut()
-            .copy_from_slice(cast_slice(&[uniform_data]));
+        crate::resources::builders::write_mapped(
+            uniform_buffer.slice(..),
+            cast_slice(&[uniform_data]),
+        );
         uniform_buffer.unmap();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

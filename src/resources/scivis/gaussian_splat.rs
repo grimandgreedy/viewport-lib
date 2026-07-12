@@ -356,11 +356,11 @@ impl DeviceResources {
             ],
         });
 
-        let depth_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("gaussian_splat_depth_layout"),
-            bind_group_layouts: &[&depth_bgl],
-            push_constant_ranges: &[],
-        });
+        let depth_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "gaussian_splat_depth_layout",
+            &[&depth_bgl],
+        );
 
         let gaussian_splat_depth_pipeline = crate::resources::builders::compute_pipeline(
             device,
@@ -438,11 +438,11 @@ impl DeviceResources {
             ],
         });
 
-        let sort_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("gaussian_splat_sort_layout"),
-            bind_group_layouts: &[&sort_bgl],
-            push_constant_ranges: &[],
-        });
+        let sort_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "gaussian_splat_sort_layout",
+            &[&sort_bgl],
+        );
 
         let gaussian_splat_sort_init_pipeline = crate::resources::builders::compute_pipeline(
             device,

@@ -93,11 +93,8 @@ impl crate::resources::DeviceResources {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("compute_filter_layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout =
+            crate::resources::builders::pipeline_layout(device, "compute_filter_layout", &[&bgl]);
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -286,10 +283,7 @@ impl crate::resources::DeviceResources {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: true,
             });
-            {
-                let mut view = counter_buf.slice(..).get_mapped_range_mut();
-                view[0..4].copy_from_slice(&0u32.to_le_bytes());
-            }
+            crate::resources::builders::write_mapped(counter_buf.slice(..), &0u32.to_le_bytes());
             counter_buf.unmap();
 
             // Staging buffer to read back the counter.

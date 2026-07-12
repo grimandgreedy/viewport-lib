@@ -418,10 +418,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = vbuf.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(bytemuck::cast_slice(&vertices));
-        }
+        crate::resources::builders::write_mapped(vbuf.slice(..), bytemuck::cast_slice(&vertices));
         vbuf.unmap();
 
         let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -430,10 +427,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = ibuf.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(bytemuck::cast_slice(&indices));
-        }
+        crate::resources::builders::write_mapped(ibuf.slice(..), bytemuck::cast_slice(&indices));
         ibuf.unmap();
 
         self.volume.cube_vb = Some(vbuf);
@@ -605,10 +599,7 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = uniform_buf.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(&uniform_data);
-        }
+        crate::resources::builders::write_mapped(uniform_buf.slice(..), &uniform_data);
         uniform_buf.unmap();
 
         let volume_view = &self
@@ -644,16 +635,8 @@ impl DeviceResources {
         let nearest_sampler =
             crate::resources::builders::clamp_nearest_sampler(device, "volume_nearest_sampler");
 
-        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("volume_lut_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let linear_sampler =
+            crate::resources::builders::clamp_linear_mip_sampler(device, "volume_lut_sampler");
 
         let bgl = self
             .volume
@@ -710,10 +693,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = vertex_buffer.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(bytemuck::cast_slice(&vertices));
-        }
+        crate::resources::builders::write_mapped(
+            vertex_buffer.slice(..),
+            bytemuck::cast_slice(&vertices),
+        );
         vertex_buffer.unmap();
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -722,10 +705,10 @@ impl DeviceResources {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        {
-            let mut view = index_buffer.slice(..).get_mapped_range_mut();
-            view.copy_from_slice(bytemuck::cast_slice(&indices));
-        }
+        crate::resources::builders::write_mapped(
+            index_buffer.slice(..),
+            bytemuck::cast_slice(&indices),
+        );
         index_buffer.unmap();
 
         VolumeGpuData {

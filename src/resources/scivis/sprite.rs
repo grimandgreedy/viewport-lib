@@ -178,11 +178,11 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("sprite"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sprite_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, &bgl, &soft_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "sprite_pipeline_layout",
+            &[&self.camera_bind_group_layout, &bgl, &soft_bgl],
+        );
 
         // Position vertex buffer: one vec3 per sprite, Instance stepping.
         // Stored in an array so both pipeline creations can borrow from it.
@@ -286,50 +286,49 @@ impl DeviceResources {
         );
 
         let bgl_ref = self.sprite.bgl.as_ref().unwrap();
-        let refraction_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sprite_refraction_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, bgl_ref, &refraction_bgl],
-            push_constant_ranges: &[],
-        });
+        let refraction_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "sprite_refraction_pipeline_layout",
+            &[&self.camera_bind_group_layout, bgl_ref, &refraction_bgl],
+        );
 
-        let refraction_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sprite_refraction_pipeline"),
-            layout: Some(&refraction_layout),
-            vertex: wgpu::VertexState {
-                module: &refraction_shader,
-                entry_point: Some("vs_main"),
-                buffers: &vertex_buffers,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let refraction_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "sprite_refraction_pipeline",
+                layout: &refraction_layout,
+                vertex: wgpu::VertexState {
+                    module: &refraction_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffers,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &refraction_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::Less,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &refraction_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        );
 
         self.sprite.refraction_bgl = Some(refraction_bgl);
         self.sprite.refraction_sampler = Some(refraction_sampler);
@@ -354,16 +353,16 @@ impl DeviceResources {
 
         let sprite_bgl_ref = self.sprite.bgl.as_ref().unwrap();
         let soft_bgl_ref = self.sprite.soft_bgl.as_ref().unwrap();
-        let lit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sprite_lit_pipeline_layout"),
-            bind_group_layouts: &[
+        let lit_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "sprite_lit_pipeline_layout",
+            &[
                 &self.camera_bind_group_layout,
                 sprite_bgl_ref,
                 soft_bgl_ref,
                 &lit_bgl,
             ],
-            push_constant_ranges: &[],
-        });
+        );
 
         let make_lit = |depth_write: bool, blend: wgpu::BlendState, label: &str| {
             crate::resources::builders::build_dual_pipeline(

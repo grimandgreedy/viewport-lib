@@ -29,11 +29,11 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("projected_tet"),
         );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pt_pipeline_layout"),
-            bind_group_layouts: &[&self.camera_bind_group_layout, bgl, lut_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "pt_pipeline_layout",
+            &[&self.camera_bind_group_layout, bgl, lut_bgl],
+        );
 
         // Blend states match the existing OIT mesh pipeline.
         let accum_blend = wgpu::BlendState {
@@ -61,51 +61,50 @@ impl DeviceResources {
             },
         };
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("pt_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[], // all data comes from storage buffer via instance_index
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "pt_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[], // all data comes from storage buffer via instance_index
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            blend: Some(accum_blend),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::R8Unorm,
+                            blend: Some(reveal_blend),
+                            write_mask: wgpu::ColorWrites::RED,
+                        }),
+                    ],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None, // bounding quad can have any winding
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    false,
+                    wgpu::CompareFunction::LessEqual,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        blend: Some(accum_blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R8Unorm,
-                        blend: Some(reveal_blend),
-                        write_mask: wgpu::ColorWrites::RED,
-                    }),
-                ],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None, // bounding quad can have any winding
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        );
 
         self.pt.pipeline = Some(pipeline);
     }

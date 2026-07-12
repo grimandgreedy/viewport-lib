@@ -250,44 +250,40 @@ pub(crate) fn build_dual_pipeline(
     desc: &DualPipelineDesc,
 ) -> crate::resources::types::DualPipeline {
     let make = |format: wgpu::TextureFormat| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(desc.label),
-            layout: Some(desc.layout),
-            vertex: wgpu::VertexState {
-                module: desc.shader,
-                entry_point: Some(desc.vertex_entry),
-                buffers: desc.vertex_buffers,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        render_pipeline(
+            device,
+            RenderPipelineDesc {
+                label: desc.label,
+                layout: desc.layout,
+                vertex: wgpu::VertexState {
+                    module: desc.shader,
+                    entry_point: Some(desc.vertex_entry),
+                    buffers: desc.vertex_buffers,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: desc.shader,
+                    entry_point: Some(desc.fragment_entry),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: desc.blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: desc.topology,
+                    cull_mode: desc.cull_mode,
+                    ..Default::default()
+                },
+                depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
+                multisample: wgpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: desc.shader,
-                entry_point: Some(desc.fragment_entry),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: desc.blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: desc.topology,
-                cull_mode: desc.cull_mode,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: desc.depth_write,
-                depth_compare: desc.depth_compare,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: desc.sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        })
+        )
     };
     crate::resources::types::DualPipeline {
         ldr: make(desc.ldr_format),
@@ -310,35 +306,37 @@ pub(crate) fn build_fullscreen_pipeline(
     target_format: wgpu::TextureFormat,
     blend: Option<wgpu::BlendState>,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main"),
-            buffers: &[],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    render_pipeline(
+        device,
+        RenderPipelineDesc {
+            label,
+            layout,
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            cache: None,
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: target_format,
-                blend,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-        cache: None,
-    })
+    )
 }
 
 /// Build an outline selection-mask pipeline: the item's geometry drawn into a
@@ -363,41 +361,37 @@ pub(crate) fn build_outline_mask_pipeline(
     depth_write: bool,
     depth_compare: wgpu::CompareFunction,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main"),
-            buffers: vertex_buffers,
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+    render_pipeline(
+        device,
+        RenderPipelineDesc {
+            label,
+            layout,
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: vertex_buffers,
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: mask_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(scene_depth_stencil(depth_write, depth_compare)),
+            multisample: wgpu::MultisampleState::default(),
+            cache: None,
         },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: mask_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: cull,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
-            depth_write_enabled: depth_write,
-            depth_compare,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-        cache: None,
-    })
+    )
 }
 
 /// Create a compute pipeline. Every compute pipeline in the crate has the same
@@ -421,6 +415,22 @@ pub(crate) fn compute_pipeline(
     })
 }
 
+/// Pipeline layout from a list of bind group layouts, with no push-constant
+/// ranges (nothing in the crate uses push constants). This is the one place the
+/// crate calls `create_pipeline_layout`, so the push-constant field that churns
+/// across wgpu versions only has to be audited here.
+pub(crate) fn pipeline_layout<'a>(
+    device: &wgpu::Device,
+    label: impl Into<wgpu::Label<'a>>,
+    bind_group_layouts: &[&wgpu::BindGroupLayout],
+) -> wgpu::PipelineLayout {
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: label.into(),
+        bind_group_layouts,
+        push_constant_ranges: &[],
+    })
+}
+
 /// Pipeline layout with the standard scene binding convention:
 /// group 0 = camera, group 1 = the feature's per-item bind group layout.
 pub(crate) fn standard_scene_layout(
@@ -429,9 +439,174 @@ pub(crate) fn standard_scene_layout(
     camera_bgl: &wgpu::BindGroupLayout,
     per_item_bgl: &wgpu::BindGroupLayout,
 ) -> wgpu::PipelineLayout {
-    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: &[camera_bgl, per_item_bgl],
-        push_constant_ranges: &[],
+    pipeline_layout(device, label, &[camera_bgl, per_item_bgl])
+}
+
+/// The parts of a render pipeline that vary between call sites. The two fields
+/// that churn across wgpu versions (`multiview`, always `None`; `cache`, passed
+/// through) are filled by [`render_pipeline`], so a version bump only touches
+/// that one function instead of every descriptor literal.
+pub(crate) struct RenderPipelineDesc<'a> {
+    pub label: &'a str,
+    pub layout: &'a wgpu::PipelineLayout,
+    pub vertex: wgpu::VertexState<'a>,
+    pub fragment: Option<wgpu::FragmentState<'a>>,
+    pub primitive: wgpu::PrimitiveState,
+    pub depth_stencil: Option<wgpu::DepthStencilState>,
+    pub multisample: wgpu::MultisampleState,
+    pub cache: Option<&'a wgpu::PipelineCache>,
+}
+
+/// Create a render pipeline from the parts that vary ([`RenderPipelineDesc`]),
+/// filling `multiview: None`. This is the one place the crate calls
+/// `create_render_pipeline`, so the `multiview` field that changes shape across
+/// wgpu versions only has to be audited here.
+pub(crate) fn render_pipeline(
+    device: &wgpu::Device,
+    desc: RenderPipelineDesc,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(desc.label),
+        layout: Some(desc.layout),
+        vertex: desc.vertex,
+        fragment: desc.fragment,
+        primitive: desc.primitive,
+        depth_stencil: desc.depth_stencil,
+        multisample: desc.multisample,
+        multiview: None,
+        cache: desc.cache,
     })
+}
+
+/// A depth-stencil state with the given format, depth write flag, and compare
+/// function, using the default stencil state and depth bias. Centralises the
+/// `DepthStencilState` construction that changes shape across wgpu versions.
+pub(crate) fn depth_stencil(
+    format: wgpu::TextureFormat,
+    depth_write_enabled: bool,
+    depth_compare: wgpu::CompareFunction,
+) -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format,
+        depth_write_enabled,
+        depth_compare,
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    }
+}
+
+/// The scene depth-stencil state: `Depth24PlusStencil8` shared by every scene
+/// render pass, parameterised by the depth write flag and compare function that
+/// vary per pipeline.
+pub(crate) fn scene_depth_stencil(
+    depth_write_enabled: bool,
+    depth_compare: wgpu::CompareFunction,
+) -> wgpu::DepthStencilState {
+    depth_stencil(
+        wgpu::TextureFormat::Depth24PlusStencil8,
+        depth_write_enabled,
+        depth_compare,
+    )
+}
+
+/// Create a render-bundle encoder, filling `multiview: None`. This is the one
+/// place the crate calls `create_render_bundle_encoder`, so the `multiview`
+/// field that changes shape across wgpu versions is audited here alongside the
+/// render-pipeline path.
+pub(crate) fn render_bundle_encoder<'a>(
+    device: &'a wgpu::Device,
+    label: &str,
+    color_formats: &[Option<wgpu::TextureFormat>],
+    depth_stencil: Option<wgpu::RenderBundleDepthStencil>,
+    sample_count: u32,
+) -> wgpu::RenderBundleEncoder<'a> {
+    device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+        label: Some(label),
+        color_formats,
+        depth_stencil,
+        sample_count,
+        multiview: None,
+    })
+}
+
+/// Write `bytes` into the front of a buffer slice mapped at creation. Wraps
+/// `get_mapped_range_mut` + `copy_from_slice`; the caller still owns the
+/// matching `unmap()`. `bytes` may be shorter than the slice (a buffer padded
+/// to a minimum size), in which case only the leading `bytes.len()` are
+/// written. This is the one place the crate maps a buffer for writing, so the
+/// mapped-view API change across wgpu versions is audited here.
+pub(crate) fn write_mapped(slice: wgpu::BufferSlice, bytes: &[u8]) {
+    slice.get_mapped_range_mut()[..bytes.len()].copy_from_slice(bytes);
+}
+
+/// Comparison sampler for shadow-map PCF: linear filtering with a depth compare
+/// function, edge-clamped by default.
+pub(crate) fn comparison_sampler(
+    device: &wgpu::Device,
+    label: &str,
+    compare: wgpu::CompareFunction,
+) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(label),
+        compare: Some(compare),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    })
+}
+
+/// Linear-filtered sampler clamped to edge on all axes, with linear mip
+/// filtering. Like [`clamp_linear_sampler`] but samples across the mip chain
+/// (used by the volume LUT lookups).
+pub(crate) fn clamp_linear_mip_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    })
+}
+
+/// Run `f` under a wgpu validation error scope, returning its result alongside
+/// any validation error captured while it ran. This is the one place the crate
+/// uses `push_error_scope` / `pop_error_scope`, so the error-scope API change
+/// across wgpu versions is audited here.
+pub(crate) fn capture_validation<T>(
+    device: &wgpu::Device,
+    f: impl FnOnce() -> T,
+) -> (T, Option<wgpu::Error>) {
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let value = f();
+    let captured = block_on_simple(device.pop_error_scope());
+    (value, captured)
+}
+
+/// Tiny sync executor that polls a future until it resolves. wgpu's
+/// `pop_error_scope` resolves on the next driver poll, which the device itself
+/// drives; spinning here is fine because validation completes without going
+/// through the device's command queue.
+fn block_on_simple<F: std::future::Future>(mut fut: F) -> F::Output {
+    use std::pin::Pin;
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(
+        |_| RawWaker::new(std::ptr::null(), &VTABLE),
+        |_| {},
+        |_| {},
+        |_| {},
+    );
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+    let mut cx = Context::from_waker(&waker);
+    // SAFETY: we own `fut` on the stack and never move it after this point.
+    let mut fut = unsafe { Pin::new_unchecked(&mut fut) };
+    loop {
+        if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+            return v;
+        }
+        std::thread::yield_now();
+    }
 }

@@ -330,11 +330,11 @@ impl ClusteredResources {
             "cluster_clear_shader",
             crate::resources::builders::wgsl_source!("cluster_clear"),
         );
-        let clear_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("cluster_clear_pipeline_layout"),
-            bind_group_layouts: &[&clear_bgl],
-            push_constant_ranges: &[],
-        });
+        let clear_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "cluster_clear_pipeline_layout",
+            &[&clear_bgl],
+        );
         let clear_pipeline = crate::resources::builders::compute_pipeline(
             device,
             "cluster_clear_pipeline",
@@ -386,11 +386,11 @@ impl ClusteredResources {
             "cluster_build_shader",
             crate::resources::builders::wgsl_source!("cluster_build"),
         );
-        let build_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("cluster_build_pipeline_layout"),
-            bind_group_layouts: &[&build_bgl],
-            push_constant_ranges: &[],
-        });
+        let build_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "cluster_build_pipeline_layout",
+            &[&build_bgl],
+        );
         let build_pipeline = crate::resources::builders::compute_pipeline(
             device,
             "cluster_build_pipeline",

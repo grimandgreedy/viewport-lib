@@ -182,40 +182,40 @@ impl DeviceResources {
     ) -> wgpu::RenderPipeline {
         let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
         let desc = self.opaque_target_desc();
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: opts.label,
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: opts.shader,
-                entry_point: Some(opts.vs_entry),
-                buffers: opts.vertex_layouts,
-                compilation_options: Default::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: opts.shader,
+                    entry_point: Some(opts.vs_entry),
+                    buffers: opts.vertex_layouts,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: desc.color_format,
+                        blend: opts.color_blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::depth_stencil(
+                    desc.depth_format,
+                    opts.depth_write,
+                    opts.depth_compare,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: opts.shader,
-                entry_point: Some(opts.fs_entry),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: desc.color_format,
-                    blend: opts.color_blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: opts.primitive,
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: desc.depth_format,
-                depth_write_enabled: opts.depth_write,
-                depth_compare: opts.depth_compare,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: desc.sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        })
+        )
     }
 
     /// Build a transparent pipeline that draws into the OIT pass.
@@ -230,47 +230,47 @@ impl DeviceResources {
     ) -> wgpu::RenderPipeline {
         let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
         let desc = self.oit_target_desc();
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: opts.label,
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: opts.shader,
-                entry_point: Some(opts.vs_entry),
-                buffers: opts.vertex_layouts,
-                compilation_options: Default::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: opts.shader,
+                    entry_point: Some(opts.vs_entry),
+                    buffers: opts.vertex_layouts,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format: desc.accum_format,
+                            blend: Some(desc.accum_blend),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: desc.reveal_format,
+                            blend: Some(desc.reveal_blend),
+                            write_mask: wgpu::ColorWrites::RED,
+                        }),
+                    ],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::depth_stencil(
+                    desc.depth_format,
+                    false,
+                    wgpu::CompareFunction::LessEqual,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: opts.shader,
-                entry_point: Some(opts.fs_entry),
-                targets: &[
-                    Some(wgpu::ColorTargetState {
-                        format: desc.accum_format,
-                        blend: Some(desc.accum_blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: desc.reveal_format,
-                        blend: Some(desc.reveal_blend),
-                        write_mask: wgpu::ColorWrites::RED,
-                    }),
-                ],
-                compilation_options: Default::default(),
-            }),
-            primitive: opts.primitive,
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: desc.depth_format,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: desc.sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        })
+        )
     }
 
     /// Build a pipeline for the outline-mask pass (R8 target).
@@ -285,40 +285,40 @@ impl DeviceResources {
     ) -> wgpu::RenderPipeline {
         let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
         let desc = self.mask_target_desc();
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: opts.label,
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: opts.shader,
-                entry_point: Some(opts.vs_entry),
-                buffers: opts.vertex_layouts,
-                compilation_options: Default::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: opts.shader,
+                    entry_point: Some(opts.vs_entry),
+                    buffers: opts.vertex_layouts,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: desc.color_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::RED,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::depth_stencil(
+                    desc.depth_format,
+                    false,
+                    wgpu::CompareFunction::LessEqual,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: opts.shader,
-                entry_point: Some(opts.fs_entry),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: desc.color_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::RED,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: opts.primitive,
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: desc.depth_format,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: desc.sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        })
+        )
     }
 
     /// Build a pipeline for the pick-id pass.
@@ -347,40 +347,40 @@ impl DeviceResources {
                 write_mask: wgpu::ColorWrites::ALL,
             })
         };
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: opts.label,
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: opts.shader,
-                entry_point: Some(opts.vs_entry),
-                buffers: opts.vertex_layouts,
-                compilation_options: Default::default(),
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: opts.shader,
+                    entry_point: Some(opts.vs_entry),
+                    buffers: opts.vertex_layouts,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[
+                        color_target(desc.object_id_format),
+                        color_target(desc.primitive_id_format),
+                        color_target(desc.depth_channel_format),
+                    ],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::depth_stencil(
+                    desc.depth_stencil_format,
+                    true,
+                    wgpu::CompareFunction::LessEqual,
+                )),
+                multisample: wgpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: opts.shader,
-                entry_point: Some(opts.fs_entry),
-                targets: &[
-                    color_target(desc.object_id_format),
-                    color_target(desc.primitive_id_format),
-                    color_target(desc.depth_channel_format),
-                ],
-                compilation_options: Default::default(),
-            }),
-            primitive: opts.primitive,
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: desc.depth_stencil_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: desc.sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        })
+        )
     }
 
     /// Build a depth-only pipeline for the shadow-atlas pass.
@@ -406,35 +406,37 @@ impl DeviceResources {
                 compilation_options: Default::default(),
             })
         };
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: opts.label,
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: opts.shader,
-                entry_point: Some(opts.vs_entry),
-                buffers: opts.vertex_layouts,
-                compilation_options: Default::default(),
-            },
-            fragment,
-            primitive: opts.primitive,
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: desc.depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: opts.shader,
+                    entry_point: Some(opts.vs_entry),
+                    buffers: opts.vertex_layouts,
+                    compilation_options: Default::default(),
                 },
-            }),
-            multisample: wgpu::MultisampleState {
-                count: desc.sample_count,
-                ..Default::default()
+                fragment,
+                primitive: opts.primitive,
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: desc.depth_format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
             },
-            multiview: None,
-            cache: None,
-        })
+        )
     }
 }
 
@@ -510,9 +512,5 @@ fn build_layout(
     let mut bgls: Vec<&wgpu::BindGroupLayout> = Vec::with_capacity(1 + extras.len());
     bgls.push(&res.camera_bind_group_layout);
     bgls.extend(extras.iter().copied());
-    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label,
-        bind_group_layouts: &bgls,
-        push_constant_ranges: &[],
-    })
+    crate::resources::builders::pipeline_layout(device, label, &bgls)
 }
