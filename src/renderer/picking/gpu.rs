@@ -66,6 +66,29 @@ impl ViewportRenderer {
         cursor: glam::Vec2,
         frame: &FrameData,
     ) -> Option<crate::interaction::query::picking::GpuPickHit> {
+        self.pick_scene_gpu_masked(
+            device,
+            queue,
+            cursor,
+            frame,
+            crate::interaction::select::pick_mask::PickMask::all(),
+        )
+    }
+
+    /// GPU object-ID pick restricted to the item types `mask` selects.
+    ///
+    /// A type is drawn into the pick pass only when it answers a bit in `mask`,
+    /// so a typed query (say an instance-only mask) is never occluded by an
+    /// object of a type the caller did not ask for. Types with no pick pipeline
+    /// yet do not draw, so they read back as no hit rather than a wrong hit.
+    pub(crate) fn pick_scene_gpu_masked(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        cursor: glam::Vec2,
+        frame: &FrameData,
+        mask: crate::interaction::select::pick_mask::PickMask,
+    ) -> Option<crate::interaction::query::picking::GpuPickHit> {
         // In Playback mode, throttle picking to every 4th frame to reduce overhead
         // during animation. Interactive, Paused, and Capture modes always pick.
         if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
@@ -98,31 +121,48 @@ impl ViewportRenderer {
         self.resources.ensure_pick_pipeline(device);
 
         // --- build PickInstance data ---
-        // Only surfaces with a nonzero pick_id participate in picking.
-        // Clear value 0 means "no hit" (or non-pickable surface).
-        let pickable_items: Vec<&SceneRenderItem> = scene_items
-            .iter()
-            .filter(|item| !item.settings.hidden && item.settings.pick_id != PickId::NONE)
-            .collect();
+        // Every mesh-backed pickable item draws through the surface pipeline:
+        // scene surfaces, plus volume-mesh boundaries (both opaque and
+        // transparent, which render their boundary as a surface mesh). Items that
+        // are hidden or have pick_id 0 are skipped; clear value 0 means "no hit".
+        let pickable =
+            |item: &SceneRenderItem| !item.settings.hidden && item.settings.pick_id != PickId::NONE;
+        let to_instance = |item: &SceneRenderItem| {
+            let m = item.model;
+            PickInstance {
+                model_c0: m[0],
+                model_c1: m[1],
+                model_c2: m[2],
+                model_c3: m[3],
+                object_id: item.settings.pick_id.0 as u32,
+                _pad: [0; 3],
+            }
+        };
 
-        let pick_instances: Vec<PickInstance> = pickable_items
-            .iter()
-            .map(|item| {
-                let m = item.model;
-                PickInstance {
-                    model_c0: m[0],
-                    model_c1: m[1],
-                    model_c2: m[2],
-                    model_c3: m[3],
-                    object_id: item.settings.pick_id.0 as u32,
-                    _pad: [0; 3],
-                }
-            })
-            .collect();
+        let mut draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)> = Vec::new();
+        // Surfaces and volume-mesh boundaries draw through the Surface pipeline;
+        // skip building their instance data when the mask asks for none of the
+        // levels that type answers.
+        if PickItemType::Surface.satisfies(mask) {
+            for item in scene_items.iter().filter(|i| pickable(i)) {
+                draws.push((item.mesh_id, to_instance(item)));
+            }
+            for ri in frame
+                .scene
+                .volume_meshes
+                .iter()
+                .map(|vm| vm.to_render_item())
+                .filter(pickable)
+            {
+                draws.push((ri.mesh_id, to_instance(&ri)));
+            }
+        }
 
-        if pick_instances.is_empty() {
+        if draws.is_empty() {
             return None;
         }
+
+        let pick_instances: Vec<PickInstance> = draws.iter().map(|(_, inst)| *inst).collect();
 
         // --- pick instance storage buffer + bind group ---
         let pick_instance_bytes = bytemuck::cast_slice(&pick_instances);
@@ -316,12 +356,10 @@ impl ViewportRenderer {
 
             // Pick pass registry: draw every item type that answers the mask.
             // Only surfaces are wired today; other types register as variants of
-            // PickItemType as their pick pipelines land. The mask defaults to
-            // "everything" here; the type filter narrows to the requested types
-            // once the object entry points thread a mask through.
-            let pick_mask = crate::interaction::select::pick_mask::PickMask::all();
+            // PickItemType as their pick pipelines land. A type that answers no
+            // requested bit is skipped, so an unbuilt type reads back as no hit.
             for item_type in PickItemType::ALL {
-                if !item_type.satisfies(pick_mask) {
+                if !item_type.satisfies(mask) {
                     continue;
                 }
                 match item_type {
@@ -335,9 +373,9 @@ impl ViewportRenderer {
                         );
                         pick_pass.set_bind_group(1, &pick_instance_bg, &[]);
 
-                        // Instance index in the storage buffer = position in pick_instances.
-                        for (instance_slot, item) in pickable_items.iter().enumerate() {
-                            let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+                        // Instance index in the storage buffer = position in draws.
+                        for (instance_slot, (mesh_id, _)) in draws.iter().enumerate() {
+                            let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                                 continue;
                             };
                             pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));

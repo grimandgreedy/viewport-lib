@@ -86,9 +86,11 @@ pub enum PickBackend {
     /// per the mask, and reads the per-frame pick cache, which must be enabled
     /// with [`set_cpu_pick_cache`](ViewportRenderer::set_cpu_pick_cache).
     Cpu,
-    /// GPU object-id readback. Object-level only: `sub_object` is always `None`.
-    /// Its cost tracks the render rather than the object count, so it is the
-    /// backend for large scenes.
+    /// GPU object-id readback. Object-level only: `sub_object` is always `None`,
+    /// even when the mask asks for a sub-object level, until sub-object picking
+    /// reads back the primitive channel. Its cost tracks the render rather than
+    /// the object count, so it is the backend for large scenes. For sub-object
+    /// identity, run the [`Cpu`](Self::Cpu) backend on the object it returns.
     Gpu,
 }
 
@@ -96,9 +98,12 @@ impl ViewportRenderer {
     /// Pick the nearest object under `cursor`, running `backend` and returning a
     /// shared [`PickHit`](crate::interaction::query::picking::PickHit).
     ///
-    /// The camera and viewport size come from `frame`. `mask` is used by the CPU
-    /// backend to choose which item types and sub-object levels participate; the
-    /// GPU backend answers object identity only and ignores the sub-object bits.
+    /// The camera and viewport size come from `frame`. `mask` chooses which item
+    /// types and sub-object levels participate. Both backends use it to select
+    /// item types; the CPU backend also fills the sub-object level, while the GPU
+    /// backend answers object identity only (`sub_object` is `None`). A type the
+    /// GPU pass has no pipeline for yet is simply not drawn, so it returns no hit
+    /// rather than a wrong one.
     pub fn pick_object(
         &mut self,
         backend: PickBackend,
@@ -113,7 +118,7 @@ impl ViewportRenderer {
         match backend {
             PickBackend::Cpu => self.pick(cursor, viewport_size, view_proj, mask),
             PickBackend::Gpu => self
-                .pick_scene_gpu(device, queue, cursor, frame)
+                .pick_scene_gpu_masked(device, queue, cursor, frame, mask)
                 .map(|hit| hit.to_pick_hit(cursor, viewport_size, view_proj)),
         }
     }

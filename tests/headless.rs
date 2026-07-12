@@ -4,7 +4,8 @@
 //! resource APIs. Requires a GPU adapter (software or hardware).
 
 use viewport_lib::{
-    BackfacePolicy, Camera, Material, MeshId, PickId, Scene, Selection,
+    BackfacePolicy, Camera, Material, MeshId, PickBackend, PickId, PickMask, Scene, Selection,
+    VolumeMeshItem,
     error::ViewportError,
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
@@ -766,4 +767,110 @@ fn gpu_pick_returns_object_id_under_cursor() {
     // multi-target pick pass (object id + primitive id + depth).
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(7)));
+}
+
+#[test]
+fn gpu_pick_hits_volume_mesh_boundary() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // The box stands in for an extracted volume-mesh boundary surface.
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // No surfaces: the only pickable geometry is a volume-mesh boundary, which
+    // the pick pass only sees after G3 folds boundaries into the surface draw.
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    let mut vm = VolumeMeshItem::new(mesh_idx, vec![]);
+    vm.settings.pick_id = PickId(9);
+    frame.scene.volume_meshes = vec![vm];
+
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(9)));
+}
+
+#[test]
+fn gpu_pick_object_honors_type_mask() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.settings.pick_id = PickId(7);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let cursor = glam::Vec2::new(32.0, 32.0);
+
+    // OBJECT mask: the surface draws and its object id comes back, but the GPU
+    // path is object-level so there is no sub-object even for a mesh.
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        cursor,
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(hit.map(|h| h.id), Some(7));
+    assert_eq!(hit.and_then(|h| h.sub_object), None);
+
+    // INSTANCE mask: surfaces answer no instance-level query, so nothing draws
+    // and the pick reads back as a clean miss rather than the surface behind it.
+    let miss = renderer.pick_object(
+        PickBackend::Gpu,
+        cursor,
+        &frame,
+        &device,
+        &queue,
+        PickMask::INSTANCE,
+    );
+    assert!(miss.is_none());
 }
