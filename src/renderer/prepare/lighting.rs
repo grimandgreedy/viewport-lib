@@ -635,9 +635,13 @@ impl ViewportRenderer {
                 // relative to the real texture. The requested resolution enters
                 // through the atlas rects, which shrink when it is lowered.
                 atlas_size: crate::resources::SHADOW_ATLAS_SIZE as f32,
+                // Tier values match the dispatch in csm.wgsl.
                 shadow_filter: match lighting.shadow_filter {
                     ShadowFilter::Pcf => 0,
                     ShadowFilter::Pcss => 1,
+                    ShadowFilter::Hard => 2,
+                    ShadowFilter::PcfHigh => 3,
+                    ShadowFilter::PcssFast => 4,
                 },
                 pcss_light_radius: lighting.pcss_light_radius,
                 atlas_rects,

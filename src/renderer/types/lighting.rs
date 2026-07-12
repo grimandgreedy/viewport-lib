@@ -119,13 +119,33 @@ pub const MAX_POINT_SHADOW_LIGHTS: u32 = 8;
 pub const POINT_SHADOW_FACE_SIZE: u32 = 1024;
 
 /// Shadow filtering mode.
+///
+/// Two axes in one enum: the penumbra model (hard edge, fixed-width PCF,
+/// or variable-width PCSS with contact hardening) and the sampling budget
+/// within that model. Receiver-side filtering runs per lit fragment, so
+/// the tap count is a whole-scene cost multiplier on shadowed frames.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ShadowFilter {
-    /// Standard 3x3 PCF (fast).
+    /// One hardware-compare tap (2x2 bilinear). Crisp edges; the cheapest
+    /// tier.
+    Hard,
+    /// 8-tap rotated-Poisson PCF over a fixed 1.5-texel radius. The
+    /// default: visually close to [`PcfHigh`](Self::PcfHigh) at a quarter
+    /// of the sampling cost.
     #[default]
     Pcf,
-    /// Percentage-Closer Soft Shadows (variable penumbra width, higher cost).
+    /// 32-tap rotated-Poisson PCF over the same radius. This was the
+    /// `Pcf` behaviour before v0.20.0; the extra taps slightly smooth the
+    /// penumbra dither.
+    PcfHigh,
+    /// Percentage-Closer Soft Shadows: a blocker search sizes a variable
+    /// penumbra per fragment (contact hardening), then a wide filter
+    /// samples it. 16 blocker + 32 filter taps; the most expensive tier.
     Pcss,
+    /// PCSS with halved loops (8 blocker + 16 filter taps). Same contact
+    /// hardening; noisier in the widest penumbras.
+    PcssFast,
 }
 
 /// Per-frame lighting configuration for the viewport.

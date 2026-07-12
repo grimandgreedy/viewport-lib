@@ -58,6 +58,8 @@ Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin:
 
 ### Breaking changes
 
+- **The default shadow filter dropped from 32 to 8 PCF taps, and `ShadowFilter` gained tiers.** Receiver-side shadow filtering runs per lit fragment and was the single largest cost on dense shadowed scenes (~16 ms at 12M triangles on an RTX 3080); 8 rotated Poisson taps over the same 1.5-texel radius look nearly identical at a quarter of the cost. `ShadowFilter::PcfHigh` restores the previous 32-tap output exactly; new `Hard` (one hardware-compare tap) and `PcssFast` (halved PCSS loops) tiers round out the range. The enum is now `#[non_exhaustive]`. The CSM sampling code also moved to one shared shader include; per-shader copies had drifted (the two-sided receiver bias fix existed only on the per-object path).
+
 - **`cast_shadows = false` is now honoured on the primary directional light.** If your scene sets the flag but relied on shadows rendering anyway, set it back to `true`.
 
 - **Oversized meshes are refused up front.** `upload_mesh_data` and friends return `ViewportError::MeshTooLarge` for meshes that exceed the device's buffer limit, instead of losing the device to a validation error.
