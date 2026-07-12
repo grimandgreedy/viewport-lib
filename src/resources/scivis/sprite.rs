@@ -20,6 +20,11 @@ pub(crate) struct SpriteResources {
     pub(crate) refraction_sampler: Option<wgpu::Sampler>,
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
     pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    /// GPU object-id pick pipeline. Reuses the sprite render vertex expansion and
+    /// writes the item's pick_id. None until the first pick call with sprites.
+    pub(crate) pick_pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 2 layout for the per-draw pick_id uniform used by `pick_pipeline`.
+    pub(crate) pick_id_bgl: Option<wgpu::BindGroupLayout>,
     /// Bind group layout for the per-pass scene-depth resolve bound at group 2.
     pub(crate) soft_bgl: Option<wgpu::BindGroupLayout>,
     /// Fallback bind group for the group-2 soft-particle binding.
@@ -652,6 +657,7 @@ impl DeviceResources {
         SpriteGpuData {
             vertex_buffer,
             sprite_count: count,
+            pick_id: item.settings.pick_id,
             bind_group,
             depth_write: item.depth_write,
             blend: item.blend,
@@ -926,6 +932,9 @@ impl DeviceResources {
 /// Per-frame GPU data for one sprite batch item, created in `prepare()`.
 #[derive(Clone)]
 pub struct SpriteGpuData {
+    /// Object-level pick id shared by every instance in the batch (from the
+    /// item's `settings.pick_id`); `PickId::NONE` when not pickable.
+    pub(crate) pick_id: crate::PickId,
     /// Position vertex buffer: one `vec3` per sprite, instance-stepped.
     pub(crate) vertex_buffer: wgpu::Buffer,
     /// Number of sprites (= draw instance count).

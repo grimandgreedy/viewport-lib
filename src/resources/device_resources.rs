@@ -1503,6 +1503,116 @@ impl DeviceResources {
             build_glyph_pick_pipeline(device, "tensor_glyph_pick_pipeline", &layout, &shader);
         self.pick.tensor_glyph_pipeline = Some(pipeline);
     }
+
+    /// Lazily create the sprite pick pipeline. Reuses the sprite render vertex
+    /// expansion (same position vertex buffer + sprite bind group) with a
+    /// fragment that writes the item's object id. Group 0 is the full camera
+    /// bind group (the sprite billboard expansion needs the viewport size that
+    /// lives there); group 2 carries the per-draw pick id.
+    pub(crate) fn ensure_sprite_pick_pipeline(&mut self, device: &wgpu::Device) {
+        if self.sprite.pick_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        self.ensure_sprite_pipelines(device);
+
+        let pick_id_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sprite_pick_id_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let sprite_bgl = self
+            .sprite
+            .bgl
+            .as_ref()
+            .expect("ensure_sprite_pipelines must build the sprite bind group layout");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "sprite_pick_shader",
+            crate::resources::builders::wgsl_source!("sprite_pick"),
+        );
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sprite_pick_pipeline_layout"),
+            bind_group_layouts: &[&self.camera_bind_group_layout, sprite_bgl, &pick_id_bgl],
+            push_constant_ranges: &[],
+        });
+
+        // Position vertex buffer: one vec3 per sprite, instance-stepped, exactly
+        // as the sprite render pipeline binds it.
+        let vert_attrs = [wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x3,
+        }];
+        let vertex_buffers = [wgpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &vert_attrs,
+        }];
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sprite_pick_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &vertex_buffers,
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.sprite.pick_id_bgl = Some(pick_id_bgl);
+        self.sprite.pick_pipeline = Some(pipeline);
+    }
 }
 
 /// Build a glyph / tensor glyph pick pipeline. Both share the same fragment

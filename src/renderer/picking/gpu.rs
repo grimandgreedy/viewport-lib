@@ -22,6 +22,9 @@ enum PickItemType {
     /// Glyph and tensor-glyph sets: instanced base meshes drawn with a dedicated
     /// pick pipeline that reuses the render vertex transform. Object-level only.
     Glyph,
+    /// Sprite sets: camera-facing quads expanded in the vertex shader, drawn with
+    /// a dedicated pick pipeline that reuses the render expansion. Object-level.
+    Sprite,
 }
 
 impl PickItemType {
@@ -42,8 +45,11 @@ impl PickItemType {
             PickItemType::Curve => {
                 mask.intersects(PickMask::OBJECT | PickMask::SEGMENT | PickMask::STRIP)
             }
-            // Glyph sets answer the object mask plus the per-instance level.
-            PickItemType::Glyph => mask.intersects(PickMask::OBJECT | PickMask::INSTANCE),
+            // Glyph and sprite sets answer the object mask plus the per-instance
+            // level.
+            PickItemType::Glyph | PickItemType::Sprite => {
+                mask.intersects(PickMask::OBJECT | PickMask::INSTANCE)
+            }
         }
     }
 }
@@ -59,6 +65,16 @@ struct GlyphPickDraw<'a> {
     index_buffer: &'a wgpu::Buffer,
     index_count: u32,
     instance_count: u32,
+}
+
+/// One sprite set to draw into the pick pass. The group-2 pick-id bind group is
+/// owned; the sprite bind group and position buffer are borrowed from prepared
+/// state. The pipeline and group-0 camera bind group are shared across sets.
+struct SpritePickDraw<'a> {
+    id_bind_group: wgpu::BindGroup,
+    sprite_bind_group: &'a wgpu::BindGroup,
+    vertex_buffer: &'a wgpu::Buffer,
+    sprite_count: u32,
 }
 
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
@@ -175,6 +191,14 @@ impl ViewportRenderer {
         }
         if has_pickable_tensor {
             self.resources.ensure_tensor_glyph_pick_pipeline(device);
+        }
+        let has_pickable_sprites = PickItemType::Sprite.satisfies(mask)
+            && self
+                .sprite_gpu_data
+                .iter()
+                .any(|g| g.pick_id != PickId::NONE && g.sprite_count > 0);
+        if has_pickable_sprites {
+            self.resources.ensure_sprite_pick_pipeline(device);
         }
 
         // --- build PickInstance data ---
@@ -335,7 +359,48 @@ impl ViewportRenderer {
             }
         }
 
-        if draws.is_empty() && glyph_draws.is_empty() {
+        // Sprite sets draw with their own pipeline. Each set gets a group-2 bind
+        // group holding its object id; the pipeline and camera bind group are
+        // shared, so only the id, sprite bind group, and position buffer vary.
+        let mut sprite_draws: Vec<SpritePickDraw> = Vec::new();
+        if has_pickable_sprites {
+            let id_bgl = self
+                .resources
+                .sprite
+                .pick_id_bgl
+                .as_ref()
+                .expect("sprite pick id bgl");
+            for gpu in self
+                .sprite_gpu_data
+                .iter()
+                .filter(|g| g.pick_id != PickId::NONE && g.sprite_count > 0)
+            {
+                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("sprite_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("sprite_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                sprite_draws.push(SpritePickDraw {
+                    id_bind_group,
+                    sprite_bind_group: &gpu.bind_group,
+                    vertex_buffer: &gpu.vertex_buffer,
+                    sprite_count: gpu.sprite_count,
+                });
+            }
+        }
+
+        if draws.is_empty() && glyph_draws.is_empty() && sprite_draws.is_empty() {
             return None;
         }
 
@@ -583,6 +648,22 @@ impl ViewportRenderer {
                 pick_pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
                 pick_pass.set_index_buffer(gd.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pick_pass.draw_indexed(0..gd.index_count, 0, 0..gd.instance_count);
+            }
+
+            // Sprite sets: camera-facing quads expanded in the vertex shader. The
+            // pipeline and full camera bind group (group 0) are shared; each set
+            // varies its sprite bind group, pick-id, and position buffer.
+            if let Some(sprite_pipeline) = self.resources.sprite.pick_pipeline.as_ref() {
+                if !sprite_draws.is_empty() {
+                    pick_pass.set_pipeline(sprite_pipeline);
+                    pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                    for sd in &sprite_draws {
+                        pick_pass.set_bind_group(1, sd.sprite_bind_group, &[]);
+                        pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
+                        pick_pass.set_vertex_buffer(0, sd.vertex_buffer.slice(..));
+                        pick_pass.draw(0..6, 0..sd.sprite_count);
+                    }
+                }
             }
         }
 

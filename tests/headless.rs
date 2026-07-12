@@ -5,7 +5,7 @@
 
 use viewport_lib::{
     BackfacePolicy, Camera, GlyphItem, GlyphType, Material, MeshId, PickBackend, PickId, PickMask,
-    RibbonItem, Scene, Selection, VolumeMeshItem,
+    RibbonItem, Scene, Selection, SpriteItem, SpriteSizeMode, VolumeMeshItem,
     error::ViewportError,
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
@@ -957,4 +957,45 @@ fn gpu_pick_hits_glyph_set() {
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(555)));
+}
+
+#[test]
+fn gpu_pick_hits_sprite_set() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // One large world-space sprite at the origin. Sprite billboards are expanded
+    // during the render vertex stage, which the pick pipeline reuses, so prepare
+    // must run first to build the sprite buffers.
+    let mut sprite = SpriteItem::default();
+    sprite.positions = vec![[0.0, 0.0, 0.0]];
+    sprite.default_size = 4.0;
+    sprite.size_mode = SpriteSizeMode::WorldSpace;
+    sprite.settings.pick_id = PickId(777);
+    frame.scene.sprite_items.push(sprite);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(777)));
 }
