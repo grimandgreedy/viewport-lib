@@ -415,6 +415,7 @@ impl DeviceResources {
             return false;
         }
         self.evict_texture_bind_group_caches(id.raw());
+        self.resource_free_epoch += 1;
         true
     }
 
@@ -1115,7 +1116,11 @@ impl DeviceResources {
         let cache_key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
+            // Index and generation both: cached per-object entries can now
+            // outlive a mesh slot's occupant, so a freed-and-reused slot must
+            // not alias the old occupant's bind group.
             mesh_id.index().hash(&mut h);
+            mesh_id.generation.hash(&mut h);
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
             normal_map_id
                 .map(|t| t.raw())

@@ -422,15 +422,53 @@ impl ViewportRenderer {
             }
         }
 
-        // Drop cache entries for objects not seen for a while, so a long
-        // streaming session does not carry resources for evicted objects
-        // forever. The grace window tolerates an object briefly leaving the
-        // per-object path (a frame of frustum-edge culling) without losing its
-        // bind group.
-        const CACHE_GRACE_FRAMES: u64 = 60;
-        mesh_uniforms
-            .cache
-            .retain(|_, e| e.last_frame + CACHE_GRACE_FRAMES >= frame_index);
+        // Capacity-based eviction. An entry whose item left the frame (hidden,
+        // culled, or streamed out) keeps its uniform buffer and bind group
+        // until the cache exceeds its budget, so re-showing a large set does
+        // not rebuild every bind group in one frame (~11 us per item measured;
+        // 11 ms for 1k items). The previous policy evicted by age (60 frames),
+        // which made any hide-longer-than-a-second / re-show cycle pay that
+        // storm. Entries used this frame are never evicted: the budget is at
+        // least twice the live set, so eviction only ever removes stale
+        // entries, oldest first.
+        // A freed texture or mesh may still be referenced by a stale entry's
+        // bind group, which would pin its GPU memory for as long as the entry
+        // stays cached. Purge every stale entry when something was freed;
+        // live entries reference only live resources.
+        if mesh_uniforms.free_epoch != resources.resource_free_epoch {
+            mesh_uniforms.free_epoch = resources.resource_free_epoch;
+            mesh_uniforms
+                .cache
+                .retain(|_, e| e.last_frame == frame_index);
+        }
+
+        const CACHE_MIN_CAPACITY: usize = 8192;
+        if mesh_uniforms.cache.len() > CACHE_MIN_CAPACITY {
+            let live = mesh_uniforms
+                .cache
+                .values()
+                .filter(|e| e.last_frame == frame_index)
+                .count();
+            let cap = CACHE_MIN_CAPACITY.max(live.saturating_mul(2));
+            let len = mesh_uniforms.cache.len();
+            if len > cap {
+                let excess = len - cap;
+                let mut stale_frames: Vec<u64> = mesh_uniforms
+                    .cache
+                    .values()
+                    .map(|e| e.last_frame)
+                    .filter(|f| *f != frame_index)
+                    .collect();
+                stale_frames.sort_unstable();
+                // Evict every stale entry at least as old as the excess-th
+                // oldest. Ties may evict slightly past the budget; all such
+                // entries are equally stale.
+                let threshold = stale_frames[excess.min(stale_frames.len()) - 1];
+                mesh_uniforms
+                    .cache
+                    .retain(|_, e| e.last_frame == frame_index || e.last_frame > threshold);
+            }
+        }
 
         // Build per-item wireframe bind groups so each visible item gets its own
         // object uniform, avoiding the shared-MeshId overwrite problem.

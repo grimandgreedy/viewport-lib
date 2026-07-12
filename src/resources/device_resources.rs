@@ -876,6 +876,11 @@ pub struct DeviceResources {
     /// create pipelines (not on their no-op early returns). Read and reset
     /// each `prepare()` call to populate `FrameStats::pipelines_built_this_frame`.
     pub frame_pipelines_built: u32,
+    /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
+    /// holds bind groups that keep their referenced GPU resources alive; when
+    /// this changes, the cache purges its stale entries so a freed resource's
+    /// memory is actually reclaimed instead of pinned by an unused bind group.
+    pub(crate) resource_free_epoch: u64,
 
     // --- Screen-space decal pipelines (D1 + D5, lazily created) ---
     /// Decal render/exclude pipelines and their bind group layouts.

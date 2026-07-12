@@ -67,6 +67,10 @@ pub(crate) struct PerObjectBundle {
 pub(crate) struct PerObjectState {
     /// Per-object draw resources keyed by [`PerObjectKey`].
     pub(crate) cache: HashMap<PerObjectKey, PerObjectCacheEntry>,
+    /// `DeviceResources::resource_free_epoch` as of the last prepare. When the
+    /// epoch moves (a texture or mesh was freed), stale cache entries are
+    /// purged so their bind groups stop pinning the freed resource's memory.
+    pub(crate) free_epoch: u64,
     /// Per-item bind groups for the current frame, indexed by the item's position
     /// in the frame's item list. Populated from `cache` each frame (cheap
     /// reference-counted clones) so the render path can index by item slot.
@@ -87,6 +91,7 @@ impl PerObjectState {
     pub(crate) fn new() -> Self {
         Self {
             cache: HashMap::new(),
+            free_epoch: 0,
             bind_groups: Vec::new(),
             wireframe_uniform_bufs: Vec::new(),
             wireframe_bind_groups: Vec::new(),

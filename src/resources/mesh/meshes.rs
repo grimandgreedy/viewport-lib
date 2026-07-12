@@ -803,7 +803,11 @@ impl DeviceResources {
     ///
     /// [`remove_mesh`]: Self::remove_mesh
     pub fn free_mesh(&mut self, id: crate::resources::mesh::mesh_store::MeshId) -> bool {
-        self.mesh_store.remove(id)
+        let removed = self.mesh_store.remove(id);
+        if removed {
+            self.resource_free_epoch += 1;
+        }
+        removed
     }
 
     /// Upload an unstructured volume mesh and return a ready-to-submit
