@@ -326,14 +326,14 @@ impl DeviceResources {
 
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu_then_gpu(move |progress| {
+            runner.submit_cpu_then_gpu_chunked(move |progress| {
                 // A single supplied level means an uncompressed RGBA base
                 // image: build its mip chain here on the worker so minified
                 // sampling is trilinear instead of full-resolution fetches.
                 // Compressed uploads pass their own chains and skip this.
                 // The chain build is pure CPU and by far the expensive part
                 // of the job, so it must not run on the render thread; only
-                // the texture creation and copy below need the device
+                // the texture creation and copies below need the device
                 // thread.
                 let mip_levels = if mip_levels.len() == 1
                     && matches!(
@@ -348,47 +348,136 @@ impl DeviceResources {
                     mip_levels
                 };
                 progress.set(0.2);
+
+                // GPU stage: create the texture once, then write the chain
+                // in row bands of at most TEXTURE_CHUNK_BYTES, as many per
+                // turn as the frame budget allows (at least one, so an
+                // already-elapsed budget still makes progress). The typed
+                // result is published only after the final band and flush,
+                // so no partially written texture is ever observable.
+                let total_bytes: u64 = mip_levels.iter().map(|l| l.len() as u64).sum();
+                let mut texture: Option<wgpu::Texture> = None;
+                let mut level: usize = 0;
+                let mut block_row: u32 = 0;
+                let mut written: u64 = 0;
+                let mut slot_for_apply = Some(slot_for_apply);
                 Ok(Box::new(
                     move |dev: &wgpu::Device,
                           q: &wgpu::Queue,
-                          progress: &crate::resources::ProgressHandle| {
-                        let gpu_texture = build_gpu_texture(
+                          progress: &crate::resources::ProgressHandle,
+                          budget: &crate::resources::upload_jobs::FrameBudget| {
+                        let tex_label = if is_normal_map {
+                            "user_normal_map_texture"
+                        } else {
+                            "user_texture"
+                        };
+                        let tex = texture.get_or_insert_with(|| {
+                            dev.create_texture(&wgpu::TextureDescriptor {
+                                label: Some(tex_label),
+                                size: wgpu::Extent3d {
+                                    width,
+                                    height,
+                                    depth_or_array_layers: 1,
+                                },
+                                mip_level_count: mip_levels.len() as u32,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D2,
+                                format,
+                                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                    | wgpu::TextureUsages::COPY_DST,
+                                view_formats: &[],
+                            })
+                        });
+                        while level < mip_levels.len() {
+                            let lw = (width >> level).max(1);
+                            let lh = (height >> level).max(1);
+                            let (bytes_per_row, blocks_high, _) = mip_block_layout(format, lw, lh);
+                            let band_rows = ((TEXTURE_CHUNK_BYTES / bytes_per_row as u64).max(1)
+                                as u32)
+                                .min(blocks_high - block_row);
+                            let (_, block_h) = format.block_dimensions();
+                            let origin_y = block_row * block_h;
+                            let end_row = block_row + band_rows;
+                            // The last band's texel height absorbs any
+                            // non-multiple-of-block edge.
+                            let band_height = if end_row == blocks_high {
+                                lh - origin_y
+                            } else {
+                                band_rows * block_h
+                            };
+                            let data = &mip_levels[level][(block_row as usize
+                                * bytes_per_row as usize)
+                                ..(end_row as usize * bytes_per_row as usize)];
+                            q.write_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: tex,
+                                    mip_level: level as u32,
+                                    origin: wgpu::Origin3d {
+                                        x: 0,
+                                        y: origin_y,
+                                        z: 0,
+                                    },
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                data,
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(bytes_per_row),
+                                    rows_per_image: Some(band_rows),
+                                },
+                                wgpu::Extent3d {
+                                    width: lw,
+                                    height: band_height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                            written += data.len() as u64;
+                            block_row = end_row;
+                            if block_row == blocks_high {
+                                level += 1;
+                                block_row = 0;
+                            }
+                            progress.set(0.2 + 0.7 * (written as f32 / total_bytes.max(1) as f32));
+                            if budget.exhausted() {
+                                break;
+                            }
+                        }
+                        if level < mip_levels.len() {
+                            return Ok(crate::resources::upload_jobs::GpuStep::Continue);
+                        }
+
+                        let gpu_texture = finish_gpu_texture(
                             dev,
-                            q,
-                            width,
-                            height,
-                            format,
+                            texture.take().expect("texture created on first turn"),
+                            mip_levels.len() as u32,
                             is_normal_map,
-                            &mip_levels,
                             &bgl,
                             &fallback_albedo_view,
                             &fallback_normal_view,
                             &fallback_ao_view,
                         );
-                        progress.set(0.9);
-
                         // Flush so the runner has a submission to gate on.
-                        // Implicit writes queued above are folded into this
-                        // submit by wgpu.
+                        // Writes queued above are folded into this submit.
                         let encoder = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("async_texture_flush"),
                         });
                         let submission = q.submit(std::iter::once(encoder.finish()));
                         progress.set(1.0);
 
-                        Ok(
+                        let slot = slot_for_apply.take().expect("done reached once");
+                        Ok(crate::resources::upload_jobs::GpuStep::Done(
                             crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
                                 submission,
                                 Box::new(move |resources: &mut DeviceResources| {
                                     let tex_id =
                                         resources.content.textures.insert(gpu_texture, data_bytes);
-                                    slot_for_apply.set(tex_id);
+                                    slot.set(tex_id);
                                 }),
                             ),
-                        )
+                        ))
                     },
                 )
-                    as crate::resources::upload_jobs::GpuWorkFn)
+                    as crate::resources::upload_jobs::ChunkedGpuWorkFn)
             })
         };
 
@@ -626,6 +715,13 @@ fn build_rgba_mip_chain(base: Vec<u8>, width: u32, height: u32, srgb: bool) -> V
     levels
 }
 
+/// Slice size for the chunked async texture writes, in bytes. Small enough
+/// that one band fits a sub-millisecond frame budget at staging-copy
+/// bandwidth (a few GB/s), large enough to amortise per-write overhead.
+/// Bands are whole block rows, so a mip smaller than this uploads in one
+/// write.
+const TEXTURE_CHUNK_BYTES: u64 = 4 << 20;
+
 /// Block-packed layout for a single mip level: `(bytes_per_row, rows_of_blocks,
 /// total_bytes)`. Uses the format's block dimensions and size, so it is correct
 /// for uncompressed formats (1x1 blocks) and block-compressed formats alike.
@@ -714,6 +810,33 @@ fn build_gpu_texture(
         );
     }
 
+    finish_gpu_texture(
+        device,
+        texture,
+        mip_level_count,
+        is_normal_map,
+        bgl,
+        fallback_albedo_view,
+        fallback_normal_view,
+        fallback_ao_view,
+    )
+}
+
+/// Build the view, sampler, and bind group around an already-written
+/// texture. Tail of [`build_gpu_texture`], shared with the chunked async
+/// upload path, which creates and fills the texture across several frames
+/// before finishing it here.
+#[allow(clippy::too_many_arguments)]
+fn finish_gpu_texture(
+    device: &wgpu::Device,
+    texture: wgpu::Texture,
+    mip_level_count: u32,
+    is_normal_map: bool,
+    bgl: &wgpu::BindGroupLayout,
+    fallback_albedo_view: &wgpu::TextureView,
+    fallback_normal_view: &wgpu::TextureView,
+    fallback_ao_view: &wgpu::TextureView,
+) -> GpuTexture {
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let mipmap_filter = if mip_level_count > 1 {
         wgpu::FilterMode::Linear

@@ -172,11 +172,50 @@ pub(crate) type GpuWorkFn = Box<
         + Send,
 >;
 
-/// A `submit_with_gpu` job awaiting execution on the main thread.
+/// What one turn of a chunked GPU-stage closure reports back.
+pub(crate) enum GpuStep {
+    /// More slices remain; the runner requeues the job and calls it again
+    /// on a later `process` (same call if budget remains, next frame
+    /// otherwise).
+    Continue,
+    /// All slices written; the job finishes with this product.
+    Done(JobProduct),
+}
+
+/// Resumable GPU-stage work for a `submit_cpu_then_gpu_chunked` job.
+///
+/// Runs on the device thread like [`GpuWorkFn`], but is called repeatedly:
+/// each turn should write slices until the passed budget elapses (doing at
+/// least one slice per turn so an already-elapsed budget still makes
+/// progress) and return `Continue` while work remains. With an unbounded
+/// budget a well-formed closure completes in a single turn, so the
+/// unbudgeted path keeps whole-asset behaviour.
+pub(crate) type ChunkedGpuWorkFn = Box<
+    dyn FnMut(
+            &wgpu::Device,
+            &wgpu::Queue,
+            &ProgressHandle,
+            &FrameBudget,
+        ) -> Result<GpuStep, ViewportError>
+        + Send,
+>;
+
+/// The two shapes of device-thread work a job can defer.
+pub(crate) enum DeferredWork {
+    /// Runs once, to completion, in a single drain turn.
+    Once(GpuWorkFn),
+    /// Runs across as many drain turns as its slices need.
+    Chunked(ChunkedGpuWorkFn),
+}
+
+/// A job's GPU stage awaiting execution on the main thread.
 struct DeferredGpuJob {
-    work: GpuWorkFn,
+    work: DeferredWork,
     progress: ProgressHandle,
     tx: mpsc::Sender<WorkerOutcome>,
+    /// Device-thread time already spent in earlier turns of a chunked
+    /// job; folded into the duration reported with the final outcome.
+    elapsed: Duration,
 }
 
 /// Maximum number of deferred GPU jobs run per `process` call. The cap spreads
@@ -322,7 +361,7 @@ impl FrameBudget {
     }
 
     /// True when the budget has elapsed.
-    fn exhausted(&self) -> bool {
+    pub(crate) fn exhausted(&self) -> bool {
         match self.deadline {
             Some(t) => Instant::now() >= t,
             None => false,
@@ -340,10 +379,10 @@ impl FrameBudget {
 #[allow(dead_code)]
 enum WorkerOutcome {
     Done(JobProduct, Duration),
-    /// The CPU stage of a `submit_cpu_then_gpu` job finished and handed
+    /// The CPU stage of a `submit_cpu_then_gpu*` job finished and handed
     /// back GPU work. `process` moves it onto the deferred queue; the
     /// deferred run reports `Done` or `Failed` through the same channel.
-    NeedsGpu(GpuWorkFn, Duration),
+    NeedsGpu(DeferredWork, Duration),
     Failed(ViewportError, Duration),
 }
 
@@ -550,7 +589,58 @@ impl JobRunner {
         rayon::spawn(move || {
             let t0 = Instant::now();
             let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
-                Ok(Ok(gpu_work)) => WorkerOutcome::NeedsGpu(gpu_work, t0.elapsed()),
+                Ok(Ok(gpu_work)) => {
+                    WorkerOutcome::NeedsGpu(DeferredWork::Once(gpu_work), t0.elapsed())
+                }
+                Ok(Err(e)) => WorkerOutcome::Failed(e, t0.elapsed()),
+                Err(_) => WorkerOutcome::Failed(
+                    ViewportError::JobWorkerLost {
+                        reason: "worker panicked",
+                    },
+                    t0.elapsed(),
+                ),
+            };
+            let _ = worker_tx.send(outcome);
+        });
+
+        self.slots.insert(
+            id.0,
+            JobSlot {
+                progress,
+                tx,
+                rx,
+                awaiting: None,
+                callback: None,
+            },
+        );
+        id
+    }
+
+    /// `submit_cpu_then_gpu` for GPU stages too large to run in one turn.
+    ///
+    /// The worker returns a resumable [`ChunkedGpuWorkFn`] instead of a
+    /// one-shot closure: `process` calls it repeatedly on the device
+    /// thread, passing the frame budget, until it reports
+    /// [`GpuStep::Done`]. Use this when the GPU stage's copies are large
+    /// enough to blow a frame budget on their own (streamed textures and
+    /// meshes); the closure slices its writes and spreads them across
+    /// frames.
+    pub(crate) fn submit_cpu_then_gpu_chunked<F>(&mut self, work: F) -> JobId
+    where
+        F: FnOnce(&ProgressHandle) -> Result<ChunkedGpuWorkFn, ViewportError> + Send + 'static,
+    {
+        let id = self.issue_id();
+        let progress = ProgressHandle::new();
+        let worker_progress = progress.clone();
+        let (tx, rx) = mpsc::channel();
+        let worker_tx = tx.clone();
+
+        rayon::spawn(move || {
+            let t0 = Instant::now();
+            let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
+                Ok(Ok(gpu_work)) => {
+                    WorkerOutcome::NeedsGpu(DeferredWork::Chunked(gpu_work), t0.elapsed())
+                }
                 Ok(Err(e)) => WorkerOutcome::Failed(e, t0.elapsed()),
                 Err(_) => WorkerOutcome::Failed(
                     ViewportError::JobWorkerLost {
@@ -606,9 +696,10 @@ impl JobRunner {
         // supplies them when the work runs.
         let _ = (device, queue);
         self.deferred_gpu.push_back(DeferredGpuJob {
-            work: Box::new(work),
+            work: DeferredWork::Once(Box::new(work)),
             progress: progress.clone(),
             tx: tx.clone(),
+            elapsed: Duration::ZERO,
         });
 
         self.slots.insert(
@@ -739,23 +830,56 @@ impl JobRunner {
             if i > 0 && budget.exhausted() {
                 break;
             }
-            let Some(job) = self.deferred_gpu.pop_front() else {
+            let Some(mut job) = self.deferred_gpu.pop_front() else {
                 break;
             };
             let t0 = Instant::now();
-            let outcome = match catch_unwind(AssertUnwindSafe(|| {
-                (job.work)(device, queue, &job.progress)
-            })) {
-                Ok(Ok(product)) => WorkerOutcome::Done(product, t0.elapsed()),
-                Ok(Err(e)) => WorkerOutcome::Failed(e, t0.elapsed()),
-                Err(_) => WorkerOutcome::Failed(
-                    ViewportError::JobWorkerLost {
-                        reason: "gpu job panicked",
-                    },
-                    t0.elapsed(),
-                ),
-            };
-            let _ = job.tx.send(outcome);
+            let progress = job.progress.clone();
+            match job.work {
+                DeferredWork::Once(work) => {
+                    let outcome = match catch_unwind(AssertUnwindSafe(|| {
+                        work(device, queue, &progress)
+                    })) {
+                        Ok(Ok(product)) => WorkerOutcome::Done(product, job.elapsed + t0.elapsed()),
+                        Ok(Err(e)) => WorkerOutcome::Failed(e, job.elapsed + t0.elapsed()),
+                        Err(_) => WorkerOutcome::Failed(
+                            ViewportError::JobWorkerLost {
+                                reason: "gpu job panicked",
+                            },
+                            job.elapsed + t0.elapsed(),
+                        ),
+                    };
+                    let _ = job.tx.send(outcome);
+                }
+                DeferredWork::Chunked(ref mut work) => {
+                    let step =
+                        catch_unwind(AssertUnwindSafe(|| work(device, queue, &progress, budget)));
+                    match step {
+                        Ok(Ok(GpuStep::Continue)) => {
+                            // Requeue at the back so other pending stages
+                            // get their turn before this job's next slice.
+                            job.elapsed = job.elapsed.saturating_add(t0.elapsed());
+                            self.deferred_gpu.push_back(job);
+                        }
+                        Ok(Ok(GpuStep::Done(product))) => {
+                            let d = job.elapsed + t0.elapsed();
+                            let _ = job.tx.send(WorkerOutcome::Done(product, d));
+                        }
+                        Ok(Err(e)) => {
+                            let d = job.elapsed + t0.elapsed();
+                            let _ = job.tx.send(WorkerOutcome::Failed(e, d));
+                        }
+                        Err(_) => {
+                            let _ = job.tx.send(WorkerOutcome::Failed(
+                                ViewportError::JobWorkerLost {
+                                    reason: "gpu job panicked",
+                                },
+                                job.elapsed + t0.elapsed(),
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
         // Advance internal wgpu state so completed submissions are visible
@@ -801,8 +925,12 @@ impl JobRunner {
                             .get(&id)
                             .map(|s| (s.progress.clone(), s.tx.clone()))
                         {
-                            self.deferred_gpu
-                                .push_back(DeferredGpuJob { work, progress, tx });
+                            self.deferred_gpu.push_back(DeferredGpuJob {
+                                work,
+                                progress,
+                                tx,
+                                elapsed: Duration::ZERO,
+                            });
                         }
                         continue;
                     }
@@ -1410,6 +1538,125 @@ mod tests {
         });
 
         assert!(matches!(runner.status(id), UploadStatus::Failed(_)));
+    }
+
+    #[test]
+    fn chunked_job_resumes_across_calls() {
+        // A chunked GPU stage needing three slices, driven with an
+        // already-elapsed budget: each process call runs exactly one turn
+        // (one slice), so completion takes three calls and the turn count
+        // equals the slice count.
+        let mut runner = JobRunner::new();
+        let turns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let turns_in_job = turns.clone();
+        let id = runner.submit_cpu_then_gpu_chunked(move |_p| {
+            let mut slices_done = 0usize;
+            Ok(Box::new(
+                move |_d: &wgpu::Device,
+                      _q: &wgpu::Queue,
+                      _p: &ProgressHandle,
+                      budget: &FrameBudget| {
+                    turns_in_job.fetch_add(1, Ordering::Relaxed);
+                    loop {
+                        slices_done += 1;
+                        if slices_done >= 3 {
+                            return Ok(GpuStep::Done(JobProduct::empty()));
+                        }
+                        if budget.exhausted() {
+                            return Ok(GpuStep::Continue);
+                        }
+                    }
+                },
+            ) as ChunkedGpuWorkFn)
+        });
+
+        with_test_gpu(|device, queue| {
+            for _ in 0..400 {
+                let _ =
+                    runner.process_budgeted(device, queue, &FrameBudget::from_now(Duration::ZERO));
+                if runner.all_complete() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+
+        assert!(matches!(runner.status(id), UploadStatus::Ready));
+        assert_eq!(
+            turns.load(Ordering::Relaxed),
+            3,
+            "expected one slice per zero-budget turn"
+        );
+    }
+
+    #[test]
+    fn chunked_job_unbudgeted_completes_in_one_turn() {
+        // The same three-slice job under an unbounded budget: the internal
+        // loop never sees an exhausted budget, so the whole stage runs in
+        // a single turn (whole-asset behaviour on the unbudgeted path).
+        let mut runner = JobRunner::new();
+        let turns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let turns_in_job = turns.clone();
+        let id = runner.submit_cpu_then_gpu_chunked(move |_p| {
+            let mut slices_done = 0usize;
+            Ok(Box::new(
+                move |_d: &wgpu::Device,
+                      _q: &wgpu::Queue,
+                      _p: &ProgressHandle,
+                      budget: &FrameBudget| {
+                    turns_in_job.fetch_add(1, Ordering::Relaxed);
+                    loop {
+                        slices_done += 1;
+                        if slices_done >= 3 {
+                            return Ok(GpuStep::Done(JobProduct::empty()));
+                        }
+                        if budget.exhausted() {
+                            return Ok(GpuStep::Continue);
+                        }
+                    }
+                },
+            ) as ChunkedGpuWorkFn)
+        });
+
+        with_test_gpu(|device, queue| {
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
+        });
+
+        assert!(matches!(runner.status(id), UploadStatus::Ready));
+        assert_eq!(turns.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn chunked_job_error_mid_stream_surfaces_as_failed() {
+        let mut runner = JobRunner::new();
+        let id = runner.submit_cpu_then_gpu_chunked(move |_p| {
+            let mut turn = 0usize;
+            Ok(Box::new(
+                move |_d: &wgpu::Device,
+                      _q: &wgpu::Queue,
+                      _p: &ProgressHandle,
+                      _b: &FrameBudget| {
+                    turn += 1;
+                    if turn == 1 {
+                        return Ok(GpuStep::Continue);
+                    }
+                    Err(ViewportError::JobWorkerLost {
+                        reason: "slice failed",
+                    })
+                },
+            ) as ChunkedGpuWorkFn)
+        });
+
+        with_test_gpu(|device, queue| {
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
+        });
+
+        match runner.status(id) {
+            UploadStatus::Failed(ViewportError::JobWorkerLost { reason }) => {
+                assert_eq!(reason, "slice failed");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
     }
 
     #[test]

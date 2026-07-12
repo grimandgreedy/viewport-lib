@@ -1,5 +1,11 @@
 use crate::resources::*;
 
+/// Slice size for the chunked async mesh buffer fills, in bytes. The copies
+/// are plain memcpys into mapped buffers, so the size only has to fit a
+/// sub-millisecond frame budget at memcpy bandwidth while amortising
+/// per-slice overhead.
+const MESH_CHUNK_BYTES: usize = 4 << 20;
+
 /// CPU-prepared vertex stream and ancillary buffers needed to finish a mesh
 /// upload on the main thread.
 ///
@@ -244,11 +250,12 @@ impl DeviceResources {
     /// Start an asynchronous mesh upload.
     ///
     /// Returns immediately with a `JobId`. The CPU prep (tangent
-    /// computation, vertex repack, normal-line build) runs on a worker
-    /// thread; GPU buffer creation and store insertion run on the main
-    /// thread during the next `process_uploads` call after the worker
-    /// finishes. Once the status is `Ready`, call `upload_result_mesh` to
-    /// take the resulting `MeshId`.
+    /// computation, vertex repack, pick-data copies) runs on a worker
+    /// thread; the GPU buffers are then filled on the main thread during
+    /// `process_uploads` calls, sliced across frames under the upload
+    /// budget when one is set, and the mesh record is assembled once the
+    /// last slice lands. Once the status is `Ready`, call
+    /// `upload_result_mesh` to take the resulting `MeshId`.
     ///
     /// Ownership of `data` transfers into the worker. To upload a mesh
     /// without giving up ownership, clone the `MeshData` at the call site.
@@ -269,20 +276,186 @@ impl DeviceResources {
         let slot =
             crate::resources::ResultSlot::<crate::resources::mesh::mesh_store::MeshId>::new();
         let slot_for_apply = slot.clone();
-        let device_for_apply = device.clone();
 
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu(move |progress| {
+            runner.submit_cpu_then_gpu_chunked(move |progress| {
                 progress.set(0.1);
                 let prep = DeviceResources::prep_mesh_data(&data);
-                progress.set(0.95);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut DeviceResources| {
-                        let mesh_id = resources.assemble_mesh_data(&device_for_apply, &data, prep);
-                        slot_for_apply.set(mesh_id);
-                    }),
-                ))
+                let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
+                progress.set(0.5);
+
+                // GPU stage: create the two buffers mapped, memcpy the
+                // vertex and index bytes in MESH_CHUNK_BYTES slices as the
+                // frame budget allows (at least one slice per turn), unmap,
+                // and hand the filled buffers to the apply step. The typed
+                // result is published only after the apply, so no partially
+                // filled mesh is ever observable.
+                let MeshPrep {
+                    vertices,
+                    computed_tangents,
+                    cpu_positions,
+                    cpu_normals,
+                    cpu_indices,
+                } = prep;
+                let mut bufs: Option<(wgpu::Buffer, wgpu::Buffer)> = None;
+                let mut voff: usize = 0;
+                let mut ioff: usize = 0;
+                // One-shot payload for the apply closure; an FnMut cannot
+                // move out of its captures, so the final turn takes it.
+                let mut payload = Some((
+                    data,
+                    computed_tangents,
+                    cpu_positions,
+                    cpu_normals,
+                    cpu_indices,
+                    aabb,
+                    slot_for_apply,
+                ));
+                Ok(Box::new(
+                    move |dev: &wgpu::Device,
+                          _q: &wgpu::Queue,
+                          progress: &crate::resources::ProgressHandle,
+                          budget: &crate::resources::upload_jobs::FrameBudget| {
+                        use bytemuck::cast_slice;
+                        let vsrc: &[u8] = cast_slice(&vertices);
+                        let indices_bytes = payload
+                            .as_ref()
+                            .expect("payload present until done")
+                            .0
+                            .indices
+                            .len()
+                            * std::mem::size_of::<u32>();
+                        let (vbuf, ibuf) = bufs.get_or_insert_with(|| {
+                            let vbuf = dev.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("vertex_buf"),
+                                size: vsrc.len() as u64,
+                                usage: wgpu::BufferUsages::VERTEX
+                                    | wgpu::BufferUsages::COPY_DST
+                                    | wgpu::BufferUsages::STORAGE,
+                                mapped_at_creation: true,
+                            });
+                            let ibuf = dev.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("index_buf"),
+                                size: indices_bytes as u64,
+                                usage: wgpu::BufferUsages::INDEX
+                                    | wgpu::BufferUsages::COPY_DST
+                                    | wgpu::BufferUsages::STORAGE,
+                                mapped_at_creation: true,
+                            });
+                            (vbuf, ibuf)
+                        });
+                        let total = vsrc.len() + indices_bytes;
+                        loop {
+                            if voff < vsrc.len() {
+                                let end = (voff + MESH_CHUNK_BYTES).min(vsrc.len());
+                                vbuf.slice(voff as u64..end as u64)
+                                    .get_mapped_range_mut()
+                                    .copy_from_slice(&vsrc[voff..end]);
+                                voff = end;
+                            } else if ioff < indices_bytes {
+                                let isrc: &[u8] = cast_slice(
+                                    &payload.as_ref().expect("payload present").0.indices,
+                                );
+                                let end = (ioff + MESH_CHUNK_BYTES).min(isrc.len());
+                                ibuf.slice(ioff as u64..end as u64)
+                                    .get_mapped_range_mut()
+                                    .copy_from_slice(&isrc[ioff..end]);
+                                ioff = end;
+                            } else {
+                                break;
+                            }
+                            progress.set(0.5 + 0.45 * ((voff + ioff) as f32 / total as f32));
+                            if budget.exhausted() {
+                                break;
+                            }
+                        }
+                        if voff < vsrc.len() || ioff < indices_bytes {
+                            return Ok(crate::resources::upload_jobs::GpuStep::Continue);
+                        }
+
+                        let (vbuf, ibuf) = bufs.take().expect("buffers created on first turn");
+                        vbuf.unmap();
+                        ibuf.unmap();
+                        let (
+                            data,
+                            computed_tangents,
+                            cpu_positions,
+                            cpu_normals,
+                            cpu_indices,
+                            aabb,
+                            slot,
+                        ) = payload.take().expect("done reached once");
+                        let device = dev.clone();
+                        let upload_bytes = total as u64;
+                        let apply = Box::new(move |resources: &mut DeviceResources| {
+                            let tangent_slice =
+                                data.tangents.as_deref().or(computed_tangents.as_deref());
+                            resources.frame_upload_bytes += upload_bytes;
+                            let mut mesh = DeviceResources::create_mesh_from_buffers(
+                                &device,
+                                &resources.object_bind_group_layout,
+                                &resources.fallback_texture.view,
+                                &resources.fallback_normal_map_view,
+                                &resources.fallback_ao_map_view,
+                                &resources.material_sampler,
+                                &resources.lut_sampler,
+                                &resources.content.fallback_lut_view,
+                                &resources.content.fallback_scalar_buf,
+                                &resources.fallback_texture.view,
+                                &resources.content.fallback_face_colour_buf,
+                                &resources.content.fallback_warp_buf,
+                                &resources.content.fallback_position_override_buf,
+                                &resources.content.fallback_normal_override_buf,
+                                &resources.fallback_metallic_roughness_texture_view,
+                                &resources.fallback_emissive_texture_view,
+                                vbuf,
+                                ibuf,
+                                data.indices.len() as u32,
+                                aabb,
+                            );
+                            mesh.cpu_positions = Some(cpu_positions);
+                            mesh.cpu_normals = Some(cpu_normals);
+                            mesh.cpu_indices = Some(cpu_indices);
+                            let (
+                                attr_bufs,
+                                attr_ranges,
+                                face_vbuf,
+                                face_attr_bufs,
+                                face_colour_bufs,
+                                vector_attr_bufs,
+                            ) = DeviceResources::upload_attributes(
+                                &device,
+                                &data.attributes,
+                                &data.positions,
+                                &data.normals,
+                                &data.indices,
+                                data.uvs.as_deref(),
+                                tangent_slice,
+                            );
+                            mesh.attribute_buffers = attr_bufs;
+                            mesh.attribute_ranges = attr_ranges;
+                            mesh.face_vertex_buffer = face_vbuf;
+                            mesh.face_attribute_buffers = face_attr_bufs;
+                            mesh.face_colour_buffers = face_colour_bufs;
+                            mesh.vector_attribute_buffers = vector_attr_bufs;
+                            let mesh_id = resources.mesh_store.insert(mesh);
+                            tracing::debug!(
+                                mesh_index = mesh_id.index(),
+                                vertices = data.positions.len(),
+                                indices = data.indices.len(),
+                                "mesh uploaded"
+                            );
+                            slot.set(mesh_id);
+                        })
+                            as crate::resources::upload_jobs::ApplyFn;
+                        progress.set(0.95);
+                        Ok(crate::resources::upload_jobs::GpuStep::Done(
+                            crate::resources::upload_jobs::JobProduct::with_apply(apply),
+                        ))
+                    },
+                )
+                    as crate::resources::upload_jobs::ChunkedGpuWorkFn)
             })
         };
 
@@ -1891,6 +2064,82 @@ impl DeviceResources {
             .copy_from_slice(cast_slice(indices));
         index_buffer.unmap();
 
+        let aabb = crate::scene::aabb::Aabb::from_positions(
+            &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
+        );
+        let mut mesh = Self::create_mesh_from_buffers(
+            device,
+            object_bgl,
+            fallback_albedo_view,
+            fallback_normal_view,
+            fallback_ao_view,
+            fallback_sampler,
+            lut_sampler,
+            fallback_lut_view,
+            fallback_scalar_buf,
+            fallback_matcap_view,
+            fallback_face_colour_buf,
+            fallback_warp_buf,
+            fallback_position_override_buf,
+            fallback_normal_override_buf,
+            fallback_metallic_roughness_view,
+            fallback_emissive_view,
+            vertex_buffer,
+            index_buffer,
+            indices.len() as u32,
+            aabb,
+        );
+        if let Some(nl_verts) = normal_line_verts
+            && !nl_verts.is_empty()
+        {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("normal_line_buf"),
+                size: (std::mem::size_of::<Vertex>() * nl_verts.len()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+            buf.slice(..)
+                .get_mapped_range_mut()
+                .copy_from_slice(cast_slice(nl_verts));
+            buf.unmap();
+            mesh.normal_line_count = nl_verts.len() as u32;
+            mesh.normal_line_buffer = Some(buf);
+        }
+        mesh.cpu_indices = Some(indices.to_vec());
+        mesh
+    }
+
+    /// Build a `GpuMesh` around already-created and already-filled vertex
+    /// and index buffers: uniforms, bind groups, and the mesh record.
+    /// Tail of `create_mesh_with_normals`, shared with the chunked async
+    /// upload path, which fills the buffers across several frames before
+    /// assembling the mesh here. The normal-line buffer and CPU pick
+    /// copies start empty; callers set them as needed.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn create_mesh_from_buffers(
+        device: &wgpu::Device,
+        object_bgl: &wgpu::BindGroupLayout,
+        fallback_albedo_view: &wgpu::TextureView,
+        fallback_normal_view: &wgpu::TextureView,
+        fallback_ao_view: &wgpu::TextureView,
+        fallback_sampler: &wgpu::Sampler,
+        lut_sampler: &wgpu::Sampler,
+        fallback_lut_view: &wgpu::TextureView,
+        fallback_scalar_buf: &wgpu::Buffer,
+        fallback_matcap_view: &wgpu::TextureView,
+        fallback_face_colour_buf: &wgpu::Buffer,
+        fallback_warp_buf: &wgpu::Buffer,
+        fallback_position_override_buf: &wgpu::Buffer,
+        fallback_normal_override_buf: &wgpu::Buffer,
+        fallback_metallic_roughness_view: &wgpu::TextureView,
+        fallback_emissive_view: &wgpu::TextureView,
+        vertex_buffer: wgpu::Buffer,
+        index_buffer: wgpu::Buffer,
+        index_count: u32,
+        aabb: crate::scene::aabb::Aabb,
+    ) -> GpuMesh {
+        use bytemuck::cast_slice;
+
         let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
         let object_uniform = ObjectUniform {
             model: identity,
@@ -2142,41 +2391,16 @@ impl DeviceResources {
             ],
         });
 
-        let (normal_line_buffer, normal_line_count) = if let Some(nl_verts) = normal_line_verts {
-            if nl_verts.is_empty() {
-                (None, 0)
-            } else {
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("normal_line_buf"),
-                    size: (std::mem::size_of::<Vertex>() * nl_verts.len()) as u64,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: true,
-                });
-                buf.slice(..)
-                    .get_mapped_range_mut()
-                    .copy_from_slice(cast_slice(nl_verts));
-                buf.unmap();
-                let count = nl_verts.len() as u32;
-                (Some(buf), count)
-            }
-        } else {
-            (None, 0)
-        };
-
-        let aabb = crate::scene::aabb::Aabb::from_positions(
-            &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
-        );
-
         GpuMesh {
             vertex_buffer,
             index_buffer,
-            index_count: indices.len() as u32,
+            index_count,
             // Wireframe edges are built lazily on first use; the indices are
             // retained so any mesh can materialise them.
             edge_index_buffer: None,
             edge_index_count: 0,
-            normal_line_buffer,
-            normal_line_count,
+            normal_line_buffer: None,
+            normal_line_count: 0,
             object_uniform_buf,
             object_bind_group,
             last_tex_key: (
@@ -2197,7 +2421,7 @@ impl DeviceResources {
             aabb,
             cpu_positions: None,
             cpu_normals: None,
-            cpu_indices: Some(indices.to_vec()),
+            cpu_indices: None,
             attribute_buffers: std::collections::HashMap::new(),
             attribute_ranges: std::collections::HashMap::new(),
             face_vertex_buffer: None,
