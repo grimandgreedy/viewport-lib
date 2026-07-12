@@ -8,23 +8,23 @@ pub(crate) struct GaussianSplatResources {
     /// Gaussian splat render pipeline. None until first splat set is submitted.
     pub(crate) pipeline: Option<DualPipeline>,
     /// Bind group layout for group 1 of the render pipeline.
-    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Compute pipeline for per-splat view-space depth.
-    pub(crate) depth_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) depth_pipeline: Option<crate::gpu::ComputePipeline>,
     /// Compute pipeline that clears the sort histogram.
-    pub(crate) sort_clear_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) sort_clear_pipeline: Option<crate::gpu::ComputePipeline>,
     /// Radix-sort histogram pass.
-    pub(crate) sort_histogram_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) sort_histogram_pipeline: Option<crate::gpu::ComputePipeline>,
     /// Radix-sort prefix-sum pass.
-    pub(crate) sort_prefix_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) sort_prefix_pipeline: Option<crate::gpu::ComputePipeline>,
     /// Radix-sort scatter pass.
-    pub(crate) sort_scatter_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) sort_scatter_pipeline: Option<crate::gpu::ComputePipeline>,
     /// Compute pipeline that initialises sort index values.
-    pub(crate) sort_init_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) sort_init_pipeline: Option<crate::gpu::ComputePipeline>,
     /// Bind group layout for the depth compute pass.
-    pub(crate) depth_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) depth_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Bind group layout for the sort compute passes.
-    pub(crate) sort_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) sort_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 impl Default for GaussianSplatResources {
@@ -69,8 +69,8 @@ fn validate_gaussian_splat_data(
 /// the async worker, and `replace_gaussian_splat` so all three produce identical
 /// resources.
 fn build_gaussian_splat_set(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     data: &crate::renderer::GaussianSplatData,
 ) -> GaussianSplatGpuSet {
     let count = data.positions.len() as u32;
@@ -98,42 +98,42 @@ fn build_gaussian_splat_set(
     let buf_size_opa = (data.opacities.len() * 4).max(4) as u64;
     let buf_size_sh = (data.sh_coefficients.len() * 4).max(4) as u64;
 
-    let position_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    let position_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
         label: Some("splat_position_buf"),
         size: buf_size_pos,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     queue.write_buffer(&position_buf, 0, bytemuck::cast_slice(&pos_data));
 
-    let scale_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    let scale_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
         label: Some("splat_scale_buf"),
         size: buf_size_scale,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     queue.write_buffer(&scale_buf, 0, bytemuck::cast_slice(&scale_data));
 
-    let rotation_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    let rotation_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
         label: Some("splat_rotation_buf"),
         size: buf_size_rot,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     queue.write_buffer(&rotation_buf, 0, bytemuck::cast_slice(&rotation_data));
 
-    let opacity_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    let opacity_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
         label: Some("splat_opacity_buf"),
         size: buf_size_opa,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     queue.write_buffer(&opacity_buf, 0, bytemuck::cast_slice(&data.opacities));
 
-    let sh_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    let sh_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
         label: Some("splat_sh_buf"),
         size: buf_size_sh,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     if !data.sh_coefficients.is_empty() {
@@ -188,7 +188,7 @@ impl DeviceResources {
     /// Lazily create all Gaussian splat render and compute pipelines.
     ///
     /// No-op after first call. Called from prepare when gaussian_splats is non-empty.
-    pub(crate) fn ensure_gaussian_splat_pipelines(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_gaussian_splat_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.gaussian_splat.bgl.is_some() {
             return;
         }
@@ -200,74 +200,75 @@ impl DeviceResources {
 
         // Group 1 BGL: SplatUniform (b0), sorted_indices (b1), positions (b2),
         //              scales (b3), rotations (b4), opacities (b5), sh_coefficients (b6).
-        let splat_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let splat_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("gaussian_splat_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -299,11 +300,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: 1,
                 ldr_format: self.target_format,
             },
@@ -320,34 +321,34 @@ impl DeviceResources {
         );
 
         // Depth compute BGL: DepthUniform (b0), positions (b1), keys_ping_out (b2).
-        let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let depth_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("gaussian_splat_depth_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -372,64 +373,64 @@ impl DeviceResources {
 
         // Sort BGL: SortUniform (b0), keys_ping (b1), keys_pong (b2),
         //           vals_ping (b3), vals_pong (b4), histogram (b5).
-        let sort_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let sort_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("gaussian_splat_sort_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -519,8 +520,8 @@ impl DeviceResources {
     /// ```
     pub fn upload_gaussian_splat(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         data: &crate::renderer::GaussianSplatData,
     ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
         validate_gaussian_splat_data(data)?;
@@ -549,8 +550,8 @@ impl DeviceResources {
     /// resolve to a live set.
     pub fn replace_gaussian_splat(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::renderer::GaussianSplatId,
         data: &crate::renderer::GaussianSplatData,
     ) -> crate::error::ViewportResult<()> {
@@ -586,8 +587,8 @@ impl DeviceResources {
     /// vectors disagree in length.
     pub fn begin_upload_gaussian_splat(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         data: crate::renderer::GaussianSplatData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         validate_gaussian_splat_data(&data)?;
@@ -656,7 +657,7 @@ impl DeviceResources {
     /// Called from run_gaussian_splat_sort before dispatching.
     pub(crate) fn ensure_gaussian_splat_sort_buffers(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         store_index: usize,
         viewport_index: usize,
     ) {
@@ -682,53 +683,53 @@ impl DeviceResources {
             if set_mut.viewport_sort[viewport_index].is_none() {
                 let buf_size = (count * 4).max(4) as u64;
 
-                let depth_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let depth_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("splat_depth_buf"),
                     size: buf_size,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_DST
-                        | wgpu::BufferUsages::COPY_SRC,
+                    usage: crate::gpu::BufferUsages::STORAGE
+                        | crate::gpu::BufferUsages::COPY_DST
+                        | crate::gpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 });
-                let sort_buf_usage = wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::COPY_DST;
-                let keys_ping = device.create_buffer(&wgpu::BufferDescriptor {
+                let sort_buf_usage = crate::gpu::BufferUsages::STORAGE
+                    | crate::gpu::BufferUsages::COPY_SRC
+                    | crate::gpu::BufferUsages::COPY_DST;
+                let keys_ping = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("splat_keys_ping"),
                     size: buf_size,
                     usage: sort_buf_usage,
                     mapped_at_creation: false,
                 });
-                let keys_pong = device.create_buffer(&wgpu::BufferDescriptor {
+                let keys_pong = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("splat_keys_pong"),
                     size: buf_size,
                     usage: sort_buf_usage,
                     mapped_at_creation: false,
                 });
-                let vals_ping = device.create_buffer(&wgpu::BufferDescriptor {
+                let vals_ping = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("splat_vals_ping"),
                     size: buf_size,
                     usage: sort_buf_usage,
                     mapped_at_creation: false,
                 });
-                let vals_pong = device.create_buffer(&wgpu::BufferDescriptor {
+                let vals_pong = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("splat_vals_pong"),
                     size: buf_size,
                     usage: sort_buf_usage,
                     mapped_at_creation: false,
                 });
                 // Histogram: 256 x u32 atomic.
-                let histogram_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let histogram_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("splat_histogram"),
                     size: 256 * 4,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 // Per-viewport SplatUniform buffer.
-                let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("splat_uniform_buf"),
                     size: std::mem::size_of::<SplatUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
 
@@ -741,35 +742,35 @@ impl DeviceResources {
                         .gaussian_splat_store
                         .get_by_index(store_index)
                         .unwrap();
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("splat_render_bg"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
                                 resource: uniform_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
                                 resource: vals_ping.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 2,
                                 resource: set_ref.position_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 3,
                                 resource: set_ref.scale_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 4,
                                 resource: set_ref.rotation_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 5,
                                 resource: set_ref.opacity_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 6,
                                 resource: set_ref.sh_buf.as_entire_binding(),
                             },
@@ -805,8 +806,8 @@ impl DeviceResources {
     /// the depth compute shader, then runs init_indices + 4 sort passes.
     pub(crate) fn run_gaussian_splat_sort(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         store_index: usize,
         viewport_index: usize,
         eye: [f32; 3],
@@ -848,10 +849,10 @@ impl DeviceResources {
 
         // Upload depth uniform.
         let depth_uni = DepthUniform { model, eye, count };
-        let depth_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let depth_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("splat_depth_uniform_tmp"),
             size: std::mem::size_of::<DepthUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&depth_uniform_buf, 0, bytemuck::bytes_of(&depth_uni));
@@ -865,19 +866,19 @@ impl DeviceResources {
                 .get_by_index(store_index)
                 .unwrap();
             let vp_sort_ref = set_ref.viewport_sort[viewport_index].as_ref().unwrap();
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("splat_depth_bg"),
                 layout: bgl,
                 entries: &[
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: depth_uniform_buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 1,
                         resource: set_ref.position_buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 2,
                         resource: vp_sort_ref.depth_buf.as_entire_binding(),
                     },
@@ -887,14 +888,14 @@ impl DeviceResources {
 
         let workgroups = (count + 255) / 256;
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("splat_sort_encoder"),
         });
 
         // --- Depth compute pass ---
         {
             let depth_pipeline = self.gaussian_splat.depth_pipeline.as_ref().unwrap();
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("splat_depth_pass"),
                 timestamp_writes: None,
             });
@@ -932,10 +933,10 @@ impl DeviceResources {
                 pass_num: pass,
                 _pad: 0,
             };
-            let sort_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let sort_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("splat_sort_uniform_tmp"),
                 size: std::mem::size_of::<SortUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             queue.write_buffer(&sort_uniform_buf, 0, bytemuck::bytes_of(&sort_uni));
@@ -947,31 +948,31 @@ impl DeviceResources {
                 .unwrap();
             let vp_sort_ref = set_ref.viewport_sort[viewport_index].as_ref().unwrap();
 
-            let sort_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let sort_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("splat_sort_bg"),
                 layout: sort_bgl,
                 entries: &[
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: sort_uniform_buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 1,
                         resource: vp_sort_ref.keys_ping.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 2,
                         resource: vp_sort_ref.keys_pong.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 3,
                         resource: vp_sort_ref.vals_ping.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 4,
                         resource: vp_sort_ref.vals_pong.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 5,
                         resource: vp_sort_ref.histogram_buf.as_entire_binding(),
                     },
@@ -981,7 +982,7 @@ impl DeviceResources {
             // If pass 0: run init_indices first.
             if pass == 0 {
                 let init_pipeline = self.gaussian_splat.sort_init_pipeline.as_ref().unwrap();
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                     label: Some("splat_init_pass"),
                     timestamp_writes: None,
                 });
@@ -993,7 +994,7 @@ impl DeviceResources {
             // Clear histogram.
             {
                 let clear_pipeline = self.gaussian_splat.sort_clear_pipeline.as_ref().unwrap();
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                     label: Some("splat_clear_hist"),
                     timestamp_writes: None,
                 });
@@ -1009,7 +1010,7 @@ impl DeviceResources {
                     .sort_histogram_pipeline
                     .as_ref()
                     .unwrap();
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                     label: Some("splat_hist_pass"),
                     timestamp_writes: None,
                 });
@@ -1021,7 +1022,7 @@ impl DeviceResources {
             // Prefix sum.
             {
                 let prefix_pipeline = self.gaussian_splat.sort_prefix_pipeline.as_ref().unwrap();
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                     label: Some("splat_prefix_pass"),
                     timestamp_writes: None,
                 });
@@ -1033,7 +1034,7 @@ impl DeviceResources {
             // Scatter.
             {
                 let scatter_pipeline = self.gaussian_splat.sort_scatter_pipeline.as_ref().unwrap();
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                     label: Some("splat_scatter_pass"),
                     timestamp_writes: None,
                 });
@@ -1064,15 +1065,17 @@ mod async_tests {
     use crate::renderer::GaussianSplatData;
     use crate::resources::UploadStatus;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn sample_splats(n: usize) -> GaussianSplatData {
@@ -1090,7 +1093,8 @@ mod async_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // Upload a splat set, then remove it. The handle is now stale.
         let id1 = resources
@@ -1122,7 +1126,8 @@ mod async_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = resources
             .begin_upload_gaussian_splat(&device, &queue, GaussianSplatData::default())
             .unwrap_err();
@@ -1138,7 +1143,8 @@ mod async_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources
             .begin_upload_gaussian_splat(&device, &queue, sample_splats(8))
             .expect("job submitted");
@@ -1162,7 +1168,8 @@ mod async_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id = resources
             .upload_gaussian_splat(&device, &queue, &sample_splats(8))
@@ -1200,36 +1207,36 @@ mod async_tests {
 /// Per-viewport sort buffers for one Gaussian splat set.
 pub(crate) struct GaussianSplatViewportSort {
     /// u32 view-space depth keys (flipped for back-to-front), written by depth compute each frame.
-    pub depth_buf: wgpu::Buffer,
+    pub depth_buf: crate::gpu::Buffer,
     /// Ping/pong key buffers for radix sort.
-    pub keys_ping: wgpu::Buffer,
-    pub keys_pong: wgpu::Buffer,
+    pub keys_ping: crate::gpu::Buffer,
+    pub keys_pong: crate::gpu::Buffer,
     /// Ping/pong value (index) buffers for radix sort.
-    pub vals_ping: wgpu::Buffer,
-    pub vals_pong: wgpu::Buffer,
+    pub vals_ping: crate::gpu::Buffer,
+    pub vals_pong: crate::gpu::Buffer,
     /// 256-entry atomic histogram / prefix-sum scratch.
-    pub histogram_buf: wgpu::Buffer,
+    pub histogram_buf: crate::gpu::Buffer,
     /// Render bind group (group 1). Contains sorted_indices, positions, scales, rotations,
     /// opacities, sh_coefficients, and the per-viewport SplatUniform.
-    pub render_bg: wgpu::BindGroup,
+    pub render_bg: crate::gpu::BindGroup,
     /// Eye position at last sort; skip re-sort when unchanged.
     pub last_eye: [f32; 3],
     /// Per-viewport uniform buffer holding SplatUniform (model, viewport dims, sh_degree, count).
-    pub uniform_buf: wgpu::Buffer,
+    pub uniform_buf: crate::gpu::Buffer,
 }
 
 /// Persistent GPU state for one uploaded Gaussian splat set.
 pub(crate) struct GaussianSplatGpuSet {
     /// Positions as vec4<f32> (w=1), one per splat.
-    pub position_buf: wgpu::Buffer,
+    pub position_buf: crate::gpu::Buffer,
     /// Scales as vec4<f32> (w=0), one per splat.
-    pub scale_buf: wgpu::Buffer,
+    pub scale_buf: crate::gpu::Buffer,
     /// Rotations as vec4<f32> [x,y,z,w], one per splat.
-    pub rotation_buf: wgpu::Buffer,
+    pub rotation_buf: crate::gpu::Buffer,
     /// Opacities as f32, one per splat.
-    pub opacity_buf: wgpu::Buffer,
+    pub opacity_buf: crate::gpu::Buffer,
     /// SH coefficients as f32, count = splat_count * sh_degree.coeff_count().
-    pub sh_buf: wgpu::Buffer,
+    pub sh_buf: crate::gpu::Buffer,
     /// SH degree for this set.
     pub sh_degree: crate::renderer::ShDegree,
     /// Number of splats.

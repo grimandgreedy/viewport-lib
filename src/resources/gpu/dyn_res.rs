@@ -11,17 +11,17 @@ use crate::resources::DeviceResources;
 /// or surface size changes.
 pub(crate) struct DynResTarget {
     /// Scaled colour texture (render_scale x surface_size).
-    pub _colour_texture: wgpu::Texture,
+    pub _colour_texture: crate::gpu::Texture,
     /// View of `colour_texture`.
-    pub colour_view: wgpu::TextureView,
+    pub colour_view: crate::gpu::TextureView,
     /// Depth texture matching the scaled resolution.
-    pub _depth_texture: wgpu::Texture,
+    pub _depth_texture: crate::gpu::Texture,
     /// View of `depth_texture`.
-    pub depth_view: wgpu::TextureView,
+    pub depth_view: crate::gpu::TextureView,
     /// Depth-aspect view for sampling (HiZ occlusion prev-depth copy).
-    pub depth_only_view: wgpu::TextureView,
+    pub depth_only_view: crate::gpu::TextureView,
     /// Bind group for the upscale pass: colour_texture + linear sampler.
-    pub upscale_bind_group: wgpu::BindGroup,
+    pub upscale_bind_group: crate::gpu::BindGroup,
     /// Dimensions of the intermediate target `[w, h]`.
     pub scaled_size: [u32; 2],
     /// Native surface dimensions this target was created for `[w, h]`.
@@ -31,7 +31,7 @@ pub(crate) struct DynResTarget {
 impl DeviceResources {
     /// Ensure the shared upscale pipeline and sampler exist, creating them on
     /// first call. Idempotent.
-    pub(crate) fn ensure_dyn_res_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_dyn_res_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.post.dyn_res_upscale_pipeline.is_some() {
             return;
         }
@@ -40,7 +40,7 @@ impl DeviceResources {
         let bgl = crate::resources::builders::texture_sampler_bgl(
             device,
             "dyn_res_upscale_bgl",
-            wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::FRAGMENT,
         );
 
         let sampler =
@@ -76,7 +76,7 @@ impl DeviceResources {
     /// `depth_stencil` is set to read-only `Depth24PlusStencil8` so the pipeline is
     /// compatible with any render pass that carries that depth attachment.
     /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) must be called first.
-    pub(crate) fn ensure_dyn_res_ds_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_dyn_res_ds_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.post.dyn_res_upscale_ds_pipeline.is_some() {
             return;
         }
@@ -102,31 +102,31 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "dyn_res_upscale_ds_pipeline",
                 layout: &layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     buffers: &[],
                     compilation_options: Default::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: self.target_format,
                         blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Always,
+                    crate::gpu::CompareFunction::Always,
                 )),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: crate::gpu::MultisampleState::default(),
                 cache: None,
             },
         );
@@ -138,62 +138,64 @@ impl DeviceResources {
     /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) first).
     pub(crate) fn create_dyn_res_target(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         scaled_size: [u32; 2],
         surface_size: [u32; 2],
     ) -> DynResTarget {
         let [sw, sh] = scaled_size;
 
-        let colour_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let colour_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("dyn_res_colour"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: sw,
                 height: sh,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: crate::gpu::TextureDimension::D2,
             format: self.target_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let colour_view = colour_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let colour_view = colour_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let depth_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("dyn_res_depth"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: sw,
                 height: sh,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
             // TEXTURE_BINDING so the HiZ occlusion prev-depth copy can sample it.
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth_only_view = depth_texture.create_view(&wgpu::TextureViewDescriptor {
-            aspect: wgpu::TextureAspect::DepthOnly,
+        let depth_view = depth_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let depth_only_view = depth_texture.create_view(&crate::gpu::TextureViewDescriptor {
+            aspect: crate::gpu::TextureAspect::DepthOnly,
             ..Default::default()
         });
 
         let bgl = self.post.dyn_res_upscale_bgl.as_ref().unwrap();
         let sampler = self.post.dyn_res_linear_sampler.as_ref().unwrap();
-        let upscale_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let upscale_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("dyn_res_upscale_bg"),
             layout: bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&colour_view),
+                    resource: crate::gpu::BindingResource::TextureView(&colour_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: crate::gpu::BindingResource::Sampler(sampler),
                 },
             ],
         });
@@ -216,40 +218,41 @@ impl DeviceResources {
     /// [`ensure_dyn_res_pipeline`](Self::ensure_dyn_res_pipeline) first.
     pub(crate) fn create_hdr_callback_target(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         size: [u32; 2],
     ) -> HdrCallbackTarget {
         let [w, h] = size;
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("hdr_callback_target"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: w.max(1),
                 height: h.max(1),
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: crate::gpu::TextureDimension::D2,
             format: self.target_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
         let blit_bind_group = {
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
             let bgl = self.post.dyn_res_upscale_bgl.as_ref().unwrap();
             let sampler = self.post.dyn_res_linear_sampler.as_ref().unwrap();
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("hdr_callback_blit_bg"),
                 layout: bgl,
                 entries: &[
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
+                        resource: crate::gpu::BindingResource::TextureView(&view),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
+                        resource: crate::gpu::BindingResource::Sampler(sampler),
                     },
                 ],
             })
@@ -276,9 +279,9 @@ pub(crate) struct HdrCallbackTarget {
     ///
     /// Stored so we can create a fresh `TextureView` each frame inside
     /// `prepare_hdr_callback`, avoiding a simultaneous mutable + immutable borrow.
-    pub texture: wgpu::Texture,
+    pub texture: crate::gpu::Texture,
     /// Bind group for the blit pass: `texture` view + linear sampler.
-    pub blit_bind_group: wgpu::BindGroup,
+    pub blit_bind_group: crate::gpu::BindGroup,
     /// Dimensions `[w, h]`.
     pub size: [u32; 2],
 }

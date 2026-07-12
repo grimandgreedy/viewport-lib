@@ -125,8 +125,8 @@ impl ViewportRenderer {
         backend: PickBackend,
         cursor: glam::Vec2,
         frame: &FrameData,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mask: crate::interaction::select::pick_mask::PickMask,
     ) -> Option<crate::interaction::query::picking::PickHit> {
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);

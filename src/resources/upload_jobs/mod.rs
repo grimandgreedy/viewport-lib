@@ -168,7 +168,11 @@ pub type ApplyFn = Box<dyn FnOnce(&mut super::DeviceResources) + Send>;
 /// `submit_cpu` or the CPU stage of `submit_cpu_then_gpu`; only the GPU
 /// calls are funnelled here.
 pub(crate) type GpuWorkFn = Box<
-    dyn FnOnce(&wgpu::Device, &wgpu::Queue, &ProgressHandle) -> Result<JobProduct, ViewportError>
+    dyn FnOnce(
+            &crate::gpu::Device,
+            &crate::gpu::Queue,
+            &ProgressHandle,
+        ) -> Result<JobProduct, ViewportError>
         + Send,
 >;
 
@@ -192,8 +196,8 @@ pub(crate) enum GpuStep {
 /// unbudgeted path keeps whole-asset behaviour.
 pub(crate) type ChunkedGpuWorkFn = Box<
     dyn FnMut(
-            &wgpu::Device,
-            &wgpu::Queue,
+            &crate::gpu::Device,
+            &crate::gpu::Queue,
             &ProgressHandle,
             &FrameBudget,
         ) -> Result<GpuStep, ViewportError>
@@ -282,7 +286,7 @@ pub struct JobProduct {
     /// `Some` when the worker has submitted commands that must complete
     /// before the job can be reported `Ready`. The runner gates on this
     /// submission via `device.poll`.
-    pub gpu: Option<wgpu::SubmissionIndex>,
+    pub gpu: Option<crate::gpu::SubmissionIndex>,
     /// `Some` when the worker has built state that must be folded into
     /// `DeviceResources` from the main thread.
     pub apply: Option<ApplyFn>,
@@ -305,7 +309,7 @@ impl JobProduct {
     }
 
     /// Gate on a single GPU submission; no main-thread apply.
-    pub fn with_gpu(gpu: wgpu::SubmissionIndex) -> Self {
+    pub fn with_gpu(gpu: crate::gpu::SubmissionIndex) -> Self {
         Self {
             gpu: Some(gpu),
             apply: None,
@@ -321,7 +325,7 @@ impl JobProduct {
     }
 
     /// Gate on a GPU submission, then run the apply step.
-    pub fn with_gpu_and_apply(gpu: wgpu::SubmissionIndex, apply: ApplyFn) -> Self {
+    pub fn with_gpu_and_apply(gpu: crate::gpu::SubmissionIndex, apply: ApplyFn) -> Self {
         Self {
             gpu: Some(gpu),
             apply: Some(apply),
@@ -414,7 +418,7 @@ struct JobSlot {
     rx: mpsc::Receiver<WorkerOutcome>,
     /// Once the worker has reported, the GPU submission to gate on (if any)
     /// and the apply closure to run when the GPU side finishes.
-    awaiting: Option<(Option<wgpu::SubmissionIndex>, Option<ApplyFn>)>,
+    awaiting: Option<(Option<crate::gpu::SubmissionIndex>, Option<ApplyFn>)>,
     callback: Option<CompletionCallback>,
 }
 
@@ -673,14 +677,14 @@ impl JobRunner {
     /// on that submission before reporting `Ready`.
     pub(crate) fn submit_with_gpu<F>(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         work: F,
     ) -> JobId
     where
         F: FnOnce(
-                &wgpu::Device,
-                &wgpu::Queue,
+                &crate::gpu::Device,
+                &crate::gpu::Queue,
                 &ProgressHandle,
             ) -> Result<JobProduct, ViewportError>
             + Send
@@ -801,7 +805,11 @@ impl JobRunner {
     /// (only when `status` is `Ready`), then invoke the registered
     /// `callback` if present. Splitting these out lets the caller drop any
     /// external lock around the runner before mutating renderer state.
-    pub fn process(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<Completion> {
+    pub fn process(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) -> Vec<Completion> {
         self.process_budgeted(device, queue, &FrameBudget::unbounded())
     }
 
@@ -813,8 +821,8 @@ impl JobRunner {
     /// else behaves like `process`.
     pub fn process_budgeted(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         budget: &FrameBudget,
     ) -> Vec<Completion> {
         // Drop the previous frame's retention window. Callers that needed
@@ -884,7 +892,7 @@ impl JobRunner {
 
         // Advance internal wgpu state so completed submissions are visible
         // to the per-submission wait below.
-        let _ = device.poll(wgpu::PollType::Poll);
+        let _ = device.poll(crate::gpu::PollType::Poll);
 
         let mut completions = Vec::new();
         let ids: Vec<u64> = self.slots.keys().copied().collect();
@@ -965,12 +973,13 @@ impl JobRunner {
                 .and_then(|s| s.awaiting.as_ref())
                 .and_then(|(g, _)| g.clone());
             if let Some(sub) = pending_sub {
-                let result = device.poll(wgpu::PollType::Wait {
+                let result = device.poll(crate::gpu::PollType::Wait {
                     submission_index: Some(sub),
                     timeout: Some(Duration::from_millis(0)),
                 });
                 match result {
-                    Ok(wgpu::PollStatus::QueueEmpty) | Ok(wgpu::PollStatus::WaitSucceeded) => {
+                    Ok(crate::gpu::PollStatus::QueueEmpty)
+                    | Ok(crate::gpu::PollStatus::WaitSucceeded) => {
                         let apply = self
                             .slots
                             .get_mut(&id)
@@ -978,7 +987,7 @@ impl JobRunner {
                             .and_then(|(_, a)| a);
                         self.finish(id, UploadStatus::Ready, apply, &mut completions);
                     }
-                    Ok(wgpu::PollStatus::Poll) => {
+                    Ok(crate::gpu::PollStatus::Poll) => {
                         // Backend still working; check again next frame.
                     }
                     Err(_) => {
@@ -1042,7 +1051,7 @@ impl super::DeviceResources {
     /// Apply closures and callbacks both run after the runner's mutex is
     /// released, so they are free to query the runner or submit a fresh job
     /// without risk of deadlock.
-    pub fn process_uploads(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub fn process_uploads(&mut self, device: &crate::gpu::Device, queue: &crate::gpu::Queue) {
         self.process_uploads_with_budget(device, queue, FrameBudget::unbounded());
     }
 
@@ -1065,8 +1074,8 @@ impl super::DeviceResources {
     /// has started; the budget is a soft cap, not a hard deadline.
     pub fn process_uploads_with_budget(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         budget: FrameBudget,
     ) {
         // Stage 1: advance the runner and drain immediate (failure /
@@ -1199,8 +1208,8 @@ impl super::DeviceResources {
     /// error verbatim when the job ends in `Failed`.
     pub fn drain_until(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: JobId,
     ) -> crate::error::ViewportResult<()> {
         loop {
@@ -1431,8 +1440,8 @@ mod tests {
     /// rayon pool, so a single sleep + process cycle is not enough.
     fn drain_until<F>(
         runner: &mut JobRunner,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         max_iterations: usize,
         mut predicate: F,
     ) where
@@ -1508,12 +1517,12 @@ mod tests {
         let mut runner = JobRunner::new();
         let id = runner.submit_cpu_then_gpu(|p| {
             p.set(0.5);
-            Ok(
-                Box::new(|_d: &wgpu::Device, _q: &wgpu::Queue, p: &ProgressHandle| {
+            Ok(Box::new(
+                |_d: &crate::gpu::Device, _q: &crate::gpu::Queue, p: &ProgressHandle| {
                     p.set(1.0);
                     Ok(JobProduct::empty())
-                }) as GpuWorkFn,
-            )
+                },
+            ) as GpuWorkFn)
         });
 
         with_test_gpu(|device, queue| {
@@ -1552,8 +1561,8 @@ mod tests {
         let id = runner.submit_cpu_then_gpu_chunked(move |_p| {
             let mut slices_done = 0usize;
             Ok(Box::new(
-                move |_d: &wgpu::Device,
-                      _q: &wgpu::Queue,
+                move |_d: &crate::gpu::Device,
+                      _q: &crate::gpu::Queue,
                       _p: &ProgressHandle,
                       budget: &FrameBudget| {
                     turns_in_job.fetch_add(1, Ordering::Relaxed);
@@ -1600,8 +1609,8 @@ mod tests {
         let id = runner.submit_cpu_then_gpu_chunked(move |_p| {
             let mut slices_done = 0usize;
             Ok(Box::new(
-                move |_d: &wgpu::Device,
-                      _q: &wgpu::Queue,
+                move |_d: &crate::gpu::Device,
+                      _q: &crate::gpu::Queue,
                       _p: &ProgressHandle,
                       budget: &FrameBudget| {
                     turns_in_job.fetch_add(1, Ordering::Relaxed);
@@ -1632,8 +1641,8 @@ mod tests {
         let id = runner.submit_cpu_then_gpu_chunked(move |_p| {
             let mut turn = 0usize;
             Ok(Box::new(
-                move |_d: &wgpu::Device,
-                      _q: &wgpu::Queue,
+                move |_d: &crate::gpu::Device,
+                      _q: &crate::gpu::Queue,
                       _p: &ProgressHandle,
                       _b: &FrameBudget| {
                     turn += 1;
@@ -1671,7 +1680,7 @@ mod tests {
             let ran = ran.clone();
             runner.submit_cpu_then_gpu(move |_p| {
                 Ok(Box::new(
-                    move |_d: &wgpu::Device, _q: &wgpu::Queue, _p: &ProgressHandle| {
+                    move |_d: &crate::gpu::Device, _q: &crate::gpu::Queue, _p: &ProgressHandle| {
                         ran.fetch_add(1, Ordering::Relaxed);
                         Ok(JobProduct::empty())
                     },
@@ -1828,10 +1837,10 @@ mod tests {
         let mut runner = JobRunner::new();
         with_test_gpu(|device, queue| {
             let id = runner.submit_with_gpu(device, queue, |device, queue, _p| {
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("upload_jobs_test_buf"),
                     size: 16,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                    usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(
@@ -1839,14 +1848,14 @@ mod tests {
                     0,
                     &[1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 );
-                let mut enc =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                let mut enc = device
+                    .create_command_encoder(&crate::gpu::CommandEncoderDescriptor { label: None });
                 // Force a non-trivial command buffer so the submission has
                 // something to flush.
-                let dst = device.create_buffer(&wgpu::BufferDescriptor {
+                let dst = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("upload_jobs_test_dst"),
                     size: 16,
-                    usage: wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 enc.copy_buffer_to_buffer(&buf, 0, &dst, 0, 16);
@@ -1872,26 +1881,35 @@ mod tests {
     // Plugin-facing facade
     // -----------------------------------------------------------------
 
-    fn make_resources_for_jobs()
-    -> Option<(wgpu::Device, wgpu::Queue, super::super::DeviceResources)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn make_resources_for_jobs() -> Option<(
+        crate::gpu::Device,
+        crate::gpu::Queue,
+        super::super::DeviceResources,
+    )> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
         let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
-        let resources =
-            super::super::DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default()))
+                .ok()?;
+        let resources = super::super::DeviceResources::new(
+            &device,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            1,
+        );
         Some((device, queue, resources))
     }
 
     fn drive_resources<F: FnMut(&super::super::DeviceResources) -> bool>(
         resources: &mut super::super::DeviceResources,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mut predicate: F,
     ) {
         for _ in 0..200 {
@@ -2095,32 +2113,34 @@ mod tests {
     /// Skips the test (via early return) if no adapter is available. CI
     /// builds without a GPU should pass the CPU-only tests above and skip
     /// the GPU-gated one.
-    fn with_test_gpu<F: FnOnce(&wgpu::Device, &wgpu::Queue)>(f: F) {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY | wgpu::Backends::SECONDARY,
+    fn with_test_gpu<F: FnOnce(&crate::gpu::Device, &crate::gpu::Queue)>(f: F) {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor {
+            backends: crate::gpu::Backends::PRIMARY | crate::gpu::Backends::SECONDARY,
             ..Default::default()
         });
-        let adapter =
-            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
+        let adapter = match pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: false,
-            })) {
-                Ok(a) => a,
-                Err(_) => {
-                    eprintln!("skipping GPU-gated test: no adapter available");
-                    return;
-                }
-            };
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("upload_jobs_test_device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            experimental_features: wgpu::ExperimentalFeatures::default(),
-            trace: wgpu::Trace::Off,
-        }))
-        .expect("device creation");
+            },
+        )) {
+            Ok(a) => a,
+            Err(_) => {
+                eprintln!("skipping GPU-gated test: no adapter available");
+                return;
+            }
+        };
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+                label: Some("upload_jobs_test_device"),
+                required_features: crate::gpu::Features::empty(),
+                required_limits: crate::gpu::Limits::downlevel_defaults(),
+                memory_hints: crate::gpu::MemoryHints::Performance,
+                experimental_features: crate::gpu::ExperimentalFeatures::default(),
+                trace: crate::gpu::Trace::Off,
+            }))
+            .expect("device creation");
         f(&device, &queue);
     }
 }

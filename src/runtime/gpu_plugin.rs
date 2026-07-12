@@ -57,25 +57,25 @@ pub mod gpu_phase {
 #[non_exhaustive]
 pub struct PostPaintTargets<'a> {
     /// View of the just-rendered color target.
-    pub color_view: &'a wgpu::TextureView,
+    pub color_view: &'a crate::gpu::TextureView,
     /// View of the depth target produced during paint.
-    pub depth_view: &'a wgpu::TextureView,
+    pub depth_view: &'a crate::gpu::TextureView,
     /// View of the pick-id target (`R32Uint`) if the host renders one. `None`
     /// when the active path does not produce a pick-id texture (e.g. an eframe
     /// callback that did not request GPU picking this frame).
-    pub pick_id_view: Option<&'a wgpu::TextureView>,
+    pub pick_id_view: Option<&'a crate::gpu::TextureView>,
     /// Format of `color_view`. Useful when a plugin builds a pipeline whose
     /// output format must match.
-    pub color_format: wgpu::TextureFormat,
+    pub color_format: crate::gpu::TextureFormat,
 }
 
 impl<'a> PostPaintTargets<'a> {
     /// Construct targets without a pick-id view. A host that rendered a pick-id
     /// texture this frame chains [`with_pick_id_view`](Self::with_pick_id_view).
     pub fn new(
-        color_view: &'a wgpu::TextureView,
-        depth_view: &'a wgpu::TextureView,
-        color_format: wgpu::TextureFormat,
+        color_view: &'a crate::gpu::TextureView,
+        depth_view: &'a crate::gpu::TextureView,
+        color_format: crate::gpu::TextureFormat,
     ) -> Self {
         Self {
             color_view,
@@ -86,7 +86,7 @@ impl<'a> PostPaintTargets<'a> {
     }
 
     /// Supply the pick-id target view (`R32Uint`) for plugins that read it.
-    pub fn with_pick_id_view(mut self, pick_id_view: &'a wgpu::TextureView) -> Self {
+    pub fn with_pick_id_view(mut self, pick_id_view: &'a crate::gpu::TextureView) -> Self {
         self.pick_id_view = Some(pick_id_view);
         self
     }
@@ -208,7 +208,7 @@ pub trait GpuPlugin: Send + 'static {
     /// plugin is registered after the runtime has already run, every plugin's
     /// `init_gpu` is invoked again on the next frame; implementations should
     /// either be idempotent or guard their own one-time setup.
-    fn init_gpu(&mut self, _device: &wgpu::Device) {}
+    fn init_gpu(&mut self, _device: &crate::gpu::Device) {}
 
     /// Called when the wgpu device is recreated, e.g. after device loss or a
     /// host-driven reset. Every cached buffer, texture, bind group, or
@@ -222,7 +222,7 @@ pub trait GpuPlugin: Send + 'static {
     /// plugin before the next `pre_prepare`, so a typical implementation
     /// can simply drop its cached resources here and let `init_gpu` rebuild
     /// them.
-    fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {}
+    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {}
 
     /// Encode work that runs before `renderer.prepare()`.
     ///
@@ -232,10 +232,10 @@ pub trait GpuPlugin: Send + 'static {
     /// `prepare()`'s passes (cluster build, shadow render, etc.).
     fn pre_prepare(
         &mut self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        _device: &crate::gpu::Device,
+        _queue: &crate::gpu::Queue,
         _ctx: &GpuFrameContext<'_>,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         Vec::new()
     }
 
@@ -251,11 +251,11 @@ pub trait GpuPlugin: Send + 'static {
     /// does not loop a plugin's output back into the rendered color.
     fn post_paint(
         &mut self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        _device: &crate::gpu::Device,
+        _queue: &crate::gpu::Queue,
         _targets: &PostPaintTargets<'_>,
         _ctx: &GpuFrameContext<'_>,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         Vec::new()
     }
 }
@@ -277,20 +277,20 @@ impl<P: GpuPlugin> GpuPlugin for ViewportScopedPlugin<P> {
         self.inner.priority()
     }
 
-    fn init_gpu(&mut self, device: &wgpu::Device) {
+    fn init_gpu(&mut self, device: &crate::gpu::Device) {
         self.inner.init_gpu(device);
     }
 
-    fn on_device_recreated(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn on_device_recreated(&mut self, device: &crate::gpu::Device, queue: &crate::gpu::Queue) {
         self.inner.on_device_recreated(device, queue);
     }
 
     fn pre_prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         ctx: &GpuFrameContext<'_>,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         if ctx.viewport_id == Some(self.viewport) {
             self.inner.pre_prepare(device, queue, ctx)
         } else {
@@ -300,11 +300,11 @@ impl<P: GpuPlugin> GpuPlugin for ViewportScopedPlugin<P> {
 
     fn post_paint(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         targets: &PostPaintTargets<'_>,
         ctx: &GpuFrameContext<'_>,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         if ctx.viewport_id == Some(self.viewport) {
             self.inner.post_paint(device, queue, targets, ctx)
         } else {
@@ -330,64 +330,66 @@ mod tests {
             self.prio
         }
 
-        fn init_gpu(&mut self, _device: &wgpu::Device) {
+        fn init_gpu(&mut self, _device: &crate::gpu::Device) {
             *self.init_count.lock().unwrap() += 1;
         }
 
         fn pre_prepare(
             &mut self,
-            _device: &wgpu::Device,
-            _queue: &wgpu::Queue,
+            _device: &crate::gpu::Device,
+            _queue: &crate::gpu::Queue,
             _ctx: &GpuFrameContext<'_>,
-        ) -> Vec<wgpu::CommandBuffer> {
+        ) -> Vec<crate::gpu::CommandBuffer> {
             self.log.lock().unwrap().push(self.prio);
             Vec::new()
         }
 
         fn post_paint(
             &mut self,
-            _device: &wgpu::Device,
-            _queue: &wgpu::Queue,
+            _device: &crate::gpu::Device,
+            _queue: &crate::gpu::Queue,
             _targets: &PostPaintTargets<'_>,
             _ctx: &GpuFrameContext<'_>,
-        ) -> Vec<wgpu::CommandBuffer> {
+        ) -> Vec<crate::gpu::CommandBuffer> {
             self.post_log.lock().unwrap().push(self.prio);
             Vec::new()
         }
     }
 
     fn make_dummy_view(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        usage: wgpu::TextureUsages,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
+        device: &crate::gpu::Device,
+        format: crate::gpu::TextureFormat,
+        usage: crate::gpu::TextureUsages,
+    ) -> (crate::gpu::Texture, crate::gpu::TextureView) {
+        let tex = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("post_paint_test_target"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: crate::gpu::TextureDimension::D2,
             format,
             usage,
             view_formats: &[],
         });
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
         (tex, view)
     }
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     #[test]
@@ -441,18 +443,20 @@ mod tests {
         // post_paint: same priority contract.
         let (_color_tex, color_view) = make_dummy_view(
             &device,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
         );
         let (_depth_tex, depth_view) = make_dummy_view(
             &device,
-            wgpu::TextureFormat::Depth32Float,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            crate::gpu::TextureFormat::Depth32Float,
+            crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
         );
         let targets = PostPaintTargets::new(
             &color_view,
             &depth_view,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
         );
 
         let bufs = runtime.post_paint(&device, &queue, &targets, &ctx);
@@ -466,10 +470,14 @@ mod tests {
     }
 
     impl GpuPlugin for DeviceLossRecorder {
-        fn init_gpu(&mut self, _device: &wgpu::Device) {
+        fn init_gpu(&mut self, _device: &crate::gpu::Device) {
             *self.init_count.lock().unwrap() += 1;
         }
-        fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {
+        fn on_device_recreated(
+            &mut self,
+            _device: &crate::gpu::Device,
+            _queue: &crate::gpu::Queue,
+        ) {
             *self.recreated.lock().unwrap() += 1;
         }
     }

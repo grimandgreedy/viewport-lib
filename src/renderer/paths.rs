@@ -46,11 +46,11 @@ impl<'r> OwnedPath<'r> {
     /// Render a single viewport. Runs prepare internally and returns a command buffer to submit.
     pub fn render(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         self.renderer.render(device, queue, output_view, frame)
     }
 
@@ -61,8 +61,8 @@ impl<'r> OwnedPath<'r> {
     /// call in the same frame. The token may be borrowed multiple times for multi-viewport scenes.
     pub fn prepare_scene(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
@@ -78,8 +78,8 @@ impl<'r> OwnedPath<'r> {
     /// that `prepare_scene` has been called earlier in the same frame.
     pub fn prepare_viewport(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         _token: &ScenePreparedToken,
         id: ViewportId,
         frame: &FrameData,
@@ -91,12 +91,12 @@ impl<'r> OwnedPath<'r> {
     /// Call after `prepare_scene` and `prepare_viewport` for this id.
     pub fn render_viewport(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         id: ViewportId,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         self.renderer
             .render_viewport(device, queue, output_view, id, frame)
     }
@@ -109,10 +109,10 @@ impl<'r> PassPath<'r> {
     /// pass begins. Returns an empty vec for LDR with no dynamic resolution.
     pub fn prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         self.renderer.prepare_callback(device, queue, frame)
     }
 
@@ -122,7 +122,7 @@ impl<'r> PassPath<'r> {
     /// dynamic-resolution blit, or direct draw based on which path `prepare`
     /// activated. The render pass is expected to have a depth-stencil attachment,
     /// as provided by eframe and most GUI frameworks.
-    pub fn paint<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub fn paint<'rp>(&self, render_pass: &mut crate::gpu::RenderPass<'rp>, frame: &FrameData) {
         self.renderer.paint_callback(render_pass, frame);
     }
 
@@ -133,8 +133,8 @@ impl<'r> PassPath<'r> {
     /// in the same frame. The token may be borrowed multiple times for multi-viewport scenes.
     pub fn prepare_scene(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) -> ScenePreparedToken {
@@ -150,8 +150,8 @@ impl<'r> PassPath<'r> {
     /// `prepare_scene`; it enforces that `prepare_scene` has been called earlier in the same frame.
     pub fn prepare_viewport(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         _token: &ScenePreparedToken,
         id: ViewportId,
         frame: &FrameData,
@@ -165,7 +165,7 @@ impl<'r> PassPath<'r> {
     /// before calling. Call after `prepare_scene` and `prepare_viewport`.
     pub fn paint_viewport<'rp>(
         &self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
         id: ViewportId,
         frame: &FrameData,
     ) {
@@ -181,11 +181,11 @@ impl<'r> PassPath<'r> {
     /// result into the egui render pass. Set the render pass viewport and scissor rect first.
     pub fn prepare_hdr_viewport(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: ViewportId,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         self.renderer
             .prepare_hdr_callback_viewport(device, queue, id, frame)
     }
@@ -193,14 +193,14 @@ impl<'r> PassPath<'r> {
 
 impl<'r> PassView<'r> {
     /// Single viewport: issue draw calls into `render_pass`.
-    pub fn paint<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub fn paint<'rp>(&self, render_pass: &mut crate::gpu::RenderPass<'rp>, frame: &FrameData) {
         self.renderer.paint_callback(render_pass, frame);
     }
 
     /// Multi-viewport: issue draw calls for `id` into `render_pass`.
     pub fn paint_viewport<'rp>(
         &self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
         id: ViewportId,
         frame: &FrameData,
     ) {
@@ -215,7 +215,11 @@ impl<'r> PassView<'r> {
     /// The render pass must have a `Depth24PlusStencil8` depth-stencil attachment (as eframe
     /// callbacks always do). For render passes without a depth attachment (e.g. a plain winit
     /// blit pass), use [`paint_hdr_blit_no_ds`](Self::paint_hdr_blit_no_ds) instead.
-    pub fn paint_hdr_blit<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub fn paint_hdr_blit<'rp>(
+        &self,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
+        frame: &FrameData,
+    ) {
         self.renderer.paint_hdr_blit(render_pass, frame);
     }
 
@@ -226,7 +230,7 @@ impl<'r> PassView<'r> {
     /// differs to match the render pass format.
     pub fn paint_hdr_blit_no_ds<'rp>(
         &self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
         self.renderer.paint_hdr_blit_no_ds(render_pass, frame);

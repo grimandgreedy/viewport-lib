@@ -17,7 +17,7 @@ use crate::resources::{DeviceResources, LodGroupId, MeshData};
 /// Upload each level mesh, then register the group.
 fn register(
     res: &mut DeviceResources,
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     levels: &[(MeshData, f32)],
 ) -> LodGroupId {
     let mut ids = Vec::with_capacity(levels.len());
@@ -29,15 +29,17 @@ fn register(
     res.register_lod_group(&ids, &sizes).unwrap()
 }
 
-fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
+fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+    let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+    let adapter = pollster::block_on(instance.request_adapter(
+        &crate::gpu::RequestAdapterOptions {
+            power_preference: crate::gpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        },
+    ))
     .ok()?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+    pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
         label: Some("lod_instance_tests"),
         ..Default::default()
     }))
@@ -64,7 +66,7 @@ fn instances_split_into_one_batch_per_level() {
         eprintln!("skipping instances_split_into_one_batch_per_level: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
     let group = register(
         renderer.resources_mut(),
@@ -120,7 +122,7 @@ fn instances_below_cull_size_are_dropped() {
         eprintln!("skipping instances_below_cull_size_are_dropped: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
     let group = register(
         renderer.resources_mut(),
@@ -163,7 +165,7 @@ fn instanced_item_without_group_makes_one_batch() {
         eprintln!("skipping instanced_item_without_group_makes_one_batch: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
     let mesh = renderer
         .resources_mut()
         .upload_mesh_data(&device, &primitives::cube(1.0))

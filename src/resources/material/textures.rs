@@ -11,8 +11,8 @@ impl DeviceResources {
     /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData) if the data length is incorrect.
     pub fn upload_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba_data: &[u8],
@@ -35,8 +35,8 @@ impl DeviceResources {
     /// normal map decoding. `rgba_data` must be `width * height * 4` bytes.
     pub fn upload_normal_map(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba_data: &[u8],
@@ -72,8 +72,8 @@ impl DeviceResources {
     /// submitted.
     pub fn begin_upload_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba: Vec<u8>,
@@ -91,7 +91,7 @@ impl DeviceResources {
             TextureUploadSpec {
                 width,
                 height,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
                 is_normal_map: false,
                 mip_levels: vec![rgba],
             },
@@ -109,8 +109,8 @@ impl DeviceResources {
     /// Same as `begin_upload_texture`.
     pub fn begin_upload_normal_map(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba: Vec<u8>,
@@ -128,7 +128,7 @@ impl DeviceResources {
             TextureUploadSpec {
                 width,
                 height,
-                format: wgpu::TextureFormat::Rgba8Unorm,
+                format: crate::gpu::TextureFormat::Rgba8Unorm,
                 is_normal_map: true,
                 mip_levels: vec![rgba],
             },
@@ -178,8 +178,8 @@ impl DeviceResources {
     /// See [`begin_upload_compressed_texture`](Self::begin_upload_compressed_texture).
     pub fn upload_compressed_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         let id = self.begin_upload_compressed_texture(device, queue, desc)?;
@@ -205,8 +205,8 @@ impl DeviceResources {
     /// block-packed size.
     pub fn begin_upload_compressed_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         desc: CompressedTextureDesc<'_>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         if !desc.format.is_compressed() {
@@ -277,8 +277,8 @@ impl DeviceResources {
     /// slot (albedo vs normal map) the texture occupies.
     fn spawn_texture_upload(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         spec: TextureUploadSpec,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::TextureId>::new();
@@ -307,7 +307,7 @@ impl DeviceResources {
         let data_bytes: u64 = if mip_levels.len() == 1
             && matches!(
                 format,
-                wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Rgba8Unorm
+                crate::gpu::TextureFormat::Rgba8UnormSrgb | crate::gpu::TextureFormat::Rgba8Unorm
             ) {
             let mut total = 0u64;
             let (mut w, mut h) = (width, height);
@@ -338,9 +338,10 @@ impl DeviceResources {
                 let mip_levels = if mip_levels.len() == 1
                     && matches!(
                         format,
-                        wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Rgba8Unorm
+                        crate::gpu::TextureFormat::Rgba8UnormSrgb
+                            | crate::gpu::TextureFormat::Rgba8Unorm
                     ) {
-                    let srgb = format == wgpu::TextureFormat::Rgba8UnormSrgb;
+                    let srgb = format == crate::gpu::TextureFormat::Rgba8UnormSrgb;
                     let mut levels = mip_levels;
                     let base = levels.pop().expect("one base level");
                     build_rgba_mip_chain(base, width, height, srgb)
@@ -356,14 +357,14 @@ impl DeviceResources {
                 // result is published only after the final band and flush,
                 // so no partially written texture is ever observable.
                 let total_bytes: u64 = mip_levels.iter().map(|l| l.len() as u64).sum();
-                let mut texture: Option<wgpu::Texture> = None;
+                let mut texture: Option<crate::gpu::Texture> = None;
                 let mut level: usize = 0;
                 let mut block_row: u32 = 0;
                 let mut written: u64 = 0;
                 let mut slot_for_apply = Some(slot_for_apply);
                 Ok(Box::new(
-                    move |dev: &wgpu::Device,
-                          q: &wgpu::Queue,
+                    move |dev: &crate::gpu::Device,
+                          q: &crate::gpu::Queue,
                           progress: &crate::resources::ProgressHandle,
                           budget: &crate::resources::upload_jobs::FrameBudget| {
                         let tex_label = if is_normal_map {
@@ -372,19 +373,19 @@ impl DeviceResources {
                             "user_texture"
                         };
                         let tex = texture.get_or_insert_with(|| {
-                            dev.create_texture(&wgpu::TextureDescriptor {
+                            dev.create_texture(&crate::gpu::TextureDescriptor {
                                 label: Some(tex_label),
-                                size: wgpu::Extent3d {
+                                size: crate::gpu::Extent3d {
                                     width,
                                     height,
                                     depth_or_array_layers: 1,
                                 },
                                 mip_level_count: mip_levels.len() as u32,
                                 sample_count: 1,
-                                dimension: wgpu::TextureDimension::D2,
+                                dimension: crate::gpu::TextureDimension::D2,
                                 format,
-                                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                                    | wgpu::TextureUsages::COPY_DST,
+                                usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+                                    | crate::gpu::TextureUsages::COPY_DST,
                                 view_formats: &[],
                             })
                         });
@@ -409,23 +410,23 @@ impl DeviceResources {
                                 * bytes_per_row as usize)
                                 ..(end_row as usize * bytes_per_row as usize)];
                             q.write_texture(
-                                wgpu::TexelCopyTextureInfo {
+                                crate::gpu::TexelCopyTextureInfo {
                                     texture: tex,
                                     mip_level: level as u32,
-                                    origin: wgpu::Origin3d {
+                                    origin: crate::gpu::Origin3d {
                                         x: 0,
                                         y: origin_y,
                                         z: 0,
                                     },
-                                    aspect: wgpu::TextureAspect::All,
+                                    aspect: crate::gpu::TextureAspect::All,
                                 },
                                 data,
-                                wgpu::TexelCopyBufferLayout {
+                                crate::gpu::TexelCopyBufferLayout {
                                     offset: 0,
                                     bytes_per_row: Some(bytes_per_row),
                                     rows_per_image: Some(band_rows),
                                 },
-                                wgpu::Extent3d {
+                                crate::gpu::Extent3d {
                                     width: lw,
                                     height: band_height,
                                     depth_or_array_layers: 1,
@@ -458,9 +459,10 @@ impl DeviceResources {
                         );
                         // Flush so the runner has a submission to gate on.
                         // Writes queued above are folded into this submit.
-                        let encoder = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("async_texture_flush"),
-                        });
+                        let encoder =
+                            dev.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                                label: Some("async_texture_flush"),
+                            });
                         let submission = q.submit(std::iter::once(encoder.finish()));
                         progress.set(1.0);
 
@@ -556,8 +558,8 @@ impl DeviceResources {
     /// mip chain built on the worker.
     pub fn replace_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::TextureId,
         width: u32,
         height: u32,
@@ -575,7 +577,7 @@ impl DeviceResources {
             queue,
             width,
             height,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
+            crate::gpu::TextureFormat::Rgba8UnormSrgb,
             false,
             std::slice::from_ref(&rgba_data.to_vec()),
             &self.texture_bind_group_layout,
@@ -643,7 +645,7 @@ impl DeviceResources {
 struct TextureUploadSpec {
     width: u32,
     height: u32,
-    format: wgpu::TextureFormat,
+    format: crate::gpu::TextureFormat,
     /// Bind into the normal-map slot and label as such.
     is_normal_map: bool,
     /// One entry per mip level, level 0 first.
@@ -726,7 +728,7 @@ const TEXTURE_CHUNK_BYTES: u64 = 4 << 20;
 /// total_bytes)`. Uses the format's block dimensions and size, so it is correct
 /// for uncompressed formats (1x1 blocks) and block-compressed formats alike.
 fn mip_block_layout(
-    format: wgpu::TextureFormat,
+    format: crate::gpu::TextureFormat,
     level_width: u32,
     level_height: u32,
 ) -> (u32, u32, usize) {
@@ -751,17 +753,17 @@ fn mip_block_layout(
 /// colour slots filled by the fallback views.
 #[allow(clippy::too_many_arguments)]
 fn build_gpu_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     width: u32,
     height: u32,
-    format: wgpu::TextureFormat,
+    format: crate::gpu::TextureFormat,
     is_normal_map: bool,
     mip_levels: &[Vec<u8>],
-    bgl: &wgpu::BindGroupLayout,
-    fallback_albedo_view: &wgpu::TextureView,
-    fallback_normal_view: &wgpu::TextureView,
-    fallback_ao_view: &wgpu::TextureView,
+    bgl: &crate::gpu::BindGroupLayout,
+    fallback_albedo_view: &crate::gpu::TextureView,
+    fallback_normal_view: &crate::gpu::TextureView,
+    fallback_ao_view: &crate::gpu::TextureView,
 ) -> GpuTexture {
     let tex_label = if is_normal_map {
         "user_normal_map_texture"
@@ -769,18 +771,18 @@ fn build_gpu_texture(
         "user_texture"
     };
     let mip_level_count = mip_levels.len() as u32;
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = device.create_texture(&crate::gpu::TextureDescriptor {
         label: Some(tex_label),
-        size: wgpu::Extent3d {
+        size: crate::gpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         },
         mip_level_count,
         sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
+        dimension: crate::gpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     // Upload each mip level. Row/size math is block-based so it is correct for
@@ -790,19 +792,19 @@ fn build_gpu_texture(
         let lh = (height >> level).max(1);
         let (bytes_per_row, blocks_high, _) = mip_block_layout(format, lw, lh);
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: level as u32,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
             },
             data,
-            wgpu::TexelCopyBufferLayout {
+            crate::gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(bytes_per_row),
                 rows_per_image: Some(blocks_high),
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width: lw,
                 height: lh,
                 depth_or_array_layers: 1,
@@ -828,20 +830,20 @@ fn build_gpu_texture(
 /// before finishing it here.
 #[allow(clippy::too_many_arguments)]
 fn finish_gpu_texture(
-    device: &wgpu::Device,
-    texture: wgpu::Texture,
+    device: &crate::gpu::Device,
+    texture: crate::gpu::Texture,
     mip_level_count: u32,
     is_normal_map: bool,
-    bgl: &wgpu::BindGroupLayout,
-    fallback_albedo_view: &wgpu::TextureView,
-    fallback_normal_view: &wgpu::TextureView,
-    fallback_ao_view: &wgpu::TextureView,
+    bgl: &crate::gpu::BindGroupLayout,
+    fallback_albedo_view: &crate::gpu::TextureView,
+    fallback_normal_view: &crate::gpu::TextureView,
+    fallback_ao_view: &crate::gpu::TextureView,
 ) -> GpuTexture {
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
     let mipmap_filter = if mip_level_count > 1 {
-        wgpu::FilterMode::Linear
+        crate::gpu::FilterMode::Linear
     } else {
-        wgpu::FilterMode::Nearest
+        crate::gpu::FilterMode::Nearest
     };
     let sampler_label = if is_normal_map {
         "user_normal_map_sampler"
@@ -855,7 +857,7 @@ fn finish_gpu_texture(
     } else {
         (&view, fallback_normal_view)
     };
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
         label: Some(if is_normal_map {
             "user_normal_map_bg"
         } else {
@@ -863,21 +865,21 @@ fn finish_gpu_texture(
         }),
         layout: bgl,
         entries: &[
-            wgpu::BindGroupEntry {
+            crate::gpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(slot0_view),
+                resource: crate::gpu::BindingResource::TextureView(slot0_view),
             },
-            wgpu::BindGroupEntry {
+            crate::gpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
+                resource: crate::gpu::BindingResource::Sampler(&sampler),
             },
-            wgpu::BindGroupEntry {
+            crate::gpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::TextureView(slot2_view),
+                resource: crate::gpu::BindingResource::TextureView(slot2_view),
             },
-            wgpu::BindGroupEntry {
+            crate::gpu::BindGroupEntry {
                 binding: 3,
-                resource: wgpu::BindingResource::TextureView(fallback_ao_view),
+                resource: crate::gpu::BindingResource::TextureView(fallback_ao_view),
             },
         ],
     });
@@ -895,7 +897,10 @@ fn finish_gpu_texture(
 /// `TEXTURE_COMPRESSION_BC`, `_ASTC`, or `_ETC2` for block-compressed
 /// formats). Call this before `upload_compressed_texture` to decide whether to
 /// hand the renderer compressed data or fall back to an uncompressed upload.
-pub fn supports_texture_format(device: &wgpu::Device, format: wgpu::TextureFormat) -> bool {
+pub fn supports_texture_format(
+    device: &crate::gpu::Device,
+    format: crate::gpu::TextureFormat,
+) -> bool {
     device.features().contains(format.required_features())
 }
 
@@ -917,7 +922,7 @@ pub struct CompressedTextureDesc<'a> {
     /// Height of mip level 0, in texels.
     pub height: u32,
     /// Block-compressed texture format.
-    pub format: wgpu::TextureFormat,
+    pub format: crate::gpu::TextureFormat,
     /// Bind into the normal-map slot rather than the albedo slot.
     pub is_normal_map: bool,
     /// Block bytes per mip level, level 0 first.
@@ -932,11 +937,11 @@ impl DeviceResources {
     #[allow(dead_code)]
     pub(crate) fn get_material_bind_group(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         albedo_id: Option<crate::resources::TextureId>,
         normal_map_id: Option<crate::resources::TextureId>,
         ao_map_id: Option<crate::resources::TextureId>,
-    ) -> &wgpu::BindGroup {
+    ) -> &crate::gpu::BindGroup {
         let key = (
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
@@ -963,25 +968,25 @@ impl DeviceResources {
                 _ => &self.fallback_ao_map_view,
             };
 
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("material_bg"),
                 layout: &self.texture_bind_group_layout,
                 entries: &[
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(albedo_view),
+                        resource: crate::gpu::BindingResource::TextureView(albedo_view),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(normal_view),
+                        resource: crate::gpu::BindingResource::TextureView(normal_view),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 3,
-                        resource: wgpu::BindingResource::TextureView(ao_view),
+                        resource: crate::gpu::BindingResource::TextureView(ao_view),
                     },
                 ],
             });
@@ -1005,7 +1010,7 @@ impl DeviceResources {
     ///   binding 6 -> scalar attribute storage buffer
     pub(crate) fn update_mesh_texture_bind_group(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         albedo_id: Option<crate::resources::TextureId>,
         normal_map_id: Option<crate::resources::TextureId>,
@@ -1088,7 +1093,7 @@ impl DeviceResources {
             return;
         };
 
-        let scalar_buf: &wgpu::Buffer = match active_attr {
+        let scalar_buf: &crate::gpu::Buffer = match active_attr {
             Some(name) => {
                 let found_vertex = mesh.attribute_buffers.get(name);
                 let found_face = mesh.face_attribute_buffers.get(name);
@@ -1099,7 +1104,7 @@ impl DeviceResources {
             None => &self.content.fallback_scalar_buf,
         };
 
-        let face_colour_buf: &wgpu::Buffer = match active_attr {
+        let face_colour_buf: &crate::gpu::Buffer = match active_attr {
             Some(name) => mesh
                 .face_colour_buffers
                 .get(name)
@@ -1108,7 +1113,7 @@ impl DeviceResources {
         };
 
         // Resolve matcap texture view : fallback to 1x1 white when no matcap active.
-        let matcap_view: &wgpu::TextureView = match matcap_id {
+        let matcap_view: &crate::gpu::TextureView = match matcap_id {
             Some(id) if id.index < self.content.matcap_views.len() => {
                 &self.content.matcap_views[id.index]
             }
@@ -1119,7 +1124,7 @@ impl DeviceResources {
                 .unwrap_or(&self.fallback_texture.view),
         };
 
-        let warp_buf: &wgpu::Buffer = match warp_attr {
+        let warp_buf: &crate::gpu::Buffer = match warp_attr {
             Some(name) => mesh
                 .vector_attribute_buffers
                 .get(name)
@@ -1127,89 +1132,89 @@ impl DeviceResources {
             None => &self.content.fallback_warp_buf,
         };
 
-        let position_override_buf: &wgpu::Buffer = mesh
+        let position_override_buf: &crate::gpu::Buffer = mesh
             .position_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_position_override_buf);
-        let normal_override_buf: &wgpu::Buffer = mesh
+        let normal_override_buf: &crate::gpu::Buffer = mesh
             .normal_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_normal_override_buf);
 
-        let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
+        let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
             _ => &self.fallback_metallic_roughness_texture_view,
         };
-        let emissive_view: &wgpu::TextureView = match emissive_texture_id {
+        let emissive_view: &crate::gpu::TextureView = match emissive_texture_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
             _ => &self.fallback_emissive_texture_view,
         };
 
-        mesh.object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        mesh.object_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("object_bind_group"),
             layout: &self.object_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: mesh.object_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(albedo_view),
+                    resource: crate::gpu::BindingResource::TextureView(albedo_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(normal_view),
+                    resource: crate::gpu::BindingResource::TextureView(normal_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(ao_view),
+                    resource: crate::gpu::BindingResource::TextureView(ao_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(lut_view),
+                    resource: crate::gpu::BindingResource::TextureView(lut_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
                     resource: scalar_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::TextureView(matcap_view),
+                    resource: crate::gpu::BindingResource::TextureView(matcap_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 8,
                     resource: face_colour_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 9,
                     resource: warp_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.lut_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 11,
-                    resource: wgpu::BindingResource::TextureView(metallic_roughness_view),
+                    resource: crate::gpu::BindingResource::TextureView(metallic_roughness_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 12,
-                    resource: wgpu::BindingResource::TextureView(emissive_view),
+                    resource: crate::gpu::BindingResource::TextureView(emissive_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 13,
                     resource: position_override_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 14,
                     resource: normal_override_buf.as_entire_binding(),
                 },
@@ -1228,9 +1233,9 @@ impl DeviceResources {
     /// so that items sharing a `MeshId` each get their own transform.
     pub(crate) fn build_per_item_object_bind_group(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
-        item_uniform_buf: &wgpu::Buffer,
+        item_uniform_buf: &crate::gpu::Buffer,
         albedo_id: Option<crate::resources::TextureId>,
         normal_map_id: Option<crate::resources::TextureId>,
         ao_map_id: Option<crate::resources::TextureId>,
@@ -1241,7 +1246,7 @@ impl DeviceResources {
         metallic_roughness_id: Option<crate::resources::TextureId>,
         emissive_texture_id: Option<crate::resources::TextureId>,
         prev_key: Option<u64>,
-    ) -> Option<(wgpu::BindGroup, u64)> {
+    ) -> Option<(crate::gpu::BindGroup, u64)> {
         let hash_str = |name: &str| -> u64 {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1325,7 +1330,7 @@ impl DeviceResources {
             _ => &self.content.fallback_lut_view,
         };
 
-        let scalar_buf: &wgpu::Buffer = match active_attr {
+        let scalar_buf: &crate::gpu::Buffer = match active_attr {
             Some(name) => {
                 let found_vertex = mesh.attribute_buffers.get(name);
                 let found_face = mesh.face_attribute_buffers.get(name);
@@ -1336,7 +1341,7 @@ impl DeviceResources {
             None => &self.content.fallback_scalar_buf,
         };
 
-        let face_colour_buf: &wgpu::Buffer = match active_attr {
+        let face_colour_buf: &crate::gpu::Buffer = match active_attr {
             Some(name) => mesh
                 .face_colour_buffers
                 .get(name)
@@ -1344,7 +1349,7 @@ impl DeviceResources {
             None => &self.content.fallback_face_colour_buf,
         };
 
-        let matcap_view: &wgpu::TextureView = match matcap_id {
+        let matcap_view: &crate::gpu::TextureView = match matcap_id {
             Some(id) if id.index < self.content.matcap_views.len() => {
                 &self.content.matcap_views[id.index]
             }
@@ -1355,7 +1360,7 @@ impl DeviceResources {
                 .unwrap_or(&self.fallback_texture.view),
         };
 
-        let warp_buf: &wgpu::Buffer = match warp_attr {
+        let warp_buf: &crate::gpu::Buffer = match warp_attr {
             Some(name) => mesh
                 .vector_attribute_buffers
                 .get(name)
@@ -1363,89 +1368,89 @@ impl DeviceResources {
             None => &self.content.fallback_warp_buf,
         };
 
-        let position_override_buf: &wgpu::Buffer = mesh
+        let position_override_buf: &crate::gpu::Buffer = mesh
             .position_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_position_override_buf);
-        let normal_override_buf: &wgpu::Buffer = mesh
+        let normal_override_buf: &crate::gpu::Buffer = mesh
             .normal_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_normal_override_buf);
 
-        let metallic_roughness_view: &wgpu::TextureView = match metallic_roughness_id {
+        let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
             _ => &self.fallback_metallic_roughness_texture_view,
         };
-        let emissive_view: &wgpu::TextureView = match emissive_texture_id {
+        let emissive_view: &crate::gpu::TextureView = match emissive_texture_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
             _ => &self.fallback_emissive_texture_view,
         };
 
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("per_item_object_bind_group"),
             layout: &self.object_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: item_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(albedo_view),
+                    resource: crate::gpu::BindingResource::TextureView(albedo_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(normal_view),
+                    resource: crate::gpu::BindingResource::TextureView(normal_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(ao_view),
+                    resource: crate::gpu::BindingResource::TextureView(ao_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(lut_view),
+                    resource: crate::gpu::BindingResource::TextureView(lut_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
                     resource: scalar_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::TextureView(matcap_view),
+                    resource: crate::gpu::BindingResource::TextureView(matcap_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 8,
                     resource: face_colour_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 9,
                     resource: warp_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.lut_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 11,
-                    resource: wgpu::BindingResource::TextureView(metallic_roughness_view),
+                    resource: crate::gpu::BindingResource::TextureView(metallic_roughness_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 12,
-                    resource: wgpu::BindingResource::TextureView(emissive_view),
+                    resource: crate::gpu::BindingResource::TextureView(emissive_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 13,
                     resource: position_override_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 14,
                     resource: normal_override_buf.as_entire_binding(),
                 },
@@ -1460,45 +1465,45 @@ impl DeviceResources {
     /// Use `BuiltinColourmap` variants + [`Self::builtin_colourmap_id`] for the built-in presets.
     pub fn upload_colourmap(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         rgba_data: &[[u8; 4]; 256],
     ) -> ColourmapId {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("lut_texture"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: 256,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let flat: Vec<u8> = rgba_data.iter().flat_map(|p| p.iter().copied()).collect();
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
             },
             &flat,
-            wgpu::TexelCopyBufferLayout {
+            crate::gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(256 * 4),
                 rows_per_image: Some(1),
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width: 256,
                 height: 1,
                 depth_or_array_layers: 1,
             },
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
         let id = ColourmapId(self.content.colourmap_textures.len());
         self.content.colourmap_textures.push(texture);
         self.content.colourmap_views.push(view);
@@ -1530,7 +1535,11 @@ impl DeviceResources {
     ///
     /// Called automatically by `ViewportRenderer::prepare()` on the first frame.
     /// Safe to call multiple times : no-op after first invocation.
-    pub fn ensure_colourmaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub fn ensure_colourmaps_initialized(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
         if self.content.colourmaps_initialized {
             return;
         }
@@ -1606,8 +1615,8 @@ impl DeviceResources {
     /// if `rgba_data` has the wrong length.
     pub fn upload_matcap(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         rgba_data: &[u8],
         blendable: bool,
     ) -> crate::error::ViewportResult<crate::resources::MatcapId> {
@@ -1620,34 +1629,34 @@ impl DeviceResources {
             });
         }
 
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("matcap_texture"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
             },
             rgba_data,
-            wgpu::TexelCopyBufferLayout {
+            crate::gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width * 4),
                 rows_per_image: Some(height),
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
@@ -1662,7 +1671,7 @@ impl DeviceResources {
             ));
         }
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
         let index = self.content.matcap_textures.len();
         self.content.matcap_textures.push(texture);
         self.content.matcap_views.push(view);
@@ -1673,7 +1682,7 @@ impl DeviceResources {
             self.content.fallback_matcap_view = Some(
                 self.fallback_texture
                     .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                    .create_view(&crate::gpu::TextureViewDescriptor::default()),
             );
         }
 
@@ -1698,7 +1707,11 @@ impl DeviceResources {
     ///
     /// Called automatically by `ViewportRenderer::prepare()`. Safe to call
     /// multiple times : no-op after first invocation.
-    pub fn ensure_matcaps_initialized(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub fn ensure_matcaps_initialized(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
         if self.content.matcaps_initialized {
             return;
         }
@@ -1738,36 +1751,40 @@ mod async_texture_tests {
     use crate::DeviceResources;
     use crate::resources::UploadStatus;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     /// Device with `TEXTURE_COMPRESSION_BC` enabled, or `None` when the adapter
     /// does not support BC (e.g. a software / mobile adapter) so the caller can
     /// skip the test.
-    fn try_make_bc_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_bc_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
         if !adapter
             .features()
-            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+            .contains(crate::gpu::Features::TEXTURE_COMPRESSION_BC)
         {
             return None;
         }
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+            required_features: crate::gpu::Features::TEXTURE_COMPRESSION_BC,
             ..Default::default()
         }))
         .ok()
@@ -1775,8 +1792,8 @@ mod async_texture_tests {
 
     fn drive_until_ready(
         resources: &mut DeviceResources,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::JobId,
     ) {
         for _ in 0..200 {
@@ -1799,7 +1816,8 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // 2x2 image requires 16 bytes. Pass 12 and confirm the error fires
         // before any job is submitted.
@@ -1823,7 +1841,8 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let rgba = vec![128u8; 4 * 4 * 4];
         let id = resources
@@ -1855,7 +1874,8 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let rgba = vec![64u8; 8 * 8 * 4];
         let id = resources
@@ -1872,7 +1892,8 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let rgba = vec![200u8; 4 * 4 * 4];
         let tex_id = resources
@@ -1887,7 +1908,8 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id = resources
             .upload_texture(&device, &queue, 4, 4, &vec![200u8; 4 * 4 * 4])
@@ -1928,7 +1950,7 @@ mod async_texture_tests {
     #[test]
     fn block_layout_matches_format() {
         use super::mip_block_layout;
-        use wgpu::TextureFormat as F;
+        use crate::gpu::TextureFormat as F;
 
         // Uncompressed RGBA8: 1x1 blocks, 4 bytes/texel.
         assert_eq!(mip_block_layout(F::Rgba8Unorm, 4, 4), (16, 4, 64));
@@ -1944,8 +1966,8 @@ mod async_texture_tests {
 
         // ASTC 8x8: 8x8 blocks, 16 bytes/block.
         let astc = F::Astc {
-            block: wgpu::AstcBlock::B8x8,
-            channel: wgpu::AstcChannel::Unorm,
+            block: crate::gpu::AstcBlock::B8x8,
+            channel: crate::gpu::AstcChannel::Unorm,
         };
         assert_eq!(mip_block_layout(astc, 16, 16), (32, 2, 64));
     }
@@ -1959,7 +1981,8 @@ mod async_texture_tests {
         for level in 0..=6 {
             let lw = (w >> level).max(1);
             let lh = (h >> level).max(1);
-            let (_, _, bytes) = mip_block_layout(wgpu::TextureFormat::Bc7RgbaUnormSrgb, lw, lh);
+            let (_, _, bytes) =
+                mip_block_layout(crate::gpu::TextureFormat::Bc7RgbaUnormSrgb, lw, lh);
             total += bytes;
         }
         assert_eq!(total, 5488);
@@ -1975,12 +1998,12 @@ mod async_texture_tests {
         // when the adapter could support it.
         assert!(!crate::resources::supports_texture_format(
             &device,
-            wgpu::TextureFormat::Bc7RgbaUnormSrgb
+            crate::gpu::TextureFormat::Bc7RgbaUnormSrgb
         ));
         // An uncompressed format needs no feature and is always supported.
         assert!(crate::resources::supports_texture_format(
             &device,
-            wgpu::TextureFormat::Rgba8Unorm
+            crate::gpu::TextureFormat::Rgba8Unorm
         ));
     }
 
@@ -1990,7 +2013,8 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // BC7 without the feature: rejected up front, no job submitted.
         let block = vec![0u8; 16];
@@ -2001,7 +2025,7 @@ mod async_texture_tests {
                 crate::resources::CompressedTextureDesc {
                     width: 4,
                     height: 4,
-                    format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
                     is_normal_map: false,
                     mip_levels: &[&block],
                 },
@@ -2021,7 +2045,7 @@ mod async_texture_tests {
                 crate::resources::CompressedTextureDesc {
                     width: 4,
                     height: 4,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    format: crate::gpu::TextureFormat::Rgba8Unorm,
                     is_normal_map: false,
                     mip_levels: &[&rgba],
                 },
@@ -2040,7 +2064,8 @@ mod async_texture_tests {
             eprintln!("skipping: no adapter with TEXTURE_COMPRESSION_BC");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // 4x4 BC7 needs one 16-byte block; pass 15 and confirm the level check
         // fires before any job is submitted.
@@ -2052,7 +2077,7 @@ mod async_texture_tests {
                 crate::resources::CompressedTextureDesc {
                     width: 4,
                     height: 4,
-                    format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
                     is_normal_map: false,
                     mip_levels: &[&bad],
                 },
@@ -2075,7 +2100,7 @@ mod async_texture_tests {
                 crate::resources::CompressedTextureDesc {
                     width: 4,
                     height: 4,
-                    format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
                     is_normal_map: false,
                     mip_levels: &[],
                 },
@@ -2094,7 +2119,8 @@ mod async_texture_tests {
             eprintln!("skipping: no adapter with TEXTURE_COMPRESSION_BC");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let before = resources.texture_memory_stats().used_bytes;
         // 4x4 BC7 = one 16-byte block. Contents need not decode to anything in
@@ -2107,7 +2133,7 @@ mod async_texture_tests {
                 crate::resources::CompressedTextureDesc {
                     width: 4,
                     height: 4,
-                    format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
                     is_normal_map: false,
                     mip_levels: &[&block],
                 },
@@ -2128,7 +2154,8 @@ mod async_texture_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // wgpu cannot create a BC texture whose dimensions are not multiples of
         // the 4x4 block. The upload must reject this up front (before any GPU
@@ -2145,7 +2172,7 @@ mod async_texture_tests {
                     crate::resources::CompressedTextureDesc {
                         width: w,
                         height: h,
-                        format: wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                        format: crate::gpu::TextureFormat::Bc7RgbaUnormSrgb,
                         is_normal_map: false,
                         mip_levels: &[&block],
                     },
@@ -2167,11 +2194,11 @@ mod async_texture_tests {
 /// A GPU texture with its view, sampler, and bind group for shader binding.
 pub struct GpuTexture {
     /// Underlying wgpu texture object.
-    pub texture: wgpu::Texture,
+    pub texture: crate::gpu::Texture,
     /// Full-texture view used for sampling.
-    pub view: wgpu::TextureView,
+    pub view: crate::gpu::TextureView,
     /// Sampler bound alongside the view.
-    pub sampler: wgpu::Sampler,
+    pub sampler: crate::gpu::Sampler,
     /// Bind group that binds `view` and `sampler` for use in shaders.
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: crate::gpu::BindGroup,
 }

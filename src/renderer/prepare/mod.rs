@@ -1,7 +1,7 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
+use crate::gpu::util::DeviceExt;
 use crate::resources::CurveMeshOutlineItem;
-use wgpu::util::DeviceExt;
 
 mod instanced;
 mod lighting;
@@ -137,8 +137,8 @@ impl ViewportRenderer {
     /// `frame.camera` for shadow cascade computation.
     pub(super) fn prepare_scene_internal(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         scene_fx: &SceneEffects<'_>,
         sink: &mut crate::renderer::SubmitSink,
@@ -402,24 +402,25 @@ impl ViewportRenderer {
                                 use crate::resources::LicObjectUniform;
                                 let model = item.model;
                                 let obj_data = LicObjectUniform { model };
-                                let obj_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                                let obj_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                                     label: Some("lic_object_uniform"),
                                     size: std::mem::size_of::<LicObjectUniform>() as u64,
-                                    usage: wgpu::BufferUsages::UNIFORM
-                                        | wgpu::BufferUsages::COPY_DST,
+                                    usage: crate::gpu::BufferUsages::UNIFORM
+                                        | crate::gpu::BufferUsages::COPY_DST,
                                     mapped_at_creation: false,
                                 });
                                 queue.write_buffer(&obj_buf, 0, bytemuck::cast_slice(&[obj_data]));
                                 // Bind group (group 1): object uniform only.
                                 // Flow vectors are bound as vertex buffer 1 in the render pass.
-                                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                    label: Some("lic_surface_item_bg"),
-                                    layout: bgl,
-                                    entries: &[wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: obj_buf.as_entire_binding(),
-                                    }],
-                                });
+                                let bg =
+                                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                        label: Some("lic_surface_item_bg"),
+                                        layout: bgl,
+                                        entries: &[crate::gpu::BindGroupEntry {
+                                            binding: 0,
+                                            resource: obj_buf.as_entire_binding(),
+                                        }],
+                                    });
                                 self.lic_gpu_data.push(crate::resources::LicSurfaceGpuData {
                                     bind_group: bg,
                                     _object_uniform_buf: obj_buf,
@@ -527,59 +528,59 @@ impl ViewportRenderer {
         if !self.mesh_uniforms.tvm_wireframe_draws.is_empty()
             && self.mesh_uniforms.tvm_wireframe_bg.is_none()
         {
-            use wgpu::util::DeviceExt;
+            use crate::gpu::util::DeviceExt;
             let mut tvm_wf_uniform: crate::resources::ObjectUniform = bytemuck::Zeroable::zeroed();
             tvm_wf_uniform.model = glam::Mat4::IDENTITY.to_cols_array_2d();
             tvm_wf_uniform.colour = [0.75, 0.75, 0.75, 1.0];
             tvm_wf_uniform.wireframe = 1;
-            let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("tvm_wireframe_uniform"),
                 contents: bytemuck::cast_slice(&[tvm_wf_uniform]),
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: crate::gpu::BufferUsages::UNIFORM,
             });
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("tvm_wireframe_bg"),
                 layout: &resources.object_bind_group_layout,
                 entries: &[
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(
+                        resource: crate::gpu::BindingResource::TextureView(
                             &resources.fallback_texture.view,
                         ),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&resources.material_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&resources.material_sampler),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 3,
-                        resource: wgpu::BindingResource::TextureView(
+                        resource: crate::gpu::BindingResource::TextureView(
                             &resources.fallback_normal_map_view,
                         ),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 4,
-                        resource: wgpu::BindingResource::TextureView(
+                        resource: crate::gpu::BindingResource::TextureView(
                             &resources.fallback_ao_map_view,
                         ),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 5,
-                        resource: wgpu::BindingResource::TextureView(
+                        resource: crate::gpu::BindingResource::TextureView(
                             &resources.content.fallback_lut_view,
                         ),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 6,
                         resource: resources.content.fallback_scalar_buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 7,
-                        resource: wgpu::BindingResource::TextureView(
+                        resource: crate::gpu::BindingResource::TextureView(
                             resources
                                 .content
                                 .fallback_matcap_view
@@ -587,41 +588,41 @@ impl ViewportRenderer {
                                 .unwrap_or(&resources.fallback_texture.view),
                         ),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 8,
                         resource: resources
                             .content
                             .fallback_face_colour_buf
                             .as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 9,
                         resource: resources.content.fallback_warp_buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 10,
-                        resource: wgpu::BindingResource::Sampler(&resources.lut_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&resources.lut_sampler),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 11,
-                        resource: wgpu::BindingResource::TextureView(
+                        resource: crate::gpu::BindingResource::TextureView(
                             &resources.fallback_metallic_roughness_texture_view,
                         ),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 12,
-                        resource: wgpu::BindingResource::TextureView(
+                        resource: crate::gpu::BindingResource::TextureView(
                             &resources.fallback_emissive_texture_view,
                         ),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 13,
                         resource: resources
                             .content
                             .fallback_position_override_buf
                             .as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 14,
                         resource: resources
                             .content
@@ -778,8 +779,8 @@ impl ViewportRenderer {
     /// Reads `viewport_fx` for clip planes, clip volume, cap fill, and post-process settings.
     pub(super) fn prepare_viewport_internal(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         viewport_fx: &ViewportEffects<'_>,
         sink: &mut crate::renderer::SubmitSink,
@@ -828,8 +829,8 @@ impl ViewportRenderer {
     /// submit them on the device-driving thread instead.
     pub(crate) fn prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> crate::renderer::stats::FrameStats {
         let mut sink = crate::renderer::SubmitSink::inline(queue);
@@ -847,10 +848,13 @@ impl ViewportRenderer {
     /// combined batch in order.
     pub fn prepare_deferred(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
-    ) -> (crate::renderer::stats::FrameStats, Vec<wgpu::CommandBuffer>) {
+    ) -> (
+        crate::renderer::stats::FrameStats,
+        Vec<crate::gpu::CommandBuffer>,
+    ) {
         let mut sink = crate::renderer::SubmitSink::deferred();
         let stats = self.prepare_into(device, queue, frame, &mut sink);
         (stats, sink.into_buffers())
@@ -861,8 +865,8 @@ impl ViewportRenderer {
     /// non-submitting queue work (buffer writes, upload-job polling, readbacks).
     fn prepare_into(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) -> crate::renderer::stats::FrameStats {
@@ -898,7 +902,7 @@ impl ViewportRenderer {
         // frame's GPU work, which on this workload is most of the frame.
         use std::sync::atomic::Ordering;
         if self.ts_map_inflight {
-            let _ = device.poll(wgpu::PollType::Poll);
+            let _ = device.poll(crate::gpu::PollType::Poll);
             match self.ts_map_status.load(Ordering::Acquire) {
                 1 => {
                     if let Some(ref stg_buf) = self.ts_staging_buf {
@@ -972,12 +976,14 @@ impl ViewportRenderer {
             if let Some(ref stg_buf) = self.ts_staging_buf {
                 self.ts_map_status.store(0, Ordering::Release);
                 let status = self.ts_map_status.clone();
-                stg_buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                    status.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
-                });
+                stg_buf
+                    .slice(..)
+                    .map_async(crate::gpu::MapMode::Read, move |r| {
+                        status.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
+                    });
                 // Pump once so the map can complete immediately when the GPU has
                 // already finished; otherwise it completes on a later frame.
-                let _ = device.poll(wgpu::PollType::Poll);
+                let _ = device.poll(crate::gpu::PollType::Poll);
                 self.ts_map_inflight = true;
                 self.ts_data_ready = false;
             }
@@ -990,7 +996,7 @@ impl ViewportRenderer {
         let indirect_bytes = self.instancing.indirect_readback_batch_count as u64 * 20;
         let bytes = indirect_bytes + 8;
         if self.instancing.indirect_map_inflight {
-            let _ = device.poll(wgpu::PollType::Poll);
+            let _ = device.poll(crate::gpu::PollType::Poll);
             match self.instancing.indirect_map_status.load(Ordering::Acquire) {
                 1 => {
                     if let Some(ref stg_buf) = self.instancing.indirect_readback_buf {
@@ -1035,10 +1041,10 @@ impl ViewportRenderer {
                     let status = self.instancing.indirect_map_status.clone();
                     stg_buf
                         .slice(..bytes)
-                        .map_async(wgpu::MapMode::Read, move |r| {
+                        .map_async(crate::gpu::MapMode::Read, move |r| {
                             status.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
                         });
-                    let _ = device.poll(wgpu::PollType::Poll);
+                    let _ = device.poll(crate::gpu::PollType::Poll);
                     self.instancing.indirect_map_inflight = true;
                 }
             }
@@ -1298,7 +1304,7 @@ mod lod_resolve_tests {
     /// Upload each level mesh, then register the group.
     fn register(
         res: &mut DeviceResources,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         levels: &[(MeshData, f32)],
     ) -> crate::error::ViewportResult<LodGroupId> {
         let mut ids = Vec::with_capacity(levels.len());
@@ -1310,15 +1316,17 @@ mod lod_resolve_tests {
         res.register_lod_group(&ids, &sizes)
     }
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn looking_down_z() -> RenderCamera {
@@ -1342,7 +1350,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,
@@ -1375,7 +1383,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,
@@ -1406,7 +1414,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,
@@ -1440,7 +1448,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,
@@ -1467,7 +1475,7 @@ mod lod_resolve_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let group = register(
             &mut res,
             &device,

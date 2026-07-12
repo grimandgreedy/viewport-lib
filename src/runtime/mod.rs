@@ -1693,7 +1693,11 @@ impl ViewportRuntime {
     /// next [`pre_prepare`](Self::pre_prepare). The runtime does not detect
     /// device loss on its own; the host is responsible for invoking this
     /// when it recreates the device.
-    pub fn notify_device_recreated(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub fn notify_device_recreated(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
         for p in self.gpu_plugins.iter_mut() {
             p.on_device_recreated(device, queue);
         }
@@ -1720,10 +1724,10 @@ impl ViewportRuntime {
     /// `init_gpu` is invoked once before any `pre_prepare`.
     pub fn pre_prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         ctx: &GpuFrameContext<'_>,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         if !self.gpu_initialized {
             for p in self.gpu_plugins.iter_mut() {
                 p.init_gpu(device);
@@ -1760,11 +1764,11 @@ impl ViewportRuntime {
     /// own to keep the post-paint path deterministic.
     pub fn post_paint(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         targets: &PostPaintTargets<'_>,
         ctx: &GpuFrameContext<'_>,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         // Stable sort: equal priorities preserve registration order. The list
         // is already sorted if `pre_prepare` ran first this frame; sorting
         // again is cheap and keeps `post_paint` safe to call standalone.

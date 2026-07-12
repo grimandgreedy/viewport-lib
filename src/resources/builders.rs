@@ -9,7 +9,7 @@
 //! so the less common multi-binding layouts can compose them instead of
 //! spelling out each `BindGroupLayoutEntry` by hand.
 
-use wgpu::ShaderStages;
+use crate::gpu::ShaderStages;
 
 /// Create a WGSL shader module. This is the one place the crate calls
 /// `create_shader_module`, so a wgpu upgrade that changes shader-module
@@ -18,13 +18,13 @@ use wgpu::ShaderStages;
 /// `source` accepts a baked `&'static str` (via [`wgsl_source!`]) or an owned
 /// `String` (a shader composed at runtime, e.g. by the deform registry).
 pub(crate) fn wgsl_module<'a>(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
     source: impl Into<std::borrow::Cow<'a, str>>,
-) -> wgpu::ShaderModule {
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+) -> crate::gpu::ShaderModule {
+    device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
         label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
+        source: crate::gpu::ShaderSource::Wgsl(source.into()),
     })
 }
 
@@ -41,12 +41,15 @@ macro_rules! wgsl_source {
 pub(crate) use wgsl_source;
 
 /// A uniform-buffer bind group layout entry (non-dynamic, no min size).
-pub(crate) fn uniform_entry(binding: u32, visibility: ShaderStages) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+pub(crate) fn uniform_entry(
+    binding: u32,
+    visibility: ShaderStages,
+) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
             min_binding_size: None,
         },
@@ -55,13 +58,16 @@ pub(crate) fn uniform_entry(binding: u32, visibility: ShaderStages) -> wgpu::Bin
 }
 
 /// A filterable float 2D texture bind group layout entry.
-pub(crate) fn texture_entry(binding: u32, visibility: ShaderStages) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+pub(crate) fn texture_entry(
+    binding: u32,
+    visibility: ShaderStages,
+) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
+        ty: crate::gpu::BindingType::Texture {
+            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+            view_dimension: crate::gpu::TextureViewDimension::D2,
             multisampled: false,
         },
         count: None,
@@ -69,22 +75,25 @@ pub(crate) fn texture_entry(binding: u32, visibility: ShaderStages) -> wgpu::Bin
 }
 
 /// A filtering sampler bind group layout entry.
-pub(crate) fn sampler_entry(binding: u32, visibility: ShaderStages) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+pub(crate) fn sampler_entry(
+    binding: u32,
+    visibility: ShaderStages,
+) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
-        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
         count: None,
     }
 }
 
 /// Bind group layout with a single uniform buffer at binding 0.
 pub(crate) fn uniform_bgl(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
     visibility: ShaderStages,
-) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+) -> crate::gpu::BindGroupLayout {
+    device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
         label: Some(label),
         entries: &[uniform_entry(0, visibility)],
     })
@@ -94,11 +103,11 @@ pub(crate) fn uniform_bgl(
 /// binding 1, both visible to `visibility`. The common shape for a
 /// full-screen composite / blit pass.
 pub(crate) fn texture_sampler_bgl(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
     visibility: ShaderStages,
-) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+) -> crate::gpu::BindGroupLayout {
+    device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
         label: Some(label),
         entries: &[texture_entry(0, visibility), sampler_entry(1, visibility)],
     })
@@ -109,12 +118,12 @@ pub(crate) fn texture_sampler_bgl(
 /// (both visible to `tex_vis`). The standard scivis per-item layout: an item
 /// uniform plus an optional colour-LUT texture and sampler.
 pub(crate) fn uniform_texture_sampler_bgl(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
     uniform_vis: ShaderStages,
     tex_vis: ShaderStages,
-) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+) -> crate::gpu::BindGroupLayout {
+    device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
         label: Some(label),
         entries: &[
             uniform_entry(0, uniform_vis),
@@ -126,28 +135,34 @@ pub(crate) fn uniform_texture_sampler_bgl(
 
 /// Linear-filtered sampler clamped to edge on all axes. The default sampler for
 /// texture lookups that must not wrap (LUTs, composite targets, most content).
-pub(crate) fn clamp_linear_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
+pub(crate) fn clamp_linear_sampler(
+    device: &crate::gpu::Device,
+    label: &str,
+) -> crate::gpu::Sampler {
+    device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
+        address_mode_u: crate::gpu::AddressMode::ClampToEdge,
+        address_mode_v: crate::gpu::AddressMode::ClampToEdge,
+        address_mode_w: crate::gpu::AddressMode::ClampToEdge,
+        mag_filter: crate::gpu::FilterMode::Linear,
+        min_filter: crate::gpu::FilterMode::Linear,
         ..Default::default()
     })
 }
 
 /// Nearest-filtered sampler clamped to edge on all axes. Used where
 /// interpolation would blur discrete data (index buffers, nearest blits).
-pub(crate) fn clamp_nearest_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
+pub(crate) fn clamp_nearest_sampler(
+    device: &crate::gpu::Device,
+    label: &str,
+) -> crate::gpu::Sampler {
+    device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Nearest,
-        min_filter: wgpu::FilterMode::Nearest,
+        address_mode_u: crate::gpu::AddressMode::ClampToEdge,
+        address_mode_v: crate::gpu::AddressMode::ClampToEdge,
+        address_mode_w: crate::gpu::AddressMode::ClampToEdge,
+        mag_filter: crate::gpu::FilterMode::Nearest,
+        min_filter: crate::gpu::FilterMode::Nearest,
         ..Default::default()
     })
 }
@@ -156,17 +171,17 @@ pub(crate) fn clamp_nearest_sampler(device: &wgpu::Device, label: &str) -> wgpu:
 /// (decals, patterned materials). `mipmap_filter` varies: most callers want
 /// `Nearest`, uploaded user textures pick it from the mip chain at runtime.
 pub(crate) fn repeat_linear_sampler(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
-    mipmap_filter: wgpu::FilterMode,
-) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
+    mipmap_filter: crate::gpu::FilterMode,
+) -> crate::gpu::Sampler {
+    device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::Repeat,
-        address_mode_w: wgpu::AddressMode::Repeat,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
+        address_mode_u: crate::gpu::AddressMode::Repeat,
+        address_mode_v: crate::gpu::AddressMode::Repeat,
+        address_mode_w: crate::gpu::AddressMode::Repeat,
+        mag_filter: crate::gpu::FilterMode::Linear,
+        min_filter: crate::gpu::FilterMode::Linear,
         mipmap_filter,
         ..Default::default()
     })
@@ -175,46 +190,46 @@ pub(crate) fn repeat_linear_sampler(
 /// Sampler for an equirectangular environment map: horizontal wrap (Repeat u),
 /// vertical clamp (Clamp v), linear filtering including across mip levels. Used
 /// by the image-based lighting passes that sample a lat-long HDR.
-pub(crate) fn env_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
+pub(crate) fn env_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
+    device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Linear,
+        address_mode_u: crate::gpu::AddressMode::Repeat,
+        address_mode_v: crate::gpu::AddressMode::ClampToEdge,
+        mag_filter: crate::gpu::FilterMode::Linear,
+        min_filter: crate::gpu::FilterMode::Linear,
+        mipmap_filter: crate::gpu::FilterMode::Linear,
         ..Default::default()
     })
 }
 
 /// Additive blend: `dst.rgb + src.rgb`, alpha unchanged. Used by the sprite and
 /// particle draw paths for glowing / emissive accumulation.
-pub(crate) const ADDITIVE_BLEND: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
+pub(crate) const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+    color: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::One,
+        dst_factor: crate::gpu::BlendFactor::One,
+        operation: crate::gpu::BlendOperation::Add,
     },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
+    alpha: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::One,
+        dst_factor: crate::gpu::BlendFactor::One,
+        operation: crate::gpu::BlendOperation::Add,
     },
 };
 
 /// Premultiplied-alpha blend: `src.rgb + dst.rgb * (1 - src.a)`. Used by the
 /// sprite and particle draw paths when the source colour already carries its
 /// alpha premultiplied.
-pub(crate) const PREMULTIPLIED_BLEND: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-        operation: wgpu::BlendOperation::Add,
+pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+    color: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::One,
+        dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+        operation: crate::gpu::BlendOperation::Add,
     },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-        operation: wgpu::BlendOperation::Add,
+    alpha: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::One,
+        dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+        operation: crate::gpu::BlendOperation::Add,
     },
 };
 
@@ -225,19 +240,19 @@ pub(crate) const PREMULTIPLIED_BLEND: wgpu::BlendState = wgpu::BlendState {
 /// one shader module, which is the shape every scivis feature uses.
 pub(crate) struct DualPipelineDesc<'a> {
     pub label: &'a str,
-    pub layout: &'a wgpu::PipelineLayout,
-    pub shader: &'a wgpu::ShaderModule,
+    pub layout: &'a crate::gpu::PipelineLayout,
+    pub shader: &'a crate::gpu::ShaderModule,
     pub vertex_entry: &'a str,
     pub fragment_entry: &'a str,
-    pub vertex_buffers: &'a [wgpu::VertexBufferLayout<'a>],
-    pub blend: Option<wgpu::BlendState>,
-    pub topology: wgpu::PrimitiveTopology,
-    pub cull_mode: Option<wgpu::Face>,
+    pub vertex_buffers: &'a [crate::gpu::VertexBufferLayout<'a>],
+    pub blend: Option<crate::gpu::BlendState>,
+    pub topology: crate::gpu::PrimitiveTopology,
+    pub cull_mode: Option<crate::gpu::Face>,
     pub depth_write: bool,
-    pub depth_compare: wgpu::CompareFunction,
+    pub depth_compare: crate::gpu::CompareFunction,
     pub sample_count: u32,
     /// LDR swapchain format; the HDR variant is always `Rgba16Float`.
-    pub ldr_format: wgpu::TextureFormat,
+    pub ldr_format: crate::gpu::TextureFormat,
 }
 
 /// Build the LDR + HDR pair of a scene render pipeline from the parts that vary
@@ -246,38 +261,38 @@ pub(crate) struct DualPipelineDesc<'a> {
 /// (`desc.ldr_format` vs `Rgba16Float`), which is the invariant `DualPipeline`
 /// encodes.
 pub(crate) fn build_dual_pipeline(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     desc: &DualPipelineDesc,
 ) -> crate::resources::types::DualPipeline {
-    let make = |format: wgpu::TextureFormat| {
+    let make = |format: crate::gpu::TextureFormat| {
         render_pipeline(
             device,
             RenderPipelineDesc {
                 label: desc.label,
                 layout: desc.layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: desc.shader,
                     entry_point: Some(desc.vertex_entry),
                     buffers: desc.vertex_buffers,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: desc.shader,
                     entry_point: Some(desc.fragment_entry),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format,
                         blend: desc.blend,
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
+                primitive: crate::gpu::PrimitiveState {
                     topology: desc.topology,
                     cull_mode: desc.cull_mode,
                     ..Default::default()
                 },
                 depth_stencil: Some(scene_depth_stencil(desc.depth_write, desc.depth_compare)),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
                     ..Default::default()
                 },
@@ -287,7 +302,7 @@ pub(crate) fn build_dual_pipeline(
     };
     crate::resources::types::DualPipeline {
         ldr: make(desc.ldr_format),
-        hdr: make(wgpu::TextureFormat::Rgba16Float),
+        hdr: make(crate::gpu::TextureFormat::Rgba16Float),
     }
 }
 
@@ -299,41 +314,41 @@ pub(crate) fn build_dual_pipeline(
 /// scatter composites) all share this shape and differ only in target format
 /// and blend.
 pub(crate) fn build_fullscreen_pipeline(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
-    layout: &wgpu::PipelineLayout,
-    shader: &wgpu::ShaderModule,
-    target_format: wgpu::TextureFormat,
-    blend: Option<wgpu::BlendState>,
-) -> wgpu::RenderPipeline {
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    target_format: crate::gpu::TextureFormat,
+    blend: Option<crate::gpu::BlendState>,
+) -> crate::gpu::RenderPipeline {
     render_pipeline(
         device,
         RenderPipelineDesc {
             label,
             layout,
-            vertex: wgpu::VertexState {
+            vertex: crate::gpu::VertexState {
                 module: shader,
                 entry_point: Some("vs_main"),
                 buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                targets: &[Some(crate::gpu::ColorTargetState {
                     format: target_format,
                     blend,
-                    write_mask: wgpu::ColorWrites::ALL,
+                    write_mask: crate::gpu::ColorWrites::ALL,
                 })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive: crate::gpu::PrimitiveState {
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: crate::gpu::MultisampleState::default(),
             cache: None,
         },
     )
@@ -351,44 +366,44 @@ pub(crate) fn build_fullscreen_pipeline(
 /// `Back` for closed solids and `None` otherwise; `depth_write` is off for
 /// billboards and screen-space items that do not own scene depth.
 pub(crate) fn build_outline_mask_pipeline(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
-    layout: &wgpu::PipelineLayout,
-    shader: &wgpu::ShaderModule,
-    mask_format: wgpu::TextureFormat,
-    vertex_buffers: &[wgpu::VertexBufferLayout],
-    cull: Option<wgpu::Face>,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    mask_format: crate::gpu::TextureFormat,
+    vertex_buffers: &[crate::gpu::VertexBufferLayout],
+    cull: Option<crate::gpu::Face>,
     depth_write: bool,
-    depth_compare: wgpu::CompareFunction,
-) -> wgpu::RenderPipeline {
+    depth_compare: crate::gpu::CompareFunction,
+) -> crate::gpu::RenderPipeline {
     render_pipeline(
         device,
         RenderPipelineDesc {
             label,
             layout,
-            vertex: wgpu::VertexState {
+            vertex: crate::gpu::VertexState {
                 module: shader,
                 entry_point: Some("vs_main"),
                 buffers: vertex_buffers,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                targets: &[Some(crate::gpu::ColorTargetState {
                     format: mask_format,
                     blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
+                    write_mask: crate::gpu::ColorWrites::ALL,
                 })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive: crate::gpu::PrimitiveState {
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: cull,
                 ..Default::default()
             },
             depth_stencil: Some(scene_depth_stencil(depth_write, depth_compare)),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: crate::gpu::MultisampleState::default(),
             cache: None,
         },
     )
@@ -399,18 +414,18 @@ pub(crate) fn build_outline_mask_pipeline(
 /// options and no cache. This is the one place the crate calls
 /// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
 pub(crate) fn compute_pipeline(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
-    layout: &wgpu::PipelineLayout,
-    shader: &wgpu::ShaderModule,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
     entry: &str,
-) -> wgpu::ComputePipeline {
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+) -> crate::gpu::ComputePipeline {
+    device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         module: shader,
         entry_point: Some(entry),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
         cache: None,
     })
 }
@@ -420,11 +435,11 @@ pub(crate) fn compute_pipeline(
 /// crate calls `create_pipeline_layout`, so the push-constant field that churns
 /// across wgpu versions only has to be audited here.
 pub(crate) fn pipeline_layout<'a>(
-    device: &wgpu::Device,
-    label: impl Into<wgpu::Label<'a>>,
-    bind_group_layouts: &[&wgpu::BindGroupLayout],
-) -> wgpu::PipelineLayout {
-    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    device: &crate::gpu::Device,
+    label: impl Into<crate::gpu::Label<'a>>,
+    bind_group_layouts: &[&crate::gpu::BindGroupLayout],
+) -> crate::gpu::PipelineLayout {
+    device.create_pipeline_layout(&crate::gpu::PipelineLayoutDescriptor {
         label: label.into(),
         bind_group_layouts,
         push_constant_ranges: &[],
@@ -434,11 +449,11 @@ pub(crate) fn pipeline_layout<'a>(
 /// Pipeline layout with the standard scene binding convention:
 /// group 0 = camera, group 1 = the feature's per-item bind group layout.
 pub(crate) fn standard_scene_layout(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
-    camera_bgl: &wgpu::BindGroupLayout,
-    per_item_bgl: &wgpu::BindGroupLayout,
-) -> wgpu::PipelineLayout {
+    camera_bgl: &crate::gpu::BindGroupLayout,
+    per_item_bgl: &crate::gpu::BindGroupLayout,
+) -> crate::gpu::PipelineLayout {
     pipeline_layout(device, label, &[camera_bgl, per_item_bgl])
 }
 
@@ -448,13 +463,13 @@ pub(crate) fn standard_scene_layout(
 /// that one function instead of every descriptor literal.
 pub(crate) struct RenderPipelineDesc<'a> {
     pub label: &'a str,
-    pub layout: &'a wgpu::PipelineLayout,
-    pub vertex: wgpu::VertexState<'a>,
-    pub fragment: Option<wgpu::FragmentState<'a>>,
-    pub primitive: wgpu::PrimitiveState,
-    pub depth_stencil: Option<wgpu::DepthStencilState>,
-    pub multisample: wgpu::MultisampleState,
-    pub cache: Option<&'a wgpu::PipelineCache>,
+    pub layout: &'a crate::gpu::PipelineLayout,
+    pub vertex: crate::gpu::VertexState<'a>,
+    pub fragment: Option<crate::gpu::FragmentState<'a>>,
+    pub primitive: crate::gpu::PrimitiveState,
+    pub depth_stencil: Option<crate::gpu::DepthStencilState>,
+    pub multisample: crate::gpu::MultisampleState,
+    pub cache: Option<&'a crate::gpu::PipelineCache>,
 }
 
 /// Create a render pipeline from the parts that vary ([`RenderPipelineDesc`]),
@@ -462,10 +477,10 @@ pub(crate) struct RenderPipelineDesc<'a> {
 /// `create_render_pipeline`, so the `multiview` field that changes shape across
 /// wgpu versions only has to be audited here.
 pub(crate) fn render_pipeline(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     desc: RenderPipelineDesc,
-) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+) -> crate::gpu::RenderPipeline {
+    device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
         label: Some(desc.label),
         layout: Some(desc.layout),
         vertex: desc.vertex,
@@ -482,16 +497,16 @@ pub(crate) fn render_pipeline(
 /// function, using the default stencil state and depth bias. Centralises the
 /// `DepthStencilState` construction that changes shape across wgpu versions.
 pub(crate) fn depth_stencil(
-    format: wgpu::TextureFormat,
+    format: crate::gpu::TextureFormat,
     depth_write_enabled: bool,
-    depth_compare: wgpu::CompareFunction,
-) -> wgpu::DepthStencilState {
-    wgpu::DepthStencilState {
+    depth_compare: crate::gpu::CompareFunction,
+) -> crate::gpu::DepthStencilState {
+    crate::gpu::DepthStencilState {
         format,
         depth_write_enabled,
         depth_compare,
-        stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState::default(),
+        stencil: crate::gpu::StencilState::default(),
+        bias: crate::gpu::DepthBiasState::default(),
     }
 }
 
@@ -500,10 +515,10 @@ pub(crate) fn depth_stencil(
 /// vary per pipeline.
 pub(crate) fn scene_depth_stencil(
     depth_write_enabled: bool,
-    depth_compare: wgpu::CompareFunction,
-) -> wgpu::DepthStencilState {
+    depth_compare: crate::gpu::CompareFunction,
+) -> crate::gpu::DepthStencilState {
     depth_stencil(
-        wgpu::TextureFormat::Depth24PlusStencil8,
+        crate::gpu::TextureFormat::Depth24PlusStencil8,
         depth_write_enabled,
         depth_compare,
     )
@@ -514,13 +529,13 @@ pub(crate) fn scene_depth_stencil(
 /// field that changes shape across wgpu versions is audited here alongside the
 /// render-pipeline path.
 pub(crate) fn render_bundle_encoder<'a>(
-    device: &'a wgpu::Device,
+    device: &'a crate::gpu::Device,
     label: &str,
-    color_formats: &[Option<wgpu::TextureFormat>],
-    depth_stencil: Option<wgpu::RenderBundleDepthStencil>,
+    color_formats: &[Option<crate::gpu::TextureFormat>],
+    depth_stencil: Option<crate::gpu::RenderBundleDepthStencil>,
     sample_count: u32,
-) -> wgpu::RenderBundleEncoder<'a> {
-    device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+) -> crate::gpu::RenderBundleEncoder<'a> {
+    device.create_render_bundle_encoder(&crate::gpu::RenderBundleEncoderDescriptor {
         label: Some(label),
         color_formats,
         depth_stencil,
@@ -535,22 +550,22 @@ pub(crate) fn render_bundle_encoder<'a>(
 /// to a minimum size), in which case only the leading `bytes.len()` are
 /// written. This is the one place the crate maps a buffer for writing, so the
 /// mapped-view API change across wgpu versions is audited here.
-pub(crate) fn write_mapped(slice: wgpu::BufferSlice, bytes: &[u8]) {
+pub(crate) fn write_mapped(slice: crate::gpu::BufferSlice, bytes: &[u8]) {
     slice.get_mapped_range_mut()[..bytes.len()].copy_from_slice(bytes);
 }
 
 /// Comparison sampler for shadow-map PCF: linear filtering with a depth compare
 /// function, edge-clamped by default.
 pub(crate) fn comparison_sampler(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
-    compare: wgpu::CompareFunction,
-) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
+    compare: crate::gpu::CompareFunction,
+) -> crate::gpu::Sampler {
+    device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         compare: Some(compare),
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
+        mag_filter: crate::gpu::FilterMode::Linear,
+        min_filter: crate::gpu::FilterMode::Linear,
         ..Default::default()
     })
 }
@@ -558,15 +573,18 @@ pub(crate) fn comparison_sampler(
 /// Linear-filtered sampler clamped to edge on all axes, with linear mip
 /// filtering. Like [`clamp_linear_sampler`] but samples across the mip chain
 /// (used by the volume LUT lookups).
-pub(crate) fn clamp_linear_mip_sampler(device: &wgpu::Device, label: &str) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
+pub(crate) fn clamp_linear_mip_sampler(
+    device: &crate::gpu::Device,
+    label: &str,
+) -> crate::gpu::Sampler {
+    device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Linear,
+        address_mode_u: crate::gpu::AddressMode::ClampToEdge,
+        address_mode_v: crate::gpu::AddressMode::ClampToEdge,
+        address_mode_w: crate::gpu::AddressMode::ClampToEdge,
+        mag_filter: crate::gpu::FilterMode::Linear,
+        min_filter: crate::gpu::FilterMode::Linear,
+        mipmap_filter: crate::gpu::FilterMode::Linear,
         ..Default::default()
     })
 }
@@ -576,10 +594,10 @@ pub(crate) fn clamp_linear_mip_sampler(device: &wgpu::Device, label: &str) -> wg
 /// uses `push_error_scope` / `pop_error_scope`, so the error-scope API change
 /// across wgpu versions is audited here.
 pub(crate) fn capture_validation<T>(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     f: impl FnOnce() -> T,
-) -> (T, Option<wgpu::Error>) {
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+) -> (T, Option<crate::gpu::Error>) {
+    device.push_error_scope(crate::gpu::ErrorFilter::Validation);
     let value = f();
     let captured = block_on_simple(device.pop_error_scope());
     (value, captured)

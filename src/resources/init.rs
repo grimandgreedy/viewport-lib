@@ -6,8 +6,8 @@ impl DeviceResources {
     /// Call once at application startup. `target_format` must match the swap-chain surface
     /// format. Use `sample_count = 1` unless the caller is providing MSAA resolve targets.
     pub fn new(
-        device: &wgpu::Device,
-        target_format: wgpu::TextureFormat,
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
         Self::new_with_cache(device, target_format, sample_count, None)
@@ -22,21 +22,22 @@ impl DeviceResources {
     /// enables `Features::PIPELINE_CACHE`; otherwise this behaves exactly like
     /// `new` and the data is ignored.
     pub fn new_with_cache(
-        device: &wgpu::Device,
-        target_format: wgpu::TextureFormat,
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
-        use wgpu;
-
         // A pipeline cache records compiled pipelines so a later run (seeded with
         // saved data) skips recompilation. Only available when the device enables
         // `Features::PIPELINE_CACHE`; `fallback: true` discards stale/invalid data
         // rather than failing. Safety: the data, if any, came from a prior
         // `PipelineCache::get_data` call as the API requires.
-        let pipeline_cache = if device.features().contains(wgpu::Features::PIPELINE_CACHE) {
+        let pipeline_cache = if device
+            .features()
+            .contains(crate::gpu::Features::PIPELINE_CACHE)
+        {
             Some(unsafe {
-                device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+                device.create_pipeline_cache(&crate::gpu::PipelineCacheDescriptor {
                     label: Some("viewport_pipeline_cache"),
                     data: pipeline_cache_data,
                     fallback: true,
@@ -83,125 +84,131 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Bind group layouts
         // ------------------------------------------------------------------
-        let camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let camera_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("camera_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Sampler(
+                        crate::gpu::SamplerBindingType::Comparison,
+                    ),
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // Binding 4: clip planes uniform (section view clipping).
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // Binding 5: shadow atlas uniform (CSM matrices, splits, PCSS params).
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // Binding 6: clip volume uniform (box/sphere/plane extended clip region).
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // Binding 7: IBL irradiance equirect texture.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // Binding 8: IBL prefiltered specular equirect texture.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // Binding 9: BRDF integration LUT texture.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // Binding 10: IBL sampler (linear, clamp-to-edge).
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 10,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // Binding 11: Skybox/environment equirect texture (full-res for skybox).
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 11,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -209,11 +216,11 @@ impl DeviceResources {
                 // Binding 12: per-fragment debug storage buffer (written in debug_vis.wgsl).
                 // Sized to viewport_width * viewport_height * 16 bytes when debug is active;
                 // a 16-byte sentinel buffer is used otherwise.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 12,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -222,11 +229,11 @@ impl DeviceResources {
                 // Binding 13: read-only storage buffer of `SingleLightUniform`
                 // entries. Indexed against the `count` field of the lights
                 // header uniform (binding 3). Capacity = `MAX_SCENE_LIGHTS`.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 13,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -234,11 +241,12 @@ impl DeviceResources {
                 },
                 // Binding 14: clustered-shading grid uniform (dimensions,
                 // near/far, screen size, fallback flag).
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 14,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -246,11 +254,11 @@ impl DeviceResources {
                 },
                 // Binding 15: cluster cell storage (offset + count per cell),
                 // read-only in the fragment stage.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 15,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -258,11 +266,11 @@ impl DeviceResources {
                 },
                 // Binding 16: global cluster light index list, read-only in
                 // the fragment stage.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 16,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -272,15 +280,15 @@ impl DeviceResources {
                 // iOS Metal does not support cube array textures, so on that
                 // target the shader uses texture_depth_2d_array and we bind a
                 // D2Array view instead.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 17,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Depth,
                         view_dimension: if cfg!(target_os = "ios") {
-                            wgpu::TextureViewDimension::D2Array
+                            crate::gpu::TextureViewDimension::D2Array
                         } else {
-                            wgpu::TextureViewDimension::CubeArray
+                            crate::gpu::TextureViewDimension::CubeArray
                         },
                         multisampled: false,
                     },
@@ -299,162 +307,165 @@ impl DeviceResources {
         // Textures are co-located in group 1 (rather than a separate group 2) so that
         // the total bind group count stays at 2, compatible with iced's wgpu device
         // which hardcodes max_bind_groups = 2 in its DeviceDescriptor.
-        let object_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let object_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("object_bgl"),
             entries: &[
                 // binding 0: per-object uniform buffer
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 1: albedo texture (filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 2: shared filtering sampler
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // binding 3: normal map texture (filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 4: AO map texture (filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 5: LUT (colourmap) texture (256x1 Rgba8Unorm, FRAGMENT, filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 6: scalar attribute storage buffer (VERTEX | FRAGMENT, read-only)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 7: matcap texture (FRAGMENT, filterable 2D)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 8: per-face colour storage buffer (VERTEX | FRAGMENT, read-only)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 8,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 9: warp vector storage buffer (VERTEX, read-only)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 9,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 10: LUT clamp sampler (FRAGMENT, filtering)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 10,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // binding 11: metallic-roughness ORM texture (FRAGMENT, filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 11,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 12: emissive texture (FRAGMENT, filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 12,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 13: position override storage buffer (VERTEX, read-only).
                 // Fallback sentinel (1x vec3<f32>) is bound when no override is set.
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 13,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 14: normal override storage buffer (VERTEX, read-only).
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 14,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -467,45 +478,45 @@ impl DeviceResources {
         // 1-4 are added alongside the storage buffer binding 0 in init_instanced_pipeline).
         // Also used as the standalone layout when creating material bind groups keyed by
         // texture combination for the instanced path.
-        let texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let texture_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("texture_bgl"),
             entries: &[
                 // binding 0: albedo texture (filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 1: shared filtering sampler
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // binding 2: normal map texture (filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 3: AO map texture (filterable)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -561,70 +572,71 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Camera uniform buffer and bind group
         // ------------------------------------------------------------------
-        let camera_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let camera_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("camera_uniform_buf"),
             size: std::mem::size_of::<CameraUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let light_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let light_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("light_uniform_buf"),
             size: std::mem::size_of::<LightUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let light_storage_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let light_storage_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("light_storage_buf"),
             size: (std::mem::size_of::<crate::resources::SingleLightUniform>()
                 * crate::resources::MAX_SCENE_LIGHTS) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
-        let clip_planes_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let clip_planes_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_planes_uniform_buf"),
             size: std::mem::size_of::<ClipPlanesUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         // Clip volume uniform buffer (binding 6 of camera bind group).
         // Holds up to CLIP_VOLUME_MAX box/sphere entries; initialized to count=0 (no volumes).
-        let clip_volume_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let clip_volume_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_volume_uniform_buf"),
             size: std::mem::size_of::<ClipVolumesUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         // ------------------------------------------------------------------
         // Shadow map texture, sampler, and bind group
         // ------------------------------------------------------------------
-        let shadow_map_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let shadow_map_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("shadow_atlas"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: SHADOW_ATLAS_SIZE,
                 height: SHADOW_ATLAS_SIZE,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Depth32Float,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let shadow_map_view =
-            shadow_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            shadow_map_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         let shadow_sampler = crate::resources::builders::comparison_sampler(
             device,
             "shadow_sampler",
-            wgpu::CompareFunction::LessEqual,
+            crate::gpu::CompareFunction::LessEqual,
         );
 
         // ------------------------------------------------------------------
@@ -638,49 +650,50 @@ impl DeviceResources {
         let point_shadow_face_size = crate::renderer::POINT_SHADOW_FACE_SIZE;
         let point_shadow_max_lights = crate::renderer::MAX_POINT_SHADOW_LIGHTS;
         let point_shadow_layers = point_shadow_max_lights * 6;
-        let point_shadow_cube_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let point_shadow_cube_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("point_shadow_cube_array"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: point_shadow_face_size,
                 height: point_shadow_face_size,
                 depth_or_array_layers: point_shadow_layers,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Depth32Float,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let point_shadow_cube_view =
-            point_shadow_cube_texture.create_view(&wgpu::TextureViewDescriptor {
+            point_shadow_cube_texture.create_view(&crate::gpu::TextureViewDescriptor {
                 label: Some("point_shadow_cube_view"),
                 // iOS Metal does not support CubeArray views. Use D2Array instead;
                 // the shader is patched at build time to match.
                 dimension: Some(if cfg!(target_os = "ios") {
-                    wgpu::TextureViewDimension::D2Array
+                    crate::gpu::TextureViewDimension::D2Array
                 } else {
-                    wgpu::TextureViewDimension::CubeArray
+                    crate::gpu::TextureViewDimension::CubeArray
                 }),
-                aspect: wgpu::TextureAspect::DepthOnly,
+                aspect: crate::gpu::TextureAspect::DepthOnly,
                 base_array_layer: 0,
                 array_layer_count: Some(point_shadow_layers),
                 base_mip_level: 0,
                 mip_level_count: Some(1),
-                format: Some(wgpu::TextureFormat::Depth32Float),
+                format: Some(crate::gpu::TextureFormat::Depth32Float),
                 usage: None,
             });
-        let point_shadow_face_views: Vec<wgpu::TextureView> = (0..point_shadow_layers)
+        let point_shadow_face_views: Vec<crate::gpu::TextureView> = (0..point_shadow_layers)
             .map(|layer| {
-                point_shadow_cube_texture.create_view(&wgpu::TextureViewDescriptor {
+                point_shadow_cube_texture.create_view(&crate::gpu::TextureViewDescriptor {
                     label: Some("point_shadow_face_view"),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    aspect: wgpu::TextureAspect::DepthOnly,
+                    dimension: Some(crate::gpu::TextureViewDimension::D2),
+                    aspect: crate::gpu::TextureAspect::DepthOnly,
                     base_array_layer: layer,
                     array_layer_count: Some(1),
                     base_mip_level: 0,
                     mip_level_count: Some(1),
-                    format: Some(wgpu::TextureFormat::Depth32Float),
+                    format: Some(crate::gpu::TextureFormat::Depth32Float),
                     usage: None,
                 })
             })
@@ -696,10 +709,10 @@ impl DeviceResources {
             crate::resources::builders::clamp_nearest_sampler(device, "shadow_atlas_depth_sampler");
 
         // Shadow atlas uniform buffer (binding 5).
-        let shadow_info_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let shadow_info_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_info_buf"),
             size: std::mem::size_of::<ShadowAtlasUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -708,51 +721,51 @@ impl DeviceResources {
         // and a linear/repeat sampler. Never sampled : the `ibl_enabled` uniform guard
         // prevents IBL calculations when no environment map is uploaded.
         // ------------------------------------------------------------------
-        let ibl_fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let ibl_fallback_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_black"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba16Float,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let ibl_fallback_view =
-            ibl_fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            ibl_fallback_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // BRDF integration LUT placeholder: a 1x1 black fallback that's swapped for the real
         // 128x128 LUT on the first call to `upload_environment_map`. The LUT is scene-independent
         // (function of roughness x N.V only); idempotent caching inside `upload_environment_map`
         // means subsequent uploads skip its ~16.7M Hammersley samples.
-        let ibl_fallback_brdf_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let ibl_fallback_brdf_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_fallback_brdf"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba16Float,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let ibl_fallback_brdf_view =
-            ibl_fallback_brdf_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            ibl_fallback_brdf_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         let ibl_sampler = crate::resources::builders::env_sampler(device, "ibl_sampler");
 
         // 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
-        let debug_frag_sentinel_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let debug_frag_sentinel_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("debug_frag_sentinel_buf"),
             size: 16,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -760,82 +773,82 @@ impl DeviceResources {
 
         mark("clustered");
 
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let camera_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
             layout: &camera_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: camera_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                    resource: crate::gpu::BindingResource::TextureView(&shadow_map_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&shadow_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
                     resource: light_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 4,
                     resource: clip_planes_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 5,
                     resource: shadow_info_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
                     resource: clip_volume_uniform_buf.as_entire_binding(),
                 },
                 // IBL textures (bindings 7-11) : fallback until environment is uploaded.
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::TextureView(&ibl_fallback_view),
+                    resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 8,
-                    resource: wgpu::BindingResource::TextureView(&ibl_fallback_view),
+                    resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 9,
-                    resource: wgpu::BindingResource::TextureView(&ibl_fallback_brdf_view),
+                    resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_brdf_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: wgpu::BindingResource::Sampler(&ibl_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&ibl_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 11,
-                    resource: wgpu::BindingResource::TextureView(&ibl_fallback_view),
+                    resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 12,
                     resource: debug_frag_sentinel_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 13,
                     resource: light_storage_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 14,
                     resource: clustered.grid_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 15,
                     resource: clustered.cluster_grid_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 16,
                     resource: clustered.light_index_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 17,
-                    resource: wgpu::BindingResource::TextureView(&point_shadow_cube_view),
+                    resource: crate::gpu::BindingResource::TextureView(&point_shadow_cube_view),
                 },
             ],
         });
@@ -852,24 +865,25 @@ impl DeviceResources {
             crate::resources::builders::wgsl_module(device, "shadow_shader", shadow_src);
 
         // Shadow pass uses a simple bind group layout: just the light uniform.
-        let shadow_camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow_camera_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    // Dynamic offset lets the cascade loop select per-cascade matrix slot
-                    // without calling write_buffer inside the render pass (which would be
-                    // a no-op per-cascade since wgpu batches all writes before execution).
-                    has_dynamic_offset: true,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let shadow_camera_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("shadow_camera_bgl"),
+                entries: &[crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
+                        // Dynamic offset lets the cascade loop select per-cascade matrix slot
+                        // without calling write_buffer inside the render pass (which would be
+                        // a no-op per-cascade since wgpu batches all writes before execution).
+                        has_dynamic_offset: true,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
-        let shadow_pl_bgls: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
+        let shadow_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
             vec![&shadow_camera_bgl, &object_bgl, d]
         } else {
             vec![&shadow_camera_bgl, &object_bgl]
@@ -892,7 +906,7 @@ impl DeviceResources {
             device,
             &shadow_pipeline_layout,
             &shadow_shader,
-            Some(wgpu::Face::Front),
+            Some(crate::gpu::Face::Front),
             pipeline_cache.as_ref(),
         );
         let shadow_pipeline_two_sided =
@@ -907,24 +921,25 @@ impl DeviceResources {
         // Shadow pass uniform buffer : 4 cascade slots x 256 bytes (wgpu dynamic-offset alignment).
         // Each slot holds one 4x4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
         const SHADOW_SLOT_STRIDE: u64 = 256;
-        let shadow_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let shadow_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_uniform_buf"),
             size: 4 * SHADOW_SLOT_STRIDE,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let shadow_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("shadow_bind_group"),
             layout: &shadow_camera_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 // Bind only the first 64-byte matrix slot; dynamic offset selects cascade.
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
                     buffer: &shadow_uniform_buf,
                     offset: 0,
                     size: Some(
-                        wgpu::BufferSize::new(std::mem::size_of::<[[f32; 4]; 4]>() as u64).unwrap(),
+                        crate::gpu::BufferSize::new(std::mem::size_of::<[[f32; 4]; 4]>() as u64)
+                            .unwrap(),
                     ),
                 }),
             }],
@@ -949,20 +964,21 @@ impl DeviceResources {
             shadow_point_src,
         );
         let shadow_point_face_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_point_face_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+                entries: &[crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,
                         min_binding_size: None,
                     },
                     count: None,
                 }],
             });
-        let shadow_point_pl_bgls: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
+        let shadow_point_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
             vec![&shadow_point_face_bgl, &object_bgl, d]
         } else {
             vec![&shadow_point_face_bgl, &object_bgl]
@@ -984,26 +1000,27 @@ impl DeviceResources {
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
         const SHADOW_POINT_FACE_STRIDE: u64 = 256;
         let shadow_point_face_count = (point_shadow_max_lights * 6) as u64;
-        let shadow_point_face_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let shadow_point_face_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_point_face_buf"),
             size: shadow_point_face_count * SHADOW_POINT_FACE_STRIDE,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let shadow_point_face_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow_point_face_bind_group"),
-            layout: &shadow_point_face_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &shadow_point_face_buf,
-                    offset: 0,
-                    // Bind one PointFace slot worth (96 bytes rounded up
-                    // to 16-byte alignment is fine here).
-                    size: Some(wgpu::BufferSize::new(96).unwrap()),
-                }),
-            }],
-        });
+        let shadow_point_face_bind_group =
+            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                label: Some("shadow_point_face_bind_group"),
+                layout: &shadow_point_face_bgl,
+                entries: &[crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
+                        buffer: &shadow_point_face_buf,
+                        offset: 0,
+                        // Bind one PointFace slot worth (96 bytes rounded up
+                        // to 16-byte alignment is fine here).
+                        size: Some(crate::gpu::BufferSize::new(96).unwrap()),
+                    }),
+                }],
+            });
 
         mark("shadow_pipelines");
 
@@ -1022,7 +1039,7 @@ impl DeviceResources {
         let gizmo_bgl = crate::resources::builders::uniform_bgl(
             device,
             "gizmo_bgl",
-            wgpu::ShaderStages::VERTEX,
+            crate::gpu::ShaderStages::VERTEX,
         );
 
         // ------------------------------------------------------------------
@@ -1044,36 +1061,36 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "gizmo_pipeline",
                 layout: &gizmo_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &gizmo_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &gizmo_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
                         blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
+                    front_face: crate::gpu::FrontFace::Ccw,
                     cull_mode: None, // No culling: gizmo geometry is viewed from all angles.
                     unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
+                    polygon_mode: crate::gpu::PolygonMode::Fill,
                     conservative: false,
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Always, // Always on top.
+                    crate::gpu::CompareFunction::Always, // Always on top.
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -1092,10 +1109,10 @@ impl DeviceResources {
                 glam::Quat::IDENTITY,
             );
 
-        let gizmo_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let gizmo_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("gizmo_vertex_buf"),
             size: (std::mem::size_of::<Vertex>() * gizmo_verts.len().max(1)) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -1105,10 +1122,10 @@ impl DeviceResources {
         gizmo_vertex_buffer.unmap();
 
         let gizmo_index_count = gizmo_indices.len() as u32;
-        let gizmo_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let gizmo_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("gizmo_index_buf"),
             size: (std::mem::size_of::<u32>() * gizmo_indices.len().max(1)) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -1123,11 +1140,11 @@ impl DeviceResources {
         let gizmo_uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
         };
-        let gizmo_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let gizmo_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("gizmo_uniform_buf"),
             size: std::mem::size_of::<crate::interaction::manipulation::gizmo::GizmoUniform>()
                 as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -1136,10 +1153,10 @@ impl DeviceResources {
         );
         gizmo_uniform_buf.unmap();
 
-        let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let gizmo_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("gizmo_bind_group"),
             layout: &gizmo_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: gizmo_uniform_buf.as_entire_binding(),
             }],
@@ -1160,7 +1177,7 @@ impl DeviceResources {
         let overlay_bgl = crate::resources::builders::uniform_bgl(
             device,
             "overlay_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
         );
 
         // ------------------------------------------------------------------
@@ -1184,36 +1201,36 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_pipeline",
                 layout: &overlay_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &overlay_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[OverlayVertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &overlay_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
+                    front_face: crate::gpu::FrontFace::Ccw,
                     cull_mode: None, // BC quads are visible from both sides.
                     unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
+                    polygon_mode: crate::gpu::PolygonMode::Fill,
                     conservative: false,
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false, // Do not write to depth buffer.
-                    wgpu::CompareFunction::Less,
+                    crate::gpu::CompareFunction::Less,
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -1233,36 +1250,36 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_line_pipeline",
                 layout: &overlay_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &overlay_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[OverlayVertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &overlay_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
                         blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::LineList,
                     strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
+                    front_face: crate::gpu::FrontFace::Ccw,
                     cull_mode: None,
                     unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
+                    polygon_mode: crate::gpu::PolygonMode::Fill,
                     conservative: false,
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Less,
+                    crate::gpu::CompareFunction::Less,
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -1288,7 +1305,7 @@ impl DeviceResources {
         let grid_bgl = crate::resources::builders::uniform_bgl(
             device,
             "grid_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
         );
         let grid_pipeline_layout = crate::resources::builders::pipeline_layout(
             device,
@@ -1300,32 +1317,32 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "grid_pipeline",
                 layout: &grid_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &grid_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[], // no vertex buffer : positions hardcoded in shader
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &grid_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_stencil: Some(crate::gpu::DepthStencilState {
+                    format: crate::gpu::TextureFormat::Depth24PlusStencil8,
                     depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState {
+                    depth_compare: crate::gpu::CompareFunction::LessEqual,
+                    stencil: crate::gpu::StencilState::default(),
+                    bias: crate::gpu::DepthBiasState {
                         // Push grid depth slightly behind coplanar geometry to prevent
                         // z-fighting when object faces coincide with the grid plane.
                         // 4 x the minimum representable Depth24 unit ~ 2.4e-7 : invisible
@@ -1335,7 +1352,7 @@ impl DeviceResources {
                         clamp: 0.0,
                     },
                 }),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -1344,16 +1361,16 @@ impl DeviceResources {
             },
         );
         // Default-zero uniform : overwritten every frame in prepare().
-        let grid_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let grid_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("grid_uniform_buf"),
             size: std::mem::size_of::<GridUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let grid_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let grid_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("grid_bind_group"),
             layout: &grid_bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: grid_uniform_buf.as_entire_binding(),
             }],
@@ -1372,51 +1389,55 @@ impl DeviceResources {
             "ground_plane_shader",
             crate::resources::builders::wgsl_source!("ground_plane"),
         );
-        let ground_plane_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ground_plane_bgl"),
-            entries: &[
-                // binding 0: GroundPlaneUniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let ground_plane_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("ground_plane_bgl"),
+                entries: &[
+                    // binding 0: GroundPlaneUniform
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // binding 1: shadow atlas (depth texture)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    // binding 1: shadow atlas (depth texture)
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Depth,
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // binding 2: shadow comparison sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-                // binding 3: shadow atlas info (cascade matrices, splits, atlas rects)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // binding 2: shadow comparison sampler
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Sampler(
+                            crate::gpu::SamplerBindingType::Comparison,
+                        ),
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                    // binding 3: shadow atlas info (cascade matrices, splits, atlas rects)
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
         let ground_plane_pipeline_layout = crate::resources::builders::pipeline_layout(
             device,
             "ground_plane_pipeline_layout",
@@ -1427,32 +1448,32 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "ground_plane_pipeline",
                 layout: &ground_plane_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &ground_plane_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &ground_plane_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     true,
-                    wgpu::CompareFunction::LessEqual,
+                    crate::gpu::CompareFunction::LessEqual,
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -1460,29 +1481,29 @@ impl DeviceResources {
                 cache: pipeline_cache.as_ref(),
             },
         );
-        let ground_plane_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let ground_plane_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ground_plane_uniform_buf"),
             size: std::mem::size_of::<GroundPlaneUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let ground_plane_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let ground_plane_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("ground_plane_bind_group"),
             layout: &ground_plane_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: ground_plane_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                    resource: crate::gpu::BindingResource::TextureView(&shadow_map_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&shadow_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
                     resource: shadow_info_buf.as_entire_binding(),
                 },
@@ -1497,63 +1518,67 @@ impl DeviceResources {
             "shadow_atlas_blit",
             crate::resources::builders::wgsl_source!("shadow_atlas_blit"),
         );
-        let atlas_blit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("atlas_blit_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let atlas_blit_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("atlas_blit_bgl"),
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Depth,
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                    count: None,
-                },
-            ],
-        });
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Sampler(
+                            crate::gpu::SamplerBindingType::NonFiltering,
+                        ),
+                        count: None,
+                    },
+                ],
+            });
         let atlas_blit_layout = crate::resources::builders::pipeline_layout(
             device,
             "atlas_blit_layout",
             &[&atlas_blit_bgl],
         );
-        let shadow_atlas_viewer_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let shadow_atlas_viewer_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_atlas_viewer_buf"),
             size: std::mem::size_of::<AtlasBlitUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let shadow_atlas_viewer_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let shadow_atlas_viewer_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("shadow_atlas_viewer_bg"),
             layout: &atlas_blit_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: shadow_atlas_viewer_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                    resource: crate::gpu::BindingResource::TextureView(&shadow_map_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&shadow_atlas_depth_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&shadow_atlas_depth_sampler),
                 },
             ],
         });
@@ -1562,32 +1587,32 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "shadow_atlas_viewer_pipeline",
                 layout: &atlas_blit_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &atlas_blit_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &atlas_blit_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Always,
+                    crate::gpu::CompareFunction::Always,
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -1613,38 +1638,38 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "axes_pipeline",
                 layout: &axes_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &axes_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[
                         crate::interaction::widgets::axes_indicator::AxesVertex::buffer_layout(),
                     ],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &axes_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
+                    front_face: crate::gpu::FrontFace::Ccw,
                     cull_mode: None,
                     unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
+                    polygon_mode: crate::gpu::PolygonMode::Fill,
                     conservative: false,
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Always,
+                    crate::gpu::CompareFunction::Always,
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -1654,11 +1679,11 @@ impl DeviceResources {
         );
 
         // Pre-allocate vertex buffer (resized in prepare if needed).
-        let axes_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let axes_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("axes_vertex_buf"),
             size: (std::mem::size_of::<crate::interaction::widgets::axes_indicator::AxesVertex>()
                 * 2048) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -1670,7 +1695,7 @@ impl DeviceResources {
         let material_sampler = crate::resources::builders::repeat_linear_sampler(
             device,
             "material_sampler",
-            wgpu::FilterMode::Nearest,
+            crate::gpu::FilterMode::Nearest,
         );
 
         // Clamp-to-edge sampler for colourmap LUT lookups (prevents wrap artifact at scalar extremes).
@@ -1679,126 +1704,131 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Fallback normal map: 1x1 [128, 128, 255, 255] : flat tangent-space normal
         // ------------------------------------------------------------------
-        let fallback_normal_map = device.create_texture(&wgpu::TextureDescriptor {
+        let fallback_normal_map = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_normal_map"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let fallback_normal_map_view =
-            fallback_normal_map.create_view(&wgpu::TextureViewDescriptor::default());
+            fallback_normal_map.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // ------------------------------------------------------------------
         // Fallback AO map: 1x1 [255, 255, 255, 255] : no occlusion
         // ------------------------------------------------------------------
-        let fallback_ao_map = device.create_texture(&wgpu::TextureDescriptor {
+        let fallback_ao_map = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_ao_map"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let fallback_ao_map_view =
-            fallback_ao_map.create_view(&wgpu::TextureViewDescriptor::default());
+            fallback_ao_map.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // ------------------------------------------------------------------
         // Fallback metallic-roughness texture: 1x1 Rgba8Unorm.
         // Content is uninitialized: shader only samples when has_metallic_roughness_tex != 0.
         // ------------------------------------------------------------------
-        let fallback_metallic_roughness_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("fallback_metallic_roughness_texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let fallback_metallic_roughness_texture_view = fallback_metallic_roughness_texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        // ------------------------------------------------------------------
-        // Fallback emissive texture: 1x1 Rgba8Unorm.
-        // Content is uninitialized: shader only samples when has_emissive_tex != 0.
-        // ------------------------------------------------------------------
-        let fallback_emissive_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("fallback_emissive_texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let fallback_emissive_texture_view =
-            fallback_emissive_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // ------------------------------------------------------------------
-        // Fallback texture: 1x1 white RGBA (used when no albedo texture is assigned)
-        // ------------------------------------------------------------------
-        let fallback_texture = {
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("fallback_texture"),
-                size: wgpu::Extent3d {
+        let fallback_metallic_roughness_texture =
+            device.create_texture(&crate::gpu::TextureDescriptor {
+                label: Some("fallback_metallic_roughness_texture"),
+                size: crate::gpu::Extent3d {
                     width: 1,
                     height: 1,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: crate::gpu::TextureFormat::Rgba8Unorm,
+                usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+                    | crate::gpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+        let fallback_metallic_roughness_texture_view = fallback_metallic_roughness_texture
+            .create_view(&crate::gpu::TextureViewDescriptor::default());
+
+        // ------------------------------------------------------------------
+        // Fallback emissive texture: 1x1 Rgba8Unorm.
+        // Content is uninitialized: shader only samples when has_emissive_tex != 0.
+        // ------------------------------------------------------------------
+        let fallback_emissive_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("fallback_emissive_texture"),
+            size: crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let fallback_emissive_texture_view =
+            fallback_emissive_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+
+        // ------------------------------------------------------------------
+        // Fallback texture: 1x1 white RGBA (used when no albedo texture is assigned)
+        // ------------------------------------------------------------------
+        let fallback_texture = {
+            let tex = device.create_texture(&crate::gpu::TextureDescriptor {
+                label: Some("fallback_texture"),
+                size: crate::gpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
+                usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+                    | crate::gpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
             // Texture pixels are uploaded lazily on first prepare() via queue.write_texture.
-            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
             // Same config as material_sampler (repeat, linear), so share it.
             let sampler = material_sampler.clone();
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("fallback_texture_bg"),
                 layout: &texture_bgl,
                 entries: &[
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
+                        resource: crate::gpu::BindingResource::TextureView(&view),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&sampler),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&fallback_normal_map_view),
+                        resource: crate::gpu::BindingResource::TextureView(
+                            &fallback_normal_map_view,
+                        ),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&fallback_ao_map_view),
+                        resource: crate::gpu::BindingResource::TextureView(&fallback_ao_map_view),
                     },
                 ],
             });
@@ -1813,57 +1843,57 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Colourmap / LUT fallback resources
         // ------------------------------------------------------------------
-        let fallback_lut_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let fallback_lut_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("fallback_lut_texture"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         // Content of fallback_lut_view is never sampled by the shader when has_attribute=0.
         // Data is intentionally left uninitialised here; it will be a zeroed 1-pixel texture
         // after the GPU zeros it on allocation (implementation-defined but harmless).
         let fallback_lut_view =
-            fallback_lut_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            fallback_lut_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
-        let fallback_scalar_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let fallback_scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_scalar_buf"),
             size: 4,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(fallback_scalar_buf.slice(..), &[0u8; 4]);
         fallback_scalar_buf.unmap();
 
-        let fallback_face_colour_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let fallback_face_colour_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_face_colour_buf"),
             size: 16, // one vec4<f32>
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(fallback_face_colour_buf.slice(..), &[0u8; 16]);
         fallback_face_colour_buf.unmap();
 
-        let fallback_warp_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let fallback_warp_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_warp_buf"),
             size: 12, // one vec3<f32>
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(fallback_warp_buf.slice(..), &[0u8; 12]);
         fallback_warp_buf.unmap();
 
-        let fallback_position_override_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let fallback_position_override_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_position_override_buf"),
             size: 12, // one vec3<f32>
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -1872,10 +1902,10 @@ impl DeviceResources {
         );
         fallback_position_override_buf.unmap();
 
-        let fallback_normal_override_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let fallback_normal_override_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_normal_override_buf"),
             size: 12,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -1919,7 +1949,7 @@ impl DeviceResources {
         let outline_bgl = crate::resources::builders::uniform_bgl(
             device,
             "outline_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
         );
 
         let xray_shader = crate::resources::builders::wgsl_module(
@@ -1928,7 +1958,7 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("xray"),
         );
 
-        let outline_pl_bgls: Vec<&wgpu::BindGroupLayout> = if let Some(d) = deform_bgl {
+        let outline_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
             vec![&camera_bgl, &outline_bgl, d]
         } else {
             vec![&camera_bgl, &outline_bgl]
@@ -1955,7 +1985,7 @@ impl DeviceResources {
             device,
             &outline_pipeline_layout,
             &outline_mask_shader,
-            wgpu::TextureFormat::R8Unorm,
+            crate::gpu::TextureFormat::R8Unorm,
             pipeline_cache.as_ref(),
         );
         let outline_mask_pipeline = outline_masks.mask;
@@ -1969,24 +1999,24 @@ impl DeviceResources {
             "splat_outline_mask_shader",
             crate::resources::builders::wgsl_source!("splat_outline_mask"),
         );
-        let splat_outline_pos_attrs = [wgpu::VertexAttribute {
+        let splat_outline_pos_attrs = [crate::gpu::VertexAttribute {
             offset: 0,
             shader_location: 0,
-            format: wgpu::VertexFormat::Float32x3,
+            format: crate::gpu::VertexFormat::Float32x3,
         }];
-        let splat_outline_pos_layout = wgpu::VertexBufferLayout {
+        let splat_outline_pos_layout = crate::gpu::VertexBufferLayout {
             array_stride: 12, // vec3<f32>
-            step_mode: wgpu::VertexStepMode::Instance,
+            step_mode: crate::gpu::VertexStepMode::Instance,
             attributes: &splat_outline_pos_attrs,
         };
-        let splat_outline_size_attrs = [wgpu::VertexAttribute {
+        let splat_outline_size_attrs = [crate::gpu::VertexAttribute {
             offset: 0,
             shader_location: 1,
-            format: wgpu::VertexFormat::Float32,
+            format: crate::gpu::VertexFormat::Float32,
         }];
-        let splat_outline_size_layout = wgpu::VertexBufferLayout {
+        let splat_outline_size_layout = crate::gpu::VertexBufferLayout {
             array_stride: 4, // f32
-            step_mode: wgpu::VertexStepMode::Instance,
+            step_mode: crate::gpu::VertexStepMode::Instance,
             attributes: &splat_outline_size_attrs,
         };
         let splat_outline_mask_pipeline = crate::resources::builders::render_pipeline(
@@ -1994,32 +2024,32 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "splat_outline_mask_pipeline",
                 layout: &outline_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &splat_outline_mask_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[splat_outline_pos_layout, splat_outline_size_layout],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &splat_outline_mask_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::R8Unorm,
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format: crate::gpu::TextureFormat::R8Unorm,
                         blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Less,
+                    crate::gpu::CompareFunction::Less,
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: 1,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -2035,37 +2065,40 @@ impl DeviceResources {
             "outline_edge_shader",
             crate::resources::builders::wgsl_source!("outline_edge"),
         );
-        let outline_edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("outline_edge_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let outline_edge_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("outline_edge_bgl"),
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Sampler(
+                            crate::gpu::SamplerBindingType::Filtering,
+                        ),
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
         let outline_edge_layout = crate::resources::builders::pipeline_layout(
             device,
             "outline_edge_layout",
@@ -2076,29 +2109,29 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "outline_edge_pipeline",
                 layout: &outline_edge_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &outline_edge_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &outline_edge_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
+                multisample: crate::gpu::MultisampleState::default(),
                 cache: pipeline_cache.as_ref(),
             },
         );
@@ -2109,32 +2142,32 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "xray_pipeline",
                 layout: &outline_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &xray_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[Vertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &xray_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: target_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Always,
+                    crate::gpu::CompareFunction::Always,
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
@@ -2159,33 +2192,33 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "skybox_pipeline",
                 layout: &skybox_pipeline_layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &skybox_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &skybox_shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba16Float,
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format: crate::gpu::TextureFormat::Rgba16Float,
                         blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
                 // Drawn after opaques: only sky pixels (depth == 1.0) pass.
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Equal,
+                    crate::gpu::CompareFunction::Equal,
                 )),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: crate::gpu::MultisampleState::default(),
                 cache: pipeline_cache.as_ref(),
             },
         );

@@ -7,19 +7,19 @@ use super::*;
 impl ViewportRenderer {
     pub(crate) fn render_frame_ldr(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
         bg_colour: [f32; 4],
         w: u32,
         h: u32,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
         // draw into a scaled intermediate texture and upscale-blit to output_view.
         // Otherwise render directly to output_view.
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("ldr_encoder"),
         });
 
@@ -53,51 +53,53 @@ impl ViewportRenderer {
             let camera_bg = &slot.camera_bind_group;
             let grid_bg = &slot.grid_bind_group;
             // Choose render target: dyn_res intermediate, backdrop intermediate, or output_view.
-            let (scene_colour_view, scene_depth_view): (&wgpu::TextureView, &wgpu::TextureView) =
-                if use_dyn_res {
-                    let dr = slot.dyn_res.as_ref().unwrap();
-                    (&dr.colour_view, &dr.depth_view)
-                } else if needs_blur {
-                    let bs = self.backdrop_blur_state.as_ref().unwrap();
-                    (&bs.intermediate_view, &slot_hdr.outline_depth_view)
-                } else {
-                    (output_view, &slot_hdr.outline_depth_view)
-                };
+            let (scene_colour_view, scene_depth_view): (
+                &crate::gpu::TextureView,
+                &crate::gpu::TextureView,
+            ) = if use_dyn_res {
+                let dr = slot.dyn_res.as_ref().unwrap();
+                (&dr.colour_view, &dr.depth_view)
+            } else if needs_blur {
+                let bs = self.backdrop_blur_state.as_ref().unwrap();
+                (&bs.intermediate_view, &slot_hdr.outline_depth_view)
+            } else {
+                (output_view, &slot_hdr.outline_depth_view)
+            };
             let ts_writes = self.ts_query_set.as_ref().map(|qs| {
                 self.ts_written_mask.fetch_or(
                     1 << crate::renderer::GPU_TS_SCENE,
                     std::sync::atomic::Ordering::Relaxed,
                 );
-                wgpu::RenderPassTimestampWrites {
+                crate::gpu::RenderPassTimestampWrites {
                     query_set: qs,
                     beginning_of_pass_write_index: Some(crate::renderer::GPU_TS_SCENE * 2),
                     end_of_pass_write_index: Some(crate::renderer::GPU_TS_SCENE * 2 + 1),
                 }
             });
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("ldr_render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: scene_colour_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
                             r: bg_colour[0] as f64,
                             g: bg_colour[1] as f64,
                             b: bg_colour[2] as f64,
                             a: bg_colour[3] as f64,
                         }),
-                        store: wgpu::StoreOp::Store,
+                        store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: scene_depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
                         store: if store_scene_depth {
-                            wgpu::StoreOp::Store
+                            crate::gpu::StoreOp::Store
                         } else {
-                            wgpu::StoreOp::Discard
+                            crate::gpu::StoreOp::Discard
                         },
                     }),
                     stencil_ops: None,
@@ -155,7 +157,7 @@ impl ViewportRenderer {
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
                                 render_pass.set_index_buffer(
                                     edge_buf.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                             }
@@ -270,39 +272,42 @@ impl ViewportRenderer {
             // Second render pass for overlays (Load to preserve scene content).
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
-            let overlay_colour_view: &wgpu::TextureView = if use_dyn_res {
+            let overlay_colour_view: &crate::gpu::TextureView = if use_dyn_res {
                 &slot.dyn_res.as_ref().unwrap().colour_view
             } else {
                 &self.backdrop_blur_state.as_ref().unwrap().intermediate_view
             };
-            let overlay_depth_view: &wgpu::TextureView = if use_dyn_res {
+            let overlay_depth_view: &crate::gpu::TextureView = if use_dyn_res {
                 &slot.dyn_res.as_ref().unwrap().depth_view
             } else {
                 &slot_hdr.outline_depth_view
             };
             {
-                let mut overlay_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("ldr_overlay_blur_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: overlay_colour_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: overlay_depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Discard,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
+                let mut overlay_pass =
+                    encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                        label: Some("ldr_overlay_blur_pass"),
+                        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                            view: overlay_colour_view,
+                            resolve_target: None,
+                            ops: crate::gpu::Operations {
+                                load: crate::gpu::LoadOp::Load,
+                                store: crate::gpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: Some(
+                            crate::gpu::RenderPassDepthStencilAttachment {
+                                view: overlay_depth_view,
+                                depth_ops: Some(crate::gpu::Operations {
+                                    load: crate::gpu::LoadOp::Load,
+                                    store: crate::gpu::StoreOp::Discard,
+                                }),
+                                stencil_ops: None,
+                            },
+                        ),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
                 // Draw blur backdrop shapes first.
                 self.draw_blur_shapes(&mut overlay_pass, &blur_bg);
                 // Then normal shapes.
@@ -361,14 +366,14 @@ impl ViewportRenderer {
                 .as_ref()
                 .unwrap()
                 .upscale_bind_group;
-            let mut upscale_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut upscale_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("dyn_res_upscale_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: output_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
@@ -386,28 +391,28 @@ impl ViewportRenderer {
             let bs = self.backdrop_blur_state.as_ref().unwrap();
             let blit_bgl = self.resources.post.dyn_res_upscale_bgl.as_ref().unwrap();
             let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
-            let blit_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let blit_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("backdrop_blit_bg"),
                 layout: blit_bgl,
                 entries: &[
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&bs.intermediate_view),
+                        resource: crate::gpu::BindingResource::TextureView(&bs.intermediate_view),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(blit_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(blit_sampler),
                     },
                 ],
             });
-            let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("backdrop_blit_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: output_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Load,
+                        store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],

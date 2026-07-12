@@ -4,76 +4,77 @@ impl DeviceResources {
     /// Lazily create the point cloud render pipeline (PointList topology).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.point_clouds` is non-empty.
-    pub(crate) fn ensure_point_cloud_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_point_cloud_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.point_cloud_pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
-        let pc_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let pc_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("point_cloud_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -95,13 +96,13 @@ impl DeviceResources {
             &pc_bgl,
         );
 
-        let pc_vertex_layout = wgpu::VertexBufferLayout {
+        let pc_vertex_layout = crate::gpu::VertexBufferLayout {
             array_stride: 12,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[wgpu::VertexAttribute {
+            step_mode: crate::gpu::VertexStepMode::Instance,
+            attributes: &[crate::gpu::VertexAttribute {
                 offset: 0,
                 shader_location: 0,
-                format: wgpu::VertexFormat::Float32x3,
+                format: crate::gpu::VertexFormat::Float32x3,
             }],
         };
 
@@ -114,11 +115,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[pc_vertex_layout.clone()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -131,8 +132,8 @@ impl DeviceResources {
     /// Called from `prepare()` for each non-empty item in `frame.scene.point_clouds`.
     pub(crate) fn upload_point_cloud_per_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::PointCloudItem,
     ) -> PointCloudGpuData {
         let point_count = item.positions.len() as u32;
@@ -142,10 +143,10 @@ impl DeviceResources {
             .iter()
             .flat_map(|p| bytemuck::bytes_of(p).iter().copied())
             .collect();
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pc_vertex_buf"),
             size: pos_bytes.len().max(12) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&vertex_buffer, 0, &pos_bytes);
@@ -161,19 +162,19 @@ impl DeviceResources {
                     .cloned()
                     .fold(f32::NEG_INFINITY, f32::max)
             });
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_scalar_buf"),
                 size: (std::mem::size_of::<f32>() * item.scalars.len()).max(4) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, bytemuck::cast_slice(&item.scalars));
             (buf, 1u32, min, max)
         } else {
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_scalar_buf_fallback"),
                 size: 4,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             (buf, 0u32, 0.0f32, 1.0f32)
@@ -181,19 +182,19 @@ impl DeviceResources {
 
         let (colour_buf, has_colours) = if !item.colours.is_empty() && has_scalars == 0 {
             let bytes: &[u8] = bytemuck::cast_slice(&item.colours);
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_colour_buf"),
                 size: bytes.len().max(16) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, bytes);
             (buf, 1u32)
         } else {
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_colour_buf_fallback"),
                 size: 16,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             (buf, 0u32)
@@ -224,47 +225,47 @@ impl DeviceResources {
                     out_min + t * (out_max - out_min)
                 })
                 .collect();
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_radius_buf"),
                 size: (std::mem::size_of::<f32>() * mapped.len()).max(4) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, bytemuck::cast_slice(&mapped));
             (buf, 1u32)
         } else if !item.radii.is_empty() {
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_radius_buf"),
                 size: (std::mem::size_of::<f32>() * item.radii.len()).max(4) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, bytemuck::cast_slice(&item.radii));
             (buf, 1u32)
         } else {
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_radius_buf_fallback"),
                 size: 4,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             (buf, 0u32)
         };
 
         let (transparency_buf, has_transparency) = if !item.transparencies.is_empty() {
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_transparency_buf"),
                 size: (std::mem::size_of::<f32>() * item.transparencies.len()).max(4) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, bytemuck::cast_slice(&item.transparencies));
             (buf, 1u32)
         } else {
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pc_transparency_buf_fallback"),
                 size: 4,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             (buf, 0u32)
@@ -304,10 +305,10 @@ impl DeviceResources {
             },
             _pad: [0; 3],
         };
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pc_uniform_buf"),
             size: std::mem::size_of::<PointCloudUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
@@ -329,35 +330,35 @@ impl DeviceResources {
             .point_cloud_bgl
             .as_ref()
             .expect("ensure_point_cloud_pipeline not called");
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("pc_bind_group"),
             layout: bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(lut_view),
+                    resource: crate::gpu::BindingResource::TextureView(lut_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(lut_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
                     resource: scalar_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 4,
                     resource: colour_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 5,
                     resource: radius_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
                     resource: transparency_buf.as_entire_binding(),
                 },
@@ -379,8 +380,8 @@ impl DeviceResources {
     /// Pre-upload a point cloud and return a typed handle.
     pub fn upload_point_cloud(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::PointCloudItem,
     ) -> crate::resources::PointCloudId {
         self.ensure_point_cloud_pipeline(device);
@@ -396,8 +397,8 @@ impl DeviceResources {
     /// Replace the geometry of a pre-uploaded point cloud, keeping the same id.
     pub fn replace_point_cloud(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::PointCloudId,
         item: &crate::renderer::PointCloudItem,
     ) -> bool {
@@ -412,8 +413,8 @@ impl DeviceResources {
     /// Start an asynchronous point cloud upload.
     pub fn begin_upload_point_cloud(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: crate::renderer::PointCloudItem,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::PointCloudId>::new();
@@ -479,15 +480,17 @@ mod tests {
     use crate::renderer::PointCloudItem;
     use crate::resources::UploadStatus;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn sample_point_cloud() -> PointCloudItem {
@@ -508,7 +511,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_point_cloud(&device, &queue, &sample_point_cloud());
         assert!(resources.content.point_cloud_store.contains(id));
         assert!(resources.drop_point_cloud(id));
@@ -521,7 +525,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_point_cloud(&device, &queue, sample_point_cloud());
         for _ in 0..200 {
             resources.process_uploads(&device, &queue);
@@ -549,15 +554,15 @@ mod tests {
 pub struct PointCloudGpuData {
     /// Vertex buffer: one entry per point, packed as `[position: vec3, _pad: f32]` (16 bytes).
     /// The shader reads colour/scalar from storage buffers indexed by `vertex_index`.
-    pub(crate) vertex_buffer: wgpu::Buffer,
+    pub(crate) vertex_buffer: crate::gpu::Buffer,
     /// Number of points (= draw count).
     pub(crate) point_count: u32,
     /// Bind group (group 1): uniform + LUT + sampler + scalar + colour + radius + transparency.
-    pub(crate) bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: crate::gpu::BindGroup,
     // Keep the buffers alive for the lifetime of this struct.
-    pub(crate) _uniform_buf: wgpu::Buffer,
-    pub(crate) _scalar_buf: wgpu::Buffer,
-    pub(crate) _colour_buf: wgpu::Buffer,
-    pub(crate) _radius_buf: wgpu::Buffer,
-    pub(crate) _transparency_buf: wgpu::Buffer,
+    pub(crate) _uniform_buf: crate::gpu::Buffer,
+    pub(crate) _scalar_buf: crate::gpu::Buffer,
+    pub(crate) _colour_buf: crate::gpu::Buffer,
+    pub(crate) _radius_buf: crate::gpu::Buffer,
+    pub(crate) _transparency_buf: crate::gpu::Buffer,
 }

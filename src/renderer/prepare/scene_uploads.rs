@@ -27,8 +27,8 @@ impl ViewportRenderer {
         resources: &mut DeviceResources,
         mesh_instance_gpu_data: &mut Vec<crate::resources::MeshInstanceGpuData>,
         lod_levels: &mut std::collections::HashMap<(u64, u32), usize>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> (u32, u32, u32, u32) {
         mesh_instance_gpu_data.clear();
@@ -150,8 +150,8 @@ impl ViewportRenderer {
         sprite_gpu_data: &mut Vec<crate::resources::SpriteGpuData>,
         particle_gpu_data: &mut Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
         tensor_glyph_gpu_data: &mut Vec<crate::resources::TensorGlyphGpuData>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) {
@@ -333,8 +333,8 @@ impl ViewportRenderer {
         polyline_gpu_data: &mut Vec<crate::resources::PolylineGpuData>,
         polyline_selected_gpu_indices: &mut Vec<usize>,
         glyph_gpu_data: &mut Vec<crate::resources::GlyphGpuData>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ------------------------------------------------------------------
@@ -489,8 +489,8 @@ impl ViewportRenderer {
         decal_exclude_items: &mut Vec<crate::resources::decal::DecalExcludeGpuItem>,
         mc_gpu_data: &mut Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>,
         pick_mc_items: &mut Vec<GpuMcPickItem>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> DecalCacheStats {
         // ------------------------------------------------------------------
@@ -620,8 +620,8 @@ impl ViewportRenderer {
         resources: &mut DeviceResources,
         screen_image_gpu_data: &mut Vec<crate::resources::ScreenImageGpuData>,
         overlay_image_gpu_data: &mut Vec<crate::resources::ScreenImageGpuData>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         let vp_size = frame.camera.viewport_size;
@@ -677,8 +677,8 @@ impl ViewportRenderer {
         tube_selected_gpu_indices: &mut Vec<usize>,
         ribbon_gpu_data: &mut Vec<crate::resources::StreamtubeGpuData>,
         ribbon_selected_gpu_indices: &mut Vec<usize>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ------------------------------------------------------------------
@@ -850,8 +850,8 @@ impl ViewportRenderer {
         resources: &mut DeviceResources,
         image_slice_gpu_data: &mut Vec<crate::resources::ImageSliceGpuData>,
         volume_surface_slice_gpu_data: &mut Vec<crate::resources::VolumeSurfaceSliceGpuData>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ------------------------------------------------------------------

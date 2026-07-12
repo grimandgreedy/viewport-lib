@@ -69,6 +69,9 @@
 //! queue.submit([cmd0, cmd1]);
 //! ```
 
+/// Internal alias for the selected wgpu version. See [`gpu`] itself.
+pub(crate) mod gpu;
+
 /// Error types for the viewport library.
 pub mod error;
 

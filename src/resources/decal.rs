@@ -1,8 +1,8 @@
 //! Screen-space decal pipeline (D1 + D2 + D5).
 
+use crate::gpu::util::DeviceExt as _;
 use crate::resources::mesh::mesh_store::MeshId;
 use crate::resources::{DeviceResources, DualPipeline};
-use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
 // GPU-internal types
@@ -48,8 +48,8 @@ pub(crate) struct DecalUniformRaw {
 #[derive(Clone)]
 pub(crate) struct DecalGpuItem {
     pub blend_mode: crate::renderer::DecalBlendMode,
-    pub _uniform_buf: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
+    pub _uniform_buf: crate::gpu::Buffer,
+    pub bind_group: crate::gpu::BindGroup,
     /// Decal model matrix (local-space unit cube -> world). Used at draw time
     /// to compute a per-decal scissor rect so the fullscreen decal quad only
     /// shades the decal's screen footprint instead of the whole framebuffer.
@@ -62,8 +62,8 @@ pub(crate) struct DecalGpuItem {
 /// Per-draw GPU data for one non-receiver surface in the decal exclude pass (D5).
 pub(crate) struct DecalExcludeGpuItem {
     pub mesh_id: MeshId,
-    pub _uniform_buf: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
+    pub _uniform_buf: crate::gpu::Buffer,
+    pub bind_group: crate::gpu::BindGroup,
 }
 
 /// Build the flat uniform for a decal. Pure: no GPU access, so it can also feed
@@ -169,24 +169,24 @@ pub(crate) struct DecalResources {
     /// Additive-blend decal pipeline (LDR + HDR). None until first decal is submitted.
     pub(crate) additive_pipeline: Option<DualPipeline>,
     /// BGL for group 1 of the decal pass: depth texture + stencil texture bindings.
-    pub(crate) depth_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) depth_bgl: Option<crate::gpu::BindGroupLayout>,
     /// BGL for group 2 of the decal pass: uniform buffer + albedo texture + sampler.
-    pub(crate) item_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) item_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear-clamp sampler used by the decal fragment shader.
-    pub(crate) sampler: Option<wgpu::Sampler>,
+    pub(crate) sampler: Option<crate::gpu::Sampler>,
     /// Pipeline that writes stencil = 0 for non-receiver surfaces (D5).
-    pub(crate) exclude_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) exclude_pipeline: Option<crate::gpu::RenderPipeline>,
     /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
-    pub(crate) exclude_obj_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) exclude_obj_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pipeline that stamps a selected decal's footprint into the R8 outline
     /// mask. Reuses the decal colour pass's bind groups (camera, depth+stencil,
     /// per-decal uniform). None until first selected decal is submitted.
-    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Fullscreen edge-detect pipeline that traces the outline ring from the
     /// decal outline mask onto the HDR colour target with alpha blending.
-    pub(crate) outline_edge_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) outline_edge_pipeline: Option<crate::gpu::RenderPipeline>,
     /// BGL for the edge-detect pass: mask texture + sampler + edge uniform.
-    pub(crate) outline_edge_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) outline_edge_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Cached outline-mask target and edge bind group, rebuilt only when the
     /// viewport size changes so the outline pass allocates nothing per frame.
     pub(crate) outline_targets: Option<DecalOutlineTargets>,
@@ -199,13 +199,13 @@ pub(crate) struct DecalOutlineTargets {
     pub(crate) width: u32,
     pub(crate) height: u32,
     /// R8 mask the selected decals stamp their footprint into.
-    pub(crate) mask_view: wgpu::TextureView,
+    pub(crate) mask_view: crate::gpu::TextureView,
     /// Retained so the view stays valid; not read directly.
-    pub(crate) _mask_tex: wgpu::Texture,
+    pub(crate) _mask_tex: crate::gpu::Texture,
     /// Edge-detect uniform (outline colour, width, viewport size).
-    pub(crate) edge_uniform_buf: wgpu::Buffer,
+    pub(crate) edge_uniform_buf: crate::gpu::Buffer,
     /// Edge-detect bind group: mask view + sampler + edge uniform.
-    pub(crate) edge_bind_group: wgpu::BindGroup,
+    pub(crate) edge_bind_group: crate::gpu::BindGroup,
 }
 
 // ---------------------------------------------------------------------------
@@ -215,27 +215,27 @@ pub(crate) struct DecalOutlineTargets {
 impl DeviceResources {
     /// Create the decal depth bind group layout and sampler if missing. These
     /// carry no target-size state, so they can be built at renderer creation.
-    pub(crate) fn ensure_decal_shared(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_decal_shared(&mut self, device: &crate::gpu::Device) {
         if self.decal.depth_bgl.is_none() {
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("decal_depth_bgl"),
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
+                    crate::gpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Depth,
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
+                    crate::gpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Uint,
-                            view_dimension: wgpu::TextureViewDimension::D2,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Uint,
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
                         count: None,
@@ -249,7 +249,7 @@ impl DeviceResources {
             let sampler = crate::resources::builders::repeat_linear_sampler(
                 device,
                 "decal_sampler",
-                wgpu::FilterMode::Nearest,
+                crate::gpu::FilterMode::Nearest,
             );
             self.decal.sampler = Some(sampler);
         }
@@ -261,7 +261,7 @@ impl DeviceResources {
     /// by [`ensure_decal_shared`](Self::ensure_decal_shared)). Called at
     /// renderer creation so the first decal in a scene does not pay a pipeline
     /// compile mid-session.
-    pub(crate) fn ensure_decal_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_decal_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.decal.replace_pipeline.is_some() {
             return;
         }
@@ -273,12 +273,12 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("decal"),
         );
 
-        let tex2d_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+        let tex2d_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
+            visibility: crate::gpu::ShaderStages::FRAGMENT,
+            ty: crate::gpu::BindingType::Texture {
+                sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                view_dimension: crate::gpu::TextureViewDimension::D2,
                 multisampled: false,
             },
             count: None,
@@ -292,24 +292,24 @@ impl DeviceResources {
         //  4: roughness map (D3; fallback_texture when absent)
         //  5: metallic map  (D3; fallback_texture when absent)
         //  6: emissive map  (D6; fallback_texture when absent)
-        let item_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let item_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("decal_item_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 tex2d_entry(1),
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 tex2d_entry(3), // D2: normal map
@@ -333,7 +333,7 @@ impl DeviceResources {
 
         // No depth attachment: decals read depth as a texture, they do not write
         // to the depth buffer. Blend mode is the only thing that varies.
-        let make = |fmt: wgpu::TextureFormat, blend: wgpu::BlendState| {
+        let make = |fmt: crate::gpu::TextureFormat, blend: crate::gpu::BlendState| {
             crate::resources::builders::build_fullscreen_pipeline(
                 device,
                 "decal_pipeline",
@@ -344,47 +344,47 @@ impl DeviceResources {
             )
         };
 
-        let replace_blend = wgpu::BlendState::ALPHA_BLENDING;
+        let replace_blend = crate::gpu::BlendState::ALPHA_BLENDING;
         // Multiply: result.rgb = dst.rgb * src.rgb; result.a = dst.a.
-        let multiply_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::Src,
-                operation: wgpu::BlendOperation::Add,
+        let multiply_blend = crate::gpu::BlendState {
+            color: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::Zero,
+                dst_factor: crate::gpu::BlendFactor::Src,
+                operation: crate::gpu::BlendOperation::Add,
             },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
+            alpha: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::Zero,
+                dst_factor: crate::gpu::BlendFactor::One,
+                operation: crate::gpu::BlendOperation::Add,
             },
         };
         // Additive: result.rgb = dst.rgb + src.rgb * src.a; result.a = dst.a.
         // src.a modulates the additive contribution so alpha still controls intensity.
-        let additive_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::SrcAlpha,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
+        let additive_blend = crate::gpu::BlendState {
+            color: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::SrcAlpha,
+                dst_factor: crate::gpu::BlendFactor::One,
+                operation: crate::gpu::BlendOperation::Add,
             },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
+            alpha: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::Zero,
+                dst_factor: crate::gpu::BlendFactor::One,
+                operation: crate::gpu::BlendOperation::Add,
             },
         };
 
         self.decal.item_bgl = Some(item_bgl);
         self.decal.replace_pipeline = Some(DualPipeline {
             ldr: make(self.target_format, replace_blend),
-            hdr: make(wgpu::TextureFormat::Rgba16Float, replace_blend),
+            hdr: make(crate::gpu::TextureFormat::Rgba16Float, replace_blend),
         });
         self.decal.multiply_pipeline = Some(DualPipeline {
             ldr: make(self.target_format, multiply_blend),
-            hdr: make(wgpu::TextureFormat::Rgba16Float, multiply_blend),
+            hdr: make(crate::gpu::TextureFormat::Rgba16Float, multiply_blend),
         });
         self.decal.additive_pipeline = Some(DualPipeline {
             ldr: make(self.target_format, additive_blend),
-            hdr: make(wgpu::TextureFormat::Rgba16Float, additive_blend),
+            hdr: make(crate::gpu::TextureFormat::Rgba16Float, additive_blend),
         });
     }
 
@@ -394,7 +394,7 @@ impl DeviceResources {
     /// first (it creates `item_bgl`) and `depth_bgl` to exist (created by
     /// `ensure_hdr_shared`). The mask pipeline reuses the decal colour pass's
     /// three bind groups, so no new per-decal resources are needed.
-    pub(crate) fn ensure_decal_outline_pipelines(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_decal_outline_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.decal.outline_mask_pipeline.is_some() {
             return;
         }
@@ -435,12 +435,12 @@ impl DeviceResources {
             "decal_outline_edge_shader",
             crate::resources::builders::wgsl_source!("outline_edge"),
         );
-        let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let edge_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("decal_outline_edge_bgl"),
             entries: &[
-                crate::resources::builders::texture_entry(0, wgpu::ShaderStages::FRAGMENT),
-                crate::resources::builders::sampler_entry(1, wgpu::ShaderStages::FRAGMENT),
-                crate::resources::builders::uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
+                crate::resources::builders::texture_entry(0, crate::gpu::ShaderStages::FRAGMENT),
+                crate::resources::builders::sampler_entry(1, crate::gpu::ShaderStages::FRAGMENT),
+                crate::resources::builders::uniform_entry(2, crate::gpu::ShaderStages::FRAGMENT),
             ],
         });
         let edge_layout = crate::resources::builders::pipeline_layout(
@@ -453,8 +453,8 @@ impl DeviceResources {
             "decal_outline_edge_pipeline",
             &edge_layout,
             &edge_shader,
-            wgpu::TextureFormat::Rgba16Float,
-            Some(wgpu::BlendState::ALPHA_BLENDING),
+            crate::gpu::TextureFormat::Rgba16Float,
+            Some(crate::gpu::BlendState::ALPHA_BLENDING),
         );
 
         self.decal.outline_mask_pipeline = Some(mask_pipeline);
@@ -467,7 +467,12 @@ impl DeviceResources {
     /// pass allocation-free per frame: only the edge uniform contents are
     /// refreshed (by the caller, via `queue.write_buffer`). Call after
     /// `ensure_decal_outline_pipelines`.
-    pub(crate) fn ensure_decal_outline_targets(&mut self, device: &wgpu::Device, w: u32, h: u32) {
+    pub(crate) fn ensure_decal_outline_targets(
+        &mut self,
+        device: &crate::gpu::Device,
+        w: u32,
+        h: u32,
+    ) {
         if let Some(t) = &self.decal.outline_targets {
             if t.width == w && t.height == h {
                 return;
@@ -480,40 +485,41 @@ impl DeviceResources {
             return;
         };
 
-        let mask_tex = device.create_texture(&wgpu::TextureDescriptor {
+        let mask_tex = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("decal_outline_mask_tex"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: w,
                 height: h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: crate::gpu::TextureDimension::D2,
             format: crate::resources::MASK_COLOR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let mask_view = mask_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let edge_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let mask_view = mask_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let edge_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("decal_outline_edge_uniform_buf"),
             size: std::mem::size_of::<crate::resources::OutlineEdgeUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let edge_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let edge_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("decal_outline_edge_bg"),
             layout: edge_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&mask_view),
+                    resource: crate::gpu::BindingResource::TextureView(&mask_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: crate::gpu::BindingResource::Sampler(sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: edge_uniform_buf.as_entire_binding(),
                 },
@@ -535,26 +541,26 @@ impl DeviceResources {
     /// Rebuilt when the viewport is resized.
     pub(crate) fn create_decal_depth_bg(
         &self,
-        device: &wgpu::Device,
-        depth_only_view: &wgpu::TextureView,
-        stencil_only_view: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
+        device: &crate::gpu::Device,
+        depth_only_view: &crate::gpu::TextureView,
+        stencil_only_view: &crate::gpu::TextureView,
+    ) -> crate::gpu::BindGroup {
         let bgl = self
             .decal
             .depth_bgl
             .as_ref()
             .expect("decal_depth_bgl not created");
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("decal_depth_bg"),
             layout: bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(depth_only_view),
+                    resource: crate::gpu::BindingResource::TextureView(depth_only_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(stencil_only_view),
+                    resource: crate::gpu::BindingResource::TextureView(stencil_only_view),
                 },
             ],
         })
@@ -565,19 +571,19 @@ impl DeviceResources {
     /// Panics if called before `ensure_decal_pipeline`.
     pub(crate) fn upload_decal_item(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         item: &crate::renderer::DecalItem,
     ) -> DecalGpuItem {
         let model = glam::Mat4::from_cols_array_2d(&item.transform);
         let raw = decal_uniform_raw(item);
 
-        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("decal_uniform_buf"),
             contents: bytemuck::bytes_of(&raw),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: crate::gpu::BufferUsages::UNIFORM,
         });
 
-        let resolve_tex = |id: Option<crate::resources::TextureId>| -> &wgpu::TextureView {
+        let resolve_tex = |id: Option<crate::resources::TextureId>| -> &crate::gpu::TextureView {
             id.and_then(|i| self.content.textures.get(i))
                 .map(|t| &t.view)
                 .unwrap_or(&self.fallback_texture.view)
@@ -606,37 +612,37 @@ impl DeviceResources {
             .as_ref()
             .expect("decal_sampler not created");
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("decal_item_bg"),
             layout: bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(tex_view),
+                    resource: crate::gpu::BindingResource::TextureView(tex_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: crate::gpu::BindingResource::Sampler(sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(normal_view),
+                    resource: crate::gpu::BindingResource::TextureView(normal_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(roughness_view),
+                    resource: crate::gpu::BindingResource::TextureView(roughness_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(metallic_view),
+                    resource: crate::gpu::BindingResource::TextureView(metallic_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(emissive_view),
+                    resource: crate::gpu::BindingResource::TextureView(emissive_view),
                 },
             ],
         });
@@ -653,7 +659,7 @@ impl DeviceResources {
     /// Lazily create the decal exclude pipeline and its object BGL (D5).
     ///
     /// No-op if already created. Must be called after `camera_bind_group_layout` exists.
-    pub(crate) fn ensure_decal_exclude_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_decal_exclude_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.decal.exclude_pipeline.is_some() {
             return;
         }
@@ -668,7 +674,7 @@ impl DeviceResources {
         let obj_bgl = crate::resources::builders::uniform_bgl(
             device,
             "decal_exclude_obj_bgl",
-            wgpu::ShaderStages::VERTEX,
+            crate::gpu::ShaderStages::VERTEX,
         );
 
         let layout = crate::resources::builders::standard_scene_layout(
@@ -680,11 +686,11 @@ impl DeviceResources {
 
         // Vertex layout: position only (location 0, Float32x3).
         // Stride matches the full Vertex struct (64 bytes) but we only read pos.
-        let vertex_layout = wgpu::VertexBufferLayout {
+        let vertex_layout = crate::gpu::VertexBufferLayout {
             array_stride: 64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
+            attributes: &[crate::gpu::VertexAttribute {
+                format: crate::gpu::VertexFormat::Float32x3,
                 offset: 0,
                 shader_location: 0,
             }],
@@ -695,39 +701,39 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "decal_exclude_pipeline",
                 layout: &layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     buffers: &[vertex_layout],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
                     targets: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_stencil: Some(crate::gpu::DepthStencilState {
+                    format: crate::gpu::TextureFormat::Depth24PlusStencil8,
                     depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState {
-                        front: wgpu::StencilFaceState {
-                            compare: wgpu::CompareFunction::Always,
-                            fail_op: wgpu::StencilOperation::Keep,
-                            depth_fail_op: wgpu::StencilOperation::Keep,
-                            pass_op: wgpu::StencilOperation::Replace,
+                    depth_compare: crate::gpu::CompareFunction::LessEqual,
+                    stencil: crate::gpu::StencilState {
+                        front: crate::gpu::StencilFaceState {
+                            compare: crate::gpu::CompareFunction::Always,
+                            fail_op: crate::gpu::StencilOperation::Keep,
+                            depth_fail_op: crate::gpu::StencilOperation::Keep,
+                            pass_op: crate::gpu::StencilOperation::Replace,
                         },
-                        back: wgpu::StencilFaceState {
-                            compare: wgpu::CompareFunction::Always,
-                            fail_op: wgpu::StencilOperation::Keep,
-                            depth_fail_op: wgpu::StencilOperation::Keep,
-                            pass_op: wgpu::StencilOperation::Replace,
+                        back: crate::gpu::StencilFaceState {
+                            compare: crate::gpu::CompareFunction::Always,
+                            fail_op: crate::gpu::StencilOperation::Keep,
+                            depth_fail_op: crate::gpu::StencilOperation::Keep,
+                            pass_op: crate::gpu::StencilOperation::Replace,
                         },
                         read_mask: 0xff,
                         write_mask: 0xff,
@@ -737,13 +743,13 @@ impl DeviceResources {
                     // Without this, floating-point rounding differences between two
                     // separate render passes of the same geometry can cause the depth
                     // test to fail intermittently, leaving stencil un-written.
-                    bias: wgpu::DepthBiasState {
+                    bias: crate::gpu::DepthBiasState {
                         constant: -2,
                         slope_scale: 0.0,
                         clamp: 0.0,
                     },
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: crate::gpu::MultisampleState::default(),
                 cache: None,
             },
         );
@@ -757,14 +763,14 @@ impl DeviceResources {
     /// Panics if called before `ensure_decal_exclude_pipeline`.
     pub(crate) fn upload_decal_exclude_item(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: MeshId,
         model: [[f32; 4]; 4],
     ) -> DecalExcludeGpuItem {
-        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("decal_exclude_uniform_buf"),
             contents: bytemuck::cast_slice(&model),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: crate::gpu::BufferUsages::UNIFORM,
         });
 
         let bgl = self
@@ -773,10 +779,10 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_decal_exclude_pipeline not called");
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("decal_exclude_obj_bg"),
             layout: bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buf.as_entire_binding(),
             }],

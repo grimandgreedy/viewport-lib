@@ -89,16 +89,16 @@ use crate::resources::{
 /// resources (lights, shadow atlas texture, IBL) are shared via the bind group
 /// pointing to buffers on `DeviceResources`.
 pub(crate) struct ViewportSlot {
-    pub camera_buf: wgpu::Buffer,
-    pub clip_planes_buf: wgpu::Buffer,
-    pub clip_volume_buf: wgpu::Buffer,
-    pub shadow_info_buf: wgpu::Buffer,
-    pub grid_buf: wgpu::Buffer,
+    pub camera_buf: crate::gpu::Buffer,
+    pub clip_planes_buf: crate::gpu::Buffer,
+    pub clip_volume_buf: crate::gpu::Buffer,
+    pub shadow_info_buf: crate::gpu::Buffer,
+    pub grid_buf: crate::gpu::Buffer,
     /// Camera bind group (group 0) referencing this slot's per-viewport buffers
     /// plus shared scene-global resources.
-    pub camera_bind_group: wgpu::BindGroup,
+    pub camera_bind_group: crate::gpu::BindGroup,
     /// Grid bind group (group 0 for grid pipeline) referencing this slot's grid buffer.
-    pub grid_bind_group: wgpu::BindGroup,
+    pub grid_bind_group: crate::gpu::BindGroup,
     /// Per-viewport HDR post-process render targets.
     ///
     /// Created lazily on first HDR render call and resized when viewport dimensions change.
@@ -109,7 +109,7 @@ pub(crate) struct ViewportSlot {
     pub cull: crate::resources::ViewportCullState,
     /// Per-fragment debug storage buffer (group 0 binding 12). Allocated at
     /// `width * height * 16` bytes when debug_vis is active; None otherwise.
-    pub debug_frag_buf: Option<wgpu::Buffer>,
+    pub debug_frag_buf: Option<crate::gpu::Buffer>,
     /// Viewport dimensions for which `debug_frag_buf` was allocated.
     pub debug_frag_dims: (u32, u32),
 
@@ -147,53 +147,53 @@ pub(crate) struct ViewportSlot {
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
         crate::resources::mesh::mesh_store::MeshId,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     )>,
     /// Per-frame constraint guide line buffers, rebuilt in prepare().
     pub constraint_line_buffers: Vec<(
-        wgpu::Buffer,
-        wgpu::Buffer,
+        crate::gpu::Buffer,
+        crate::gpu::Buffer,
         u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     )>,
     /// Per-frame cap geometry buffers (section view cross-section fill), rebuilt in prepare().
     pub cap_buffers: Vec<(
-        wgpu::Buffer,
-        wgpu::Buffer,
+        crate::gpu::Buffer,
+        crate::gpu::Buffer,
         u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     )>,
     /// Per-frame clip plane fill overlay buffers, rebuilt in prepare().
     pub clip_plane_fill_buffers: Vec<(
-        wgpu::Buffer,
-        wgpu::Buffer,
+        crate::gpu::Buffer,
+        crate::gpu::Buffer,
         u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     )>,
     /// Per-frame clip plane line overlay buffers, rebuilt in prepare().
     pub clip_plane_line_buffers: Vec<(
-        wgpu::Buffer,
-        wgpu::Buffer,
+        crate::gpu::Buffer,
+        crate::gpu::Buffer,
         u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     )>,
     /// Vertex buffer for axes indicator geometry (rebuilt each frame).
-    pub axes_vertex_buffer: wgpu::Buffer,
+    pub axes_vertex_buffer: crate::gpu::Buffer,
     /// Number of vertices in the axes indicator buffer.
     pub axes_vertex_count: u32,
     /// Gizmo model-matrix uniform buffer.
-    pub gizmo_uniform_buf: wgpu::Buffer,
+    pub gizmo_uniform_buf: crate::gpu::Buffer,
     /// Gizmo bind group (group 1: model matrix uniform).
-    pub gizmo_bind_group: wgpu::BindGroup,
+    pub gizmo_bind_group: crate::gpu::BindGroup,
     /// Gizmo vertex buffer.
-    pub gizmo_vertex_buffer: wgpu::Buffer,
+    pub gizmo_vertex_buffer: crate::gpu::Buffer,
     /// Gizmo index buffer.
-    pub gizmo_index_buffer: wgpu::Buffer,
+    pub gizmo_index_buffer: crate::gpu::Buffer,
     /// Number of indices in the current gizmo mesh.
     pub gizmo_index_count: u32,
 
@@ -219,7 +219,7 @@ impl ViewportSlot {
     /// sits on top. Does nothing when the indicator is disabled or empty.
     pub(crate) fn draw_axes_indicator(
         &self,
-        render_pass: &mut wgpu::RenderPass<'_>,
+        render_pass: &mut crate::gpu::RenderPass<'_>,
         resources: &DeviceResources,
         show_axes_indicator: bool,
     ) {
@@ -256,8 +256,8 @@ struct GpuMcPickItem {
 /// whenever the HDR target dimensions change. The bind group is rebuilt with
 /// the resolve when either changes.
 struct SpriteRefractionResolve {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
+    texture: crate::gpu::Texture,
+    view: crate::gpu::TextureView,
     size: [u32; 2],
 }
 
@@ -530,18 +530,18 @@ pub struct ViewportRenderer {
     /// stage-boundary counters have not landed yet), which made short scenes
     /// produce zero-delta samples that were dropped, latching `gpu_frame_ms`
     /// indefinitely. Resolving one submission later reads settled counters.
-    ts_query_set: Option<wgpu::QuerySet>,
+    ts_query_set: Option<crate::gpu::QuerySet>,
     /// The query set written during the previous frame, resolved this frame.
     /// Swapped with `ts_query_set` at the start of each `prepare()`.
-    ts_query_set_prev: Option<wgpu::QuerySet>,
+    ts_query_set_prev: Option<crate::gpu::QuerySet>,
     /// Bitmask of `GPU_TS_*` slots written into `ts_query_set_prev` during the
     /// previous frame. Zero when there is nothing to resolve (first frame, or
     /// the sample was already consumed).
     ts_prev_mask: u32,
     /// Resolve buffer: `2 * GPU_TS_SLOTS` x u64, GPU-only (`QUERY_RESOLVE | COPY_SRC`).
-    ts_resolve_buf: Option<wgpu::Buffer>,
+    ts_resolve_buf: Option<crate::gpu::Buffer>,
     /// Staging buffer: `2 * GPU_TS_SLOTS` x u64, CPU-readable (`COPY_DST | MAP_READ`).
-    ts_staging_buf: Option<wgpu::Buffer>,
+    ts_staging_buf: Option<crate::gpu::Buffer>,
     /// Bitmask of `GPU_TS_*` slots whose timestamps were written this frame.
     /// Passes are conditional, so unwritten slots hold stale/undefined query
     /// data; only slots set here are read back. Reset at the start of each frame.
@@ -613,12 +613,12 @@ impl ViewportRenderer {
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
     /// and `pipeline_cache_data` returns `None`.
-    pub fn recommended_device_features(adapter: &wgpu::Adapter) -> wgpu::Features {
-        let mut features = wgpu::Features::empty();
+    pub fn recommended_device_features(adapter: &crate::gpu::Adapter) -> crate::gpu::Features {
+        let mut features = crate::gpu::Features::empty();
         for feature in [
-            wgpu::Features::INDIRECT_FIRST_INSTANCE,
-            wgpu::Features::TIMESTAMP_QUERY,
-            wgpu::Features::PIPELINE_CACHE,
+            crate::gpu::Features::INDIRECT_FIRST_INSTANCE,
+            crate::gpu::Features::TIMESTAMP_QUERY,
+            crate::gpu::Features::PIPELINE_CACHE,
         ] {
             if adapter.features().contains(feature) {
                 features |= feature;
@@ -629,7 +629,7 @@ impl ViewportRenderer {
 
     /// Create a new renderer with default settings (no MSAA).
     /// Call once at application startup.
-    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
         Self::with_sample_count(device, target_format, 1)
     }
 
@@ -639,8 +639,8 @@ impl ViewportRenderer {
     /// colour and depth textures and use them as render pass attachments with the
     /// final surface texture as the resolve target.
     pub fn with_sample_count(
-        device: &wgpu::Device,
-        target_format: wgpu::TextureFormat,
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
         Self::with_sample_count_and_cache(device, target_format, sample_count, None)
@@ -654,8 +654,8 @@ impl ViewportRenderer {
     /// was created with `Features::PIPELINE_CACHE`; otherwise the data is ignored
     /// and this matches [`new`](Self::new).
     pub fn new_with_pipeline_cache(
-        device: &wgpu::Device,
-        target_format: wgpu::TextureFormat,
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
         Self::with_sample_count_and_cache(device, target_format, 1, pipeline_cache_data)
@@ -671,14 +671,14 @@ impl ViewportRenderer {
     /// Like [`with_sample_count`](Self::with_sample_count) with an MSAA count and
     /// an optional saved pipeline cache.
     pub fn with_sample_count_and_cache(
-        device: &wgpu::Device,
-        target_format: wgpu::TextureFormat,
+        device: &crate::gpu::Device,
+        target_format: crate::gpu::TextureFormat,
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
         let gpu_culling_supported = device
             .features()
-            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
+            .contains(crate::gpu::Features::INDIRECT_FIRST_INSTANCE);
         Self {
             resources: DeviceResources::new_with_cache(
                 device,
@@ -1015,9 +1015,9 @@ impl ViewportRenderer {
     /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported) first).
     pub fn submit_cull(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        encoder: &mut crate::gpu::CommandEncoder,
         frustum: &crate::camera::frustum::Frustum,
         sub: &crate::plugin_api::CullSubmission<'_>,
     ) {
@@ -1043,9 +1043,9 @@ impl ViewportRenderer {
     /// debug builds and clamp to 3 in release.
     pub fn submit_cull_shadow(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        encoder: &mut crate::gpu::CommandEncoder,
         cascade_idx: usize,
         cascade_frustum: &crate::camera::frustum::Frustum,
         sub: &crate::plugin_api::CullSubmission<'_>,
@@ -1083,14 +1083,14 @@ impl ViewportRenderer {
     /// `indirect_out` must hold one `DrawIndexedIndirect` entry (20 bytes).
     pub fn submit_cull_single_mesh(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        encoder: &mut crate::gpu::CommandEncoder,
         frustum: &crate::camera::frustum::Frustum,
-        instance_aabbs: &wgpu::Buffer,
+        instance_aabbs: &crate::gpu::Buffer,
         instance_count: u32,
-        visible_out: &wgpu::Buffer,
-        indirect_out: &wgpu::Buffer,
+        visible_out: &crate::gpu::Buffer,
+        indirect_out: &crate::gpu::Buffer,
         draw: crate::plugin_api::SingleMeshDraw,
         shadow_pass: bool,
     ) {
@@ -1113,15 +1113,15 @@ impl ViewportRenderer {
     /// [`submit_cull_single_mesh`](Self::submit_cull_single_mesh).
     pub fn submit_cull_shadow_single_mesh(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        encoder: &mut crate::gpu::CommandEncoder,
         cascade_idx: usize,
         cascade_frustum: &crate::camera::frustum::Frustum,
-        instance_aabbs: &wgpu::Buffer,
+        instance_aabbs: &crate::gpu::Buffer,
         instance_count: u32,
-        visible_out: &wgpu::Buffer,
-        indirect_out: &wgpu::Buffer,
+        visible_out: &crate::gpu::Buffer,
+        indirect_out: &crate::gpu::Buffer,
         draw: crate::plugin_api::SingleMeshDraw,
     ) {
         debug_assert!(cascade_idx < 4, "cascade_idx must be in 0..4");
@@ -1144,15 +1144,15 @@ impl ViewportRenderer {
     #[allow(clippy::too_many_arguments)]
     fn dispatch_cull_single_mesh(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        encoder: &mut crate::gpu::CommandEncoder,
         frustum: &crate::camera::frustum::Frustum,
         cascade: Option<usize>,
-        instance_aabbs: &wgpu::Buffer,
+        instance_aabbs: &crate::gpu::Buffer,
         instance_count: u32,
-        visible_out: &wgpu::Buffer,
-        indirect_out: &wgpu::Buffer,
+        visible_out: &crate::gpu::Buffer,
+        indirect_out: &crate::gpu::Buffer,
         draw: crate::plugin_api::SingleMeshDraw,
         shadow_pass: bool,
     ) {
@@ -1213,7 +1213,7 @@ impl ViewportRenderer {
     /// has populated a collection under the same name.
     pub fn with_item_type_plugin(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mut plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
     ) {
         let shared = self.resources.shared_bindings();
@@ -1238,7 +1238,11 @@ impl ViewportRenderer {
     /// recreates the device. Matches
     /// [`ViewportRuntime::notify_device_recreated`](crate::runtime::ViewportRuntime::notify_device_recreated)
     /// on the GPU-plugin side.
-    pub fn notify_device_recreated(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub fn notify_device_recreated(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
         let shared = self.resources.shared_bindings();
         for plugin in self.item_type_plugins.values_mut() {
             plugin.on_device_recreated(device, queue);
@@ -1254,15 +1258,15 @@ impl ViewportRenderer {
     /// consumer-facing API.
     pub(crate) fn dispatch_plugin_prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
             return Vec::new();
         }
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
-        let mut bufs: Vec<wgpu::CommandBuffer> = Vec::new();
+        let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
             if let Some(items) = frame.scene.plugin_items.get(*name) {
                 // Constructed per plugin because `Jobs` borrows `&resources`
@@ -1287,7 +1291,7 @@ impl ViewportRenderer {
     /// opaques and the skybox.
     pub(crate) fn dispatch_plugin_paint<'rp>(
         &'rp self,
-        pass: &mut wgpu::RenderPass<'rp>,
+        pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &'rp FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
@@ -1328,7 +1332,7 @@ impl ViewportRenderer {
     /// rebind group 0 must restore it.
     pub(crate) fn dispatch_plugin_pick<'rp>(
         &'rp self,
-        pass: &mut wgpu::RenderPass<'rp>,
+        pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &'rp FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
@@ -1354,7 +1358,7 @@ impl ViewportRenderer {
     /// transparent draws.
     pub(crate) fn dispatch_plugin_paint_transparent<'rp>(
         &'rp self,
-        pass: &mut wgpu::RenderPass<'rp>,
+        pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &'rp FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
@@ -1384,7 +1388,7 @@ impl ViewportRenderer {
     #[allow(dead_code)]
     pub(crate) fn dispatch_plugin_shadow<'rp>(
         &'rp self,
-        pass: &mut wgpu::RenderPass<'rp>,
+        pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &'rp FrameData,
         cascade_idx: u32,
         light_view_proj: glam::Mat4,
@@ -1439,7 +1443,7 @@ impl ViewportRenderer {
     /// Called from inside the lib's outline-mask render pass.
     pub(crate) fn dispatch_plugin_outline_mask<'rp>(
         &'rp self,
-        pass: &mut wgpu::RenderPass<'rp>,
+        pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &'rp FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
@@ -1495,8 +1499,8 @@ impl ViewportRenderer {
     /// The returned values are from the previous rendered frame.
     pub fn read_debug_pixel(
         &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         x: u32,
         y: u32,
     ) -> Option<[f32; 4]> {
@@ -1508,22 +1512,22 @@ impl ViewportRenderer {
             return None;
         }
         let byte_offset = ((y as u64) * (vw as u64) + (x as u64)) * 16;
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: None,
             size: 16,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::MAP_READ | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor { label: None });
         encoder.copy_buffer_to_buffer(buf, byte_offset, &staging, 0, 16);
         queue.submit(Some(encoder.finish()));
         let slice = staging.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(), crate::gpu::BufferAsyncError>>();
+        slice.map_async(crate::gpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        let _ = device.poll(wgpu::PollType::Wait {
+        let _ = device.poll(crate::gpu::PollType::Wait {
             submission_index: None,
             timeout: Some(std::time::Duration::from_secs(5)),
         });
@@ -1555,8 +1559,8 @@ impl ViewportRenderer {
     /// ```
     pub fn upload_gaussian_splat(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         data: &GaussianSplatData,
     ) -> crate::error::ViewportResult<GaussianSplatId> {
         self.resources.upload_gaussian_splat(device, queue, data)
@@ -1592,8 +1596,8 @@ impl ViewportRenderer {
     /// ```
     pub fn upload_environment_map(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         pixels: &[f32],
         width: u32,
         height: u32,
@@ -1636,8 +1640,8 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_volume`].
     pub fn begin_upload_volume(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         data: Vec<f32>,
         dims: [u32; 3],
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
@@ -1658,8 +1662,8 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_volume_for_mc`].
     pub fn begin_upload_volume_for_mc(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         vol: crate::geometry::marching_cubes::VolumeData,
     ) -> crate::resources::JobId {
         self.resources
@@ -1679,7 +1683,7 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_volume_mesh`].
     pub fn begin_upload_volume_mesh(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::volume::volume_mesh::VolumeMeshData,
     ) -> crate::resources::JobId {
         self.resources.begin_upload_volume_mesh(device, data)
@@ -1699,7 +1703,7 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_clipped_volume_mesh`].
     pub fn begin_upload_clipped_volume_mesh(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: Vec<[f32; 4]>,
     ) -> crate::resources::JobId {
@@ -1721,7 +1725,7 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_sparse_volume_grid_data`].
     pub fn begin_upload_sparse_volume_grid_data(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::SparseVolumeGridData,
     ) -> crate::resources::JobId {
         self.resources
@@ -1742,8 +1746,8 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_gaussian_splat`].
     pub fn begin_upload_gaussian_splat(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         data: crate::renderer::GaussianSplatData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         self.resources
@@ -1763,8 +1767,8 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_overlay_texture`].
     pub fn begin_upload_overlay_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba_data: Vec<u8>,
@@ -1800,8 +1804,8 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_texture`] for the semantics.
     pub fn begin_upload_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba: Vec<u8>,
@@ -1814,8 +1818,8 @@ impl ViewportRenderer {
     /// [`DeviceResources::begin_upload_normal_map`] for the semantics.
     pub fn begin_upload_normal_map(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba: Vec<u8>,
@@ -1853,7 +1857,7 @@ impl ViewportRenderer {
     /// submitted.
     pub fn begin_upload_mesh_data(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::MeshData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         self.resources.begin_upload_mesh_data(device, data)
@@ -1885,8 +1889,8 @@ impl ViewportRenderer {
     /// if `pixels.len() != width * height * 4`.
     pub fn begin_upload_environment_map(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         pixels: Vec<f32>,
         width: u32,
         height: u32,
@@ -1908,7 +1912,7 @@ impl ViewportRenderer {
     /// internally; consumers driving the async path through
     /// `begin_upload_environment_map` should call this themselves once the
     /// matching job reports `Ready`.
-    pub fn rebuild_camera_bind_groups(&mut self, device: &wgpu::Device) {
+    pub fn rebuild_camera_bind_groups(&mut self, device: &crate::gpu::Device) {
         self.resources.camera_bind_group = self.resources.create_camera_bind_group(
             device,
             &self.resources.camera_uniform_buf,
@@ -1942,24 +1946,24 @@ impl ViewportRenderer {
     /// clip planes, clip volume, shadow info, and grid. The camera bind group
     /// references this slot's per-viewport buffers plus shared scene-global
     /// resources. Slots are created lazily and never destroyed.
-    fn ensure_viewport_slot(&mut self, device: &wgpu::Device, viewport_index: usize) {
+    fn ensure_viewport_slot(&mut self, device: &crate::gpu::Device, viewport_index: usize) {
         while self.viewport_slots.len() <= viewport_index {
-            let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_camera_buf"),
                 size: std::mem::size_of::<CameraUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let clip_planes_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let clip_planes_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_clip_planes_buf"),
                 size: std::mem::size_of::<ClipPlanesUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let clip_volume_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let clip_volume_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_clip_volume_buf"),
                 size: std::mem::size_of::<ClipVolumesUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             // Seeded with the latest shadow atlas uniform rather than zeros:
@@ -1967,10 +1971,10 @@ impl ViewportRenderer {
             // exist at that point, so a slot created later in the same frame
             // would otherwise render its first frame with zeroed cascade
             // matrices (NaN shadow UVs, everything shadowed).
-            let shadow_info_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let shadow_info_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_shadow_info_buf"),
                 size: std::mem::size_of::<ShadowAtlasUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
             crate::resources::builders::write_mapped(
@@ -1978,10 +1982,10 @@ impl ViewportRenderer {
                 bytemuck::cast_slice(&[self.shadow.last_shadow_atlas_uniform]),
             );
             shadow_info_buf.unmap();
-            let grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let grid_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_grid_buf"),
                 size: std::mem::size_of::<GridUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
 
@@ -1995,10 +1999,10 @@ impl ViewportRenderer {
                 "per_viewport_camera_bg",
             );
 
-            let grid_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let grid_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("vp_grid_bind_group"),
                 layout: &self.resources.grid_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
+                entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: grid_buf.as_entire_binding(),
                 }],
@@ -2011,11 +2015,11 @@ impl ViewportRenderer {
                     crate::interaction::manipulation::gizmo::GizmoAxis::None,
                     glam::Quat::IDENTITY,
                 );
-            let gizmo_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            let gizmo_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_gizmo_vertex_buf"),
                 size: (std::mem::size_of::<crate::resources::Vertex>() * gizmo_verts.len().max(1))
                     as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
             crate::resources::builders::write_mapped(
@@ -2024,10 +2028,10 @@ impl ViewportRenderer {
             );
             gizmo_vertex_buffer.unmap();
             let gizmo_index_count = gizmo_indices.len() as u32;
-            let gizmo_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            let gizmo_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_gizmo_index_buf"),
                 size: (std::mem::size_of::<u32>() * gizmo_indices.len().max(1)) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
             crate::resources::builders::write_mapped(
@@ -2038,11 +2042,11 @@ impl ViewportRenderer {
             let gizmo_uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
                 model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             };
-            let gizmo_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let gizmo_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_gizmo_uniform_buf"),
                 size: std::mem::size_of::<crate::interaction::manipulation::gizmo::GizmoUniform>()
                     as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
             crate::resources::builders::write_mapped(
@@ -2050,21 +2054,21 @@ impl ViewportRenderer {
                 bytemuck::cast_slice(&[gizmo_uniform]),
             );
             gizmo_uniform_buf.unmap();
-            let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let gizmo_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("vp_gizmo_bind_group"),
                 layout: &self.resources.gizmo_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
+                entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: gizmo_uniform_buf.as_entire_binding(),
                 }],
             });
 
             // Per-viewport axes vertex buffer (2048 vertices = enough for all axes geometry).
-            let axes_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            let axes_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("vp_axes_vertex_buf"),
                 size: (std::mem::size_of::<crate::interaction::widgets::axes_indicator::AxesVertex>(
                 ) * 2048) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
 
@@ -2134,7 +2138,7 @@ impl ViewportRenderer {
     ///     ..Default::default()
     /// };
     /// ```
-    pub fn create_viewport(&mut self, device: &wgpu::Device) -> ViewportId {
+    pub fn create_viewport(&mut self, device: &crate::gpu::Device) -> ViewportId {
         let idx = self.viewport_slots.len();
         self.ensure_viewport_slot(device, idx);
         ViewportId(idx)
@@ -2191,8 +2195,8 @@ impl ViewportRenderer {
     /// directly or via [`EffectsFrame::split`].
     pub(crate) fn prepare_scene(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         scene_effects: &SceneEffects<'_>,
     ) {
@@ -2209,8 +2213,8 @@ impl ViewportRenderer {
     /// [`CameraFrame::with_viewport_id`] when building the frame.
     pub(crate) fn prepare_viewport(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: ViewportId,
         frame: &FrameData,
     ) {
@@ -2232,7 +2236,7 @@ impl ViewportRenderer {
     /// creates its own render pass.
     pub(crate) fn paint_viewport_to<'rp>(
         &self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
         id: ViewportId,
         frame: &FrameData,
     ) {
@@ -2307,8 +2311,10 @@ impl ViewportRenderer {
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         if let Some(edge_buf) = &mesh.edge_index_buffer {
-                            render_pass
-                                .set_index_buffer(edge_buf.slice(..), wgpu::IndexFormat::Uint32);
+                            render_pass.set_index_buffer(
+                                edge_buf.slice(..),
+                                crate::gpu::IndexFormat::Uint32,
+                            );
                             render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                         }
                     }
@@ -2327,7 +2333,7 @@ impl ViewportRenderer {
     ///
     /// Falls back to `resources.camera_bind_group` if no per-viewport slot
     /// exists (e.g. in single-viewport mode before the first prepare call).
-    fn viewport_camera_bind_group(&self, viewport_index: usize) -> &wgpu::BindGroup {
+    fn viewport_camera_bind_group(&self, viewport_index: usize) -> &crate::gpu::BindGroup {
         self.viewport_slots
             .get(viewport_index)
             .map(|slot| &slot.camera_bind_group)
@@ -2337,7 +2343,7 @@ impl ViewportRenderer {
     /// Return a reference to the grid bind group for the given viewport slot.
     ///
     /// Falls back to `resources.grid_bind_group` if no per-viewport slot exists.
-    fn viewport_grid_bind_group(&self, viewport_index: usize) -> &wgpu::BindGroup {
+    fn viewport_grid_bind_group(&self, viewport_index: usize) -> &crate::gpu::BindGroup {
         self.viewport_slots
             .get(viewport_index)
             .map(|slot| &slot.grid_bind_group)
@@ -2351,7 +2357,7 @@ impl ViewportRenderer {
     /// blit correctly). `ensure_dyn_res_pipeline` is called automatically.
     pub(crate) fn ensure_dyn_res_target(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         vp_idx: usize,
         scaled_size: [u32; 2],
         surface_size: [u32; 2],
@@ -2376,8 +2382,8 @@ impl ViewportRenderer {
     /// slot already has HDR state at the correct size nothing is recreated.
     pub(crate) fn ensure_viewport_hdr(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         viewport_index: usize,
         w: u32,
         h: u32,

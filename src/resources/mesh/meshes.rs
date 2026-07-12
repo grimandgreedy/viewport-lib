@@ -49,7 +49,7 @@ impl DeviceResources {
     /// ```
     pub fn upload_mesh(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         vertices: &[Vertex],
         indices: &[u32],
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
@@ -97,7 +97,7 @@ impl DeviceResources {
     /// or [`ViewportError::InvalidVertexIndex`](crate::error::ViewportError::InvalidVertexIndex) if an index references a nonexistent vertex.
     pub fn upload_mesh_data(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &MeshData,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         Self::validate_mesh_data(data)?;
@@ -110,7 +110,7 @@ impl DeviceResources {
     /// `max_buffer_size`: creating such a buffer raises a validation error
     /// that takes the whole device down.
     fn validate_mesh_size(
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &MeshData,
     ) -> crate::error::ViewportResult<()> {
         let max = device.limits().max_buffer_size;
@@ -181,7 +181,7 @@ impl DeviceResources {
     /// store, and returns the new id.
     pub(crate) fn assemble_mesh_data(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &MeshData,
         prep: MeshPrep,
     ) -> crate::resources::mesh::mesh_store::MeshId {
@@ -267,7 +267,7 @@ impl DeviceResources {
     /// submitted.
     pub fn begin_upload_mesh_data(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: MeshData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         Self::validate_mesh_data(&data)?;
@@ -298,7 +298,7 @@ impl DeviceResources {
                     cpu_normals,
                     cpu_indices,
                 } = prep;
-                let mut bufs: Option<(wgpu::Buffer, wgpu::Buffer)> = None;
+                let mut bufs: Option<(crate::gpu::Buffer, crate::gpu::Buffer)> = None;
                 let mut voff: usize = 0;
                 let mut ioff: usize = 0;
                 // One-shot payload for the apply closure; an FnMut cannot
@@ -313,8 +313,8 @@ impl DeviceResources {
                     slot_for_apply,
                 ));
                 Ok(Box::new(
-                    move |dev: &wgpu::Device,
-                          _q: &wgpu::Queue,
+                    move |dev: &crate::gpu::Device,
+                          _q: &crate::gpu::Queue,
                           progress: &crate::resources::ProgressHandle,
                           budget: &crate::resources::upload_jobs::FrameBudget| {
                         use bytemuck::cast_slice;
@@ -327,20 +327,20 @@ impl DeviceResources {
                             .len()
                             * std::mem::size_of::<u32>();
                         let (vbuf, ibuf) = bufs.get_or_insert_with(|| {
-                            let vbuf = dev.create_buffer(&wgpu::BufferDescriptor {
+                            let vbuf = dev.create_buffer(&crate::gpu::BufferDescriptor {
                                 label: Some("vertex_buf"),
                                 size: vsrc.len() as u64,
-                                usage: wgpu::BufferUsages::VERTEX
-                                    | wgpu::BufferUsages::COPY_DST
-                                    | wgpu::BufferUsages::STORAGE,
+                                usage: crate::gpu::BufferUsages::VERTEX
+                                    | crate::gpu::BufferUsages::COPY_DST
+                                    | crate::gpu::BufferUsages::STORAGE,
                                 mapped_at_creation: true,
                             });
-                            let ibuf = dev.create_buffer(&wgpu::BufferDescriptor {
+                            let ibuf = dev.create_buffer(&crate::gpu::BufferDescriptor {
                                 label: Some("index_buf"),
                                 size: indices_bytes as u64,
-                                usage: wgpu::BufferUsages::INDEX
-                                    | wgpu::BufferUsages::COPY_DST
-                                    | wgpu::BufferUsages::STORAGE,
+                                usage: crate::gpu::BufferUsages::INDEX
+                                    | crate::gpu::BufferUsages::COPY_DST
+                                    | crate::gpu::BufferUsages::STORAGE,
                                 mapped_at_creation: true,
                             });
                             (vbuf, ibuf)
@@ -513,7 +513,7 @@ impl DeviceResources {
     /// Same as [`upload_mesh_data`](Self::upload_mesh_data).
     pub fn upload_mesh_data_pickable(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &MeshData,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         self.upload_mesh_data(device, data)
@@ -567,7 +567,7 @@ impl DeviceResources {
     /// if `positions` and `normals` differ in length or do not match the existing vertex count.
     pub fn write_mesh_positions_normals(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::Queue,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         positions: &[[f32; 3]],
         normals: &[[f32; 3]],
@@ -685,7 +685,7 @@ impl DeviceResources {
     pub fn set_position_override_buffer(
         &mut self,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
-        buffer: wgpu::Buffer,
+        buffer: crate::gpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
         let mesh =
@@ -715,7 +715,7 @@ impl DeviceResources {
     pub fn set_normal_override_buffer(
         &mut self,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
-        buffer: wgpu::Buffer,
+        buffer: crate::gpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
         let mesh =
@@ -799,8 +799,8 @@ impl DeviceResources {
     /// or the handle is stale, or any mesh validation error from the new data.
     pub fn replace_mesh_data(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         data: &MeshData,
     ) -> crate::error::ViewportResult<()> {
@@ -1012,7 +1012,7 @@ impl DeviceResources {
     /// instead if you need to toggle volumetric rendering at runtime.
     pub fn upload_volume_mesh(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
         let (mesh_data, face_to_cell) =
@@ -1041,7 +1041,7 @@ impl DeviceResources {
     /// data and stored in the per-volume uniform.
     pub fn upload_volume_mesh_with_transparency(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
@@ -1065,7 +1065,7 @@ impl DeviceResources {
     /// The returned item has `transparency: None` and `projected_tet_id: None`.
     pub fn upload_clipped_volume_mesh(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
     ) -> crate::error::ViewportResult<crate::VolumeMeshItem> {
@@ -1084,8 +1084,8 @@ impl DeviceResources {
     /// avoid leaking GPU memory.
     pub fn replace_clipped_volume_mesh(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: &[[f32; 4]],
@@ -1103,8 +1103,8 @@ impl DeviceResources {
     /// Use this for per-frame or per-interaction updates (e.g. voxel paint) to avoid leaking GPU memory.
     pub fn replace_sparse_volume_grid_data(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         data: &crate::resources::volume::sparse_volume::SparseVolumeGridData,
     ) -> crate::error::ViewportResult<()> {
@@ -1123,7 +1123,7 @@ impl DeviceResources {
     /// [`AttributeRef { kind: AttributeKind::Face, .. }`](crate::resources::AttributeRef).
     pub fn upload_sparse_volume_grid_data(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &crate::resources::volume::sparse_volume::SparseVolumeGridData,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         let mesh_data = crate::resources::volume::sparse_volume::extract_sparse_boundary(data);
@@ -1145,7 +1145,7 @@ impl DeviceResources {
     /// [`upload_volume_mesh_with_transparency`](Self::upload_volume_mesh_with_transparency).
     pub fn begin_upload_volume_mesh(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::volume::volume_mesh::VolumeMeshData,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<(
@@ -1217,7 +1217,7 @@ impl DeviceResources {
     /// sync analog and the semantics of `clip_planes`.
     pub fn begin_upload_clipped_volume_mesh(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::volume::volume_mesh::VolumeMeshData,
         clip_planes: Vec<[f32; 4]>,
     ) -> crate::resources::JobId {
@@ -1291,7 +1291,7 @@ impl DeviceResources {
     /// Start an asynchronous sparse voxel grid upload.
     pub fn begin_upload_sparse_volume_grid_data(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::volume::sparse_volume::SparseVolumeGridData,
     ) -> crate::resources::JobId {
         let slot =
@@ -1367,7 +1367,7 @@ impl DeviceResources {
     /// - `face_attribute_buffers`: per-face scalar storage buffers (3N `f32` entries, replicated).
     /// - `face_colour_buffers`: per-face colour storage buffers (3N `[f32;4]` entries, replicated).
     fn upload_attributes(
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         attributes: &std::collections::HashMap<String, AttributeData>,
         positions: &[[f32; 3]],
         normals: &[[f32; 3]],
@@ -1375,22 +1375,22 @@ impl DeviceResources {
         uvs: Option<&[[f32; 2]]>,
         tangents: Option<&[[f32; 4]]>,
     ) -> (
-        std::collections::HashMap<String, wgpu::Buffer>,
+        std::collections::HashMap<String, crate::gpu::Buffer>,
         std::collections::HashMap<String, (f32, f32)>,
-        Option<wgpu::Buffer>,
-        std::collections::HashMap<String, wgpu::Buffer>,
-        std::collections::HashMap<String, wgpu::Buffer>,
-        std::collections::HashMap<String, wgpu::Buffer>,
+        Option<crate::gpu::Buffer>,
+        std::collections::HashMap<String, crate::gpu::Buffer>,
+        std::collections::HashMap<String, crate::gpu::Buffer>,
+        std::collections::HashMap<String, crate::gpu::Buffer>,
     ) {
         let mut bufs = std::collections::HashMap::new();
         let mut ranges = std::collections::HashMap::new();
-        let mut face_attr_bufs: std::collections::HashMap<String, wgpu::Buffer> =
+        let mut face_attr_bufs: std::collections::HashMap<String, crate::gpu::Buffer> =
             std::collections::HashMap::new();
-        let mut vector_attr_bufs: std::collections::HashMap<String, wgpu::Buffer> =
+        let mut vector_attr_bufs: std::collections::HashMap<String, crate::gpu::Buffer> =
             std::collections::HashMap::new();
-        let mut face_colour_bufs: std::collections::HashMap<String, wgpu::Buffer> =
+        let mut face_colour_bufs: std::collections::HashMap<String, crate::gpu::Buffer> =
             std::collections::HashMap::new();
-        let mut face_vbuf: Option<wgpu::Buffer> = None;
+        let mut face_vbuf: Option<crate::gpu::Buffer> = None;
 
         let n_tris = indices.len() / 3;
 
@@ -1453,10 +1453,11 @@ impl DeviceResources {
                         continue;
                     }
                     let byte_len = std::mem::size_of::<[f32; 4]>() * expanded.len();
-                    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                         label: Some(&format!("face_colour_{name}")),
                         size: byte_len as u64,
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        usage: crate::gpu::BufferUsages::STORAGE
+                            | crate::gpu::BufferUsages::COPY_DST,
                         mapped_at_creation: true,
                     });
                     crate::resources::builders::write_mapped(
@@ -1510,12 +1511,12 @@ impl DeviceResources {
                     }
                     let flat: Vec<f32> = v.iter().flat_map(|&[x, y, z]| [x, y, z]).collect();
                     let byte_len = (std::mem::size_of::<f32>() * flat.len()) as u64;
-                    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                         label: Some(&format!("vec_attr_{name}")),
                         size: byte_len,
-                        usage: wgpu::BufferUsages::VERTEX
-                            | wgpu::BufferUsages::STORAGE
-                            | wgpu::BufferUsages::COPY_DST,
+                        usage: crate::gpu::BufferUsages::VERTEX
+                            | crate::gpu::BufferUsages::STORAGE
+                            | crate::gpu::BufferUsages::COPY_DST,
                         mapped_at_creation: true,
                     });
                     crate::resources::builders::write_mapped(
@@ -1538,11 +1539,15 @@ impl DeviceResources {
     }
 
     /// Allocate and fill a STORAGE buffer from a slice of `f32` values.
-    fn create_storage_buffer_f32(device: &wgpu::Device, label: &str, data: &[f32]) -> wgpu::Buffer {
-        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+    fn create_storage_buffer_f32(
+        device: &crate::gpu::Device,
+        label: &str,
+        data: &[f32],
+    ) -> crate::gpu::Buffer {
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some(label),
             size: (std::mem::size_of::<f32>() * data.len()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(data));
@@ -1552,13 +1557,13 @@ impl DeviceResources {
 
     /// Build a non-indexed 3N-vertex buffer: one vertex per triangle corner, geometry only.
     fn build_face_vertex_buffer(
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         positions: &[[f32; 3]],
         normals: &[[f32; 3]],
         indices: &[u32],
         uvs: Option<&[[f32; 2]]>,
         tangents: Option<&[[f32; 4]]>,
-    ) -> wgpu::Buffer {
+    ) -> crate::gpu::Buffer {
         let n_tris = indices.len() / 3;
         let mut verts: Vec<Vertex> = Vec::with_capacity(n_tris * 3);
         for tri in indices.chunks(3) {
@@ -1578,10 +1583,10 @@ impl DeviceResources {
                 });
             }
         }
-        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("face_vertex_buf"),
             size: (std::mem::size_of::<Vertex>() * verts.len().max(1)) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(&verts));
@@ -1828,7 +1833,7 @@ impl DeviceResources {
     /// buffer already exists.
     pub(crate) fn ensure_edge_indices(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) {
         let Some(mesh) = self.mesh_store.get(mesh_id) else {
@@ -1850,10 +1855,10 @@ impl DeviceResources {
             );
             return;
         }
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("edge_index_buf"),
             size: bytes,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -1876,7 +1881,7 @@ impl DeviceResources {
     /// slices (which never carried normal lines).
     pub(crate) fn ensure_normal_lines(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) {
         let Some(mesh) = self.mesh_store.get(mesh_id) else {
@@ -1898,10 +1903,10 @@ impl DeviceResources {
             return;
         }
         let verts = Self::build_normal_lines(positions, normals);
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_line_buf"),
             size: bytes,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(buffer.slice(..), bytemuck::cast_slice(&verts));
@@ -1926,7 +1931,7 @@ impl DeviceResources {
     /// as if this had not been called.
     pub fn prebuild_mesh_debug_sidecars(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     ) {
         self.ensure_edge_indices(device, mesh_id);
@@ -1962,22 +1967,22 @@ impl DeviceResources {
     }
 
     pub(crate) fn create_mesh(
-        device: &wgpu::Device,
-        object_bgl: &wgpu::BindGroupLayout,
-        fallback_albedo_view: &wgpu::TextureView,
-        fallback_normal_view: &wgpu::TextureView,
-        fallback_ao_view: &wgpu::TextureView,
-        fallback_sampler: &wgpu::Sampler,
-        lut_sampler: &wgpu::Sampler,
-        fallback_lut_view: &wgpu::TextureView,
-        fallback_scalar_buf: &wgpu::Buffer,
-        fallback_matcap_view: &wgpu::TextureView,
-        fallback_face_colour_buf: &wgpu::Buffer,
-        fallback_warp_buf: &wgpu::Buffer,
-        fallback_position_override_buf: &wgpu::Buffer,
-        fallback_normal_override_buf: &wgpu::Buffer,
-        fallback_metallic_roughness_view: &wgpu::TextureView,
-        fallback_emissive_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        object_bgl: &crate::gpu::BindGroupLayout,
+        fallback_albedo_view: &crate::gpu::TextureView,
+        fallback_normal_view: &crate::gpu::TextureView,
+        fallback_ao_view: &crate::gpu::TextureView,
+        fallback_sampler: &crate::gpu::Sampler,
+        lut_sampler: &crate::gpu::Sampler,
+        fallback_lut_view: &crate::gpu::TextureView,
+        fallback_scalar_buf: &crate::gpu::Buffer,
+        fallback_matcap_view: &crate::gpu::TextureView,
+        fallback_face_colour_buf: &crate::gpu::Buffer,
+        fallback_warp_buf: &crate::gpu::Buffer,
+        fallback_position_override_buf: &crate::gpu::Buffer,
+        fallback_normal_override_buf: &crate::gpu::Buffer,
+        fallback_metallic_roughness_view: &crate::gpu::TextureView,
+        fallback_emissive_view: &crate::gpu::TextureView,
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
@@ -2005,46 +2010,45 @@ impl DeviceResources {
     }
 
     pub(crate) fn create_mesh_with_normals(
-        device: &wgpu::Device,
-        object_bgl: &wgpu::BindGroupLayout,
-        fallback_albedo_view: &wgpu::TextureView,
-        fallback_normal_view: &wgpu::TextureView,
-        fallback_ao_view: &wgpu::TextureView,
-        fallback_sampler: &wgpu::Sampler,
-        lut_sampler: &wgpu::Sampler,
-        fallback_lut_view: &wgpu::TextureView,
-        fallback_scalar_buf: &wgpu::Buffer,
-        fallback_matcap_view: &wgpu::TextureView,
-        fallback_face_colour_buf: &wgpu::Buffer,
-        fallback_warp_buf: &wgpu::Buffer,
-        fallback_position_override_buf: &wgpu::Buffer,
-        fallback_normal_override_buf: &wgpu::Buffer,
-        fallback_metallic_roughness_view: &wgpu::TextureView,
-        fallback_emissive_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        object_bgl: &crate::gpu::BindGroupLayout,
+        fallback_albedo_view: &crate::gpu::TextureView,
+        fallback_normal_view: &crate::gpu::TextureView,
+        fallback_ao_view: &crate::gpu::TextureView,
+        fallback_sampler: &crate::gpu::Sampler,
+        lut_sampler: &crate::gpu::Sampler,
+        fallback_lut_view: &crate::gpu::TextureView,
+        fallback_scalar_buf: &crate::gpu::Buffer,
+        fallback_matcap_view: &crate::gpu::TextureView,
+        fallback_face_colour_buf: &crate::gpu::Buffer,
+        fallback_warp_buf: &crate::gpu::Buffer,
+        fallback_position_override_buf: &crate::gpu::Buffer,
+        fallback_normal_override_buf: &crate::gpu::Buffer,
+        fallback_metallic_roughness_view: &crate::gpu::TextureView,
+        fallback_emissive_view: &crate::gpu::TextureView,
         vertices: &[Vertex],
         indices: &[u32],
         normal_line_verts: Option<&[Vertex]>,
     ) -> GpuMesh {
         use bytemuck::cast_slice;
-        use wgpu;
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("vertex_buf"),
             size: (std::mem::size_of::<Vertex>() * vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::STORAGE,
+            usage: crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::COPY_DST
+                | crate::gpu::BufferUsages::STORAGE,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(vertices));
         vertex_buffer.unmap();
 
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("index_buf"),
             size: (std::mem::size_of::<u32>() * indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::STORAGE,
+            usage: crate::gpu::BufferUsages::INDEX
+                | crate::gpu::BufferUsages::COPY_DST
+                | crate::gpu::BufferUsages::STORAGE,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(indices));
@@ -2078,10 +2082,10 @@ impl DeviceResources {
         if let Some(nl_verts) = normal_line_verts
             && !nl_verts.is_empty()
         {
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("normal_line_buf"),
                 size: (std::mem::size_of::<Vertex>() * nl_verts.len()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
             crate::resources::builders::write_mapped(buf.slice(..), cast_slice(nl_verts));
@@ -2101,24 +2105,24 @@ impl DeviceResources {
     /// copies start empty; callers set them as needed.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_mesh_from_buffers(
-        device: &wgpu::Device,
-        object_bgl: &wgpu::BindGroupLayout,
-        fallback_albedo_view: &wgpu::TextureView,
-        fallback_normal_view: &wgpu::TextureView,
-        fallback_ao_view: &wgpu::TextureView,
-        fallback_sampler: &wgpu::Sampler,
-        lut_sampler: &wgpu::Sampler,
-        fallback_lut_view: &wgpu::TextureView,
-        fallback_scalar_buf: &wgpu::Buffer,
-        fallback_matcap_view: &wgpu::TextureView,
-        fallback_face_colour_buf: &wgpu::Buffer,
-        fallback_warp_buf: &wgpu::Buffer,
-        fallback_position_override_buf: &wgpu::Buffer,
-        fallback_normal_override_buf: &wgpu::Buffer,
-        fallback_metallic_roughness_view: &wgpu::TextureView,
-        fallback_emissive_view: &wgpu::TextureView,
-        vertex_buffer: wgpu::Buffer,
-        index_buffer: wgpu::Buffer,
+        device: &crate::gpu::Device,
+        object_bgl: &crate::gpu::BindGroupLayout,
+        fallback_albedo_view: &crate::gpu::TextureView,
+        fallback_normal_view: &crate::gpu::TextureView,
+        fallback_ao_view: &crate::gpu::TextureView,
+        fallback_sampler: &crate::gpu::Sampler,
+        lut_sampler: &crate::gpu::Sampler,
+        fallback_lut_view: &crate::gpu::TextureView,
+        fallback_scalar_buf: &crate::gpu::Buffer,
+        fallback_matcap_view: &crate::gpu::TextureView,
+        fallback_face_colour_buf: &crate::gpu::Buffer,
+        fallback_warp_buf: &crate::gpu::Buffer,
+        fallback_position_override_buf: &crate::gpu::Buffer,
+        fallback_normal_override_buf: &crate::gpu::Buffer,
+        fallback_metallic_roughness_view: &crate::gpu::TextureView,
+        fallback_emissive_view: &crate::gpu::TextureView,
+        vertex_buffer: crate::gpu::Buffer,
+        index_buffer: crate::gpu::Buffer,
         index_count: u32,
         aabb: crate::scene::aabb::Aabb,
     ) -> GpuMesh {
@@ -2171,10 +2175,10 @@ impl DeviceResources {
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
         };
-        let object_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
             size: std::mem::size_of::<ObjectUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -2183,67 +2187,69 @@ impl DeviceResources {
         );
         object_uniform_buf.unmap();
 
-        let object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let object_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("object_bind_group"),
             layout: object_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: object_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(fallback_albedo_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(fallback_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(fallback_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(fallback_normal_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_normal_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(fallback_ao_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_ao_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(fallback_lut_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_lut_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
                     resource: fallback_scalar_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::TextureView(fallback_matcap_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_matcap_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 8,
                     resource: fallback_face_colour_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 9,
                     resource: fallback_warp_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(lut_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 11,
-                    resource: wgpu::BindingResource::TextureView(fallback_metallic_roughness_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        fallback_metallic_roughness_view,
+                    ),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 12,
-                    resource: wgpu::BindingResource::TextureView(fallback_emissive_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_emissive_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 13,
                     resource: fallback_position_override_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 14,
                     resource: fallback_normal_override_buf.as_entire_binding(),
                 },
@@ -2296,10 +2302,10 @@ impl DeviceResources {
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
         };
-        let normal_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
             size: std::mem::size_of::<ObjectUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -2308,67 +2314,69 @@ impl DeviceResources {
         );
         normal_uniform_buf.unmap();
 
-        let normal_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let normal_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("normal_bind_group"),
             layout: object_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: normal_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(fallback_albedo_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(fallback_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(fallback_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(fallback_normal_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_normal_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(fallback_ao_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_ao_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(fallback_lut_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_lut_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
                     resource: fallback_scalar_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::TextureView(fallback_matcap_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_matcap_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 8,
                     resource: fallback_face_colour_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 9,
                     resource: fallback_warp_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(lut_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 11,
-                    resource: wgpu::BindingResource::TextureView(fallback_metallic_roughness_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        fallback_metallic_roughness_view,
+                    ),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 12,
-                    resource: wgpu::BindingResource::TextureView(fallback_emissive_view),
+                    resource: crate::gpu::BindingResource::TextureView(fallback_emissive_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 13,
                     resource: fallback_position_override_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 14,
                     resource: fallback_normal_override_buf.as_entire_binding(),
                 },
@@ -2433,28 +2441,30 @@ impl DeviceResources {
     /// Group 1 carries the per-volume uniform and the tet storage buffer.  The
     /// colourmap LUT lives in group 2 and is bound per-frame from the renderer's
     /// colourmap registry: see [`ensure_pt_lut_bind_group`](Self::ensure_pt_lut_bind_group).
-    pub(crate) fn ensure_pt_bind_group_layout(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_pt_bind_group_layout(&mut self, device: &crate::gpu::Device) {
         if self.pt.bind_group_layout.is_none() {
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("pt_bgl"),
                 entries: &[
                     // binding 0: per-volume uniform (density, scalar_min, scalar_max, thresholds, flags)
-                    wgpu::BindGroupLayoutEntry {
+                    crate::gpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
                         count: None,
                     },
                     // binding 1: tet storage buffer (read-only)
-                    wgpu::BindGroupLayoutEntry {
+                    crate::gpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -2469,7 +2479,7 @@ impl DeviceResources {
             let bgl = crate::resources::builders::texture_sampler_bgl(
                 device,
                 "pt_lut_bgl",
-                wgpu::ShaderStages::FRAGMENT,
+                crate::gpu::ShaderStages::FRAGMENT,
             );
             self.pt.lut_bind_group_layout = Some(bgl);
         }
@@ -2483,9 +2493,9 @@ impl DeviceResources {
     /// ([`ensure_pt_bind_group_layout`](Self::ensure_pt_bind_group_layout)).
     pub(crate) fn ensure_pt_lut_bind_group(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         colourmap_id: Option<crate::resources::ColourmapId>,
-    ) -> &wgpu::BindGroup {
+    ) -> &crate::gpu::BindGroup {
         let bgl = self
             .pt
             .lut_bind_group_layout
@@ -2497,17 +2507,17 @@ impl DeviceResources {
             Some(slot) => {
                 if !self.pt.lut_bind_groups.contains_key(&slot) {
                     let lut_view = &self.content.colourmap_views[slot];
-                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pt_lut_bind_group"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(lut_view),
+                                resource: crate::gpu::BindingResource::TextureView(lut_view),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
+                                resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
                         ],
                     });
@@ -2517,19 +2527,19 @@ impl DeviceResources {
             }
             None => {
                 if self.pt.fallback_lut_bind_group.is_none() {
-                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pt_fallback_lut_bind_group"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(
+                                resource: crate::gpu::BindingResource::TextureView(
                                     &self.content.fallback_lut_view,
                                 ),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
+                                resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
                         ],
                     });
@@ -2554,7 +2564,7 @@ impl DeviceResources {
     /// (including the constant-data `scalar_min + 1.0` adjustment in `decompose_into_chunks`).
     pub(crate) fn upload_projected_tet(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<(ProjectedTetId, f32, f32)> {
@@ -2576,15 +2586,15 @@ impl DeviceResources {
             pending
                 .into_iter()
                 .map(|(tet_buffer, tet_count)| {
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pt_bind_group"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
                                 resource: uniform_buffer.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
                                 resource: tet_buffer.as_entire_binding(),
                             },
@@ -2619,7 +2629,7 @@ impl DeviceResources {
     #[allow(dead_code)]
     pub(crate) fn begin_upload_projected_tet(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: String,
     ) -> crate::resources::JobId {
@@ -2654,15 +2664,15 @@ impl DeviceResources {
                                 .into_iter()
                                 .map(|(tet_buffer, tet_count)| {
                                     let bind_group = device_for_apply.create_bind_group(
-                                        &wgpu::BindGroupDescriptor {
+                                        &crate::gpu::BindGroupDescriptor {
                                             label: Some("pt_bind_group"),
                                             layout: bgl,
                                             entries: &[
-                                                wgpu::BindGroupEntry {
+                                                crate::gpu::BindGroupEntry {
                                                     binding: 0,
                                                     resource: uniform_buffer.as_entire_binding(),
                                                 },
-                                                wgpu::BindGroupEntry {
+                                                crate::gpu::BindGroupEntry {
                                                     binding: 1,
                                                     resource: tet_buffer.as_entire_binding(),
                                                 },
@@ -2736,7 +2746,7 @@ impl DeviceResources {
     /// so this call no longer takes a `colourmap_id`.
     pub fn replace_projected_tet(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         id: crate::resources::ProjectedTetId,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
@@ -2761,15 +2771,15 @@ impl DeviceResources {
             pending
                 .into_iter()
                 .map(|(tet_buffer, tet_count)| {
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pt_bind_group"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
                                 resource: uniform_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
                                 resource: tet_buffer.as_entire_binding(),
                             },
@@ -2802,27 +2812,31 @@ impl DeviceResources {
     /// Bind groups are created separately so callers can supply the correct uniform buffer
     /// reference (new for upload, existing for replace).
     fn decompose_into_chunks(
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
-    ) -> (Vec<(wgpu::Buffer, u32)>, (f32, f32), wgpu::Buffer) {
+    ) -> (
+        Vec<(crate::gpu::Buffer, u32)>,
+        (f32, f32),
+        crate::gpu::Buffer,
+    ) {
         // Determine the maximum tets per chunk from device limits.
         // Each tet is 64 bytes (4 x vec4<f32>).
         let max_binding = device.limits().max_storage_buffer_binding_size as u64;
         let max_buf = device.limits().max_buffer_size;
         let chunk_size_tets = ((max_binding.min(max_buf)) / 64).max(1) as usize;
 
-        let mut pending: Vec<(wgpu::Buffer, u32)> = Vec::new();
+        let mut pending: Vec<(crate::gpu::Buffer, u32)> = Vec::new();
         let mut current_raw: Vec<f32> = Vec::with_capacity(chunk_size_tets * 16);
         let mut scalar_min = f32::INFINITY;
         let mut scalar_max = f32::NEG_INFINITY;
 
-        let flush = |raw: &mut Vec<f32>, pending: &mut Vec<(wgpu::Buffer, u32)>| {
+        let flush = |raw: &mut Vec<f32>, pending: &mut Vec<(crate::gpu::Buffer, u32)>| {
             let tet_count = (raw.len() / 16) as u32;
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pt_tet_buffer"),
                 size: (raw.len() * std::mem::size_of::<f32>()) as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
             crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(raw));
@@ -2872,10 +2886,10 @@ impl DeviceResources {
             opacity: 1.0,
             _pad: 0.0,
         };
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pt_uniform_buf"),
             size: std::mem::size_of::<crate::resources::types::ProjectedTetUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -2893,22 +2907,27 @@ mod override_tests {
     use crate::DeviceResources;
     use crate::geometry::primitives;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
-    fn dummy_override_buffer(device: &wgpu::Device, vertex_count: usize) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+    fn dummy_override_buffer(
+        device: &crate::gpu::Device,
+        vertex_count: usize,
+    ) -> crate::gpu::Buffer {
+        device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("test_override_buf"),
             size: (vertex_count * 12) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
     }
@@ -2919,7 +2938,8 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
         let vertex_count = plane.positions.len();
@@ -2957,7 +2977,8 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
         let vertex_count = plane.positions.len();
@@ -2984,7 +3005,8 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Fabricate an id that is beyond the store.
         let bogus = crate::resources::mesh::mesh_store::MeshId::new(9999, 0);
         let buf = dummy_override_buffer(&device, 4);
@@ -3001,7 +3023,8 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // Upload a mesh, then remove it. The handle is now stale.
         let id1 = resources
@@ -3040,7 +3063,8 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let stale = resources
             .upload_mesh_data(&device, &primitives::cube(1.0))
@@ -3072,7 +3096,8 @@ mod override_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let start = resources.resident_bytes().mesh_bytes;
         let id = resources
@@ -3099,21 +3124,23 @@ mod async_upload_tests {
     use crate::geometry::primitives;
     use crate::resources::UploadStatus;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn drive_until_ready(
         resources: &mut DeviceResources,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::JobId,
     ) {
         for _ in 0..200 {
@@ -3136,7 +3163,8 @@ mod async_upload_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let empty = crate::resources::MeshData::default();
         let err = resources
@@ -3152,7 +3180,8 @@ mod async_upload_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let plane = primitives::grid_plane(1.0, 1.0, 8, 8);
         let id = resources
@@ -3183,7 +3212,8 @@ mod async_upload_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let plane = primitives::grid_plane(1.0, 1.0, 4, 4);
         let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
@@ -3196,7 +3226,8 @@ mod async_upload_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         // Submit an env-map job so we have a live JobId of the wrong type.
         let pixels = vec![0.5f32; 8 * 4 * 4];
@@ -3224,21 +3255,23 @@ mod c4_volume_mesh_tests {
     use crate::resources::volume::volume_mesh::VolumeMeshData;
     use crate::resources::{CELL_SENTINEL, SparseVolumeGridData, UploadStatus};
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn drive_until_ready(
         resources: &mut DeviceResources,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::JobId,
         label: &str,
     ) {
@@ -3292,7 +3325,8 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_volume_mesh(&device, single_tet_volume());
         drive_until_ready(&mut resources, &device, &queue, job, "volume_mesh");
         let item = resources.upload_result_volume_mesh(job).expect("ready");
@@ -3311,7 +3345,8 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Empty clip planes: equivalent to plain volume mesh extraction.
         let job =
             resources.begin_upload_clipped_volume_mesh(&device, single_tet_volume(), Vec::new());
@@ -3329,7 +3364,8 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_sparse_volume_grid_data(&device, single_cell_sparse());
         drive_until_ready(&mut resources, &device, &queue, job, "sparse_volume_grid");
         let mesh_id = resources
@@ -3344,7 +3380,8 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job =
             resources.begin_upload_projected_tet(&device, single_tet_volume(), "density".into());
         drive_until_ready(&mut resources, &device, &queue, job, "projected_tet");
@@ -3358,7 +3395,8 @@ mod c4_volume_mesh_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let vol = single_tet_volume();
         let _item = resources
             .upload_volume_mesh(&device, &vol)
@@ -3431,7 +3469,7 @@ impl crate::resources::DeviceResources {
     ///   the original upload (same-topology requirement).
     pub fn replace_attribute(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::Queue,
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         name: &str,
         data: &[f32],

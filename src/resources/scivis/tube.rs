@@ -9,7 +9,7 @@ pub(crate) struct StreamtubeResources {
     /// Streamtube wireframe pipeline (LineList topology, cull_mode None).
     pub(crate) wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for streamtube uniforms (group 1).
-    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// Ribbon pipelines (one per blend mode) and layout.
@@ -24,7 +24,7 @@ pub(crate) struct RibbonResources {
     /// Ribbon wireframe pipeline (LineList topology, cull_mode None).
     pub(crate) wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for ribbons (group 1): uniform + optional streak texture + sampler.
-    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 impl DeviceResources {
@@ -32,7 +32,7 @@ impl DeviceResources {
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.streamtube_items`
     /// is non-empty.
-    pub(crate) fn ensure_streamtube_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_streamtube_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.streamtube.pipeline.is_some() {
             return;
         }
@@ -41,7 +41,7 @@ impl DeviceResources {
         let streamtube_bgl = crate::resources::builders::uniform_bgl(
             device,
             "streamtube_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
         );
 
         let shader = crate::resources::builders::wgsl_module(
@@ -63,8 +63,8 @@ impl DeviceResources {
         let ribbon_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
             "ribbon_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::FRAGMENT,
         );
         let ribbon_layout = crate::resources::builders::standard_scene_layout(
             device,
@@ -79,28 +79,28 @@ impl DeviceResources {
             "ribbon_shader",
             crate::resources::builders::wgsl_source!("ribbon"),
         );
-        let additive_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
+        let additive_blend = crate::gpu::BlendState {
+            color: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::One,
+                dst_factor: crate::gpu::BlendFactor::One,
+                operation: crate::gpu::BlendOperation::Add,
             },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
+            alpha: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::One,
+                dst_factor: crate::gpu::BlendFactor::One,
+                operation: crate::gpu::BlendOperation::Add,
             },
         };
-        let premultiplied_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
+        let premultiplied_blend = crate::gpu::BlendState {
+            color: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::One,
+                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+                operation: crate::gpu::BlendOperation::Add,
             },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
+            alpha: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::One,
+                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+                operation: crate::gpu::BlendOperation::Add,
             },
         };
         use crate::resources::builders::{DualPipelineDesc, build_dual_pipeline};
@@ -115,11 +115,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(crate::gpu::Face::Back),
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -135,11 +135,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::LineList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::LineList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -156,11 +156,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -175,10 +175,10 @@ impl DeviceResources {
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
                 blend: Some(additive_blend),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -193,10 +193,10 @@ impl DeviceResources {
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
                 blend: Some(premultiplied_blend),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: false,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -211,11 +211,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::LineList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::LineList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -230,8 +230,8 @@ impl DeviceResources {
     /// without the z-fighting or inter-segment gaps that plagued the old instanced approach.
     pub(crate) fn upload_streamtube_per_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::StreamtubeItem,
         wireframe: bool,
     ) -> StreamtubeGpuData {
@@ -383,20 +383,20 @@ impl DeviceResources {
         let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
         let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("streamtube_vbuf"),
             size: vert_bytes.len().max(std::mem::size_of::<Vertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !vert_bytes.is_empty() {
             queue.write_buffer(&vertex_buffer, 0, vert_bytes);
         }
 
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("streamtube_ibuf"),
             size: idx_bytes.len().max(12) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !idx_bytes.is_empty() {
@@ -408,10 +408,10 @@ impl DeviceResources {
         // Edge index buffer: deduplicated triangle edges as line-list pairs for wireframe.
         let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
         let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
-        let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let edge_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("streamtube_edge_ibuf"),
             size: edge_bytes.len().max(8) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !edge_bytes.is_empty() {
@@ -442,10 +442,10 @@ impl DeviceResources {
             wireframe: wireframe as u32,
             _pad: [0.0; 3],
         };
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("streamtube_uniform_buf"),
             size: std::mem::size_of::<StreamtubeUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
@@ -455,10 +455,10 @@ impl DeviceResources {
             .bgl
             .as_ref()
             .expect("ensure_streamtube_pipeline not called");
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("streamtube_uniform_bg"),
             layout: bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buf.as_entire_binding(),
             }],
@@ -491,8 +491,8 @@ impl DeviceResources {
     /// per-frame model transform without rebuilding its mesh.
     pub fn upload_streamtube(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::StreamtubeItem,
     ) -> crate::resources::StreamtubeId {
         self.ensure_streamtube_pipeline(device);
@@ -508,8 +508,8 @@ impl DeviceResources {
     /// Replace the geometry of a pre-uploaded streamtube, keeping the same id.
     pub fn replace_streamtube(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::StreamtubeId,
         item: &crate::renderer::StreamtubeItem,
     ) -> bool {
@@ -532,8 +532,8 @@ impl DeviceResources {
     /// Uses the same streamtube pipeline; sets `use_vertex_colour=1` when scalars are present.
     pub(crate) fn upload_tube_per_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::TubeItem,
         wireframe: bool,
     ) -> StreamtubeGpuData {
@@ -731,20 +731,20 @@ impl DeviceResources {
         let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
         let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("tube_vbuf"),
             size: vert_bytes.len().max(std::mem::size_of::<Vertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !vert_bytes.is_empty() {
             queue.write_buffer(&vertex_buffer, 0, vert_bytes);
         }
 
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("tube_ibuf"),
             size: idx_bytes.len().max(12) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !idx_bytes.is_empty() {
@@ -755,10 +755,10 @@ impl DeviceResources {
 
         let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
         let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
-        let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let edge_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("tube_edge_ibuf"),
             size: edge_bytes.len().max(8) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !edge_bytes.is_empty() {
@@ -788,10 +788,10 @@ impl DeviceResources {
             wireframe: wireframe as u32,
             _pad: [0.0; 3],
         };
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("tube_uniform_buf"),
             size: std::mem::size_of::<TubeUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
@@ -801,10 +801,10 @@ impl DeviceResources {
             .bgl
             .as_ref()
             .expect("ensure_streamtube_pipeline not called");
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("tube_uniform_bg"),
             layout: bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buf.as_entire_binding(),
             }],
@@ -833,8 +833,8 @@ impl DeviceResources {
     /// Pre-upload a general tube and return a typed handle.
     pub fn upload_tube(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::TubeItem,
     ) -> crate::resources::TubeId {
         self.ensure_streamtube_pipeline(device);
@@ -850,8 +850,8 @@ impl DeviceResources {
     /// Replace the geometry of a pre-uploaded tube, keeping the same id.
     pub fn replace_tube(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::TubeId,
         item: &crate::renderer::TubeItem,
     ) -> bool {
@@ -874,8 +874,8 @@ impl DeviceResources {
     /// the cross product of the tangent and the lateral direction `u`.
     pub(crate) fn upload_ribbon_per_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::RibbonItem,
         wireframe: bool,
     ) -> StreamtubeGpuData {
@@ -1074,20 +1074,20 @@ impl DeviceResources {
         let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
         let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ribbon_vbuf"),
             size: vert_bytes.len().max(std::mem::size_of::<Vertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !vert_bytes.is_empty() {
             queue.write_buffer(&vertex_buffer, 0, vert_bytes);
         }
 
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ribbon_ibuf"),
             size: idx_bytes.len().max(12) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !idx_bytes.is_empty() {
@@ -1098,10 +1098,10 @@ impl DeviceResources {
 
         let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
         let edge_bytes: &[u8] = bytemuck::cast_slice(&edge_indices);
-        let edge_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let edge_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ribbon_edge_ibuf"),
             size: edge_bytes.len().max(8) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !edge_bytes.is_empty() {
@@ -1122,7 +1122,7 @@ impl DeviceResources {
             has_texture: u32,
             _pad: [f32; 2],
         }
-        let (texture_view, has_texture): (&wgpu::TextureView, u32) =
+        let (texture_view, has_texture): (&crate::gpu::TextureView, u32) =
             if let Some(id) = item.texture_id {
                 if let Some(tex) = self.content.textures.get(id) {
                     (&tex.view, 1)
@@ -1143,10 +1143,10 @@ impl DeviceResources {
             has_texture,
             _pad: [0.0; 2],
         };
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ribbon_uniform_buf"),
             size: std::mem::size_of::<RibbonUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
@@ -1156,21 +1156,21 @@ impl DeviceResources {
             .bgl
             .as_ref()
             .expect("ensure_streamtube_pipeline not called");
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("ribbon_uniform_bg"),
             layout: bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(texture_view),
+                    resource: crate::gpu::BindingResource::TextureView(texture_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.material_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
                 },
             ],
         });
@@ -1198,8 +1198,8 @@ impl DeviceResources {
     /// Pre-upload a ribbon and return a typed handle.
     pub fn upload_ribbon(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::RibbonItem,
     ) -> crate::resources::RibbonId {
         self.ensure_streamtube_pipeline(device);
@@ -1215,8 +1215,8 @@ impl DeviceResources {
     /// Replace the geometry of a pre-uploaded ribbon, keeping the same id.
     pub fn replace_ribbon(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::RibbonId,
         item: &crate::renderer::RibbonItem,
     ) -> bool {
@@ -1231,8 +1231,8 @@ impl DeviceResources {
     /// Start an asynchronous streamtube upload.
     pub fn begin_upload_streamtube(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: crate::renderer::StreamtubeItem,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::StreamtubeId>::new();
@@ -1291,8 +1291,8 @@ impl DeviceResources {
     /// Start an asynchronous tube upload.
     pub fn begin_upload_tube(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: crate::renderer::TubeItem,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::TubeId>::new();
@@ -1350,8 +1350,8 @@ impl DeviceResources {
     /// Start an asynchronous ribbon upload.
     pub fn begin_upload_ribbon(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: crate::renderer::RibbonItem,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::RibbonId>::new();
@@ -1414,15 +1414,17 @@ mod tests {
     use crate::renderer::{RibbonItem, StreamtubeItem, TubeItem};
     use crate::resources::UploadStatus;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn sample_streamtube() -> StreamtubeItem {
@@ -1454,8 +1456,8 @@ mod tests {
 
     fn drive_until_ready(
         resources: &mut DeviceResources,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::JobId,
         label: &'static str,
     ) {
@@ -1534,7 +1536,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_streamtube(&device, &queue, &sample_streamtube());
         assert!(resources.content.streamtube_store.contains(id));
         assert!(resources.drop_streamtube(id));
@@ -1547,7 +1550,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let start = resources.resident_bytes().scivis_bytes;
         let id = resources.upload_tube(&device, &queue, &sample_tube());
         assert!(resources.content.tube_store.contains(id));
@@ -1570,7 +1574,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_ribbon(&device, &queue, &sample_ribbon());
         assert!(resources.content.ribbon_store.contains(id));
         assert!(resources.drop_ribbon(id));
@@ -1582,7 +1587,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_streamtube(&device, &queue, sample_streamtube());
         drive_until_ready(&mut resources, &device, &queue, job, "streamtube");
         let id = resources.upload_result_streamtube(job).expect("ready");
@@ -1600,7 +1606,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_tube(&device, &queue, sample_tube());
         drive_until_ready(&mut resources, &device, &queue, job, "tube");
         let id = resources.upload_result_tube(job).expect("ready");
@@ -1613,7 +1620,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_ribbon(&device, &queue, sample_ribbon());
         drive_until_ready(&mut resources, &device, &queue, job, "ribbon");
         let id = resources.upload_result_ribbon(job).expect("ready");
@@ -1628,19 +1636,19 @@ mod tests {
 #[derive(Clone)]
 pub struct StreamtubeGpuData {
     /// Owned vertex buffer for the connected tube mesh (world-space positions + normals).
-    pub(crate) vertex_buffer: wgpu::Buffer,
+    pub(crate) vertex_buffer: crate::gpu::Buffer,
     /// Owned index buffer for the connected tube mesh (triangle indices).
-    pub(crate) index_buffer: wgpu::Buffer,
+    pub(crate) index_buffer: crate::gpu::Buffer,
     /// Number of triangle indices to draw (solid mode).
     pub(crate) index_count: u32,
     /// Owned index buffer for wireframe edges (deduplicated line-list pairs).
-    pub(crate) edge_index_buffer: wgpu::Buffer,
+    pub(crate) edge_index_buffer: crate::gpu::Buffer,
     /// Number of edge indices to draw (wireframe mode).
     pub(crate) edge_index_count: u32,
     /// Whether this item should be drawn in wireframe mode.
     pub(crate) wireframe: bool,
     /// Bind group (group 1): tube uniform (colour, radius).
-    pub(crate) uniform_bind_group: wgpu::BindGroup,
+    pub(crate) uniform_bind_group: crate::gpu::BindGroup,
     /// Blend mode for the draw. Streamtubes always set this to
     /// `SpriteBlend::AlphaBlend`; ribbons honour the value from `RibbonItem`.
     pub(crate) blend: crate::renderer::SpriteBlend,
@@ -1651,5 +1659,5 @@ pub struct StreamtubeGpuData {
     /// pass uses the same matrix so its silhouette matches the rendered tube.
     pub(crate) model: [[f32; 4]; 4],
     // Keep uniform buffer alive.
-    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _uniform_buf: crate::gpu::Buffer,
 }

@@ -6,7 +6,7 @@
 /// and the count of valid indices. The renderer swaps this in during draw.
 pub struct ComputeFilterResult {
     /// Output index buffer containing only passing triangles.
-    pub index_buffer: wgpu::Buffer,
+    pub index_buffer: crate::gpu::Buffer,
     /// Number of valid indices in `index_buffer` (may be 0 if all filtered).
     pub index_count: u32,
     /// `MeshId` this result corresponds to.
@@ -14,77 +14,77 @@ pub struct ComputeFilterResult {
 }
 
 impl crate::resources::DeviceResources {
-    fn ensure_compute_filter_pipeline(&mut self, device: &wgpu::Device) {
+    fn ensure_compute_filter_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.compute_filter_pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // Build bind group layout.
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("compute_filter_bgl"),
             entries: &[
                 // binding 0: params uniform
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 1: vertices (f32 storage, read)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 2: source indices (u32 storage, read)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 3: scalars (f32 storage, read) : dummy for Clip
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 4: output compacted indices (read_write)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 // binding 5: atomic counter (read_write)
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -124,8 +124,8 @@ impl crate::resources::DeviceResources {
     /// acceptable for v1; async readback can be added later.
     pub fn run_compute_filters(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         items: &[crate::renderer::ComputeFilterItem],
     ) -> Vec<ComputeFilterResult> {
         if items.is_empty() {
@@ -135,10 +135,10 @@ impl crate::resources::DeviceResources {
         self.ensure_compute_filter_pipeline(device);
 
         // Dummy 4-byte buffer used as the scalar binding when doing a Clip filter.
-        let dummy_scalar_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let dummy_scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("compute_filter_dummy_scalar"),
             size: 4,
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: crate::gpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
@@ -257,45 +257,45 @@ impl crate::resources::DeviceResources {
                 }
             }
 
-            let params_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("compute_filter_params"),
                 size: std::mem::size_of::<FilterParams>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             queue.write_buffer(&params_buf, 0, bytemuck::bytes_of(&params));
 
             // Output index buffer (worst-case: all triangles pass).
             let out_index_size = (gpu_mesh.index_count as u64) * 4;
-            let out_index_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let out_index_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("compute_filter_out_indices"),
                 size: out_index_size.max(4),
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::INDEX
-                    | wgpu::BufferUsages::COPY_SRC,
+                usage: crate::gpu::BufferUsages::STORAGE
+                    | crate::gpu::BufferUsages::INDEX
+                    | crate::gpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
 
             // 4-byte atomic counter buffer (cleared to 0).
-            let counter_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let counter_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("compute_filter_counter"),
                 size: 4,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: true,
             });
             crate::resources::builders::write_mapped(counter_buf.slice(..), &0u32.to_le_bytes());
             counter_buf.unmap();
 
             // Staging buffer to read back the counter.
-            let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let staging_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("compute_filter_counter_staging"),
                 size: 4,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::MAP_READ | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
 
             // Pick the scalar buffer: named attribute or dummy.
-            let scalar_buf_ref: &wgpu::Buffer = match &item.kind {
+            let scalar_buf_ref: &crate::gpu::Buffer = match &item.kind {
                 crate::renderer::ComputeFilterKind::Threshold { .. } => {
                     if let Some(attr_name) = &item.attribute_name {
                         gpu_mesh
@@ -312,31 +312,31 @@ impl crate::resources::DeviceResources {
 
             // Build bind group.
             let bgl = self.compute_filter_bgl.as_ref().unwrap();
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("compute_filter_bg"),
                 layout: bgl,
                 entries: &[
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: params_buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 1,
                         resource: gpu_mesh.vertex_buffer.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 2,
                         resource: gpu_mesh.index_buffer.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 3,
                         resource: scalar_buf_ref.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 4,
                         resource: out_index_buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
+                    crate::gpu::BindGroupEntry {
                         binding: 5,
                         resource: counter_buf.as_entire_binding(),
                     },
@@ -344,13 +344,14 @@ impl crate::resources::DeviceResources {
             });
 
             // Encode and submit compute + counter copy.
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("compute_filter_encoder"),
-            });
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("compute_filter_encoder"),
+                });
 
             {
                 let pipeline = self.compute_filter_pipeline.as_ref().unwrap();
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                     label: Some("compute_filter_pass"),
                     timestamp_writes: None,
                 });
@@ -365,8 +366,8 @@ impl crate::resources::DeviceResources {
 
             // Synchronous readback (v1 : acceptable; async readback can follow later).
             let slice = staging_buf.slice(..);
-            slice.map_async(wgpu::MapMode::Read, |_| {});
-            let _ = device.poll(wgpu::PollType::Wait {
+            slice.map_async(crate::gpu::MapMode::Read, |_| {});
+            let _ = device.poll(crate::gpu::PollType::Wait {
                 submission_index: None,
                 timeout: Some(std::time::Duration::from_secs(5)),
             });

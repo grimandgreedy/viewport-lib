@@ -107,9 +107,9 @@ pub(crate) struct GlyphAtlas {
     row_height: u32,
 
     /// GPU texture (recreated when the atlas grows).
-    pub texture: wgpu::Texture,
+    pub texture: crate::gpu::Texture,
     /// View into the atlas texture.
-    pub view: wgpu::TextureView,
+    pub view: crate::gpu::TextureView,
 
     /// Set to `true` whenever new glyphs have been rasterized since the last
     /// GPU upload.  Cleared by [`GlyphAtlas::upload_if_dirty`].
@@ -121,7 +121,7 @@ impl GlyphAtlas {
     const INITIAL_SIZE: u32 = 512;
 
     /// Create a new atlas with the built-in default font pre-loaded.
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &crate::gpu::Device) -> Self {
         let default_font =
             fontdue::Font::from_bytes(DEFAULT_FONT_BYTES, fontdue::FontSettings::default())
                 .expect("built-in default font must parse");
@@ -166,7 +166,7 @@ impl GlyphAtlas {
         text: &str,
         font_size: f32,
         font: Option<FontHandle>,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
     ) -> TextLayout {
         let font_index = font.map_or(0, |h| h.0);
         let size_tenths = (font_size * 10.0).round() as u32;
@@ -245,7 +245,7 @@ impl GlyphAtlas {
         font_size: f32,
         font: Option<FontHandle>,
         max_width: f32,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
     ) -> TextLayout {
         let font_index = font.map_or(0, |h| h.0);
         let px = font_size;
@@ -371,25 +371,25 @@ impl GlyphAtlas {
 
     /// Upload new glyph data to the GPU if any glyphs were rasterized since
     /// the last upload.
-    pub fn upload_if_dirty(&mut self, queue: &wgpu::Queue) {
+    pub fn upload_if_dirty(&mut self, queue: &crate::gpu::Queue) {
         if !self.dirty {
             return;
         }
         let flat: Vec<u8> = self.pixels.iter().flat_map(|p| p.iter().copied()).collect();
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &self.texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
             },
             &flat,
-            wgpu::TexelCopyBufferLayout {
+            crate::gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(self.size * 4),
                 rows_per_image: Some(self.size),
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width: self.size,
                 height: self.size,
                 depth_or_array_layers: 1,
@@ -406,7 +406,7 @@ impl GlyphAtlas {
     /// Returns the atlas entry.
     fn ensure_glyph(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         font_index: usize,
         glyph_index: u16,
         size_tenths: u32,
@@ -484,7 +484,7 @@ impl GlyphAtlas {
 
     /// Double the atlas size, copying existing pixel data into the new buffer
     /// and recreating the GPU texture.
-    fn grow(&mut self, device: &wgpu::Device) {
+    fn grow(&mut self, device: &crate::gpu::Device) {
         let old_size = self.size;
         let new_size = old_size * 2;
         tracing::info!(
@@ -512,22 +512,25 @@ impl GlyphAtlas {
         self.dirty = true; // Full re-upload needed.
     }
 
-    fn create_texture(device: &wgpu::Device, size: u32) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+    fn create_texture(
+        device: &crate::gpu::Device,
+        size: u32,
+    ) -> (crate::gpu::Texture, crate::gpu::TextureView) {
+        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("glyph_atlas"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: size,
                 height: size,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
         (texture, view)
     }
 }

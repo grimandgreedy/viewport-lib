@@ -7,13 +7,13 @@ use crate::renderer::OverlayTextureId;
 #[derive(Default)]
 pub(crate) struct OverlayShapeResources {
     /// Render pipeline for screen-space SDF shapes (rounded rects, circles, etc.).
-    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
     /// Render pipeline for SDF shapes with texture fill.
-    pub(crate) tex_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) tex_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the texture pipeline (group 0: texture + sampler).
-    pub(crate) tex_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) tex_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Clamp-to-edge linear sampler shared across all texture shape bind groups.
-    pub(crate) tex_sampler: Option<wgpu::Sampler>,
+    pub(crate) tex_sampler: Option<crate::gpu::Sampler>,
 }
 
 /// Fullscreen separable Gaussian blur pipeline used to produce the blurred
@@ -21,11 +21,11 @@ pub(crate) struct OverlayShapeResources {
 #[derive(Default)]
 pub(crate) struct BackdropBlurResources {
     /// Fullscreen separable Gaussian blur pipeline.
-    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout (group 0: source texture + sampler + uniforms).
-    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear clamp sampler shared by blur passes.
-    pub(crate) sampler: Option<wgpu::Sampler>,
+    pub(crate) sampler: Option<crate::gpu::Sampler>,
 }
 
 impl crate::resources::DeviceResources {
@@ -33,7 +33,7 @@ impl crate::resources::DeviceResources {
     ///
     /// No-op if already created. Called from `prepare_viewport_internal()` when
     /// `frame.overlays.shapes` is non-empty.
-    pub(crate) fn ensure_overlay_shape_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_overlay_shape_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.overlay_shape.pipeline.is_some() {
             return;
         }
@@ -53,41 +53,41 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_shape_pipeline",
                 layout: &layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     buffers: &[OverlayShapeVertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Always,
+                    crate::gpu::CompareFunction::Always,
                 )),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
+                multisample: crate::gpu::MultisampleState::default(),
+                fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: self.target_format,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::SrcAlpha,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
+                        blend: Some(crate::gpu::BlendState {
+                            color: crate::gpu::BlendComponent {
+                                src_factor: crate::gpu::BlendFactor::SrcAlpha,
+                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: crate::gpu::BlendOperation::Add,
                             },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
+                            alpha: crate::gpu::BlendComponent {
+                                src_factor: crate::gpu::BlendFactor::One,
+                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: crate::gpu::BlendOperation::Add,
                             },
                         }),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
                 cache: None,
             },
@@ -100,7 +100,7 @@ impl crate::resources::DeviceResources {
     ///
     /// No-op if already created. Called from `prepare_viewport_internal()` when
     /// any shape in `OverlayFrame.shapes` carries an `OverlayTextureId`.
-    pub(crate) fn ensure_overlay_shape_tex_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_overlay_shape_tex_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.overlay_shape.tex_pipeline.is_some() {
             return;
         }
@@ -109,7 +109,7 @@ impl crate::resources::DeviceResources {
         let bgl = crate::resources::builders::texture_sampler_bgl(
             device,
             "overlay_shape_tex_bgl",
-            wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::FRAGMENT,
         );
 
         let sampler =
@@ -132,41 +132,41 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_shape_tex_pipeline",
                 layout: &layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     buffers: &[OverlayShapeTexVertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Always,
+                    crate::gpu::CompareFunction::Always,
                 )),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
+                multisample: crate::gpu::MultisampleState::default(),
+                fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: self.target_format,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::SrcAlpha,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
+                        blend: Some(crate::gpu::BlendState {
+                            color: crate::gpu::BlendComponent {
+                                src_factor: crate::gpu::BlendFactor::SrcAlpha,
+                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: crate::gpu::BlendOperation::Add,
                             },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
+                            alpha: crate::gpu::BlendComponent {
+                                src_factor: crate::gpu::BlendFactor::One,
+                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: crate::gpu::BlendOperation::Add,
                             },
                         }),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
                 cache: None,
             },
@@ -188,8 +188,8 @@ impl crate::resources::DeviceResources {
     /// (standard 8-bit image data).
     pub fn upload_overlay_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba_data: &[u8],
@@ -200,42 +200,42 @@ impl crate::resources::DeviceResources {
             "upload_overlay_texture: rgba_data length does not match width * height * 4"
         );
 
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("overlay_shape_tex"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
             },
             rgba_data,
-            wgpu::TexelCopyBufferLayout {
+            crate::gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width * 4),
                 rows_per_image: Some(height),
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
         );
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
         let id = self
             .content
             .overlay_textures
@@ -263,8 +263,8 @@ impl crate::resources::DeviceResources {
     /// before submission when `rgba_data.len() != width * height * 4`.
     pub fn begin_upload_overlay_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         width: u32,
         height: u32,
         rgba_data: Vec<u8>,
@@ -286,40 +286,41 @@ impl crate::resources::DeviceResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
-                let texture = device_for_worker.create_texture(&wgpu::TextureDescriptor {
+                let texture = device_for_worker.create_texture(&crate::gpu::TextureDescriptor {
                     label: Some("overlay_shape_tex"),
-                    size: wgpu::Extent3d {
+                    size: crate::gpu::Extent3d {
                         width,
                         height,
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
                     sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    dimension: crate::gpu::TextureDimension::D2,
+                    format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+                        | crate::gpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 });
                 queue_for_worker.write_texture(
-                    wgpu::TexelCopyTextureInfo {
+                    crate::gpu::TexelCopyTextureInfo {
                         texture: &texture,
                         mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
+                        origin: crate::gpu::Origin3d::ZERO,
+                        aspect: crate::gpu::TextureAspect::All,
                     },
                     &rgba_data,
-                    wgpu::TexelCopyBufferLayout {
+                    crate::gpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(width * 4),
                         rows_per_image: Some(height),
                     },
-                    wgpu::Extent3d {
+                    crate::gpu::Extent3d {
                         width,
                         height,
                         depth_or_array_layers: 1,
                     },
                 );
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut crate::resources::DeviceResources| {
@@ -377,39 +378,39 @@ impl crate::resources::DeviceResources {
     /// scene texture for `backdrop_blur` overlay shapes.
     ///
     /// No-op if already created.
-    pub(crate) fn ensure_backdrop_blur_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_backdrop_blur_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.backdrop_blur.pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("backdrop_blur_bgl"),
             entries: &[
                 // binding 0: source texture
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // binding 1: sampler
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // binding 2: blur parameters uniform
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: Some(std::num::NonZeroU64::new(16).unwrap()),
                     },
@@ -500,106 +501,106 @@ pub(crate) struct OverlayShapeVertex {
 }
 
 impl OverlayShapeVertex {
-    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<OverlayShapeVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
+    pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
+        crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayShapeVertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
             attributes: &[
                 // location 0: position vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 1: local_pos vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 8,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 2: fill_colour vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 16,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 3: border_colour vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 32,
                     shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 4: half_size vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 48,
                     shader_location: 4,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 5: radii vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 56,
                     shader_location: 5,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 6: shape_meta vec2f (border_width, shape_type) -- combined
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 72,
                     shader_location: 6,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 7: stop_positions vec4f (gradient stop positions)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 196,
                     shader_location: 7,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 8: fill_colour2 vec4f (end colour for gradient)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 80,
                     shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 9: gradient_params vec4f (type, angle, stop_count, pad)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 96,
                     shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 10: shadow_colour vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 112,
                     shader_location: 10,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 11: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 128,
                     shader_location: 11,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 12: clip_rect vec4f (x0, y0, x1, y1 in framebuffer pixels)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 144,
                     shader_location: 12,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 13: rotation f32 (radians)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 160,
                     shader_location: 13,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
                 // location 14: stop_colour_c vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 164,
                     shader_location: 14,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 15: stop_colour_d vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 180,
                     shader_location: 15,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],
         }
@@ -659,106 +660,106 @@ pub(crate) struct OverlayShapeTexVertex {
 }
 
 impl OverlayShapeTexVertex {
-    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<OverlayShapeTexVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
+    pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
+        crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayShapeTexVertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
             attributes: &[
                 // location 0: position vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 1: local_pos vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 8,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 2: fill_colour vec4f (tint)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 16,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 3: border_colour vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 32,
                     shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 4: half_size vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 48,
                     shader_location: 4,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 5: radii vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 56,
                     shader_location: 5,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 6: border_width f32
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 72,
                     shader_location: 6,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
                 // location 7: shape_type f32
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 76,
                     shader_location: 7,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
                 // location 8: uv vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 80,
                     shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 9: shadow_colour vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 88,
                     shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 10: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 104,
                     shader_location: 10,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 11: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 120,
                     shader_location: 11,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 12: nine_slice_uv vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 136,
                     shader_location: 12,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 13: nine_slice_frac vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 152,
                     shader_location: 13,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 14: texture_transform_a vec4f (offset.xy, scale.xy)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 168,
                     shader_location: 14,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 15: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 184,
                     shader_location: 15,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],
         }
@@ -767,23 +768,23 @@ impl OverlayShapeTexVertex {
 
 /// One batch of textured SDF overlay shapes sharing a single texture.
 pub(crate) struct OverlayShapeTexBatch {
-    pub vertex_buf: wgpu::Buffer,
+    pub vertex_buf: crate::gpu::Buffer,
     pub vertex_count: u32,
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: crate::gpu::BindGroup,
 }
 
 /// Persistent texture entry for an overlay shape texture fill.
 ///
 /// Stored in `DeviceResources::overlay_textures`.
 pub(crate) struct OverlayShapeTextureEntry {
-    pub _texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
+    pub _texture: crate::gpu::Texture,
+    pub view: crate::gpu::TextureView,
 }
 
 /// Per-frame GPU data for batched SDF overlay shape rendering.
 pub(crate) struct OverlayShapeGpuData {
     /// Vertex buffer for solid (non-textured) shapes. `None` when all shapes are textured.
-    pub vertex_buf: Option<wgpu::Buffer>,
+    pub vertex_buf: Option<crate::gpu::Buffer>,
     /// Number of solid vertices. Zero when all shapes are textured.
     pub vertex_count: u32,
     /// One batch per unique texture, drawn after solid shapes.
@@ -792,7 +793,7 @@ pub(crate) struct OverlayShapeGpuData {
     /// vertex layout as `OverlayShapeTexVertex` with screen-space UVs.
     /// The bind group is created at render time once the blurred scene texture
     /// is available.
-    pub blur_vertex_buf: Option<wgpu::Buffer>,
+    pub blur_vertex_buf: Option<crate::gpu::Buffer>,
     /// Number of blur backdrop vertices.
     pub blur_vertex_count: u32,
     /// Maximum `backdrop_blur` value across all blur shapes this frame.

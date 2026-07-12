@@ -100,7 +100,7 @@ pub enum ViewportError {
     )]
     UnsupportedTextureFormat {
         /// The format that was rejected.
-        format: wgpu::TextureFormat,
+        format: crate::gpu::TextureFormat,
     },
 
     /// A compressed-texture upload had base dimensions that are not a multiple

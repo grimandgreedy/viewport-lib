@@ -389,10 +389,10 @@ pub(crate) fn validate_name(stored: &[StoredDeformer], name: &str) -> ViewportRe
 /// Run wgpu's shader-module path under an error scope. Returns `Ok(module)`
 /// on success or a populated `DeformShaderInvalid` otherwise.
 pub(crate) fn validate_with_wgpu(
-    device: &wgpu::Device,
+    device: &crate::gpu::Device,
     label: &str,
     source: &str,
-) -> ViewportResult<wgpu::ShaderModule> {
+) -> ViewportResult<crate::gpu::ShaderModule> {
     let (module, captured) = crate::resources::builders::capture_validation(device, || {
         crate::resources::builders::wgsl_module(device, label, source)
     });

@@ -47,7 +47,7 @@ pub(crate) struct InstancingState {
     /// per-batch partial-upload path. Set by `force_dirty()` and consumed once.
     pub(crate) force_full_upload: bool,
     /// CPU-readable copy of the indirect draw args, one frame behind.
-    pub(crate) indirect_readback_buf: Option<wgpu::Buffer>,
+    pub(crate) indirect_readback_buf: Option<crate::gpu::Buffer>,
     /// Number of batches whose data was copied into `indirect_readback_buf` last frame.
     pub(crate) indirect_readback_batch_count: u32,
     /// True when `indirect_readback_buf` holds resolved data that has not yet

@@ -68,24 +68,24 @@ const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);
 /// `visible_out` as the per-instance lookup buffer.
 pub struct CullSubmission<'a> {
     /// Storage buffer of [`InstanceAabb`] entries.
-    pub instance_aabbs: &'a wgpu::Buffer,
+    pub instance_aabbs: &'a crate::gpu::Buffer,
     /// Number of valid entries in `instance_aabbs` (not the buffer capacity).
     pub instance_count: u32,
     /// Storage buffer of [`BatchMeta`] entries, one per batch.
-    pub batch_meta: &'a wgpu::Buffer,
+    pub batch_meta: &'a crate::gpu::Buffer,
     /// Number of valid entries in `batch_meta`.
     pub batch_count: u32,
     /// Storage buffer used for per-batch atomic counters. Must hold at
     /// least `batch_count` u32 slots. The cull pass zeroes the counters at
     /// the end of its dispatch so the same buffer can be reused across
     /// cascades or frames.
-    pub counter: &'a wgpu::Buffer,
+    pub counter: &'a crate::gpu::Buffer,
     /// Storage buffer that receives the compacted list of visible instance
     /// indices. Sized for at least `instance_count` u32 slots.
-    pub visible_out: &'a wgpu::Buffer,
+    pub visible_out: &'a crate::gpu::Buffer,
     /// Storage / indirect buffer that receives one `DrawIndexedIndirect`
     /// entry per batch (20 bytes each).
-    pub indirect_out: &'a wgpu::Buffer,
+    pub indirect_out: &'a crate::gpu::Buffer,
     /// `true` to run the shadow-cull variant on the main camera pass: the
     /// cull shader honours `InstanceAabb::cast_shadows` and skips entries
     /// with the flag clear. `submit_cull_shadow` forces this on regardless

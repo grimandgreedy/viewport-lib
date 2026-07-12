@@ -165,13 +165,13 @@ macro_rules! emit_draw_calls {
         // Compute filter results: used by per-object path to override index buffers.
         let compute_filter_results: &[crate::resources::ComputeFilterResult] = $compute_filter_results;
         let batches: &[InstancedBatch] = $batches;
-        let camera_bg: &wgpu::BindGroup = $camera_bg;
-        let grid_bg: &wgpu::BindGroup = $grid_bg;
-        let wireframe_bind_groups: &[wgpu::BindGroup] = $wireframe_bgs;
+        let camera_bg: &crate::gpu::BindGroup = $camera_bg;
+        let grid_bg: &crate::gpu::BindGroup = $grid_bg;
+        let wireframe_bind_groups: &[crate::gpu::BindGroup] = $wireframe_bgs;
         // Per-item object bind groups indexed by position in scene_items. Each combines
         // a per-item ObjectUniform buffer with the mesh's real textures/LUT/matcap.
         // Items routed through the instanced path have None here and use mesh.object_bind_group.
-        let per_item_object_bind_groups: &[Option<wgpu::BindGroup>] = $per_item_bgs;
+        let per_item_object_bind_groups: &[Option<crate::gpu::BindGroup>] = $per_item_bgs;
 
         // The LOD-resolved surface items from prepare: each item's mesh is the
         // level chosen for its on-screen size, and culled items are hidden.
@@ -258,7 +258,7 @@ macro_rules! emit_draw_calls {
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
                                 render_pass.draw_indexed(
                                     0..mesh.index_count,
                                     0,
@@ -283,7 +283,7 @@ macro_rules! emit_draw_calls {
                                 let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
                                 render_pass.draw_indexed(
                                     0..mesh.index_count,
                                     0,
@@ -313,7 +313,7 @@ macro_rules! emit_draw_calls {
                             render_pass.set_bind_group(1, bg, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                render_pass.set_index_buffer(edge_buf.slice(..), wgpu::IndexFormat::Uint32);
+                                render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                             }
                             wf_idx += 1;
@@ -329,8 +329,8 @@ macro_rules! emit_draw_calls {
                         // thousands of per-object items the redundant re-binds dominate
                         // command-recording time (many scenes share one mesh and one
                         // pipeline across every item).
-                        let mut cur_pipeline: Option<*const wgpu::RenderPipeline> = None;
-                        let mut cur_deform: Option<*const wgpu::BindGroup> = None;
+                        let mut cur_pipeline: Option<*const crate::gpu::RenderPipeline> = None;
+                        let mut cur_deform: Option<*const crate::gpu::BindGroup> = None;
                         let mut cur_geometry: Option<(crate::resources::mesh::mesh_store::MeshId, bool)> = None;
                         for (item_idx, item) in &excluded_items {
                             let item_idx = *item_idx;
@@ -342,7 +342,7 @@ macro_rules! emit_draw_calls {
                             };
                             let is_blended = item.settings.opacity < 1.0
                                 || item.material.is_blend();
-                            let pipeline: &wgpu::RenderPipeline = if is_blended {
+                            let pipeline: &crate::gpu::RenderPipeline = if is_blended {
                                 &resources.transparent_pipeline
                             } else if item.material.is_two_sided() {
                                 &resources.solid_two_sided_pipeline
@@ -384,7 +384,7 @@ macro_rules! emit_draw_calls {
                                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                     render_pass.set_index_buffer(
                                         mesh.index_buffer.slice(..),
-                                        wgpu::IndexFormat::Uint32,
+                                        crate::gpu::IndexFormat::Uint32,
                                     );
                                     cur_geometry = Some((item.mesh_id, false));
                                 }
@@ -451,12 +451,12 @@ macro_rules! emit_draw_calls {
                 // Re-bind pipeline, deform bind group, and geometry buffers only
                 // when they change between consecutive items; at thousands of
                 // items the redundant re-binds dominate command recording.
-                let mut cur_pipeline: Option<*const wgpu::RenderPipeline> = None;
-                let mut cur_deform: Option<*const wgpu::BindGroup> = None;
+                let mut cur_pipeline: Option<*const crate::gpu::RenderPipeline> = None;
+                let mut cur_deform: Option<*const crate::gpu::BindGroup> = None;
                 let mut cur_geometry: Option<(crate::resources::mesh::mesh_store::MeshId, bool)> = None;
                 macro_rules! set_pipeline_cached {
                     ($pl:expr) => {{
-                        let pl: &wgpu::RenderPipeline = $pl;
+                        let pl: &crate::gpu::RenderPipeline = $pl;
                         if cur_pipeline != Some(pl as *const _) {
                             render_pass.set_pipeline(pl);
                             cur_pipeline = Some(pl as *const _);
@@ -465,7 +465,7 @@ macro_rules! emit_draw_calls {
                 }
                 macro_rules! set_deform_cached {
                     ($bg:expr) => {{
-                        let bg: &wgpu::BindGroup = $bg;
+                        let bg: &crate::gpu::BindGroup = $bg;
                         if cur_deform != Some(bg as *const _) {
                             render_pass.set_bind_group(2, bg, &[]);
                             cur_deform = Some(bg as *const _);
@@ -501,7 +501,7 @@ macro_rules! emit_draw_calls {
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     edge_buf.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                                 cur_geometry = None;
@@ -525,7 +525,7 @@ macro_rules! emit_draw_calls {
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(
                                     fr.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
                                 cur_geometry = None;
@@ -534,7 +534,7 @@ macro_rules! emit_draw_calls {
                                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                     render_pass.set_index_buffer(
                                         mesh.index_buffer.slice(..),
-                                        wgpu::IndexFormat::Uint32,
+                                        crate::gpu::IndexFormat::Uint32,
                                     );
                                     cur_geometry = Some((item.mesh_id, false));
                                 }
@@ -580,7 +580,7 @@ macro_rules! emit_draw_calls {
                 render_pass.set_vertex_buffer(0, slot.gizmo_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(
                     slot.gizmo_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
+                    crate::gpu::IndexFormat::Uint32,
                 );
                 render_pass.draw_indexed(0..slot.gizmo_index_count, 0, 0..1);
             }
@@ -594,7 +594,7 @@ macro_rules! emit_draw_calls {
                 for (vbuf, ibuf, index_count, _ubuf, bg) in &slot.constraint_line_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
                     render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                    render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..*index_count, 0, 0..1);
                 }
             }
@@ -608,7 +608,7 @@ macro_rules! emit_draw_calls {
                 for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.cap_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
                     render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                    render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..*idx_count, 0, 0..1);
                 }
             }
@@ -622,7 +622,7 @@ macro_rules! emit_draw_calls {
                 for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_fill_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
                     render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                    render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..*idx_count, 0, 0..1);
                 }
             }
@@ -636,7 +636,7 @@ macro_rules! emit_draw_calls {
                 for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_line_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
                     render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                    render_pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..*idx_count, 0, 0..1);
                 }
             }
@@ -651,7 +651,7 @@ macro_rules! emit_draw_calls {
                     let Some(mesh) = resources.mesh_store.get(*mesh_id) else { continue };
                     render_pass.set_bind_group(1, bg, &[]);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
@@ -712,7 +712,7 @@ macro_rules! emit_scivis_draw_calls {
     ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $image_slice_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
-        let camera_bg: &wgpu::BindGroup = $camera_bg;
+        let camera_bg: &crate::gpu::BindGroup = $camera_bg;
         let _is_hdr: bool = $is_hdr;
 
         // Point cloud pass.
@@ -754,7 +754,7 @@ macro_rules! emit_scivis_draw_calls {
                     if glyph.wireframe {
                         render_pass.set_index_buffer(
                             glyph.mesh_edge_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(
                             0..glyph.mesh_edge_index_count,
@@ -764,7 +764,7 @@ macro_rules! emit_scivis_draw_calls {
                     } else {
                         render_pass.set_index_buffer(
                             glyph.mesh_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(
                             0..glyph.mesh_index_count,
@@ -836,8 +836,10 @@ macro_rules! emit_scivis_draw_calls {
                     }
                     render_pass.set_bind_group(1, &vol.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(vol.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(
+                        vol.index_buffer.slice(..),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
                     render_pass.draw_indexed(0..36, 0, 0..1);
                 }
             }
@@ -870,13 +872,13 @@ macro_rules! emit_scivis_draw_calls {
                     if tube.wireframe {
                         render_pass.set_index_buffer(
                             tube.edge_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..tube.edge_index_count, 0, 0..1);
                     } else {
                         render_pass.set_index_buffer(
                             tube.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
                     }
@@ -911,13 +913,13 @@ macro_rules! emit_scivis_draw_calls {
                     if tube.wireframe {
                         render_pass.set_index_buffer(
                             tube.edge_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..tube.edge_index_count, 0, 0..1);
                     } else {
                         render_pass.set_index_buffer(
                             tube.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
                     }
@@ -962,7 +964,7 @@ macro_rules! emit_scivis_draw_calls {
                     if tg.wireframe {
                         render_pass.set_index_buffer(
                             tg.mesh_edge_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(
                             0..tg.mesh_edge_index_count,
@@ -972,7 +974,7 @@ macro_rules! emit_scivis_draw_calls {
                     } else {
                         render_pass.set_index_buffer(
                             tg.mesh_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
                     }
@@ -991,7 +993,7 @@ macro_rules! emit_scivis_draw_calls {
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(
                             mesh.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                     }
@@ -1040,13 +1042,13 @@ macro_rules! emit_scivis_draw_calls {
                     if ribbon.wireframe {
                         render_pass.set_index_buffer(
                             ribbon.edge_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..ribbon.edge_index_count, 0, 0..1);
                     } else {
                         render_pass.set_index_buffer(
                             ribbon.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
                     }
@@ -1057,7 +1059,10 @@ macro_rules! emit_scivis_draw_calls {
         // Mesh-instance pass: one draw call per host-built batch, routed by
         // blend mode. Reuses the scene-graph instanced mesh pipeline family.
         if !$mesh_instance_gpu_data.is_empty() {
-            let mesh_buckets: [(crate::renderer::SpriteBlend, Option<&wgpu::RenderPipeline>); 3] = [
+            let mesh_buckets: [(
+                crate::renderer::SpriteBlend,
+                Option<&crate::gpu::RenderPipeline>,
+            ); 3] = [
                 (
                     crate::renderer::SpriteBlend::AlphaBlend,
                     resources.instancing.hdr_transparent_pipeline.as_ref(),
@@ -1100,8 +1105,10 @@ macro_rules! emit_scivis_draw_calls {
                         .instance_bind_group_for(batch.mesh_id, None);
                     render_pass.set_bind_group(2, deform_bg, &[]);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(
+                        mesh.index_buffer.slice(..),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instance_count);
                 }
             }

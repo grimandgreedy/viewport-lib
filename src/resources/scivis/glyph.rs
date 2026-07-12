@@ -9,9 +9,9 @@ pub(crate) struct GlyphResources {
     /// Glyph wireframe pipeline (LineList, same bind groups as `pipeline`).
     pub(crate) wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for glyph uniforms (group 1).
-    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Bind group layout for glyph instance storage (group 2).
-    pub(crate) instance_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) instance_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Cached glyph base mesh for the Arrow shape.
     pub(crate) arrow_mesh: Option<GlyphBaseMesh>,
     /// Cached glyph base mesh for the Sphere shape.
@@ -19,7 +19,7 @@ pub(crate) struct GlyphResources {
     /// Cached glyph base mesh for the Cube shape.
     pub(crate) cube_mesh: Option<GlyphBaseMesh>,
     /// Instanced mask pipeline for arrow/sphere glyph outlines.
-    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 /// Tensor glyph (ellipsoid / superquadric) pipelines and layouts.
@@ -30,18 +30,18 @@ pub(crate) struct TensorGlyphResources {
     /// Tensor glyph wireframe pipeline (LineList, same bind groups as `pipeline`).
     pub(crate) wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for tensor glyph uniforms (group 1).
-    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Bind group layout for tensor glyph instance storage (group 2).
-    pub(crate) instance_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) instance_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Instanced mask pipeline for tensor glyph outlines.
-    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 impl DeviceResources {
     /// Lazily create the glyph render pipeline (instanced TriangleList).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.glyphs` is non-empty.
-    pub(crate) fn ensure_glyph_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_glyph_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.glyph.pipeline.is_some() {
             return;
         }
@@ -50,18 +50,18 @@ impl DeviceResources {
         let glyph_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
             "glyph_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            wgpu::ShaderStages::VERTEX,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX,
         );
 
         let glyph_instance_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("glyph_instance_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+                entries: &[crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -96,11 +96,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(crate::gpu::Face::Back),
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -117,10 +117,10 @@ impl DeviceResources {
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
                 blend: None,
-                topology: wgpu::PrimitiveTopology::LineList,
+                topology: crate::gpu::PrimitiveTopology::LineList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -133,8 +133,8 @@ impl DeviceResources {
     /// The glyph base mesh is cached in `glyph_arrow_mesh` / `glyph_sphere_mesh` / `glyph_cube_mesh`.
     pub(crate) fn upload_glyph_set_per_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::GlyphItem,
         wireframe: bool,
     ) -> GlyphGpuData {
@@ -150,9 +150,10 @@ impl DeviceResources {
             }
             .expect("glyph mesh should have been created by ensure_glyph_mesh");
 
-            let vbuf: &'static wgpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
-            let ibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            let eibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.edge_index_buffer as *const _) };
+            let vbuf: &'static crate::gpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
+            let ibuf: &'static crate::gpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
+            let eibuf: &'static crate::gpu::Buffer =
+                unsafe { &*(&mesh.edge_index_buffer as *const _) };
             (vbuf, ibuf, mesh.index_count, eibuf, mesh.edge_index_count)
         };
 
@@ -207,10 +208,10 @@ impl DeviceResources {
             })
             .collect();
 
-        let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let instance_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("glyph_instance_buf"),
             size: (std::mem::size_of::<GlyphInstance>() * instances.len()).max(32) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&instance_buf, 0, bytemuck::cast_slice(&instances));
@@ -253,10 +254,10 @@ impl DeviceResources {
             opacity: item.settings.opacity,
             wireframe: if wireframe { 1 } else { 0 },
         };
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("glyph_uniform_buf"),
             size: std::mem::size_of::<GlyphUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
@@ -279,21 +280,21 @@ impl DeviceResources {
             .bgl
             .as_ref()
             .expect("ensure_glyph_pipeline not called");
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("glyph_uniform_bg"),
             layout: bgl1,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(lut_view),
+                    resource: crate::gpu::BindingResource::TextureView(lut_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(lut_sampler),
                 },
             ],
         });
@@ -303,10 +304,10 @@ impl DeviceResources {
             .instance_bgl
             .as_ref()
             .expect("ensure_glyph_pipeline not called");
-        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let instance_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("glyph_instance_bg"),
             layout: bgl2,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: instance_buf.as_entire_binding(),
             }],
@@ -330,7 +331,11 @@ impl DeviceResources {
 
     /// Ensure a glyph base mesh is cached for the given [`GlyphType`].
     /// Creates and uploads the mesh on first call for that type.
-    fn ensure_glyph_mesh(&mut self, device: &wgpu::Device, glyph_type: crate::renderer::GlyphType) {
+    fn ensure_glyph_mesh(
+        &mut self,
+        device: &crate::gpu::Device,
+        glyph_type: crate::renderer::GlyphType,
+    ) {
         use crate::renderer::GlyphType;
 
         let already_cached = match glyph_type {
@@ -348,19 +353,19 @@ impl DeviceResources {
             GlyphType::Cube => build_unit_cube(),
         };
 
-        let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        let vbuf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("glyph_mesh_vbuf"),
             size: (std::mem::size_of::<Vertex>() * verts.len()).max(64) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(vbuf.slice(..), bytemuck::cast_slice(&verts));
         vbuf.unmap();
 
-        let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+        let ibuf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("glyph_mesh_ibuf"),
             size: (std::mem::size_of::<u32>() * indices.len()).max(12) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(ibuf.slice(..), bytemuck::cast_slice(&indices));
@@ -368,10 +373,10 @@ impl DeviceResources {
 
         let edge_indices = crate::resources::mesh::geometry::generate_edge_indices(&indices);
         let edge_buf_size = (std::mem::size_of::<u32>() * edge_indices.len().max(2)) as u64;
-        let edge_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+        let edge_ibuf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("glyph_mesh_edge_ibuf"),
             size: edge_buf_size,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -399,7 +404,7 @@ impl DeviceResources {
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.tensor_glyphs`
     /// is non-empty.
-    pub(crate) fn ensure_tensor_glyph_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_tensor_glyph_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.tensor_glyph.pipeline.is_some() {
             return;
         }
@@ -408,23 +413,24 @@ impl DeviceResources {
         let tg_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
             "tensor_glyph_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            wgpu::ShaderStages::VERTEX,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX,
         );
 
-        let tg_instance_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("tensor_glyph_instance_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let tg_instance_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("tensor_glyph_instance_bgl"),
+                entries: &[crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -449,11 +455,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(crate::gpu::Face::Back),
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: crate::gpu::CompareFunction::Less,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -471,10 +477,10 @@ impl DeviceResources {
                     fragment_entry: "fs_main",
                     vertex_buffers: &[Vertex::buffer_layout()],
                     blend: None,
-                    topology: wgpu::PrimitiveTopology::LineList,
+                    topology: crate::gpu::PrimitiveTopology::LineList,
                     cull_mode: None,
                     depth_write: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_compare: crate::gpu::CompareFunction::Less,
                     sample_count: self.sample_count,
                     ldr_format: self.target_format,
                 },
@@ -487,8 +493,8 @@ impl DeviceResources {
     /// Reuses the sphere base mesh cached by the glyph pipeline.
     pub(crate) fn upload_tensor_glyph_set_per_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::TensorGlyphItem,
         wireframe: bool,
     ) -> TensorGlyphGpuData {
@@ -504,9 +510,10 @@ impl DeviceResources {
                 .sphere_mesh
                 .as_ref()
                 .expect("sphere mesh should be present after ensure_glyph_mesh");
-            let vbuf: &'static wgpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
-            let ibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            let eibuf: &'static wgpu::Buffer = unsafe { &*(&mesh.edge_index_buffer as *const _) };
+            let vbuf: &'static crate::gpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
+            let ibuf: &'static crate::gpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
+            let eibuf: &'static crate::gpu::Buffer =
+                unsafe { &*(&mesh.edge_index_buffer as *const _) };
             (vbuf, ibuf, mesh.index_count, eibuf, mesh.edge_index_count)
         };
 
@@ -609,10 +616,10 @@ impl DeviceResources {
             })
             .collect();
 
-        let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let instance_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("tensor_glyph_instance_buf"),
             size: (std::mem::size_of::<TensorInstance>() * instances.len()).max(128) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&instance_buf, 0, bytemuck::cast_slice(&instances));
@@ -643,10 +650,10 @@ impl DeviceResources {
             _pad1c: 0.0,
             _pad2: [[0.0; 4]; 2],
         };
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("tensor_glyph_uniform_buf"),
             size: std::mem::size_of::<TensorGlyphUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
@@ -669,21 +676,21 @@ impl DeviceResources {
             .bgl
             .as_ref()
             .expect("ensure_tensor_glyph_pipeline not called");
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("tensor_glyph_uniform_bg"),
             layout: bgl1,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(lut_view),
+                    resource: crate::gpu::BindingResource::TextureView(lut_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(lut_sampler),
                 },
             ],
         });
@@ -693,10 +700,10 @@ impl DeviceResources {
             .instance_bgl
             .as_ref()
             .expect("ensure_tensor_glyph_pipeline not called");
-        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let instance_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("tensor_glyph_instance_bg"),
             layout: bgl2,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: instance_buf.as_entire_binding(),
             }],
@@ -724,7 +731,7 @@ impl DeviceResources {
     /// outlines follow the actual arrow/sphere shape.  Reuses the bind group
     /// layouts from the main glyph pipeline (must be called after
     /// `ensure_glyph_pipeline`).
-    pub(crate) fn ensure_glyph_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_glyph_outline_mask_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.glyph.outline_mask_pipeline.is_some() {
             return;
         }
@@ -762,11 +769,11 @@ impl DeviceResources {
                 "glyph_outline_mask_pipeline",
                 &layout,
                 &shader,
-                wgpu::TextureFormat::R8Unorm,
+                crate::gpu::TextureFormat::R8Unorm,
                 &[Vertex::buffer_layout()],
-                Some(wgpu::Face::Back),
+                Some(crate::gpu::Face::Back),
                 true,
-                wgpu::CompareFunction::Less,
+                crate::gpu::CompareFunction::Less,
             ));
     }
 
@@ -774,7 +781,10 @@ impl DeviceResources {
     ///
     /// Same idea as `ensure_glyph_outline_mask_pipeline` but for tensor
     /// glyph ellipsoids.  Must be called after `ensure_tensor_glyph_pipeline`.
-    pub(crate) fn ensure_tensor_glyph_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_tensor_glyph_outline_mask_pipeline(
+        &mut self,
+        device: &crate::gpu::Device,
+    ) {
         if self.tensor_glyph.outline_mask_pipeline.is_some() {
             return;
         }
@@ -808,19 +818,19 @@ impl DeviceResources {
                 "tensor_glyph_outline_mask_pipeline",
                 &layout,
                 &shader,
-                wgpu::TextureFormat::R8Unorm,
+                crate::gpu::TextureFormat::R8Unorm,
                 &[Vertex::buffer_layout()],
-                Some(wgpu::Face::Back),
+                Some(crate::gpu::Face::Back),
                 true,
-                wgpu::CompareFunction::Less,
+                crate::gpu::CompareFunction::Less,
             ));
     }
 
     /// Pre-upload a glyph set and return a typed handle.
     pub fn upload_glyph_set(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::GlyphItem,
     ) -> crate::resources::GlyphSetId {
         self.ensure_glyph_pipeline(device);
@@ -836,8 +846,8 @@ impl DeviceResources {
     /// Replace the geometry of a pre-uploaded glyph set, keeping the same id.
     pub fn replace_glyph_set(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::GlyphSetId,
         item: &crate::renderer::GlyphItem,
     ) -> bool {
@@ -852,8 +862,8 @@ impl DeviceResources {
     /// Start an asynchronous glyph set upload.
     pub fn begin_upload_glyph_set(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: crate::renderer::GlyphItem,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::GlyphSetId>::new();
@@ -912,8 +922,8 @@ impl DeviceResources {
     /// Pre-upload a tensor glyph set and return a typed handle.
     pub fn upload_tensor_glyph_set(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::TensorGlyphItem,
     ) -> crate::resources::TensorGlyphSetId {
         self.ensure_tensor_glyph_pipeline(device);
@@ -929,8 +939,8 @@ impl DeviceResources {
     /// Replace the geometry of a pre-uploaded tensor glyph set, keeping the same id.
     pub fn replace_tensor_glyph_set(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::TensorGlyphSetId,
         item: &crate::renderer::TensorGlyphItem,
     ) -> bool {
@@ -945,8 +955,8 @@ impl DeviceResources {
     /// Start an asynchronous tensor glyph set upload.
     pub fn begin_upload_tensor_glyph_set(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: crate::renderer::TensorGlyphItem,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::TensorGlyphSetId>::new();
@@ -1012,15 +1022,17 @@ mod tests {
     use crate::renderer::{GlyphItem, TensorGlyphItem};
     use crate::resources::UploadStatus;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn sample_glyph_set() -> GlyphItem {
@@ -1040,8 +1052,8 @@ mod tests {
 
     fn drive_until_ready(
         resources: &mut DeviceResources,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::JobId,
         label: &str,
     ) {
@@ -1065,7 +1077,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_glyph_set(&device, &queue, &sample_glyph_set());
         assert!(resources.content.glyph_set_store.contains(id));
         assert!(resources.drop_glyph_set(id));
@@ -1077,7 +1090,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_tensor_glyph_set(&device, &queue, &sample_tensor_glyph_set());
         assert!(resources.content.tensor_glyph_set_store.contains(id));
         assert!(resources.drop_tensor_glyph_set(id));
@@ -1089,7 +1103,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_glyph_set(&device, &queue, sample_glyph_set());
         drive_until_ready(&mut resources, &device, &queue, job, "glyph_set");
         let id = resources.upload_result_glyph_set(job).expect("ready");
@@ -1102,7 +1117,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job =
             resources.begin_upload_tensor_glyph_set(&device, &queue, sample_tensor_glyph_set());
         drive_until_ready(&mut resources, &device, &queue, job, "tensor_glyph_set");
@@ -1116,13 +1132,13 @@ mod tests {
 /// Cached GPU vertex + index buffers for a glyph base mesh (arrow, sphere, cube).
 pub(crate) struct GlyphBaseMesh {
     /// Vertex buffer using the full `Vertex` layout (64 bytes stride).
-    pub vertex_buffer: wgpu::Buffer,
+    pub vertex_buffer: crate::gpu::Buffer,
     /// Triangle index buffer.
-    pub index_buffer: wgpu::Buffer,
+    pub index_buffer: crate::gpu::Buffer,
     /// Number of indices.
     pub index_count: u32,
     /// Edge index buffer (deduplicated pairs) for wireframe LineList rendering.
-    pub edge_index_buffer: wgpu::Buffer,
+    pub edge_index_buffer: crate::gpu::Buffer,
     /// Number of indices in the edge buffer.
     pub edge_index_count: u32,
 }
@@ -1132,13 +1148,13 @@ pub struct GlyphGpuData {
     /// Vertex buffer for the glyph base mesh (borrowed from cached `GlyphBaseMesh`).
     /// We keep a reference via raw pointer : `DeviceResources` owns the mesh.
     /// Safety: the mesh lives as long as `DeviceResources`.
-    pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
+    pub(crate) mesh_vertex_buffer: &'static crate::gpu::Buffer,
     /// Triangle index buffer for the glyph base mesh.
-    pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
+    pub(crate) mesh_index_buffer: &'static crate::gpu::Buffer,
     /// Number of triangle mesh indices.
     pub(crate) mesh_index_count: u32,
     /// Edge index buffer for wireframe LineList rendering (borrowed from cached `GlyphBaseMesh`).
-    pub(crate) mesh_edge_index_buffer: &'static wgpu::Buffer,
+    pub(crate) mesh_edge_index_buffer: &'static crate::gpu::Buffer,
     /// Number of edge indices.
     pub(crate) mesh_edge_index_count: u32,
     /// Number of glyph instances.
@@ -1149,12 +1165,12 @@ pub struct GlyphGpuData {
     /// Whether this batch should be drawn with the wireframe pipeline.
     pub(crate) wireframe: bool,
     /// Bind group (group 1): glyph uniform + LUT texture + sampler.
-    pub(crate) uniform_bind_group: wgpu::BindGroup,
+    pub(crate) uniform_bind_group: crate::gpu::BindGroup,
     /// Bind group (group 2): instance storage buffer.
-    pub(crate) instance_bind_group: wgpu::BindGroup,
+    pub(crate) instance_bind_group: crate::gpu::BindGroup,
     // Keep the buffers alive.
-    pub(crate) _uniform_buf: wgpu::Buffer,
-    pub(crate) _instance_buf: wgpu::Buffer,
+    pub(crate) _uniform_buf: crate::gpu::Buffer,
+    pub(crate) _instance_buf: crate::gpu::Buffer,
 }
 
 /// Per-frame GPU data for one tensor glyph item, created in `prepare()`.
@@ -1163,13 +1179,13 @@ pub struct GlyphGpuData {
 #[derive(Clone)]
 pub struct TensorGlyphGpuData {
     /// Vertex buffer for the sphere base mesh (borrowed).
-    pub(crate) mesh_vertex_buffer: &'static wgpu::Buffer,
+    pub(crate) mesh_vertex_buffer: &'static crate::gpu::Buffer,
     /// Triangle index buffer for the sphere base mesh (borrowed).
-    pub(crate) mesh_index_buffer: &'static wgpu::Buffer,
+    pub(crate) mesh_index_buffer: &'static crate::gpu::Buffer,
     /// Number of triangle mesh indices.
     pub(crate) mesh_index_count: u32,
     /// Edge index buffer for wireframe LineList rendering (borrowed from sphere mesh).
-    pub(crate) mesh_edge_index_buffer: &'static wgpu::Buffer,
+    pub(crate) mesh_edge_index_buffer: &'static crate::gpu::Buffer,
     /// Number of edge indices.
     pub(crate) mesh_edge_index_count: u32,
     /// Number of tensor glyph instances.
@@ -1180,10 +1196,10 @@ pub struct TensorGlyphGpuData {
     /// Whether this batch should be drawn with the wireframe pipeline.
     pub(crate) wireframe: bool,
     /// Bind group (group 1): uniform + LUT texture + sampler.
-    pub(crate) uniform_bind_group: wgpu::BindGroup,
+    pub(crate) uniform_bind_group: crate::gpu::BindGroup,
     /// Bind group (group 2): per-instance storage buffer.
-    pub(crate) instance_bind_group: wgpu::BindGroup,
+    pub(crate) instance_bind_group: crate::gpu::BindGroup,
     // Keep buffers alive.
-    pub(crate) _uniform_buf: wgpu::Buffer,
-    pub(crate) _instance_buf: wgpu::Buffer,
+    pub(crate) _uniform_buf: crate::gpu::Buffer,
+    pub(crate) _instance_buf: crate::gpu::Buffer,
 }

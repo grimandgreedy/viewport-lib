@@ -219,7 +219,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// The plugin reuses `shared.group0_layout` as group 0 of its pipeline
     /// layouts. See [`SharedBindings`](crate::plugin_api::SharedBindings)
     /// for the binding inventory.
-    fn init_gpu(&mut self, _device: &wgpu::Device, _shared: &SharedBindings<'_>) {}
+    fn init_gpu(&mut self, _device: &crate::gpu::Device, _shared: &SharedBindings<'_>) {}
 
     /// Called when the wgpu device is recreated, e.g. after device loss or a
     /// host-driven reset. Every pipeline, buffer, texture, or bind group the
@@ -232,7 +232,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// it is next used, so a typical implementation drops its cached resources
     /// here and lets `init_gpu` rebuild them. Matches
     /// [`GpuPlugin::on_device_recreated`](crate::runtime::GpuPlugin::on_device_recreated).
-    fn on_device_recreated(&mut self, _device: &wgpu::Device, _queue: &wgpu::Queue) {}
+    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {}
 
     /// Encode per-frame prepare work for this plugin's items.
     ///
@@ -253,11 +253,11 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// method for the frame.
     fn prepare(
         &mut self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        _device: &crate::gpu::Device,
+        _queue: &crate::gpu::Queue,
         _ctx: &ItemFrameContext<'_>,
         _items: &dyn PluginItemCollection,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         Vec::new()
     }
 
@@ -272,7 +272,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// lib does not pre-filter the collection.
     fn paint<'a>(
         &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
+        _pass: &mut crate::gpu::RenderPass<'a>,
         _ctx: &PaintContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {
@@ -291,7 +291,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// Plugins that ship only opaque items leave this empty.
     fn paint_transparent<'a>(
         &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
+        _pass: &mut crate::gpu::RenderPass<'a>,
         _ctx: &PaintContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {
@@ -312,7 +312,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// this empty.
     fn outline_mask<'a>(
         &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
+        _pass: &mut crate::gpu::RenderPass<'a>,
         _ctx: &OutlineMaskContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {
@@ -350,7 +350,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// this empty.
     fn cast_shadow_pass<'a>(
         &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
+        _pass: &mut crate::gpu::RenderPass<'a>,
         _ctx: &ShadowCastContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {
@@ -402,7 +402,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// Default no-op: plugins relying on the CPU path leave this empty.
     fn render_pick<'a>(
         &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
+        _pass: &mut crate::gpu::RenderPass<'a>,
         _ctx: &PickPassContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {

@@ -29,7 +29,7 @@ pub(super) struct MainCullExtras<'a> {
     pub(super) viewport: [f32; 2],
     /// Full-mip HiZ view to sample. `None` when no pyramid is available yet
     /// (first frame, or occlusion disabled); the reject is skipped.
-    pub(super) hiz_view: Option<&'a wgpu::TextureView>,
+    pub(super) hiz_view: Option<&'a crate::gpu::TextureView>,
     /// Caller's request to run the occlusion test. Ignored when `hiz_view`
     /// is `None`.
     pub(super) do_occlusion: bool,
@@ -38,40 +38,40 @@ pub(super) struct MainCullExtras<'a> {
 /// Cull compute pipelines and the lib's shared scratch buffers.
 pub(super) struct CullResources {
     /// Compute pipeline for `cull_instances` (workgroup 64).
-    cull_instances_pipeline: wgpu::ComputePipeline,
+    cull_instances_pipeline: crate::gpu::ComputePipeline,
     /// Compute pipeline for `write_indirect_args` (workgroup 64).
-    write_indirect_args_pipeline: wgpu::ComputePipeline,
+    write_indirect_args_pipeline: crate::gpu::ComputePipeline,
     /// Shared bind group layout for both pipelines (6 entries, all COMPUTE).
-    bgl: wgpu::BindGroupLayout,
+    bgl: crate::gpu::BindGroupLayout,
     /// Frustum uniform for the main-camera dispatch. One slot, overwritten
     /// each frame.
-    pub(super) frustum_buf: wgpu::Buffer,
+    pub(super) frustum_buf: crate::gpu::Buffer,
     /// Per-cascade frustum uniforms. Separate slots so a single frame can
     /// submit the main pass plus every cascade without overwriting an
     /// in-flight upload.
-    pub(super) cascade_frustum_bufs: [wgpu::Buffer; 4],
+    pub(super) cascade_frustum_bufs: [crate::gpu::Buffer; 4],
     /// Scratch `BatchMeta` slot for one-mesh submissions that come through
     /// `submit_cull_single_mesh`. One entry, overwritten per call.
-    scratch_meta_buf: wgpu::Buffer,
+    scratch_meta_buf: crate::gpu::Buffer,
     /// Scratch counter slot paired with `scratch_meta_buf`. One u32,
     /// zeroed per call.
-    scratch_counter_buf: wgpu::Buffer,
+    scratch_counter_buf: crate::gpu::Buffer,
     /// 1x1 R32Float texture bound at binding 6 when a dispatch has no HiZ
     /// pyramid (shadow, single-mesh, or occlusion disabled). Keeps the bind
     /// group layout satisfied; never sampled because `do_occlusion` is 0.
-    fallback_hiz_view: wgpu::TextureView,
+    fallback_hiz_view: crate::gpu::TextureView,
     /// Cull breakdown counters for the main dispatch: [total, frustum_visible].
     /// Cleared each main dispatch, copied to the readback staging buffer.
-    main_stats_buf: wgpu::Buffer,
+    main_stats_buf: crate::gpu::Buffer,
     /// Stats slot for non-main dispatches (shadow, single-mesh). Written but
     /// never read back.
-    scratch_stats_buf: wgpu::Buffer,
+    scratch_stats_buf: crate::gpu::Buffer,
 }
 
 impl CullResources {
     /// Build the pipelines, BGL, and the shared scratch buffers.
-    pub(super) fn new(device: &wgpu::Device) -> Self {
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    pub(super) fn new(device: &crate::gpu::Device) -> Self {
+        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("cull_bgl"),
             entries: &Self::bgl_entries(),
         });
@@ -101,65 +101,66 @@ impl CullResources {
             "write_indirect_args",
         );
 
-        let frustum_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let frustum_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cull_frustum_buf"),
             size: std::mem::size_of::<FrustumUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let cascade_frustum_bufs = std::array::from_fn(|i| {
-            device.create_buffer(&wgpu::BufferDescriptor {
+            device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some(&format!("cull_cascade_frustum_buf_{i}")),
                 size: std::mem::size_of::<FrustumUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
         });
 
-        let scratch_meta_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let scratch_meta_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cull_scratch_meta_buf"),
             size: std::mem::size_of::<BatchMeta>() as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let scratch_counter_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let scratch_counter_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cull_scratch_counter_buf"),
             size: 4,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let fallback_hiz = device.create_texture(&wgpu::TextureDescriptor {
+        let fallback_hiz = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("cull_fallback_hiz"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::R32Float,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let fallback_hiz_view = fallback_hiz.create_view(&wgpu::TextureViewDescriptor::default());
+        let fallback_hiz_view =
+            fallback_hiz.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // Two u32 counters: [total, frustum_visible]. COPY_SRC for the readback
         // copy, COPY_DST for the per-frame clear.
-        let main_stats_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let main_stats_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cull_main_stats_buf"),
             size: 8,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::COPY_SRC
+                | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let scratch_stats_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let scratch_stats_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cull_scratch_stats_buf"),
             size: 8,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -179,7 +180,7 @@ impl CullResources {
 
     /// Borrow the main-cull stats buffer ([total, frustum_visible]) so the
     /// instanced prepare path can copy it into its readback staging buffer.
-    pub(super) fn main_stats_buf(&self) -> &wgpu::Buffer {
+    pub(super) fn main_stats_buf(&self) -> &crate::gpu::Buffer {
         &self.main_stats_buf
     }
 
@@ -195,13 +196,13 @@ impl CullResources {
     /// and single-mesh culls pass `None` and are not timed.
     pub(super) fn dispatch(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frustum: &Frustum,
         cascade: Option<usize>,
         sub: &CullSubmission<'_>,
-        ts: Option<(&wgpu::QuerySet, &std::sync::atomic::AtomicU32)>,
+        ts: Option<(&crate::gpu::QuerySet, &std::sync::atomic::AtomicU32)>,
         extras: Option<&MainCullExtras<'_>>,
     ) {
         let frustum_buf = match cascade {
@@ -266,39 +267,39 @@ impl CullResources {
             None => "cull_bg".to_string(),
             Some(c) => format!("cull_shadow_bg_{c}"),
         };
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some(&label),
             layout: &self.bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: frustum_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
                     resource: sub.instance_aabbs.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: sub.batch_meta.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 3,
                     resource: sub.counter.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 4,
                     resource: sub.visible_out.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 5,
                     resource: sub.indirect_out.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
-                    resource: wgpu::BindingResource::TextureView(hiz_view),
+                    resource: crate::gpu::BindingResource::TextureView(hiz_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 7,
                     resource: stats_buf.as_entire_binding(),
                 },
@@ -323,12 +324,12 @@ impl CullResources {
             Some((qs, mask)) => {
                 mask.fetch_or(1 << cull_slot, std::sync::atomic::Ordering::Relaxed);
                 (
-                    Some(wgpu::ComputePassTimestampWrites {
+                    Some(crate::gpu::ComputePassTimestampWrites {
                         query_set: qs,
                         beginning_of_pass_write_index: Some(cull_slot * 2),
                         end_of_pass_write_index: None,
                     }),
-                    Some(wgpu::ComputePassTimestampWrites {
+                    Some(crate::gpu::ComputePassTimestampWrites {
                         query_set: qs,
                         beginning_of_pass_write_index: None,
                         end_of_pass_write_index: Some(cull_slot * 2 + 1),
@@ -339,7 +340,7 @@ impl CullResources {
         };
 
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some(&pass1_label),
                 timestamp_writes: ts_begin,
             });
@@ -348,7 +349,7 @@ impl CullResources {
             pass.dispatch_workgroups(sub.instance_count.div_ceil(64), 1, 1);
         }
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some(&pass2_label),
                 timestamp_writes: ts_end,
             });
@@ -362,74 +363,74 @@ impl CullResources {
     /// `submit_cull_single_mesh`. The renderer fills these before each
     /// single-mesh dispatch and passes them through as the submission's
     /// `batch_meta` and `counter` buffers.
-    pub(super) fn scratch_single_mesh_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer) {
+    pub(super) fn scratch_single_mesh_buffers(&self) -> (&crate::gpu::Buffer, &crate::gpu::Buffer) {
         (&self.scratch_meta_buf, &self.scratch_counter_buf)
     }
 
-    fn bgl_entries() -> [wgpu::BindGroupLayoutEntry; CULL_BGL_ENTRY_COUNT] {
-        let compute = wgpu::ShaderStages::COMPUTE;
+    fn bgl_entries() -> [crate::gpu::BindGroupLayoutEntry; CULL_BGL_ENTRY_COUNT] {
+        let compute = crate::gpu::ShaderStages::COMPUTE;
         [
             // binding 0: frustum uniform
-            wgpu::BindGroupLayoutEntry {
+            crate::gpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: compute,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
                 count: None,
             },
             // binding 1: instance_aabbs (read-only storage)
-            wgpu::BindGroupLayoutEntry {
+            crate::gpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: compute,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
                 count: None,
             },
             // binding 2: batch_meta (read-only storage)
-            wgpu::BindGroupLayoutEntry {
+            crate::gpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: compute,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
                 count: None,
             },
             // binding 3: batch counters (atomic, read-write storage)
-            wgpu::BindGroupLayoutEntry {
+            crate::gpu::BindGroupLayoutEntry {
                 binding: 3,
                 visibility: compute,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
                 count: None,
             },
             // binding 4: visibility output (read-write storage)
-            wgpu::BindGroupLayoutEntry {
+            crate::gpu::BindGroupLayoutEntry {
                 binding: 4,
                 visibility: compute,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
                 count: None,
             },
             // binding 5: indirect args (read-write storage)
-            wgpu::BindGroupLayoutEntry {
+            crate::gpu::BindGroupLayoutEntry {
                 binding: 5,
                 visibility: compute,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -437,22 +438,22 @@ impl CullResources {
             },
             // binding 6: HiZ max-depth pyramid (R32Float, non-filterable, sampled
             // via textureLoad).
-            wgpu::BindGroupLayoutEntry {
+            crate::gpu::BindGroupLayoutEntry {
                 binding: 6,
                 visibility: compute,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
                 count: None,
             },
             // binding 7: cull breakdown counters (read-write storage)
-            wgpu::BindGroupLayoutEntry {
+            crate::gpu::BindGroupLayoutEntry {
                 binding: 7,
                 visibility: compute,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },

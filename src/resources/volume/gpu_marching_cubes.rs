@@ -7,8 +7,8 @@
 //!
 //! The output is drawn with a lightweight Phong render pipeline via `draw_indirect`.
 
+use crate::gpu::util::DeviceExt as _;
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt as _;
 
 use crate::{
     geometry::marching_cubes::{TRI_TABLE, VolumeData},
@@ -24,21 +24,21 @@ use crate::{
 /// state keyed by submission order.
 #[derive(Default)]
 pub(crate) struct McResources {
-    pub(crate) classify_pipeline: Option<wgpu::ComputePipeline>,
-    pub(crate) prefix_sum_pipeline: Option<wgpu::ComputePipeline>,
-    pub(crate) generate_pipeline: Option<wgpu::ComputePipeline>,
+    pub(crate) classify_pipeline: Option<crate::gpu::ComputePipeline>,
+    pub(crate) prefix_sum_pipeline: Option<crate::gpu::ComputePipeline>,
+    pub(crate) generate_pipeline: Option<crate::gpu::ComputePipeline>,
     pub(crate) surface_pipeline: Option<DualPipeline>,
     pub(crate) wireframe_pipeline: Option<DualPipeline>,
-    pub(crate) wireframe_render_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) classify_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) prefix_sum_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) generate_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) render_bgl: Option<wgpu::BindGroupLayout>,
-    pub(crate) case_count_buf: Option<wgpu::Buffer>,
-    pub(crate) case_table_buf: Option<wgpu::Buffer>,
+    pub(crate) wireframe_render_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) classify_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) prefix_sum_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) generate_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) render_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) case_count_buf: Option<crate::gpu::Buffer>,
+    pub(crate) case_table_buf: Option<crate::gpu::Buffer>,
     pub(crate) volumes: Vec<McVolumeGpuData>,
     /// Outline mask pipeline for MC surfaces (stride-24 vertex buffer, draw_indirect).
-    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,16 +68,16 @@ crate::resources::handle::slot_handle! {
 /// Adjacent slabs share exactly one scalar Z-layer at their boundary so MC
 /// edge interpolation produces no seams.
 pub(crate) struct McSlabGpuData {
-    pub scalar_buf: wgpu::Buffer,   // f32 per slab node; STORAGE | COPY_DST
-    pub counts_buf: wgpu::Buffer,   // u32 per slab cell; STORAGE
-    pub case_idx_buf: wgpu::Buffer, // u32 per slab cell; STORAGE
-    pub offsets_buf: wgpu::Buffer,  // u32 per slab cell; STORAGE
-    pub block_sums_buf: wgpu::Buffer, // u32 per slab block; STORAGE
-    pub vertex_buf: wgpu::Buffer,   // f32 * 6 per vertex; STORAGE | VERTEX
-    pub indirect_buf: wgpu::Buffer, // 4 u32; STORAGE | INDIRECT (surface draw)
-    pub wire_indirect_buf: wgpu::Buffer, // 4 u32; STORAGE | INDIRECT (wireframe draw)
-    pub dims: [u32; 3],             // [nx, ny, slab_nz] (scalar layers)
-    pub origin: [f32; 3],           // world origin; z is offset per slab
+    pub scalar_buf: crate::gpu::Buffer, // f32 per slab node; STORAGE | COPY_DST
+    pub counts_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
+    pub case_idx_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
+    pub offsets_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
+    pub block_sums_buf: crate::gpu::Buffer, // u32 per slab block; STORAGE
+    pub vertex_buf: crate::gpu::Buffer, // f32 * 6 per vertex; STORAGE | VERTEX
+    pub indirect_buf: crate::gpu::Buffer, // 4 u32; STORAGE | INDIRECT (surface draw)
+    pub wire_indirect_buf: crate::gpu::Buffer, // 4 u32; STORAGE | INDIRECT (wireframe draw)
+    pub dims: [u32; 3],                 // [nx, ny, slab_nz] (scalar layers)
+    pub origin: [f32; 3],               // world origin; z is offset per slab
     pub spacing: [f32; 3],
     pub cell_count: u32,
     pub block_count: u32,
@@ -119,19 +119,19 @@ impl McVolumeGpuData {
 /// Per-frame data for one MC job, consumed by the render phase.
 pub(crate) struct McFrameData {
     pub volume_idx: usize,
-    pub render_bg: wgpu::BindGroup,
+    pub render_bg: crate::gpu::BindGroup,
     /// True if this job was submitted with `appearance.wireframe = true`.
     pub wireframe: bool,
     /// Per-slab bind groups for the wireframe pipeline (binding 0 = vertex storage buffer).
-    pub wire_slab_bgs: Vec<wgpu::BindGroup>,
+    pub wire_slab_bgs: Vec<crate::gpu::BindGroup>,
 }
 
 /// Per-selected MC job data for the outline mask pass.
 pub(crate) struct McOutlineItem {
     /// Index into `mc_gpu_data` (frame-level array of processed MC jobs).
     pub mc_gpu_idx: usize,
-    pub _uniform_buf: wgpu::Buffer,
-    pub mask_bind_group: wgpu::BindGroup,
+    pub _uniform_buf: crate::gpu::Buffer,
+    pub mask_bind_group: crate::gpu::BindGroup,
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ impl DeviceResources {
     /// Lazily create all GPU MC pipelines and shared lookup buffers.
     ///
     /// No-op if already initialised.
-    pub(crate) fn ensure_mc_pipelines(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_mc_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.mc.classify_pipeline.is_some() {
             return;
         }
@@ -237,66 +237,71 @@ impl DeviceResources {
         // Shared lookup buffers (uploaded once).
         // ----------------------------------------------------------------
         let count_table = case_triangle_count_table();
-        let mc_case_count_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mc_case_count_buf"),
-            contents: bytemuck::cast_slice(&count_table),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let mc_case_count_buf =
+            device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                label: Some("mc_case_count_buf"),
+                contents: bytemuck::cast_slice(&count_table),
+                usage: crate::gpu::BufferUsages::STORAGE,
+            });
 
         let flat_table = case_table_flat();
-        let mc_case_table_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mc_case_table_buf"),
-            contents: bytemuck::cast_slice(&flat_table),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let mc_case_table_buf =
+            device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                label: Some("mc_case_table_buf"),
+                contents: bytemuck::cast_slice(&flat_table),
+                usage: crate::gpu::BufferUsages::STORAGE,
+            });
 
         // ----------------------------------------------------------------
         // Bind group layouts.
         // ----------------------------------------------------------------
 
         // Classify: 5 bindings (uniform + 2 read storage + 2 rw storage).
-        let classify_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("mc_classify_bgl"),
-            entries: &[
-                bgl_uniform(0),
-                bgl_storage_ro(1),
-                bgl_storage_ro(2),
-                bgl_storage_rw(3),
-                bgl_storage_rw(4),
-            ],
-        });
+        let classify_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("mc_classify_bgl"),
+                entries: &[
+                    bgl_uniform(0),
+                    bgl_storage_ro(1),
+                    bgl_storage_ro(2),
+                    bgl_storage_rw(3),
+                    bgl_storage_rw(4),
+                ],
+            });
 
         // Prefix sum: 6 bindings (uniform + ro + 3 rw + wire_indirect_buf rw).
-        let prefix_sum_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("mc_prefix_sum_bgl"),
-            entries: &[
-                bgl_uniform(0),
-                bgl_storage_ro(1),
-                bgl_storage_rw(2),
-                bgl_storage_rw(3),
-                bgl_storage_rw(4),
-                bgl_storage_rw(5), // wire_indirect_buf
-            ],
-        });
+        let prefix_sum_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("mc_prefix_sum_bgl"),
+                entries: &[
+                    bgl_uniform(0),
+                    bgl_storage_ro(1),
+                    bgl_storage_rw(2),
+                    bgl_storage_rw(3),
+                    bgl_storage_rw(4),
+                    bgl_storage_rw(5), // wire_indirect_buf
+                ],
+            });
 
         // Generate: 6 bindings (uniform + 3 ro + 2 rw [case_indices ro, vertex_buf rw]).
-        let generate_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("mc_generate_bgl"),
-            entries: &[
-                bgl_uniform(0),
-                bgl_storage_ro(1),
-                bgl_storage_ro(2),
-                bgl_storage_ro(3),
-                bgl_storage_ro(4),
-                bgl_storage_rw(5),
-            ],
-        });
+        let generate_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("mc_generate_bgl"),
+                entries: &[
+                    bgl_uniform(0),
+                    bgl_storage_ro(1),
+                    bgl_storage_ro(2),
+                    bgl_storage_ro(3),
+                    bgl_storage_ro(4),
+                    bgl_storage_rw(5),
+                ],
+            });
 
         // Surface render: one per-draw material uniform.
         let render_bgl = crate::resources::builders::uniform_bgl(
             device,
             "mc_render_bgl",
-            wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::FRAGMENT,
         );
 
         // ----------------------------------------------------------------
@@ -372,20 +377,20 @@ impl DeviceResources {
         );
 
         let vertex_attrs = [
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
+            crate::gpu::VertexAttribute {
+                format: crate::gpu::VertexFormat::Float32x3,
                 offset: 0,
                 shader_location: 0,
             },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
+            crate::gpu::VertexAttribute {
+                format: crate::gpu::VertexFormat::Float32x3,
                 offset: 12,
                 shader_location: 1,
             },
         ];
-        let vertex_layout = wgpu::VertexBufferLayout {
+        let vertex_layout = crate::gpu::VertexBufferLayout {
             array_stride: 24,
-            step_mode: wgpu::VertexStepMode::Vertex,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
             attributes: &vertex_attrs,
         };
 
@@ -393,13 +398,13 @@ impl DeviceResources {
         // Wireframe render pipeline.
         // ----------------------------------------------------------------
         let wireframe_render_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("mc_wireframe_render_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+                entries: &[crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -439,11 +444,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[vertex_layout.clone()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_compare: crate::gpu::CompareFunction::LessEqual,
                 sample_count: 1,
                 ldr_format: self.target_format,
             },
@@ -458,11 +463,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[], // positions read from storage buffer
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::LineList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::LineList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_compare: crate::gpu::CompareFunction::LessEqual,
                 sample_count: 1,
                 ldr_format: self.target_format,
             },
@@ -479,8 +484,8 @@ impl DeviceResources {
     /// extraction.
     pub fn upload_volume_for_mc(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         vol: &VolumeData,
     ) -> crate::ViewportResult<McVolumeId> {
         // Build the MC compute and render pipelines now so a load-time upload
@@ -523,8 +528,8 @@ impl DeviceResources {
 /// CPU + GPU-buffer work for an MC volume upload, factored out so the same
 /// code can run on a worker thread for the async path.
 pub(crate) fn build_mc_volume_gpu_data(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     vol: &VolumeData,
 ) -> crate::ViewportResult<McVolumeGpuData> {
     {
@@ -584,57 +589,58 @@ pub(crate) fn build_mc_volume_gpu_data(
             let scalar_end = (z_cell_start + slab_nz) as usize * nodes_per_z;
             let slab_origin_z = vol.origin[2] + z_cell_start as f32 * vol.spacing[2];
 
-            let scalar_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let scalar_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("mc_scalar_buf"),
                 contents: bytemuck::cast_slice(&vol.data[scalar_start..scalar_end]),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             });
-            let counts_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let counts_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("mc_counts_buf"),
                 size: slab_cell_bytes,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: crate::gpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let case_idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let case_idx_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("mc_case_idx_buf"),
                 size: slab_cell_bytes,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: crate::gpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let offsets_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let offsets_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("mc_offsets_buf"),
                 size: slab_cell_bytes,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: crate::gpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let block_sums_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let block_sums_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("mc_block_sums_buf"),
                 size: slab_block_bytes,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: crate::gpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let vertex_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("mc_vertex_buf"),
                 size: slab_vertex_bytes,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::VERTEX,
                 mapped_at_creation: false,
             });
             let initial_indirect = bytemuck::cast_slice(&[0u32, 1u32, 0u32, 0u32]);
-            let indirect_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let indirect_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("mc_indirect_buf"),
                 // Initial: 0 vertices, 1 instance, 0 first_vertex, 0 first_instance.
                 contents: initial_indirect,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::INDIRECT
-                    | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE
+                    | crate::gpu::BufferUsages::INDIRECT
+                    | crate::gpu::BufferUsages::COPY_DST,
             });
-            let wire_indirect_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mc_wire_indirect_buf"),
-                contents: initial_indirect,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::INDIRECT
-                    | wgpu::BufferUsages::COPY_DST,
-            });
+            let wire_indirect_buf =
+                device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                    label: Some("mc_wire_indirect_buf"),
+                    contents: initial_indirect,
+                    usage: crate::gpu::BufferUsages::STORAGE
+                        | crate::gpu::BufferUsages::INDIRECT
+                        | crate::gpu::BufferUsages::COPY_DST,
+                });
 
             slabs.push(McSlabGpuData {
                 scalar_buf,
@@ -684,8 +690,8 @@ impl DeviceResources {
     /// `max_storage_buffer_binding_size` cannot fit a single Z-cell layer.
     pub fn begin_upload_volume_for_mc(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         vol: VolumeData,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<McVolumeId>::new();
@@ -777,7 +783,7 @@ impl DeviceResources {
     /// buffer matches the MC output format: stride 24 (position f32x3 at offset 0,
     /// normal f32x3 at offset 12). Uses the existing `outline_mask.wgsl` shader since
     /// only position is needed. No-op if already created.
-    pub(crate) fn ensure_mc_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_mc_outline_mask_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.mc.outline_mask_pipeline.is_some() {
             return;
         }
@@ -798,14 +804,14 @@ impl DeviceResources {
             ],
         );
 
-        let vert_attrs = [wgpu::VertexAttribute {
+        let vert_attrs = [crate::gpu::VertexAttribute {
             offset: 0,
             shader_location: 0,
-            format: wgpu::VertexFormat::Float32x3,
+            format: crate::gpu::VertexFormat::Float32x3,
         }];
-        let vert_layout = wgpu::VertexBufferLayout {
+        let vert_layout = crate::gpu::VertexBufferLayout {
             array_stride: 24, // position (12 bytes) + normal (12 bytes)
-            step_mode: wgpu::VertexStepMode::Vertex,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
             attributes: &vert_attrs,
         };
 
@@ -817,11 +823,11 @@ impl DeviceResources {
                 "mc_outline_mask_pipeline",
                 &layout,
                 &shader,
-                wgpu::TextureFormat::R8Unorm,
+                crate::gpu::TextureFormat::R8Unorm,
                 &[vert_layout],
                 None,
                 true,
-                wgpu::CompareFunction::LessEqual,
+                crate::gpu::CompareFunction::LessEqual,
             ));
     }
 
@@ -830,8 +836,8 @@ impl DeviceResources {
     /// Returns the per-frame render data to be stored in `ViewportRenderer.mc_gpu_data`.
     pub(crate) fn run_mc_jobs(
         &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         jobs: &[GpuMarchingCubesJob],
     ) -> Vec<McFrameData> {
         if jobs.is_empty() {
@@ -849,7 +855,7 @@ impl DeviceResources {
         let case_table_buf = self.mc.case_table_buf.as_ref().unwrap();
 
         let mut frame_data = Vec::with_capacity(jobs.len());
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("mc_compute_encoder"),
         });
 
@@ -869,15 +875,15 @@ impl DeviceResources {
                 ambient: job.material.ambient,
                 _pad: 0,
             };
-            let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let mat_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("mc_surface_mat"),
                 contents: bytemuck::bytes_of(&mat_raw),
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: crate::gpu::BufferUsages::UNIFORM,
             });
-            let render_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let render_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("mc_render_bg"),
                 layout: render_bgl,
-                entries: &[wgpu::BindGroupEntry {
+                entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: mat_buf.as_entire_binding(),
                 }],
@@ -898,33 +904,33 @@ impl DeviceResources {
                     isovalue: job.isovalue,
                 };
                 let classify_uniform =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                         label: Some("mc_classify_uniform"),
                         contents: bytemuck::bytes_of(&classify_params),
-                        usage: wgpu::BufferUsages::UNIFORM,
+                        usage: crate::gpu::BufferUsages::UNIFORM,
                     });
 
-                let classify_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let classify_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("mc_classify_bg"),
                     layout: classify_bgl,
                     entries: &[
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: classify_uniform.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 1,
                             resource: slab.scalar_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 2,
                             resource: case_count_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 3,
                             resource: slab.counts_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 4,
                             resource: slab.case_idx_buf.as_entire_binding(),
                         },
@@ -934,46 +940,46 @@ impl DeviceResources {
                 // ----------------------------------------------------------
                 // Per-slab prefix-sum uniforms (one per level).
                 // ----------------------------------------------------------
-                let ps_uniforms: [wgpu::Buffer; 3] = std::array::from_fn(|level| {
+                let ps_uniforms: [crate::gpu::Buffer; 3] = std::array::from_fn(|level| {
                     let params = PrefixSumParams {
                         cell_count: cc,
                         block_count: bc,
                         level: level as u32,
                         _pad: 0,
                     };
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                         label: Some("mc_ps_uniform"),
                         contents: bytemuck::bytes_of(&params),
-                        usage: wgpu::BufferUsages::UNIFORM,
+                        usage: crate::gpu::BufferUsages::UNIFORM,
                     })
                 });
 
-                let ps_bgs: [wgpu::BindGroup; 3] = std::array::from_fn(|level| {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let ps_bgs: [crate::gpu::BindGroup; 3] = std::array::from_fn(|level| {
+                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("mc_ps_bg"),
                         layout: prefix_sum_bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
                                 resource: ps_uniforms[level].as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
                                 resource: slab.counts_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 2,
                                 resource: slab.offsets_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 3,
                                 resource: slab.block_sums_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 4,
                                 resource: slab.indirect_buf.as_entire_binding(),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 5,
                                 resource: slab.wire_indirect_buf.as_entire_binding(),
                             },
@@ -999,37 +1005,37 @@ impl DeviceResources {
                     _pad1: 0.0,
                 };
                 let generate_uniform =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                         label: Some("mc_generate_uniform"),
                         contents: bytemuck::bytes_of(&generate_params),
-                        usage: wgpu::BufferUsages::UNIFORM,
+                        usage: crate::gpu::BufferUsages::UNIFORM,
                     });
 
-                let generate_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let generate_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("mc_generate_bg"),
                     layout: generate_bgl,
                     entries: &[
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: generate_uniform.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 1,
                             resource: slab.scalar_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 2,
                             resource: case_table_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 3,
                             resource: slab.offsets_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 4,
                             resource: slab.case_idx_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 5,
                             resource: slab.vertex_buf.as_entire_binding(),
                         },
@@ -1040,7 +1046,7 @@ impl DeviceResources {
                 // Pass 1: classify.
                 // ----------------------------------------------------------
                 {
-                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    let mut cp = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                         label: Some("mc_classify_pass"),
                         timestamp_writes: None,
                     });
@@ -1053,7 +1059,7 @@ impl DeviceResources {
                 // Pass 2a: prefix sum level 0.
                 // ----------------------------------------------------------
                 {
-                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    let mut cp = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                         label: Some("mc_ps_level0_pass"),
                         timestamp_writes: None,
                     });
@@ -1066,7 +1072,7 @@ impl DeviceResources {
                 // Pass 2b: prefix sum level 1 (single workgroup, sequential).
                 // ----------------------------------------------------------
                 {
-                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    let mut cp = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                         label: Some("mc_ps_level1_pass"),
                         timestamp_writes: None,
                     });
@@ -1079,7 +1085,7 @@ impl DeviceResources {
                 // Pass 2c: prefix sum level 2 (propagate block offsets).
                 // ----------------------------------------------------------
                 {
-                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    let mut cp = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                         label: Some("mc_ps_level2_pass"),
                         timestamp_writes: None,
                     });
@@ -1092,7 +1098,7 @@ impl DeviceResources {
                 // Pass 3: generate vertices.
                 // ----------------------------------------------------------
                 {
-                    let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    let mut cp = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                         label: Some("mc_generate_pass"),
                         timestamp_writes: None,
                     });
@@ -1102,15 +1108,15 @@ impl DeviceResources {
                 }
             }
 
-            let wire_slab_bgs: Vec<wgpu::BindGroup> =
+            let wire_slab_bgs: Vec<crate::gpu::BindGroup> =
                 if let Some(ref wire_bgl) = self.mc.wireframe_render_bgl {
                     vol.slabs
                         .iter()
                         .map(|slab| {
-                            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                                 label: Some("mc_wire_slab_bg"),
                                 layout: wire_bgl,
-                                entries: &[wgpu::BindGroupEntry {
+                                entries: &[crate::gpu::BindGroupEntry {
                                     binding: 0,
                                     resource: slab.vertex_buf.as_entire_binding(),
                                 }],
@@ -1138,12 +1144,12 @@ impl DeviceResources {
 // Bind group layout entry helpers
 // ---------------------------------------------------------------------------
 
-fn bgl_uniform(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+fn bgl_uniform(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
+        visibility: crate::gpu::ShaderStages::COMPUTE,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
             min_binding_size: None,
         },
@@ -1151,12 +1157,12 @@ fn bgl_uniform(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-fn bgl_storage_ro(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+fn bgl_storage_ro(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
+        visibility: crate::gpu::ShaderStages::COMPUTE,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
             has_dynamic_offset: false,
             min_binding_size: None,
         },
@@ -1164,12 +1170,12 @@ fn bgl_storage_ro(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-fn bgl_storage_rw(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
+fn bgl_storage_rw(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
+    crate::gpu::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: false },
+        visibility: crate::gpu::ShaderStages::COMPUTE,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Storage { read_only: false },
             has_dynamic_offset: false,
             min_binding_size: None,
         },
@@ -1182,15 +1188,17 @@ mod residency_tests {
     use crate::DeviceResources;
     use crate::geometry::marching_cubes::VolumeData;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn sample_volume() -> VolumeData {
@@ -1212,7 +1220,8 @@ mod residency_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id1 = resources
             .upload_volume_for_mc(&device, &queue, &sample_volume())
@@ -1243,7 +1252,8 @@ mod residency_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let start = resources.resident_bytes().mc_volume_bytes;
         let id = resources

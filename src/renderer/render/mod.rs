@@ -1,5 +1,5 @@
 use super::*;
-use wgpu::util::DeviceExt;
+use crate::gpu::util::DeviceExt;
 
 /// Emit the 2D overlay draw calls shared by every paint path: SDF shapes,
 /// rects, labels, scalar bars, rulers, loading bars, and overlay images, in
@@ -110,8 +110,8 @@ impl ViewportRenderer {
     /// intermediate texture is fully written before the blit reads it.
     pub(crate) fn prepare_ldr_dyn_res(
         &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
         frame: &FrameData,
     ) -> bool {
         if self.current_render_scale >= 1.0 - 0.001 {
@@ -142,27 +142,27 @@ impl ViewportRenderer {
             let camera_bg = &slot.camera_bind_group;
             let grid_bg = &slot.grid_bind_group;
 
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("ldr_dyn_res_render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: colour_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
                             r: bg_colour[0] as f64,
                             g: bg_colour[1] as f64,
                             b: bg_colour[2] as f64,
                             a: bg_colour[3] as f64,
                         }),
-                        store: wgpu::StoreOp::Store,
+                        store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
+                        store: crate::gpu::StoreOp::Discard,
                     }),
                     stencil_ops: None,
                 }),
@@ -219,7 +219,7 @@ impl ViewportRenderer {
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
                                 render_pass.set_index_buffer(
                                     edge_buf.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                             }
@@ -308,7 +308,7 @@ impl ViewportRenderer {
     /// frame. Emits a fullscreen upscale quad into `render_pass`.
     pub(crate) fn paint_dyn_res_blit<'rp>(
         &self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
@@ -343,10 +343,10 @@ impl ViewportRenderer {
     /// composite the intermediate texture into the egui render pass.
     pub(crate) fn prepare_hdr_callback(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         self.prepare(device, queue, frame);
 
         let vp_idx = frame.camera.viewport_index;
@@ -382,7 +382,7 @@ impl ViewportRenderer {
             .as_ref()
             .unwrap()
             .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+            .create_view(&crate::gpu::TextureViewDescriptor::default());
 
         self.render_frame_internal(device, queue, &output_view, vp_idx, frame)
     }
@@ -404,11 +404,11 @@ impl ViewportRenderer {
     /// `CallbackTrait::paint` with the scissor/viewport rect set first.
     pub(crate) fn prepare_hdr_callback_viewport(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: ViewportId,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         let vp_idx = id.0;
         let ppp = frame.camera.pixels_per_point;
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
@@ -432,7 +432,7 @@ impl ViewportRenderer {
             .as_ref()
             .unwrap()
             .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+            .create_view(&crate::gpu::TextureViewDescriptor::default());
 
         self.render_frame_internal(device, queue, &output_view, vp_idx, frame)
     }
@@ -444,7 +444,7 @@ impl ViewportRenderer {
     /// same frame and viewport. Emits a fullscreen triangle into `render_pass`.
     pub(crate) fn paint_hdr_blit<'rp>(
         &self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
@@ -472,7 +472,7 @@ impl ViewportRenderer {
     /// (e.g. winit) and omit the depth attachment.
     pub(crate) fn paint_hdr_blit_no_ds<'rp>(
         &self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
@@ -504,19 +504,20 @@ impl ViewportRenderer {
     /// Call [`paint_callback`](Self::paint_callback) from `CallbackTrait::paint`.
     pub(crate) fn prepare_callback(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         if frame.effects.post_process.enabled {
             let cb = self.prepare_hdr_callback(device, queue, frame);
             vec![cb]
         } else {
             self.prepare(device, queue, frame);
             if self.current_render_scale < 1.0 - 0.001 {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("ldr_dyn_res_callback_encoder"),
-                });
+                let mut encoder =
+                    device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                        label: Some("ldr_dyn_res_callback_encoder"),
+                    });
                 self.prepare_ldr_dyn_res(&mut encoder, device, frame);
                 vec![encoder.finish()]
             } else {
@@ -532,7 +533,7 @@ impl ViewportRenderer {
     /// based on which path `prepare_callback` activated.
     pub(crate) fn paint_callback<'rp>(
         &self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
@@ -575,12 +576,12 @@ impl ViewportRenderer {
     /// Returns a [`wgpu::CommandBuffer`] ready to submit.
     pub(crate) fn render_viewport(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         id: ViewportId,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         self.render_frame_internal(device, queue, output_view, id.0, frame)
     }
 
@@ -593,11 +594,11 @@ impl ViewportRenderer {
     /// Returns a `CommandBuffer` ready to submit.
     pub(crate) fn render(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         // Always run prepare() to upload uniforms and run the shadow pass.
         self.prepare(device, queue, frame);
         self.render_frame_internal(
@@ -615,11 +616,11 @@ impl ViewportRenderer {
     /// submits them, in order, on the device-driving thread.
     pub(crate) fn render_deferred(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         frame: &FrameData,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         let (_stats, mut buffers) = self.prepare_deferred(device, queue, frame);
         buffers.push(self.render_frame_internal(
             device,
@@ -637,12 +638,12 @@ impl ViewportRenderer {
     /// independent of `frame.camera.viewport_index`.
     fn render_frame_internal(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
-    ) -> wgpu::CommandBuffer {
+    ) -> crate::gpu::CommandBuffer {
         let paint_start = std::time::Instant::now();
         // Take the LOD-resolved surfaces from prepare (level mesh chosen, culled
         // items hidden), then extend with the boundary draws contributed by
@@ -688,7 +689,9 @@ impl ViewportRenderer {
 
         // Lazy-initialize GPU timestamp resources on first render call when supported.
         if self.ts_query_set.is_none()
-            && device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+            && device
+                .features()
+                .contains(crate::gpu::Features::TIMESTAMP_QUERY)
         {
             // One begin/end timestamp pair per measured pass. The resolve
             // buffer gives each slot its own 256-byte region because
@@ -696,28 +699,29 @@ impl ViewportRenderer {
             // written slots are resolved individually (see the resolve blocks).
             let ts_count = 2 * super::GPU_TS_SLOTS;
             let ts_bytes = super::GPU_TS_SLOTS as u64 * 256;
-            self.ts_query_set = Some(device.create_query_set(&wgpu::QuerySetDescriptor {
+            self.ts_query_set = Some(device.create_query_set(&crate::gpu::QuerySetDescriptor {
                 label: Some("ts_query_set"),
-                ty: wgpu::QueryType::Timestamp,
+                ty: crate::gpu::QueryType::Timestamp,
                 count: ts_count,
             }));
             // Second set of the double buffer: passes write one set while the
             // other (written last frame) is resolved from this frame's encoder.
-            self.ts_query_set_prev = Some(device.create_query_set(&wgpu::QuerySetDescriptor {
-                label: Some("ts_query_set_prev"),
-                ty: wgpu::QueryType::Timestamp,
-                count: ts_count,
-            }));
-            self.ts_resolve_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            self.ts_query_set_prev =
+                Some(device.create_query_set(&crate::gpu::QuerySetDescriptor {
+                    label: Some("ts_query_set_prev"),
+                    ty: crate::gpu::QueryType::Timestamp,
+                    count: ts_count,
+                }));
+            self.ts_resolve_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("ts_resolve_buf"),
                 size: ts_bytes,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                usage: crate::gpu::BufferUsages::QUERY_RESOLVE | crate::gpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }));
-            self.ts_staging_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            self.ts_staging_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("ts_staging_buf"),
                 size: ts_bytes,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             }));
             self.ts_period = queue.get_timestamp_period();
@@ -761,9 +765,9 @@ impl ViewportRenderer {
     /// timestamps or their own copy on a cadence rather than every frame.
     pub fn render_to_texture(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         frame: &FrameData,
     ) {
         let cmd_buf = self.render(device, queue, output_view, frame);
@@ -781,17 +785,17 @@ impl ViewportRenderer {
     /// corrupts some drivers (see [`crate::renderer::SubmitSink`]).
     pub fn render_to_texture_deferred(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        output_view: &crate::gpu::TextureView,
         frame: &FrameData,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> Vec<crate::gpu::CommandBuffer> {
         self.render_deferred(device, queue, output_view, frame)
     }
 
     /// Submit a batch of command buffers produced by the `*_deferred` encoders,
     /// in order, on the device-driving thread. A no-op for an empty batch.
-    pub fn submit_frame(queue: &wgpu::Queue, buffers: Vec<wgpu::CommandBuffer>) {
+    pub fn submit_frame(queue: &crate::gpu::Queue, buffers: Vec<crate::gpu::CommandBuffer>) {
         if !buffers.is_empty() {
             queue.submit(buffers);
         }
@@ -812,31 +816,33 @@ impl ViewportRenderer {
     /// PNG/EXR independently : no image codec dependency in this crate.
     pub fn render_offscreen(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         width: u32,
         height: u32,
     ) -> Vec<u8> {
         // 1. Create offscreen texture with RENDER_ATTACHMENT | COPY_SRC usage.
         let target_format = self.resources.target_format;
-        let offscreen_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let offscreen_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("offscreen_target"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: width.max(1),
                 height: height.max(1),
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: crate::gpu::TextureDimension::D2,
             format: target_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
 
         // 2. Create a texture view for rendering into.
-        let output_view = offscreen_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let output_view =
+            offscreen_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // 3. render() calls ensure_viewport_hdr which provides the depth-stencil buffer
         //    for both LDR and HDR paths, so no separate ensure_outline_target is needed.
@@ -851,36 +857,37 @@ impl ViewportRenderer {
         // 5. Copy texture -> staging buffer (wgpu requires row alignment to 256 bytes).
         let bytes_per_pixel = 4u32;
         let unpadded_row = width * bytes_per_pixel;
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let align = crate::gpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_row = (unpadded_row + align - 1) & !(align - 1);
         let buffer_size = (padded_row * height.max(1)) as u64;
 
-        let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let staging_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("offscreen_staging"),
             size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 
-        let mut copy_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("offscreen_copy_encoder"),
-        });
+        let mut copy_encoder =
+            device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                label: Some("offscreen_copy_encoder"),
+            });
         copy_encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &offscreen_texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
             },
-            wgpu::TexelCopyBufferInfo {
+            crate::gpu::TexelCopyBufferInfo {
                 buffer: &staging_buf,
-                layout: wgpu::TexelCopyBufferLayout {
+                layout: crate::gpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_row),
                     rows_per_image: Some(height.max(1)),
                 },
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width: width.max(1),
                 height: height.max(1),
                 depth_or_array_layers: 1,
@@ -892,16 +899,16 @@ impl ViewportRenderer {
         let (tx, rx) = std::sync::mpsc::channel();
         staging_buf
             .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
+            .map_async(crate::gpu::MapMode::Read, move |result| {
                 let _ = tx.send(result);
             });
         device
-            .poll(wgpu::PollType::Wait {
+            .poll(crate::gpu::PollType::Wait {
                 submission_index: None,
                 timeout: Some(std::time::Duration::from_secs(5)),
             })
             .unwrap();
-        let _ = rx.recv().unwrap_or(Err(wgpu::BufferAsyncError));
+        let _ = rx.recv().unwrap_or(Err(crate::gpu::BufferAsyncError));
 
         let mut pixels: Vec<u8> = Vec::with_capacity((width * height * 4) as usize);
         {
@@ -924,7 +931,7 @@ impl ViewportRenderer {
         // 7. Swizzle BGRA -> RGBA if the format stores bytes in BGRA order.
         let is_bgra = matches!(
             target_format,
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+            crate::gpu::TextureFormat::Bgra8Unorm | crate::gpu::TextureFormat::Bgra8UnormSrgb
         );
         if is_bgra {
             for pixel in pixels.chunks_exact_mut(4) {
@@ -940,7 +947,7 @@ impl ViewportRenderer {
     // ------------------------------------------------------------------
 
     /// Ensure the backdrop blur state textures exist at the right size.
-    fn ensure_backdrop_blur_state(&mut self, device: &wgpu::Device, w: u32, h: u32) {
+    fn ensure_backdrop_blur_state(&mut self, device: &crate::gpu::Device, w: u32, h: u32) {
         let need_recreate = match &self.backdrop_blur_state {
             Some(s) => s.size != [w, h] || s.format != self.resources.target_format,
             None => true,
@@ -953,36 +960,37 @@ impl ViewportRenderer {
         let blur_w = (w / 2).max(1);
         let blur_h = (h / 2).max(1);
 
-        let intermediate_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let intermediate_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("backdrop_intermediate"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: w,
                 height: h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: crate::gpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let intermediate_view = intermediate_texture.create_view(&Default::default());
 
         let make_blur_tex = |label: &str| {
-            let t = device.create_texture(&wgpu::TextureDescriptor {
+            let t = device.create_texture(&crate::gpu::TextureDescriptor {
                 label: Some(label),
-                size: wgpu::Extent3d {
+                size: crate::gpu::Extent3d {
                     width: blur_w,
                     height: blur_h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
+                dimension: crate::gpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                    | crate::gpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
             let v = t.create_view(&Default::default());
@@ -1008,12 +1016,12 @@ impl ViewportRenderer {
     /// texture pipeline.
     fn run_backdrop_blur(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        source_view: &wgpu::TextureView,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        _queue: &crate::gpu::Queue,
+        source_view: &crate::gpu::TextureView,
         spread: f32,
-    ) -> wgpu::BindGroup {
+    ) -> crate::gpu::BindGroup {
         let bs = self.backdrop_blur_state.as_ref().unwrap();
         let blur_bgl = self.resources.backdrop_blur.bgl.as_ref().unwrap();
         let blur_sampler = self.resources.backdrop_blur.sampler.as_ref().unwrap();
@@ -1029,29 +1037,29 @@ impl ViewportRenderer {
         let blit_sampler = self.resources.post.dyn_res_linear_sampler.as_ref().unwrap();
 
         // Step 1: downsample source -> blur_a (half-res) using bilinear blit.
-        let downsample_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let downsample_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("backdrop_downsample_bg"),
             layout: blit_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(source_view),
+                    resource: crate::gpu::BindingResource::TextureView(source_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(blit_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(blit_sampler),
                 },
             ],
         });
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("backdrop_downsample"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: &bs.blur_a_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
+                        store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
@@ -1068,38 +1076,38 @@ impl ViewportRenderer {
         let effective_spread = (spread / 2.0).max(1.0);
 
         // Step 2: horizontal blur: blur_a -> blur_b.
-        let h_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let h_uniform = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("blur_h_uniform"),
             contents: bytemuck::cast_slice(&[1u32, effective_spread.to_bits(), 0u32, 0u32]),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: crate::gpu::BufferUsages::UNIFORM,
         });
-        let h_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let h_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("blur_h_bg"),
             layout: blur_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&bs.blur_a_view),
+                    resource: crate::gpu::BindingResource::TextureView(&bs.blur_a_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(blur_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(blur_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: h_uniform.as_entire_binding(),
                 },
             ],
         });
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("backdrop_blur_h"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: &bs.blur_b_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
+                        store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
@@ -1113,38 +1121,38 @@ impl ViewportRenderer {
         }
 
         // Step 3: vertical blur: blur_b -> blur_a.
-        let v_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let v_uniform = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("blur_v_uniform"),
             contents: bytemuck::cast_slice(&[0u32, effective_spread.to_bits(), 0u32, 0u32]),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: crate::gpu::BufferUsages::UNIFORM,
         });
-        let v_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let v_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("blur_v_bg"),
             layout: blur_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&bs.blur_b_view),
+                    resource: crate::gpu::BindingResource::TextureView(&bs.blur_b_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(blur_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(blur_sampler),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: v_uniform.as_entire_binding(),
                 },
             ],
         });
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("backdrop_blur_v"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: &bs.blur_a_view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
+                        store: crate::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
@@ -1162,17 +1170,17 @@ impl ViewportRenderer {
         // existing texture pipeline.
         let tex_bgl = self.resources.overlay_shape.tex_bgl.as_ref().unwrap();
         let tex_sampler = self.resources.overlay_shape.tex_sampler.as_ref().unwrap();
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("backdrop_blur_overlay_bg"),
             layout: tex_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&bs.blur_a_view),
+                    resource: crate::gpu::BindingResource::TextureView(&bs.blur_a_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(tex_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(tex_sampler),
                 },
             ],
         })
@@ -1188,8 +1196,8 @@ impl ViewportRenderer {
     /// Draw blur overlay shapes into the given render pass using the texture pipeline.
     fn draw_blur_shapes<'rp>(
         &'rp self,
-        render_pass: &mut wgpu::RenderPass<'rp>,
-        blur_bind_group: &'rp wgpu::BindGroup,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
+        blur_bind_group: &'rp crate::gpu::BindGroup,
     ) {
         if let Some(ref sd) = self.overlay_shape_gpu_data {
             if sd.blur_vertex_count > 0 {

@@ -98,7 +98,7 @@ pub use target_desc::{
 pub struct SharedBindings<'a> {
     /// The group-0 `BindGroupLayout`. Pass by reference when calling
     /// `device.create_pipeline_layout`.
-    pub group0_layout: &'a wgpu::BindGroupLayout,
+    pub group0_layout: &'a crate::gpu::BindGroupLayout,
 }
 
 impl<'a> SharedBindings<'a> {

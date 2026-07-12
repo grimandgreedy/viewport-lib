@@ -66,11 +66,11 @@ impl PickItemType {
 /// group (the set uniform + a per-set object-id uniform) is owned; the pipeline,
 /// instance bind group, and mesh buffers are borrowed from prepared state.
 struct GlyphPickDraw<'a> {
-    pipeline: &'a wgpu::RenderPipeline,
-    id_bind_group: wgpu::BindGroup,
-    instance_bind_group: &'a wgpu::BindGroup,
-    vertex_buffer: &'a wgpu::Buffer,
-    index_buffer: &'a wgpu::Buffer,
+    pipeline: &'a crate::gpu::RenderPipeline,
+    id_bind_group: crate::gpu::BindGroup,
+    instance_bind_group: &'a crate::gpu::BindGroup,
+    vertex_buffer: &'a crate::gpu::Buffer,
+    index_buffer: &'a crate::gpu::Buffer,
     index_count: u32,
     instance_count: u32,
 }
@@ -79,9 +79,9 @@ struct GlyphPickDraw<'a> {
 /// owned; the sprite bind group and position buffer are borrowed from prepared
 /// state. The pipeline and group-0 camera bind group are shared across sets.
 struct SpritePickDraw<'a> {
-    id_bind_group: wgpu::BindGroup,
-    sprite_bind_group: &'a wgpu::BindGroup,
-    vertex_buffer: &'a wgpu::Buffer,
+    id_bind_group: crate::gpu::BindGroup,
+    sprite_bind_group: &'a crate::gpu::BindGroup,
+    vertex_buffer: &'a crate::gpu::Buffer,
     sprite_count: u32,
 }
 
@@ -90,9 +90,9 @@ struct SpritePickDraw<'a> {
 /// buffer are borrowed. The pipeline and group-0 pick camera bind group are
 /// shared across polylines.
 struct PolylinePickDraw<'a> {
-    id_bind_group: wgpu::BindGroup,
-    render_bind_group: &'a wgpu::BindGroup,
-    vertex_buffer: &'a wgpu::Buffer,
+    id_bind_group: crate::gpu::BindGroup,
+    render_bind_group: &'a crate::gpu::BindGroup,
+    vertex_buffer: &'a crate::gpu::Buffer,
     segment_count: u32,
 }
 
@@ -101,10 +101,10 @@ struct PolylinePickDraw<'a> {
 /// texture + samplers) and the unit-cube buffers are borrowed from prepared
 /// `VolumeGpuData`.
 struct VolumePickDraw<'a> {
-    id_bind_group: wgpu::BindGroup,
-    render_bind_group: &'a wgpu::BindGroup,
-    vertex_buffer: &'a wgpu::Buffer,
-    index_buffer: &'a wgpu::Buffer,
+    id_bind_group: crate::gpu::BindGroup,
+    render_bind_group: &'a crate::gpu::BindGroup,
+    vertex_buffer: &'a crate::gpu::Buffer,
+    index_buffer: &'a crate::gpu::Buffer,
 }
 
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
@@ -115,8 +115,8 @@ enum PickGeom<'a> {
     Mesh(crate::resources::mesh::mesh_store::MeshId),
     /// Direct buffer references for a tube-family connected mesh.
     Tube {
-        vertex_buffer: &'a wgpu::Buffer,
-        index_buffer: &'a wgpu::Buffer,
+        vertex_buffer: &'a crate::gpu::Buffer,
+        index_buffer: &'a crate::gpu::Buffer,
         index_count: u32,
     },
 }
@@ -147,8 +147,8 @@ impl ViewportRenderer {
     /// `Some(GpuPickHit)` if an object is under the cursor, `None` if empty space.
     pub fn pick_scene_gpu(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         cursor: glam::Vec2,
         frame: &FrameData,
     ) -> Option<crate::interaction::query::picking::GpuPickHit> {
@@ -176,8 +176,8 @@ impl ViewportRenderer {
     /// later call instead of stalling here.
     pub(crate) fn pick_scene_gpu_masked(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         cursor: glam::Vec2,
         frame: &FrameData,
         mask: crate::interaction::select::pick_mask::PickMask,
@@ -199,7 +199,7 @@ impl ViewportRenderer {
         // staging maps), then read the pixel. The wait is targeted at the pick
         // submission index, so it does not drain frames queued after it.
         device
-            .poll(wgpu::PollType::Wait {
+            .poll(crate::gpu::PollType::Wait {
                 submission_index: Some(pending.submission.clone()),
                 timeout: Some(std::time::Duration::from_secs(5)),
             })
@@ -216,8 +216,8 @@ impl ViewportRenderer {
     /// submit.
     fn pick_scene_gpu_begin(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         cursor: glam::Vec2,
         frame: &FrameData,
         mask: crate::interaction::select::pick_mask::PickMask,
@@ -505,24 +505,24 @@ impl ViewportRenderer {
                 .glyph_pick_id_bgl
                 .as_ref()
                 .expect("glyph pick id bgl");
-            let make_id_bg = |pick_id: PickId, uniform_buf: &wgpu::Buffer| {
+            let make_id_bg = |pick_id: PickId, uniform_buf: &crate::gpu::Buffer| {
                 let id_data = [pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("glyph_pick_id_buf"),
                     size: std::mem::size_of_val(&id_data) as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("glyph_pick_id_bg"),
                     layout: id_bgl,
                     entries: &[
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 3,
                             resource: id_buf.as_entire_binding(),
                         },
@@ -594,17 +594,17 @@ impl ViewportRenderer {
                 .filter(|g| g.pick_id != PickId::NONE && g.sprite_count > 0)
             {
                 let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("sprite_pick_id_buf"),
                     size: std::mem::size_of_val(&id_data) as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("sprite_pick_id_bg"),
                     layout: id_bgl,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: id_buf.as_entire_binding(),
                     }],
@@ -635,17 +635,17 @@ impl ViewportRenderer {
                 .filter(|g| g.pick_id != PickId::NONE && g.segment_count > 0)
             {
                 let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("polyline_pick_id_buf"),
                     size: std::mem::size_of_val(&id_data) as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("polyline_pick_id_bg"),
                     layout: id_bgl,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: id_buf.as_entire_binding(),
                     }],
@@ -676,17 +676,17 @@ impl ViewportRenderer {
                 .filter(|v| !v.wireframe && v.pick_id != PickId::NONE)
             {
                 let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("volume_pick_id_buf"),
                     size: std::mem::size_of_val(&id_data) as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("volume_pick_id_bg"),
                     layout: id_bgl,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: id_buf.as_entire_binding(),
                     }],
@@ -722,15 +722,15 @@ impl ViewportRenderer {
 
         // --- pick instance storage buffer + bind group ---
         let pick_instance_bytes = bytemuck::cast_slice(&pick_instances);
-        let pick_instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let pick_instance_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_instance_buf"),
             size: pick_instance_bytes.len().max(80) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&pick_instance_buf, 0, pick_instance_bytes);
 
-        let pick_instance_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let pick_instance_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("pick_instance_bg"),
             layout: self
                 .resources
@@ -738,7 +738,7 @@ impl ViewportRenderer {
                 .bind_group_layout_1
                 .as_ref()
                 .expect("ensure_pick_pipeline must be called first"),
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: pick_instance_buf.as_entire_binding(),
             }],
@@ -747,15 +747,15 @@ impl ViewportRenderer {
         // --- pick camera uniform buffer + bind group ---
         let camera_uniform = frame.camera.render_camera.camera_uniform();
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
-        let pick_camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let pick_camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_camera_buf"),
             size: std::mem::size_of::<CameraUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&pick_camera_buf, 0, camera_bytes);
 
-        let pick_camera_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let pick_camera_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("pick_camera_bg"),
             layout: self
                 .resources
@@ -764,11 +764,11 @@ impl ViewportRenderer {
                 .as_ref()
                 .expect("ensure_pick_pipeline must be called first"),
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: pick_camera_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 6,
                     resource: self.resources.clip_volume_uniform_buf.as_entire_binding(),
                 },
@@ -776,131 +776,136 @@ impl ViewportRenderer {
         });
 
         // --- offscreen pick textures (R32Uint + R32Float) + depth ---
-        let pick_id_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let pick_id_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("pick_id_texture"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: vp_w,
                 height: vp_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Uint,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::R32Uint,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let pick_id_view = pick_id_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let pick_id_view =
+            pick_id_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // Primitive-id target. The pick pipelines write a sub-object index here
         // (0 for now); it is attached so the pipeline's location-1 output has a
         // target, but it is not read back until sub-object picking uses it.
-        let pick_prim_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let pick_prim_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("pick_prim_texture"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: vp_w,
                 height: vp_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Uint,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::R32Uint,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let pick_prim_view = pick_prim_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let pick_prim_view =
+            pick_prim_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
-        let pick_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let pick_depth_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("pick_depth_colour_texture"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: vp_w,
                 height: vp_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::R32Float,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let pick_depth_view =
-            pick_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            pick_depth_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
-        let depth_stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let depth_stencil_texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("pick_ds_texture"),
-            size: wgpu::Extent3d {
+            size: crate::gpu::Extent3d {
                 width: vp_w,
                 height: vp_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24PlusStencil8,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let depth_stencil_view =
-            depth_stencil_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            depth_stencil_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // --- render pass ---
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("pick_pass_encoder"),
         });
         {
-            let mut pick_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pick_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("pick_pass"),
                 color_attachments: &[
-                    Some(wgpu::RenderPassColorAttachment {
+                    Some(crate::gpu::RenderPassColorAttachment {
                         view: &pick_id_view,
                         resolve_target: None,
                         depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
                                 r: 0.0,
                                 g: 0.0,
                                 b: 0.0,
                                 a: 0.0,
                             }),
-                            store: wgpu::StoreOp::Store,
+                            store: crate::gpu::StoreOp::Store,
                         },
                     }),
-                    Some(wgpu::RenderPassColorAttachment {
+                    Some(crate::gpu::RenderPassColorAttachment {
                         view: &pick_prim_view,
                         resolve_target: None,
                         depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
                                 r: 0.0,
                                 g: 0.0,
                                 b: 0.0,
                                 a: 0.0,
                             }),
-                            store: wgpu::StoreOp::Store,
+                            store: crate::gpu::StoreOp::Store,
                         },
                     }),
-                    Some(wgpu::RenderPassColorAttachment {
+                    Some(crate::gpu::RenderPassColorAttachment {
                         view: &pick_depth_view,
                         resolve_target: None,
                         depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
                                 r: 1.0,
                                 g: 0.0,
                                 b: 0.0,
                                 a: 0.0,
                             }),
-                            store: wgpu::StoreOp::Store,
+                            store: crate::gpu::StoreOp::Store,
                         },
                     }),
                 ],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: &depth_stencil_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
+                        store: crate::gpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
@@ -943,7 +948,7 @@ impl ViewportRenderer {
                         pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         pick_pass.set_index_buffer(
                             mesh.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
                     }
@@ -953,8 +958,10 @@ impl ViewportRenderer {
                         index_count,
                     } => {
                         pick_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                        pick_pass
-                            .set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        pick_pass.set_index_buffer(
+                            index_buffer.slice(..),
+                            crate::gpu::IndexFormat::Uint32,
+                        );
                         pick_pass.draw_indexed(0..*index_count, 0, slot..slot + 1);
                     }
                 }
@@ -969,7 +976,8 @@ impl ViewportRenderer {
                 pick_pass.set_bind_group(1, &gd.id_bind_group, &[]);
                 pick_pass.set_bind_group(2, gd.instance_bind_group, &[]);
                 pick_pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
-                pick_pass.set_index_buffer(gd.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pick_pass
+                    .set_index_buffer(gd.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
                 pick_pass.draw_indexed(0..gd.index_count, 0, 0..gd.instance_count);
             }
 
@@ -1016,8 +1024,10 @@ impl ViewportRenderer {
                         pick_pass.set_bind_group(1, vd.render_bind_group, &[]);
                         pick_pass.set_bind_group(2, &vd.id_bind_group, &[]);
                         pick_pass.set_vertex_buffer(0, vd.vertex_buffer.slice(..));
-                        pick_pass
-                            .set_index_buffer(vd.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        pick_pass.set_index_buffer(
+                            vd.index_buffer.slice(..),
+                            crate::gpu::IndexFormat::Uint32,
+                        );
                         // The volume cube is 36 indices (12 triangles).
                         pick_pass.draw_indexed(0..36, 0, 0..1);
                     }
@@ -1038,58 +1048,58 @@ impl ViewportRenderer {
         // R32Uint: 4 bytes per pixel, min bytes_per_row = 256 (wgpu alignment)
         let bytes_per_row_aligned = 256u32; // wgpu requires multiples of 256
 
-        let id_staging = device.create_buffer(&wgpu::BufferDescriptor {
+        let id_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_id_staging"),
             size: bytes_per_row_aligned as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let depth_staging = device.create_buffer(&wgpu::BufferDescriptor {
+        let depth_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_depth_staging"),
             size: bytes_per_row_aligned as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 
         // `px` / `py`: physical pixel under the cursor, computed above and shared
         // with the scissor so the pass and the read-back target the same texel.
         encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &pick_id_texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d { x: px, y: py, z: 0 },
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
             },
-            wgpu::TexelCopyBufferInfo {
+            crate::gpu::TexelCopyBufferInfo {
                 buffer: &id_staging,
-                layout: wgpu::TexelCopyBufferLayout {
+                layout: crate::gpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row_aligned),
                     rows_per_image: Some(1),
                 },
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
         );
         encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &pick_depth_texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d { x: px, y: py, z: 0 },
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
             },
-            wgpu::TexelCopyBufferInfo {
+            crate::gpu::TexelCopyBufferInfo {
                 buffer: &depth_staging,
-                layout: wgpu::TexelCopyBufferLayout {
+                layout: crate::gpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row_aligned),
                     rows_per_image: Some(1),
                 },
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
@@ -1106,11 +1116,13 @@ impl ViewportRenderer {
         let ready = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for staging in [&id_staging, &depth_staging] {
             let ready = ready.clone();
-            staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                if r.is_ok() {
-                    ready.fetch_add(1, std::sync::atomic::Ordering::Release);
-                }
-            });
+            staging
+                .slice(..)
+                .map_async(crate::gpu::MapMode::Read, move |r| {
+                    if r.is_ok() {
+                        ready.fetch_add(1, std::sync::atomic::Ordering::Release);
+                    }
+                });
         }
 
         PickBegin::Pending(PendingPick {
@@ -1130,7 +1142,7 @@ impl ViewportRenderer {
     /// `None` only if the upload fails.
     fn ensure_decal_pick_cube(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
     ) -> Option<crate::resources::mesh::mesh_store::MeshId> {
         if let Some(id) = self.decal_pick_cube {
             if self.resources.mesh_store.get(id).is_some() {
@@ -1150,7 +1162,7 @@ impl ViewportRenderer {
     /// cached handle was freed. Returns `None` only if the upload fails.
     fn ensure_scatter_pick_sphere(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
     ) -> Option<crate::resources::mesh::mesh_store::MeshId> {
         if let Some(id) = self.scatter_pick_sphere {
             if self.resources.mesh_store.get(id).is_some() {
@@ -1181,8 +1193,8 @@ impl ViewportRenderer {
         &mut self,
         cursor: glam::Vec2,
         frame: &FrameData,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mask: crate::interaction::select::pick_mask::PickMask,
     ) -> bool {
         match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
@@ -1213,7 +1225,7 @@ impl ViewportRenderer {
     /// work between polls should use the blocking path instead.
     pub fn pick_object_poll(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
     ) -> crate::renderer::picking::PickPoll {
         use crate::renderer::picking::PickPoll;
         if self.pending_pick.is_none() {
@@ -1222,7 +1234,7 @@ impl ViewportRenderer {
 
         // Drive map callbacks without waiting on the queue. This processes work
         // that has already completed; it does not block for the pick submission.
-        let _ = device.poll(wgpu::PollType::Poll);
+        let _ = device.poll(crate::gpu::PollType::Poll);
 
         let pending = self.pending_pick.as_ref().expect("pending checked above");
         if pending.ready.load(std::sync::atomic::Ordering::Acquire) < 2 {
@@ -1250,13 +1262,13 @@ enum PickBegin {
 /// renderer between [`ViewportRenderer::pick_object_begin`] and
 /// [`ViewportRenderer::pick_object_poll`].
 pub(crate) struct PendingPick {
-    id_staging: wgpu::Buffer,
-    depth_staging: wgpu::Buffer,
+    id_staging: crate::gpu::Buffer,
+    depth_staging: crate::gpu::Buffer,
     /// Reaches 2 when both `map_async` callbacks have signalled success.
     ready: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Submission index of the id pass, so a reader can wait on this pick alone
     /// rather than draining the whole queue.
-    submission: wgpu::SubmissionIndex,
+    submission: crate::gpu::SubmissionIndex,
     cursor: glam::Vec2,
     viewport_size: glam::Vec2,
     view_proj: glam::Mat4,

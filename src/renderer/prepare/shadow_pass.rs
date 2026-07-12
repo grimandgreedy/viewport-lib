@@ -21,10 +21,10 @@ impl ViewportRenderer {
         light: &LightingFrame,
         shadows_skipped: bool,
         last_stats: &mut crate::renderer::stats::FrameStats,
-        ts_query_set: Option<&wgpu::QuerySet>,
+        ts_query_set: Option<&crate::gpu::QuerySet>,
         ts_written_mask: &std::sync::atomic::AtomicU32,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) {
@@ -49,17 +49,17 @@ impl ViewportRenderer {
         // atlas to max depth so that stale values from a previous frame or a previous
         // showcase don't produce phantom shadows.
         if lighting.shadows_enabled && (skip_shadows || scene_items.is_empty()) {
-            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            let mut enc = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                 label: Some("shadow_clear_encoder"),
             });
-            let _ = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let _ = enc.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 label: Some("shadow_clear_pass"),
                 color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                     view: &resources.shadow_map_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
+                    depth_ops: Some(crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(1.0),
+                        store: crate::gpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
@@ -133,7 +133,7 @@ impl ViewportRenderer {
                 ) {
                     let cull = instancing.cull_resources.as_ref().unwrap();
                     let mut shadow_cull_encoder =
-                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                             label: Some("shadow_cull_encoder"),
                         });
                     for c in 0..light.effective_cascade_count {
@@ -238,35 +238,39 @@ impl ViewportRenderer {
                 }
             }
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("shadow_pass_encoder"),
-            });
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("shadow_pass_encoder"),
+                });
             {
                 let shadow_ts_writes = ts_query_set.map(|qs| {
                     ts_written_mask.fetch_or(
                         1 << crate::renderer::GPU_TS_SHADOW,
                         std::sync::atomic::Ordering::Relaxed,
                     );
-                    wgpu::RenderPassTimestampWrites {
+                    crate::gpu::RenderPassTimestampWrites {
                         query_set: qs,
                         beginning_of_pass_write_index: Some(crate::renderer::GPU_TS_SHADOW * 2),
                         end_of_pass_write_index: Some(crate::renderer::GPU_TS_SHADOW * 2 + 1),
                     }
                 });
-                let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("shadow_pass"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &resources.shadow_map_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: shadow_ts_writes,
-                    occlusion_query_set: None,
-                });
+                let mut shadow_pass =
+                    encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                        label: Some("shadow_pass"),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(
+                            crate::gpu::RenderPassDepthStencilAttachment {
+                                view: &resources.shadow_map_view,
+                                depth_ops: Some(crate::gpu::Operations {
+                                    load: crate::gpu::LoadOp::Clear(1.0),
+                                    store: crate::gpu::StoreOp::Store,
+                                }),
+                                stencil_ops: None,
+                            },
+                        ),
+                        timestamp_writes: shadow_ts_writes,
+                        occlusion_query_set: None,
+                    });
 
                 let mut shadow_draws = 0u32;
                 let tile_px = light.tile_size as f32;
@@ -406,7 +410,7 @@ impl ViewportRenderer {
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 shadow_pass
                                     .draw_indexed_indirect(shadow_indirect_buf, bi as u64 * 20);
@@ -531,7 +535,7 @@ impl ViewportRenderer {
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 shadow_pass.draw_indexed(
                                     0..mesh.index_count,
@@ -637,7 +641,7 @@ impl ViewportRenderer {
                                 shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 shadow_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 shadow_pass.draw_indexed(
                                     0..mesh.index_count,
@@ -752,7 +756,7 @@ impl ViewportRenderer {
                             shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             shadow_pass.set_index_buffer(
                                 mesh.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
+                                crate::gpu::IndexFormat::Uint32,
                             );
                             shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                             shadow_draws += 1;
@@ -826,7 +830,7 @@ impl ViewportRenderer {
                             shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             shadow_pass.set_index_buffer(
                                 mesh.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
+                                crate::gpu::IndexFormat::Uint32,
                             );
                             shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                             shadow_draws += 1;
@@ -1017,9 +1021,10 @@ impl ViewportRenderer {
                 .filter(|fc| slot_dirty.get(&fc.slot).copied().unwrap_or(true))
                 .collect();
             if !rendered.is_empty() {
-                let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("point_shadow_encoder"),
-                });
+                let mut enc =
+                    device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                        label: Some("point_shadow_encoder"),
+                    });
                 let last_face = rendered.len() - 1;
                 for (face_idx, fc) in rendered.iter().enumerate() {
                     let layer = fc.slot * 6 + fc.face;
@@ -1035,24 +1040,26 @@ impl ViewportRenderer {
                                 std::sync::atomic::Ordering::Relaxed,
                             );
                             let slot = crate::renderer::GPU_TS_POINT_SHADOW;
-                            wgpu::RenderPassTimestampWrites {
+                            crate::gpu::RenderPassTimestampWrites {
                                 query_set: qs,
                                 beginning_of_pass_write_index: (face_idx == 0).then_some(slot * 2),
                                 end_of_pass_write_index: (face_idx == last_face)
                                     .then_some(slot * 2 + 1),
                             }
                         });
-                    let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    let mut pass = enc.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                         label: Some("point_shadow_face_pass"),
                         color_attachments: &[],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        }),
+                        depth_stencil_attachment: Some(
+                            crate::gpu::RenderPassDepthStencilAttachment {
+                                view,
+                                depth_ops: Some(crate::gpu::Operations {
+                                    load: crate::gpu::LoadOp::Clear(1.0),
+                                    store: crate::gpu::StoreOp::Store,
+                                }),
+                                stencil_ops: None,
+                            },
+                        ),
                         timestamp_writes: ts_writes,
                         occlusion_query_set: None,
                     });
@@ -1078,7 +1085,7 @@ impl ViewportRenderer {
                         pass.set_vertex_buffer(0, c.mesh.vertex_buffer.slice(..));
                         pass.set_index_buffer(
                             c.mesh.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
+                            crate::gpu::IndexFormat::Uint32,
                         );
                         pass.draw_indexed(0..c.mesh.index_count, 0, 0..1);
                     }
@@ -1093,7 +1100,7 @@ impl ViewportRenderer {
             // Other work submitted before this point in prepare is minor, so this
             // is a good attribution of the shadow cost.
             device
-                .poll(wgpu::PollType::Wait {
+                .poll(crate::gpu::PollType::Wait {
                     submission_index: None,
                     timeout: Some(std::time::Duration::from_millis(2000)),
                 })

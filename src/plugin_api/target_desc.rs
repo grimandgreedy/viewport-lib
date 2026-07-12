@@ -12,9 +12,9 @@
 pub struct OpaqueTargetDesc {
     /// Colour target format. `Rgba16Float` on the HDR path; matches the
     /// swap-chain format on the LDR path.
-    pub color_format: wgpu::TextureFormat,
+    pub color_format: crate::gpu::TextureFormat,
     /// Depth-stencil format. `Depth24PlusStencil8` everywhere today.
-    pub depth_format: wgpu::TextureFormat,
+    pub depth_format: crate::gpu::TextureFormat,
     /// MSAA sample count. Matches the renderer's configured `sample_count`.
     pub sample_count: u32,
 }
@@ -28,15 +28,15 @@ pub struct OpaqueTargetDesc {
 #[derive(Clone, Copy, Debug)]
 pub struct OitTargetDesc {
     /// `@location(0)` accumulation target. `Rgba16Float` with additive blend.
-    pub accum_format: wgpu::TextureFormat,
+    pub accum_format: crate::gpu::TextureFormat,
     /// `@location(1)` reveal target. `R8Unorm` with `(0, OneMinusSrc)` blend.
-    pub reveal_format: wgpu::TextureFormat,
+    pub reveal_format: crate::gpu::TextureFormat,
     /// Shared depth attachment (read-only `LessEqual` test, no depth write).
-    pub depth_format: wgpu::TextureFormat,
+    pub depth_format: crate::gpu::TextureFormat,
     /// Blend state for the accum target.
-    pub accum_blend: wgpu::BlendState,
+    pub accum_blend: crate::gpu::BlendState,
     /// Blend state for the reveal target.
-    pub reveal_blend: wgpu::BlendState,
+    pub reveal_blend: crate::gpu::BlendState,
     /// MSAA sample count. OIT runs at the scene sample count.
     pub sample_count: u32,
 }
@@ -48,10 +48,10 @@ pub struct OitTargetDesc {
 #[derive(Clone, Copy, Debug)]
 pub struct MaskTargetDesc {
     /// `R8Unorm` mask target.
-    pub color_format: wgpu::TextureFormat,
+    pub color_format: crate::gpu::TextureFormat,
     /// Depth attachment. The mask pass uses the scene depth buffer for
     /// correct occlusion, so the format matches the scene depth.
-    pub depth_format: wgpu::TextureFormat,
+    pub depth_format: crate::gpu::TextureFormat,
     /// MSAA sample count. Mask runs at sample count 1 (the mask is a 1x
     /// auxiliary target).
     pub sample_count: u32,
@@ -71,15 +71,15 @@ pub struct MaskTargetDesc {
 #[derive(Clone, Copy, Debug)]
 pub struct PickTargetDesc {
     /// `@location(0)`: `R32Uint` object id (the item's `PickId`).
-    pub object_id_format: wgpu::TextureFormat,
+    pub object_id_format: crate::gpu::TextureFormat,
     /// `@location(1)`: `R32Uint` sub-object primitive index. Write 0 unless the
     /// pipeline resolves sub-objects.
-    pub primitive_id_format: wgpu::TextureFormat,
+    pub primitive_id_format: crate::gpu::TextureFormat,
     /// `@location(2)`: `R32Float` depth channel, written as the fragment's
     /// framebuffer-space `z` so the renderer can reconstruct world position.
-    pub depth_channel_format: wgpu::TextureFormat,
+    pub depth_channel_format: crate::gpu::TextureFormat,
     /// Depth-stencil attachment used for occlusion within the pass.
-    pub depth_stencil_format: wgpu::TextureFormat,
+    pub depth_stencil_format: crate::gpu::TextureFormat,
     /// MSAA sample count. Pick runs at sample count 1.
     pub sample_count: u32,
 }
@@ -91,35 +91,35 @@ pub struct PickTargetDesc {
 #[derive(Clone, Copy, Debug)]
 pub struct ShadowTargetDesc {
     /// `Depth32Float` shadow atlas format.
-    pub depth_format: wgpu::TextureFormat,
+    pub depth_format: crate::gpu::TextureFormat,
     /// MSAA sample count. Shadow runs at sample count 1.
     pub sample_count: u32,
 }
 
 /// OIT accum-target blend state: additive `(One, One)` on color and alpha.
-pub const OIT_ACCUM_BLEND: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
+pub const OIT_ACCUM_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+    color: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::One,
+        dst_factor: crate::gpu::BlendFactor::One,
+        operation: crate::gpu::BlendOperation::Add,
     },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
+    alpha: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::One,
+        dst_factor: crate::gpu::BlendFactor::One,
+        operation: crate::gpu::BlendOperation::Add,
     },
 };
 
 /// OIT reveal-target blend state: `(Zero, OneMinusSrc)`.
-pub const OIT_REVEAL_BLEND: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::Zero,
-        dst_factor: wgpu::BlendFactor::OneMinusSrc,
-        operation: wgpu::BlendOperation::Add,
+pub const OIT_REVEAL_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+    color: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::Zero,
+        dst_factor: crate::gpu::BlendFactor::OneMinusSrc,
+        operation: crate::gpu::BlendOperation::Add,
     },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::Zero,
-        dst_factor: wgpu::BlendFactor::OneMinusSrc,
-        operation: wgpu::BlendOperation::Add,
+    alpha: crate::gpu::BlendComponent {
+        src_factor: crate::gpu::BlendFactor::Zero,
+        dst_factor: crate::gpu::BlendFactor::OneMinusSrc,
+        operation: crate::gpu::BlendOperation::Add,
     },
 };

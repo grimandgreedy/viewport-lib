@@ -134,11 +134,11 @@ pub(crate) struct ProjectedTetUniform {
 pub(crate) struct ProjectedTetChunk {
     /// Storage buffer for this chunk's tetrahedra (kept alive for the bind group).
     #[allow(dead_code)]
-    pub tet_buffer: wgpu::Buffer,
+    pub tet_buffer: crate::gpu::Buffer,
     /// Number of tetrahedra in this chunk (= instanced draw count).
     pub tet_count: u32,
     /// Bind group: shared uniform + this chunk's tet buffer + colourmap + sampler.
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: crate::gpu::BindGroup,
 }
 
 /// Uploaded projected-tetrahedra mesh, stored persistently on the GPU.
@@ -150,7 +150,7 @@ pub(crate) struct GpuProjectedTetMesh {
     /// One or more device-limit-bounded chunks.
     pub chunks: Vec<ProjectedTetChunk>,
     /// Uniform buffer shared across all chunks (density, scalar_min/max). Written each frame.
-    pub uniform_buffer: wgpu::Buffer,
+    pub uniform_buffer: crate::gpu::Buffer,
     /// Auto-detected scalar range from the uploaded data (min, max).
     pub scalar_range: (f32, f32),
 }

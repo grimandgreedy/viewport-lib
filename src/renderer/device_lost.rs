@@ -20,7 +20,7 @@ pub struct DeviceLostInfo {
     /// Why the device was lost. `Unknown` covers driver errors and OS
     /// watchdog kills; `Destroyed` means [`wgpu::Device::destroy`] was
     /// called.
-    pub reason: wgpu::DeviceLostReason,
+    pub reason: crate::gpu::DeviceLostReason,
     /// The backend's message, if any.
     pub message: String,
 }
@@ -54,7 +54,7 @@ impl DeviceLostWatcher {
     /// wgpu delivers the callback when the device is next maintained (a
     /// `device.poll`, a submit, or drop), so a loss becomes visible on the
     /// frame after it happens, not at the exact failing call.
-    pub fn install(device: &wgpu::Device) -> Self {
+    pub fn install(device: &crate::gpu::Device) -> Self {
         let inner = Arc::new(WatcherInner {
             lost: AtomicBool::new(false),
             info: Mutex::new(None),
@@ -64,7 +64,7 @@ impl DeviceLostWatcher {
             if let Ok(mut slot) = cb_inner.info.lock() {
                 slot.get_or_insert(DeviceLostInfo { reason, message });
             }
-            if reason != wgpu::DeviceLostReason::Destroyed {
+            if reason != crate::gpu::DeviceLostReason::Destroyed {
                 cb_inner.lost.store(true, Ordering::Release);
             }
         });

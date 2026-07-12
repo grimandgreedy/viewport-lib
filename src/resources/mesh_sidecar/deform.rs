@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 
+use crate::gpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 
 use crate::error::ViewportResult;
 use crate::resources::DeviceResources;
@@ -82,7 +82,7 @@ pub const fn deform_slot_params_byte_offset(slot: usize) -> u64 {
 /// say). Cloning is cheap.
 #[derive(Clone)]
 pub struct DeformSlotHandle {
-    header_buffer: wgpu::Buffer,
+    header_buffer: crate::gpu::Buffer,
     slot: usize,
 }
 
@@ -94,7 +94,7 @@ impl DeformSlotHandle {
 
     /// Write the four `vec4<f32>` parameter words for this slot. Cheap;
     /// safe to call per frame from a plugin's `pre_prepare`.
-    pub fn write(&self, queue: &wgpu::Queue, params: &[[f32; 4]; DEFORM_PARAMS_PER_SLOT]) {
+    pub fn write(&self, queue: &crate::gpu::Queue, params: &[[f32; 4]; DEFORM_PARAMS_PER_SLOT]) {
         queue.write_buffer(
             &self.header_buffer,
             deform_slot_params_byte_offset(self.slot),
@@ -110,11 +110,11 @@ impl DeformSlotHandle {
 pub(crate) struct InstanceDeform {
     pub slot_data: [Option<Vec<u8>>; DEFORM_SLOT_COUNT],
     pub slot_stride: [u32; DEFORM_SLOT_COUNT],
-    pub buffer: wgpu::Buffer,
+    pub buffer: crate::gpu::Buffer,
     /// Bytes currently allocated in `buffer`. Used to decide when to realloc
     /// rather than `write_buffer` in place.
     pub buffer_capacity: u64,
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: crate::gpu::BindGroup,
     /// Bit `i` set when slot `i` has per-instance data attached.
     pub flag_bits: u32,
 }
@@ -129,11 +129,11 @@ pub(crate) struct MeshDeform {
     pub slot_stride: [u32; DEFORM_SLOT_COUNT],
     /// Packed buffer: `SLOT_LAYOUT_WORDS * 4` bytes of `(offset, stride)`
     /// header followed by tightly packed slot bytes in slot order.
-    pub buffer: wgpu::Buffer,
+    pub buffer: crate::gpu::Buffer,
     /// Bind group for draws of this mesh that have no per-instance data:
     /// binds the per-mesh buffer at @binding(1) and the renderer's empty
     /// instance buffer at @binding(2).
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: crate::gpu::BindGroup,
     /// Bit `i` set when slot `i` has per-mesh data attached.
     pub flag_bits: u32,
     /// Bit `i` set when *any* instance of this mesh has slot `i`
@@ -150,21 +150,21 @@ pub(crate) struct DeformationState {
     /// bind group layout is not included in pipeline layouts and deformer
     /// registration is silently skipped.
     pub enabled: bool,
-    pub bind_group_layout: wgpu::BindGroupLayout,
-    pub header_buffer: wgpu::Buffer,
+    pub bind_group_layout: crate::gpu::BindGroupLayout,
+    pub header_buffer: crate::gpu::Buffer,
     /// Empty slot-layout prefix bound when a mesh has no attached data.
     /// `SLOT_LAYOUT_WORDS` u32s of zero. Kept alive so the dummy bind group
     /// stays valid.
     #[allow(dead_code)]
-    pub dummy_data_buffer: wgpu::Buffer,
+    pub dummy_data_buffer: crate::gpu::Buffer,
     /// Empty per-instance buffer reused by every per-mesh bind group that
     /// has no instance data yet. Kept alive on the state so the bind group
     /// stays valid.
-    pub dummy_instance_buffer: wgpu::Buffer,
+    pub dummy_instance_buffer: crate::gpu::Buffer,
     /// Bind group used when a mesh has no attached deformer data. Bound by
     /// every mesh-family draw at slot 2 to satisfy the pipeline layout
     /// without forcing per-mesh storage allocation.
-    pub dummy_bind_group: wgpu::BindGroup,
+    pub dummy_bind_group: crate::gpu::BindGroup,
     pub meshes: HashMap<MeshId, MeshDeform>,
     pub header_cpu: DeformHeader,
     /// Currently registered deformers, in registration order.
@@ -172,75 +172,78 @@ pub(crate) struct DeformationState {
 }
 
 impl DeformationState {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("deform_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+    pub fn new(device: &crate::gpu::Device) -> Self {
+        let bind_group_layout =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("deform_bgl"),
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         let header_cpu = DeformHeader::zeroed();
-        let header_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let header_buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("deform_header"),
             contents: bytemuck::bytes_of(&header_cpu),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
         });
 
         let dummy_words = vec![0u32; SLOT_LAYOUT_WORDS];
-        let dummy_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("deform_dummy_data"),
-            contents: bytemuck::cast_slice(&dummy_words),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-        let dummy_instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("deform_dummy_instance_data"),
-            contents: bytemuck::cast_slice(&dummy_words),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        let dummy_data_buffer =
+            device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                label: Some("deform_dummy_data"),
+                contents: bytemuck::cast_slice(&dummy_words),
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            });
+        let dummy_instance_buffer =
+            device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                label: Some("deform_dummy_instance_data"),
+                contents: bytemuck::cast_slice(&dummy_words),
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            });
 
-        let dummy_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let dummy_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("deform_dummy_bg"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: header_buffer.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
                     resource: dummy_data_buffer.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: dummy_instance_buffer.as_entire_binding(),
                 },
@@ -265,7 +268,7 @@ impl DeformationState {
     /// The returned state still allocates a minimal BGL and dummy bind group so
     /// that render.rs can call set_bind_group(2, ...) without crashing; those
     /// calls target a slot not present in any pipeline layout and are ignored.
-    pub fn new_disabled(device: &wgpu::Device) -> Self {
+    pub fn new_disabled(device: &crate::gpu::Device) -> Self {
         let mut s = Self::new(device);
         s.enabled = false;
         s
@@ -276,7 +279,7 @@ impl DeformationState {
     /// at draw time once the registry has rebuilt the mesh pipelines to bind
     /// group 2.
     #[allow(dead_code)]
-    pub fn bind_group_for(&self, mesh_id: MeshId) -> &wgpu::BindGroup {
+    pub fn bind_group_for(&self, mesh_id: MeshId) -> &crate::gpu::BindGroup {
         self.meshes
             .get(&mesh_id)
             .map(|m| &m.bind_group)
@@ -320,7 +323,7 @@ impl DeformationState {
         &self,
         mesh_id: MeshId,
         instance_id: Option<u32>,
-    ) -> &wgpu::BindGroup {
+    ) -> &crate::gpu::BindGroup {
         let Some(mesh) = self.meshes.get(&mesh_id) else {
             return &self.dummy_bind_group;
         };
@@ -356,24 +359,24 @@ impl DeformationState {
 
     fn make_bind_group(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         label: &str,
-        mesh_buffer: &wgpu::Buffer,
-        instance_buffer: &wgpu::Buffer,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        mesh_buffer: &crate::gpu::Buffer,
+        instance_buffer: &crate::gpu::Buffer,
+    ) -> crate::gpu::BindGroup {
+        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some(label),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: self.header_buffer.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
                     resource: mesh_buffer.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: instance_buffer.as_entire_binding(),
                 },
@@ -385,7 +388,7 @@ impl DeformationState {
     /// group and every per-instance bind group (which also binds the
     /// per-mesh buffer). Drops the mesh entry when no slot has any data
     /// attached on either side.
-    fn refresh(&mut self, device: &wgpu::Device, mesh_id: MeshId) {
+    fn refresh(&mut self, device: &crate::gpu::Device, mesh_id: MeshId) {
         let Some(m) = self.meshes.get(&mesh_id) else {
             return;
         };
@@ -394,10 +397,10 @@ impl DeformationState {
             return;
         }
         let words = Self::pack(&m.slot_data, &m.slot_stride);
-        let new_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let new_buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("deform_mesh_data"),
             contents: bytemuck::cast_slice(&words),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
         });
         let new_bg = self.make_bind_group(
             device,
@@ -449,15 +452,15 @@ impl DeformationState {
         m.bind_group = new_bg;
     }
 
-    fn ensure_mesh(&mut self, device: &wgpu::Device, mesh_id: MeshId) {
+    fn ensure_mesh(&mut self, device: &crate::gpu::Device, mesh_id: MeshId) {
         if self.meshes.contains_key(&mesh_id) {
             return;
         }
         let init_words = vec![0u32; SLOT_LAYOUT_WORDS];
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("deform_mesh_data_init"),
             contents: bytemuck::cast_slice(&init_words),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
         });
         let bind_group = self.make_bind_group(
             device,
@@ -484,7 +487,7 @@ impl DeformationState {
     /// deformer's `per_vertex_stride / 4`).
     pub fn attach_slot(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: MeshId,
         slot: usize,
         stride_words: u32,
@@ -504,7 +507,12 @@ impl DeformationState {
     }
 
     /// Detach a per-mesh slot. Returns `true` if any data was removed.
-    pub fn detach_slot(&mut self, device: &wgpu::Device, mesh_id: MeshId, slot: usize) -> bool {
+    pub fn detach_slot(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: MeshId,
+        slot: usize,
+    ) -> bool {
         assert!(slot < DEFORM_SLOT_COUNT);
         let Some(m) = self.meshes.get_mut(&mesh_id) else {
             return false;
@@ -540,8 +548,8 @@ impl DeformationState {
     /// written with `queue.write_buffer` and the bind group is reused.
     pub fn attach_slot_instance(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mesh_id: MeshId,
         instance_id: u32,
         slot: usize,
@@ -563,10 +571,10 @@ impl DeformationState {
             .contains_key(&instance_id);
         if needs_insert {
             let init_words = vec![0u32; SLOT_LAYOUT_WORDS];
-            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("deform_mesh_instance_data_init"),
                 contents: bytemuck::cast_slice(&init_words),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             });
             let mesh_buf_clone = self.meshes.get(&mesh_id).unwrap().buffer.clone();
             let bind_group =
@@ -626,10 +634,10 @@ impl DeformationState {
         };
 
         if needs_realloc {
-            let new_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let new_buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("deform_mesh_instance_data"),
                 contents: bytemuck::cast_slice(&packed_words),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             });
             let mesh_buf_clone = self.meshes.get(&mesh_id).unwrap().buffer.clone();
             let bg = self.make_bind_group(
@@ -669,8 +677,8 @@ impl DeformationState {
     /// the instance buffer if other slots still hold data.
     pub fn detach_slot_instance(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mesh_id: MeshId,
         instance_id: u32,
         slot: usize,
@@ -701,11 +709,13 @@ impl DeformationState {
             };
             let inst = m.instances.get(&instance_id).unwrap();
             if packed_bytes_len > inst.buffer_capacity {
-                let new_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("deform_mesh_instance_data"),
-                    contents: bytemuck::cast_slice(&packed_words),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                });
+                let new_buffer =
+                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                        label: Some("deform_mesh_instance_data"),
+                        contents: bytemuck::cast_slice(&packed_words),
+                        usage: crate::gpu::BufferUsages::STORAGE
+                            | crate::gpu::BufferUsages::COPY_DST,
+                    });
                 let mesh_buf_clone = m.buffer.clone();
                 let bg = self.make_bind_group(
                     device,
@@ -748,7 +758,7 @@ impl DeformationState {
 impl DeviceResources {
     /// Write the shared header uniform's `time_seconds` field. Cheap; safe to
     /// call per frame.
-    pub fn set_deform_time(&mut self, queue: &wgpu::Queue, time_seconds: f32) {
+    pub fn set_deform_time(&mut self, queue: &crate::gpu::Queue, time_seconds: f32) {
         self.deform.header_cpu.time_seconds = time_seconds;
         queue.write_buffer(
             &self.deform.header_buffer,
@@ -761,7 +771,7 @@ impl DeviceResources {
     /// header uniform.
     pub fn set_deform_slot_params(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::Queue,
         slot: usize,
         params: [[f32; 4]; DEFORM_PARAMS_PER_SLOT],
     ) {
@@ -786,7 +796,7 @@ impl DeviceResources {
     /// of `stride_bytes` and 4.
     pub fn attach_deform_slot(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: MeshId,
         slot: usize,
         stride_bytes: u32,
@@ -803,7 +813,7 @@ impl DeviceResources {
     /// Detach a per-mesh slot's data. Returns `true` if any data was removed.
     pub fn detach_deform_slot(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         mesh_id: MeshId,
         slot: usize,
     ) -> bool {
@@ -822,8 +832,8 @@ impl DeviceResources {
     /// length must be a multiple of `stride_bytes` and 4.
     pub fn attach_deform_slot_instance(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mesh_id: MeshId,
         instance_id: u32,
         slot: usize,
@@ -849,8 +859,8 @@ impl DeviceResources {
     /// removed.
     pub fn detach_deform_slot_instance(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mesh_id: MeshId,
         instance_id: u32,
         slot: usize,
@@ -895,7 +905,7 @@ impl DeviceResources {
     /// [`ViewportError::DeformSlotsExhausted`]: crate::error::ViewportError::DeformSlotsExhausted
     pub fn register_deformer(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         desc: DeformerDesc,
     ) -> ViewportResult<DeformerId> {
         validate_name(&self.deform.registrations, desc.name)?;
@@ -930,7 +940,7 @@ impl DeviceResources {
     #[allow(dead_code)]
     pub(crate) fn register_internal_deformer(
         &mut self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         desc: DeformerDesc,
     ) -> ViewportResult<DeformerId> {
         validate_name(&self.deform.registrations, desc.name)?;
@@ -988,7 +998,7 @@ impl DeviceResources {
     /// to reset to the identity shader. The instanced and instanced-OIT
     /// pipelines stay on their build-time shader modules until their
     /// factories migrate to the same rebuild flow.
-    fn rebuild_mesh_pipelines(&mut self, device: &wgpu::Device) {
+    fn rebuild_mesh_pipelines(&mut self, device: &crate::gpu::Device) {
         if !self.deform.enabled {
             return;
         }
@@ -1084,7 +1094,7 @@ impl DeviceResources {
                 device,
                 &layout,
                 &shader,
-                Some(wgpu::Face::Front),
+                Some(crate::gpu::Face::Front),
                 None,
             );
             self.shadow_pipeline_two_sided =
@@ -1114,7 +1124,7 @@ impl DeviceResources {
                 device,
                 &layout,
                 &shader,
-                wgpu::TextureFormat::R8Unorm,
+                crate::gpu::TextureFormat::R8Unorm,
                 None,
             );
             self.outline.mask_pipeline = masks.mask;
@@ -1250,19 +1260,22 @@ impl DeviceResources {
 mod tests {
     use super::*;
 
-    fn headless() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        }))
+    fn headless() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            },
+        ))
         .ok()?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("deform_tests"),
-            ..Default::default()
-        }))
-        .ok()?;
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+                label: Some("deform_tests"),
+                ..Default::default()
+            }))
+            .ok()?;
         Some((device, queue))
     }
 
@@ -1357,13 +1370,13 @@ mod tests {
         assert!(!s.has_slot_instance(mesh, instance, 1));
 
         // The instance bind group differs from the mesh bind group.
-        let inst_bg: *const wgpu::BindGroup = s.instance_bind_group_for(mesh, Some(instance));
-        let mesh_bg: *const wgpu::BindGroup = s.instance_bind_group_for(mesh, None);
+        let inst_bg: *const crate::gpu::BindGroup = s.instance_bind_group_for(mesh, Some(instance));
+        let mesh_bg: *const crate::gpu::BindGroup = s.instance_bind_group_for(mesh, None);
         assert_ne!(inst_bg, mesh_bg);
 
         // A draw of an instance with no per-instance data falls back to the
         // mesh bind group.
-        let fallback: *const wgpu::BindGroup = s.instance_bind_group_for(mesh, Some(99));
+        let fallback: *const crate::gpu::BindGroup = s.instance_bind_group_for(mesh, Some(99));
         assert_eq!(fallback, mesh_bg);
 
         // Detaching the instance slot drops the instance entry and clears
@@ -1399,10 +1412,11 @@ mod tests {
         let Some((device, _queue)) = headless() else {
             return;
         };
-        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
-        let solid_before: *const wgpu::RenderPipeline = &renderer.resources().solid_pipeline;
-        let wf_before: *const wgpu::RenderPipeline = &renderer.resources().wireframe_pipeline;
+        let solid_before: *const crate::gpu::RenderPipeline = &renderer.resources().solid_pipeline;
+        let wf_before: *const crate::gpu::RenderPipeline = &renderer.resources().wireframe_pipeline;
 
         let body = "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if (deform_slot_stride(0u) > 0u) {\n        o.position.z = o.position.z + deform_read_f32(0u, v.vertex_index, 0u);\n    }\n    return o;\n}\n";
         let desc = DeformerDesc {
@@ -1418,8 +1432,8 @@ mod tests {
             .expect("register");
         assert_eq!(id.slot(), 0);
 
-        let solid_after: *const wgpu::RenderPipeline = &renderer.resources().solid_pipeline;
-        let wf_after: *const wgpu::RenderPipeline = &renderer.resources().wireframe_pipeline;
+        let solid_after: *const crate::gpu::RenderPipeline = &renderer.resources().solid_pipeline;
+        let wf_after: *const crate::gpu::RenderPipeline = &renderer.resources().wireframe_pipeline;
         // The fields themselves moved during the swap, so the addresses
         // stay the same. Instead, confirm that `solid_pipeline` and
         // `wireframe_pipeline` are still live wgpu handles by hashing
@@ -1436,7 +1450,8 @@ mod tests {
         let Some((device, _queue)) = headless() else {
             return;
         };
-        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let resources = renderer.resources_mut();
         let desc = DeformerDesc {
             name: "wind",

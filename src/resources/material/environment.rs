@@ -32,8 +32,8 @@ use crate::resources::upload_jobs::{ApplyFn, JobId, JobProduct, ProgressHandle, 
 /// through the upload-job runner.
 pub fn upload_environment_map(
     resources: &mut crate::resources::DeviceResources,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     pixels: &[f32],
     width: u32,
     height: u32,
@@ -69,8 +69,8 @@ pub fn upload_environment_map(
 /// Ownership of `pixels` transfers into the background worker.
 pub fn begin_upload_environment_map(
     resources: &mut crate::resources::DeviceResources,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     pixels: Vec<f32>,
     width: u32,
     height: u32,
@@ -127,8 +127,8 @@ fn apply_gpu_result(result: super::ibl_compute::IblComputeResult) -> ApplyFn {
 /// CPU, creates GPU textures, queues their writes, and submits a
 /// flush so the runner has a `SubmissionIndex` to gate on.
 fn run_cpu_path(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     pixels: &[f32],
     width: u32,
     height: u32,
@@ -139,7 +139,7 @@ fn run_cpu_path(
 
     // 1. Full-resolution skybox.
     let skybox_tex = upload_rgba16f(device, queue, pixels, width, height, "ibl_skybox");
-    let skybox_view = skybox_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let skybox_view = skybox_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
     progress.set(0.15);
 
@@ -155,7 +155,7 @@ fn run_cpu_path(
         irr_h,
         "ibl_irradiance",
     );
-    let irr_view = irr_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let irr_view = irr_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
     progress.set(0.55);
 
@@ -166,7 +166,7 @@ fn run_cpu_path(
     let (_spec_data_mips, spec_tex) = prefilter_specular(
         device, queue, pixels, width, height, spec_w, spec_h, mip_levels,
     );
-    let spec_view = spec_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let spec_view = spec_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
     progress.set(0.9);
 
@@ -183,7 +183,7 @@ fn run_cpu_path(
             brdf_size,
             "ibl_brdf_lut",
         );
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
         (Some(tex), Some(view))
     } else {
         (None, None)
@@ -191,7 +191,7 @@ fn run_cpu_path(
 
     // 5. Flush so the runner has a submission to gate on. Implicit writes
     // queued above are folded into this submit by wgpu.
-    let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    let encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
         label: Some("ibl_flush"),
     });
     let submission = queue.submit(std::iter::once(encoder.finish()));
@@ -221,44 +221,44 @@ fn run_cpu_path(
 
 /// Upload f32 RGBA pixel data as an Rgba16Float GPU texture.
 pub(crate) fn upload_rgba16f(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     pixels: &[f32],
     width: u32,
     height: u32,
     label: &str,
-) -> wgpu::Texture {
+) -> crate::gpu::Texture {
     let mip_level_count = 1;
-    let tex = device.create_texture(&wgpu::TextureDescriptor {
+    let tex = device.create_texture(&crate::gpu::TextureDescriptor {
         label: Some(label),
-        size: wgpu::Extent3d {
+        size: crate::gpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         },
         mip_level_count,
         sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba16Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba16Float,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     // Convert f32 -> f16 for upload.
     let half_data: Vec<u16> = pixels.iter().map(|&f| f32_to_f16(f)).collect();
     queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
+        crate::gpu::TexelCopyTextureInfo {
             texture: &tex,
             mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
+            origin: crate::gpu::Origin3d::ZERO,
+            aspect: crate::gpu::TextureAspect::All,
         },
         bytemuck::cast_slice(&half_data),
-        wgpu::TexelCopyBufferLayout {
+        crate::gpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(width * 8), // 4 x f16 = 8 bytes per pixel
             rows_per_image: Some(height),
         },
-        wgpu::Extent3d {
+        crate::gpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
@@ -367,27 +367,27 @@ fn convolve_irradiance(src: &[f32], src_w: u32, src_h: u32, dst_w: u32, dst_h: u
 // -------------------------------------------------------------------------
 
 fn prefilter_specular(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     src: &[f32],
     src_w: u32,
     src_h: u32,
     base_w: u32,
     base_h: u32,
     mip_levels: u32,
-) -> (Vec<Vec<f32>>, wgpu::Texture) {
-    let tex = device.create_texture(&wgpu::TextureDescriptor {
+) -> (Vec<Vec<f32>>, crate::gpu::Texture) {
+    let tex = device.create_texture(&crate::gpu::TextureDescriptor {
         label: Some("ibl_prefiltered"),
-        size: wgpu::Extent3d {
+        size: crate::gpu::Extent3d {
             width: base_w,
             height: base_h,
             depth_or_array_layers: 1,
         },
         mip_level_count: mip_levels,
         sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba16Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba16Float,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
 
@@ -429,19 +429,19 @@ fn prefilter_specular(
         // Upload this mip level.
         let half_data: Vec<u16> = data.iter().map(|&f| f32_to_f16(f)).collect();
         queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
+            crate::gpu::TexelCopyTextureInfo {
                 texture: &tex,
                 mip_level: mip,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
             },
             bytemuck::cast_slice(&half_data),
-            wgpu::TexelCopyBufferLayout {
+            crate::gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(mip_w * 8),
                 rows_per_image: Some(mip_h),
             },
-            wgpu::Extent3d {
+            crate::gpu::Extent3d {
                 width: mip_w,
                 height: mip_h,
                 depth_or_array_layers: 1,
@@ -649,19 +649,21 @@ mod tests {
         v
     }
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
-    fn make_resources(device: &wgpu::Device) -> DeviceResources {
-        DeviceResources::new(device, wgpu::TextureFormat::Rgba8UnormSrgb, 1)
+    fn make_resources(device: &crate::gpu::Device) -> DeviceResources {
+        DeviceResources::new(device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1)
     }
 
     #[test]

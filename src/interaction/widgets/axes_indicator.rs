@@ -27,20 +27,20 @@ pub(crate) struct AxesVertex {
 
 impl AxesVertex {
     /// wgpu vertex buffer layout matching shader locations 0 (position) and 1 (colour).
-    pub(crate) fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<AxesVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
+    pub(crate) fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
+        crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<AxesVertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
             attributes: &[
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                crate::gpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 2]>() as crate::gpu::BufferAddress,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],
         }

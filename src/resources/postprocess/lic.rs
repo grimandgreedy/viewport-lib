@@ -8,17 +8,17 @@
 #[derive(Default)]
 pub(crate) struct LicResources {
     /// Renders mesh with vector storage buffer -> lic_vector_texture (Rgba8Unorm).
-    pub(crate) surface_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) surface_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 1 layout of the LIC surface pass (object uniform + vector buffer + noise).
-    pub(crate) surface_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) surface_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Reads lic_vector_texture, writes LIC intensity to R8Unorm target.
-    pub(crate) advect_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) advect_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the LIC advect pass.
-    pub(crate) advect_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) advect_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Bilinear sampler for the LIC advect pass.
-    pub(crate) noise_sampler: Option<wgpu::Sampler>,
+    pub(crate) noise_sampler: Option<crate::gpu::Sampler>,
     /// 1x1 R8Unorm white placeholder bound to tone_map binding 7 when LIC is inactive.
-    pub(crate) placeholder_view: Option<wgpu::TextureView>,
+    pub(crate) placeholder_view: Option<crate::gpu::TextureView>,
 }
 
 /// Uniform for the LIC advect render pass (step counts and viewport dims).
@@ -41,9 +41,9 @@ pub(crate) struct LicObjectUniform {
 /// Per-frame GPU data for one Surface LIC item, created in `prepare()`.
 pub struct LicSurfaceGpuData {
     /// Bind group (group 1): LicObjectUniform only. Flow vectors bound as vertex buffer 1.
-    pub(crate) bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: crate::gpu::BindGroup,
     /// Owned uniform buffer for the model matrix. Kept alive by this struct.
-    pub(crate) _object_uniform_buf: wgpu::Buffer,
+    pub(crate) _object_uniform_buf: crate::gpu::Buffer,
     /// MeshId used to look up vertex + index buffers in the render pass.
     pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Name of the flow vector attribute for looking up the vertex buffer in the render pass.

@@ -9,20 +9,20 @@ pub(crate) struct PolylineResources {
     /// Clip-exempt polyline pipeline (uses fs_main_no_clip).
     pub(crate) no_clip_pipeline: Option<DualPipeline>,
     /// Bind group layout for polyline uniforms (group 1).
-    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Thin 1px LineList wireframe polyline pipeline.
     pub(crate) wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for the wireframe polyline pipeline (group 1).
-    pub(crate) wireframe_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) wireframe_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Polyline outline mask pipeline (R8Unorm). None until first selected polyline.
-    pub(crate) outline_mask_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 impl DeviceResources {
     /// Lazily create the polyline render pipeline (instanced TriangleList : screen-space thick lines).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.polylines` is non-empty.
-    pub(crate) fn ensure_polyline_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_polyline_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.polyline.pipeline.is_some() {
             return;
         }
@@ -31,8 +31,8 @@ impl DeviceResources {
         let pl_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
             "polyline_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            wgpu::ShaderStages::VERTEX,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX,
         );
 
         let shader = crate::resources::builders::wgsl_module(
@@ -63,74 +63,74 @@ impl DeviceResources {
         //   offset 100: radius_b          f32   : line width in px at B
         //   offset 104: use_direct_colour  u32   : 1 = use colour_a/b, 0 = use scalar LUT / default
         //   offset 108: _pad              u32
-        let pl_instance_layout = wgpu::VertexBufferLayout {
+        let pl_instance_layout = crate::gpu::VertexBufferLayout {
             array_stride: 112,
-            step_mode: wgpu::VertexStepMode::Instance,
+            step_mode: crate::gpu::VertexStepMode::Instance,
             attributes: &[
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 }, // pos_a
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 12,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 }, // pos_b
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 24,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 }, // prev_pos
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 36,
                     shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 }, // next_pos
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 48,
                     shader_location: 4,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 }, // scalar_a
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 52,
                     shader_location: 5,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 }, // scalar_b
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 56,
                     shader_location: 6,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 }, // has_prev
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 60,
                     shader_location: 7,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 }, // has_next
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 64,
                     shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 }, // colour_a
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 80,
                     shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 }, // colour_b
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 96,
                     shader_location: 10,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 }, // radius_a
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 100,
                     shader_location: 11,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 }, // radius_b
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 104,
                     shader_location: 12,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 }, // use_direct_colour
             ],
         };
@@ -144,11 +144,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[pl_instance_layout.clone()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_compare: crate::gpu::CompareFunction::LessEqual,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -162,19 +162,19 @@ impl DeviceResources {
     ///
     /// Reads segment endpoints from a storage buffer so no vertex buffer is needed.
     /// Created alongside `ensure_polyline_pipeline`; no-op if already created.
-    pub(crate) fn ensure_polyline_wireframe_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_polyline_wireframe_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.polyline.wireframe_pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
-        let wf_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let wf_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("polyline_wireframe_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+            entries: &[crate::gpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -205,11 +205,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::LineList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::LineList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_compare: crate::gpu::CompareFunction::LessEqual,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -229,8 +229,8 @@ impl DeviceResources {
     /// uniform so the vertex shader can compute correct pixel offsets.
     pub(crate) fn upload_polyline_per_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::PolylineItem,
         viewport_size: [f32; 2],
     ) -> PolylineGpuData {
@@ -360,12 +360,12 @@ impl DeviceResources {
 
         // Allocate instance buffer (min 112 bytes so wgpu doesn't complain on empty).
         let seg_bytes: &[u8] = bytemuck::cast_slice(&instances);
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("polyline_vertex_buf"),
             size: seg_bytes.len().max(112) as u64,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX
+                | crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if !seg_bytes.is_empty() {
@@ -416,10 +416,10 @@ impl DeviceResources {
             viewport_height: viewport_size[1].max(1.0),
             _pad: [0.0; 2],
         };
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("polyline_uniform_buf"),
             size: std::mem::size_of::<PolylineUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
@@ -442,30 +442,30 @@ impl DeviceResources {
             .bgl
             .as_ref()
             .expect("ensure_polyline_pipeline not called");
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("polyline_bind_group"),
             layout: bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(lut_view),
+                    resource: crate::gpu::BindingResource::TextureView(lut_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(lut_sampler),
                 },
             ],
         });
 
         let wireframe_bind_group = self.polyline.wireframe_bgl.as_ref().map(|bgl| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("polyline_wireframe_bind_group"),
                 layout: bgl,
-                entries: &[wgpu::BindGroupEntry {
+                entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: vertex_buffer.as_entire_binding(),
                 }],
@@ -497,8 +497,8 @@ impl DeviceResources {
     /// callers can rely on it being correct after the first frame.
     pub fn upload_polyline(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: &crate::renderer::PolylineItem,
     ) -> crate::resources::PolylineId {
         self.ensure_polyline_pipeline(device);
@@ -519,8 +519,8 @@ impl DeviceResources {
     /// `false` if the slot was empty (call [`upload_polyline`](Self::upload_polyline) instead).
     pub fn replace_polyline(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         id: crate::resources::PolylineId,
         item: &crate::renderer::PolylineItem,
     ) -> bool {
@@ -543,8 +543,8 @@ impl DeviceResources {
     /// Ownership of `item` transfers into the worker.
     pub fn begin_upload_polyline(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         item: crate::renderer::PolylineItem,
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::PolylineId>::new();
@@ -607,7 +607,7 @@ impl DeviceResources {
     /// Identical to the regular polyline pipeline but uses `fs_main_no_clip` so
     /// fragments are never discarded by clip planes or clip volumes. Used for
     /// clip object wireframe overlays which must always be fully visible.
-    pub(crate) fn ensure_polyline_no_clip_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_polyline_no_clip_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.polyline.no_clip_pipeline.is_some() {
             return;
         }
@@ -634,74 +634,74 @@ impl DeviceResources {
         );
 
         // Vertex buffer layout is identical to the regular polyline pipeline (112 bytes/segment).
-        let pl_instance_layout = wgpu::VertexBufferLayout {
+        let pl_instance_layout = crate::gpu::VertexBufferLayout {
             array_stride: 112,
-            step_mode: wgpu::VertexStepMode::Instance,
+            step_mode: crate::gpu::VertexStepMode::Instance,
             attributes: &[
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 12,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 24,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 36,
                     shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 48,
                     shader_location: 4,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 52,
                     shader_location: 5,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 56,
                     shader_location: 6,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 60,
                     shader_location: 7,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 64,
                     shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 80,
                     shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 96,
                     shader_location: 10,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 100,
                     shader_location: 11,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 104,
                     shader_location: 12,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 },
             ],
         };
@@ -715,11 +715,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main_no_clip",
                 vertex_buffers: &[pl_instance_layout.clone()],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_compare: crate::gpu::CompareFunction::LessEqual,
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
@@ -731,7 +731,7 @@ impl DeviceResources {
     /// Renders polyline segments into the R8 mask texture using the same
     /// screen-space quad expansion as the regular pipeline, but outputs white
     /// and skips clip plane / colour logic.
-    pub(crate) fn ensure_polyline_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_polyline_outline_mask_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.polyline.outline_mask_pipeline.is_some() {
             return;
         }
@@ -757,74 +757,74 @@ impl DeviceResources {
             crate::resources::builders::wgsl_source!("polyline_outline_mask"),
         );
 
-        let pl_instance_layout = wgpu::VertexBufferLayout {
+        let pl_instance_layout = crate::gpu::VertexBufferLayout {
             array_stride: 112,
-            step_mode: wgpu::VertexStepMode::Instance,
+            step_mode: crate::gpu::VertexStepMode::Instance,
             attributes: &[
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 12,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 24,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 36,
                     shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 48,
                     shader_location: 4,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 52,
                     shader_location: 5,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 56,
                     shader_location: 6,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 60,
                     shader_location: 7,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 64,
                     shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 80,
                     shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 96,
                     shader_location: 10,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 100,
                     shader_location: 11,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 104,
                     shader_location: 12,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: crate::gpu::VertexFormat::Uint32,
                 },
             ],
         };
@@ -835,11 +835,11 @@ impl DeviceResources {
                 "polyline_outline_mask_pipeline",
                 &layout,
                 &shader,
-                wgpu::TextureFormat::R8Unorm,
+                crate::gpu::TextureFormat::R8Unorm,
                 &[pl_instance_layout],
                 None,
                 true,
-                wgpu::CompareFunction::LessEqual,
+                crate::gpu::CompareFunction::LessEqual,
             ));
     }
 }
@@ -850,15 +850,17 @@ mod tests {
     use crate::renderer::PolylineItem;
     use crate::resources::UploadStatus;
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn sample_polyline() -> PolylineItem {
@@ -887,7 +889,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_polyline(&device, &queue, &sample_polyline());
         assert!(resources.content.polyline_store.contains(id));
         // drop + reupload cycles the slot.
@@ -903,7 +906,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id1 = resources.upload_polyline(&device, &queue, &sample_polyline());
         assert!(resources.content.polyline_store.get(id1).is_some());
@@ -929,7 +933,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = resources.upload_polyline(&device, &queue, &sample_polyline());
         let mut updated = sample_polyline();
         updated.line_width = 5.0;
@@ -943,7 +948,8 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut resources = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let job = resources.begin_upload_polyline(&device, &queue, sample_polyline());
 
         // Not ready yet.
@@ -998,13 +1004,13 @@ pub struct PolylineGpuData {
     /// `PickId::NONE` when not pickable.
     pub(crate) pick_id: crate::PickId,
     /// Instance buffer: `[xa, ya, za, xb, yb, zb, scalar_a, scalar_b]` per segment (32 bytes).
-    pub(crate) vertex_buffer: wgpu::Buffer,
+    pub(crate) vertex_buffer: crate::gpu::Buffer,
     /// Number of line segments (instances).  Draw call: `draw(0..6, 0..segment_count)`.
     pub(crate) segment_count: u32,
     /// Bind group (group 1): uniform + LUT texture + sampler.
-    pub(crate) bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: crate::gpu::BindGroup,
     // Keep the uniform buffer alive for the lifetime of this struct.
-    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _uniform_buf: crate::gpu::Buffer,
     /// When true, renders with the clip-exempt pipeline (no clip plane or clip volume test).
     /// Used for clip object wireframe overlays that must always be fully visible.
     pub(crate) skip_clip: bool,
@@ -1012,5 +1018,5 @@ pub struct PolylineGpuData {
     pub(crate) wireframe: bool,
     /// Bind group for the wireframe pipeline (group 1: segment storage buffer).
     /// None when the wireframe pipeline has not been created yet.
-    pub(crate) wireframe_bind_group: Option<wgpu::BindGroup>,
+    pub(crate) wireframe_bind_group: Option<crate::gpu::BindGroup>,
 }

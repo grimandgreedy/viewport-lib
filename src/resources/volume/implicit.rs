@@ -3,9 +3,9 @@
 //! Public API: [`GpuImplicitItem`], [`ImplicitPrimitive`], [`ImplicitBlendMode`],
 //! [`GpuImplicitOptions`].
 
+use crate::gpu::util::DeviceExt as _;
 use crate::renderer::GpuImplicitItem;
 use crate::resources::DeviceResources;
-use wgpu::util::DeviceExt as _;
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -108,8 +108,8 @@ pub(crate) struct ImplicitUniformRaw {
 
 /// Per-draw GPU data for one [`GpuImplicitItem`].
 pub(crate) struct ImplicitGpuItem {
-    pub _uniform_buf: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
+    pub _uniform_buf: crate::gpu::Buffer,
+    pub bind_group: crate::gpu::BindGroup,
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ impl DeviceResources {
     ///
     /// No-op if already created.  Called from `prepare()` when any
     /// `GpuImplicitItem` is submitted via `SceneFrame::gpu_implicit`.
-    pub(crate) fn ensure_implicit_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_implicit_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.implicit.pipeline.is_some() {
             return;
         }
@@ -137,7 +137,7 @@ impl DeviceResources {
         let implicit_bgl = crate::resources::builders::uniform_bgl(
             device,
             "implicit_bgl",
-            wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::FRAGMENT,
         );
 
         // Group 0 reuses camera_bind_group_layout (provides CameraUniform + LightsUniform).
@@ -159,11 +159,11 @@ impl DeviceResources {
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
                 vertex_buffers: &[],
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_write: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_compare: crate::gpu::CompareFunction::LessEqual,
                 sample_count: 1,
                 ldr_format: self.target_format,
             },
@@ -175,7 +175,7 @@ impl DeviceResources {
     /// Reuses the same bind group layouts as `ensure_implicit_pipeline`. Must be
     /// called after `ensure_implicit_pipeline` so that `implicit_bgl` is set.
     /// No-op if already created.
-    pub(crate) fn ensure_implicit_outline_mask_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_implicit_outline_mask_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.implicit.outline_mask_pipeline.is_some() {
             return;
         }
@@ -204,11 +204,11 @@ impl DeviceResources {
                 "implicit_outline_mask_pipeline",
                 &layout,
                 &shader,
-                wgpu::TextureFormat::R8Unorm,
+                crate::gpu::TextureFormat::R8Unorm,
                 &[],
                 None,
                 true,
-                wgpu::CompareFunction::Less,
+                crate::gpu::CompareFunction::Less,
             ));
     }
 
@@ -217,7 +217,7 @@ impl DeviceResources {
     /// Panics if called before `ensure_implicit_pipeline`.
     pub(crate) fn upload_implicit_item(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         item: &GpuImplicitItem,
     ) -> ImplicitGpuItem {
         // Build the flat uniform struct.
@@ -243,10 +243,10 @@ impl DeviceResources {
             raw.primitives[i] = *prim;
         }
 
-        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("implicit_uniform_buf"),
             contents: bytemuck::bytes_of(&raw),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: crate::gpu::BufferUsages::UNIFORM,
         });
 
         let bgl = self
@@ -255,10 +255,10 @@ impl DeviceResources {
             .as_ref()
             .expect("ensure_implicit_pipeline not called");
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("implicit_bind_group"),
             layout: bgl,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buf.as_entire_binding(),
             }],

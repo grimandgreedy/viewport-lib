@@ -11,15 +11,15 @@ use super::*;
 /// buffer and uploading via the queue turns such a failure into a logged error
 /// and a degraded frame rather than a hard crash that takes the process down.
 fn upload_overlay_vbuf<T: bytemuck::Pod>(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
     label: &str,
     verts: &[T],
-) -> wgpu::Buffer {
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+) -> crate::gpu::Buffer {
+    let buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
         label: Some(label),
         size: std::mem::size_of_val(verts) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     queue.write_buffer(&buffer, 0, bytemuck::cast_slice(verts));
@@ -29,8 +29,8 @@ fn upload_overlay_vbuf<T: bytemuck::Pod>(
 impl ViewportRenderer {
     pub(super) fn prepare_overlay_labels(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ---------------------------------------------------------------
@@ -272,19 +272,19 @@ impl ViewportRenderer {
                         upload_overlay_vbuf(device, queue, "overlay_label_vbuf", &verts);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("overlay_label_bg"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(
+                                resource: crate::gpu::BindingResource::TextureView(
                                     &self.resources.content.glyph_atlas.view,
                                 ),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
+                                resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
                         ],
                     });
@@ -300,8 +300,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_scalar_bars(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ---------------------------------------------------------------
@@ -596,19 +596,19 @@ impl ViewportRenderer {
                         upload_overlay_vbuf(device, queue, "overlay_scalar_bar_vbuf", &verts);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("overlay_scalar_bar_bg"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(
+                                resource: crate::gpu::BindingResource::TextureView(
                                     &self.resources.content.glyph_atlas.view,
                                 ),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
+                                resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
                         ],
                     });
@@ -624,8 +624,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_rulers(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ---------------------------------------------------------------
@@ -782,19 +782,19 @@ impl ViewportRenderer {
                         upload_overlay_vbuf(device, queue, "overlay_ruler_vbuf", &verts);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("overlay_ruler_bg"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(
+                                resource: crate::gpu::BindingResource::TextureView(
                                     &self.resources.content.glyph_atlas.view,
                                 ),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
+                                resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
                         ],
                     });
@@ -810,8 +810,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_loading_bars(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ---------------------------------------------------------------
@@ -914,19 +914,19 @@ impl ViewportRenderer {
                     let vertex_buf = upload_overlay_vbuf(device, queue, "loading_bar_vbuf", &verts);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("loading_bar_bg"),
                         layout: bgl,
                         entries: &[
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(
+                                resource: crate::gpu::BindingResource::TextureView(
                                     &self.resources.content.glyph_atlas.view,
                                 ),
                             },
-                            wgpu::BindGroupEntry {
+                            crate::gpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
+                                resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
                         ],
                     });
@@ -942,8 +942,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_overlay_shapes(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ------------------------------------------------------------------
@@ -1543,20 +1543,23 @@ impl ViewportRenderer {
                                 continue;
                             };
                             let view = &entry.view;
-                            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("overlay_shape_tex_bg"),
-                                layout: bgl,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: wgpu::BindingResource::TextureView(view),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: wgpu::BindingResource::Sampler(sampler),
-                                    },
-                                ],
-                            });
+                            let bind_group =
+                                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                    label: Some("overlay_shape_tex_bg"),
+                                    layout: bgl,
+                                    entries: &[
+                                        crate::gpu::BindGroupEntry {
+                                            binding: 0,
+                                            resource: crate::gpu::BindingResource::TextureView(
+                                                view,
+                                            ),
+                                        },
+                                        crate::gpu::BindGroupEntry {
+                                            binding: 1,
+                                            resource: crate::gpu::BindingResource::Sampler(sampler),
+                                        },
+                                    ],
+                                });
                             let vertex_buf =
                                 upload_overlay_vbuf(device, queue, "overlay_shape_tex_vbuf", verts);
                             tex_batches.push(crate::resources::OverlayShapeTexBatch {

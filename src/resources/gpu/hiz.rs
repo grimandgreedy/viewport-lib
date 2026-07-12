@@ -45,7 +45,7 @@ pub(crate) struct HizState {
     pub(crate) dims: [u32; 2],
 
     /// Last frame's scene depth, copied as R32Float and reprojected each frame.
-    prev_depth_storage_view: wgpu::TextureView,
+    prev_depth_storage_view: crate::gpu::TextureView,
     /// Set once the first depth has been stored. Until then there is nothing to
     /// reproject and the pyramid is not built.
     has_prev_depth: bool,
@@ -54,49 +54,50 @@ pub(crate) struct HizState {
 
     /// Reprojection uniform (inverse-prev and current view-projection). The
     /// scatter buffer is owned by the bind groups that reference it.
-    reproj_uniform_buf: wgpu::Buffer,
+    reproj_uniform_buf: crate::gpu::Buffer,
 
     /// Full-mip-chain view sampled by the cull shader.
-    all_view: wgpu::TextureView,
+    all_view: crate::gpu::TextureView,
     /// One single-mip storage view per level (reduction write targets).
-    storage_views: Vec<wgpu::TextureView>,
+    storage_views: Vec<crate::gpu::TextureView>,
 
     /// depth -> prev_depth copy (reuses the mip-0 copy shader).
-    copy_pipeline: wgpu::ComputePipeline,
-    copy_bgl: wgpu::BindGroupLayout,
+    copy_pipeline: crate::gpu::ComputePipeline,
+    copy_bgl: crate::gpu::BindGroupLayout,
     /// Reprojection: clear, scatter, then buffer -> mip 0.
-    init_pipeline: wgpu::ComputePipeline,
-    scatter_pipeline: wgpu::ComputePipeline,
-    to_texture_pipeline: wgpu::ComputePipeline,
+    init_pipeline: crate::gpu::ComputePipeline,
+    scatter_pipeline: crate::gpu::ComputePipeline,
+    to_texture_pipeline: crate::gpu::ComputePipeline,
     /// mip N -> mip N+1 (max of 2x2).
-    reduce_pipeline: wgpu::ComputePipeline,
+    reduce_pipeline: crate::gpu::ComputePipeline,
 
     /// Cached bind groups for the per-frame passes (the depth-copy group is
     /// rebuilt each call because the depth view changes).
-    reproj_bg: wgpu::BindGroup,
-    to_texture_bg: wgpu::BindGroup,
-    reduce_bind_groups: Vec<wgpu::BindGroup>,
+    reproj_bg: crate::gpu::BindGroup,
+    to_texture_bg: crate::gpu::BindGroup,
+    reduce_bind_groups: Vec<crate::gpu::BindGroup>,
 }
 
 impl HizState {
-    pub(crate) fn new(device: &wgpu::Device, w: u32, h: u32) -> Self {
+    pub(crate) fn new(device: &crate::gpu::Device, w: u32, h: u32) -> Self {
         let w = w.max(1);
         let h = h.max(1);
         let mips = mip_count(w, h);
 
         let storage_texture = |label: &str, mip_levels: u32| {
-            device.create_texture(&wgpu::TextureDescriptor {
+            device.create_texture(&crate::gpu::TextureDescriptor {
                 label: Some(label),
-                size: wgpu::Extent3d {
+                size: crate::gpu::Extent3d {
                     width: w,
                     height: h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: mip_levels,
                 sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R32Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+                dimension: crate::gpu::TextureDimension::D2,
+                format: crate::gpu::TextureFormat::R32Float,
+                usage: crate::gpu::TextureUsages::TEXTURE_BINDING
+                    | crate::gpu::TextureUsages::STORAGE_BINDING,
                 view_formats: &[],
             })
         };
@@ -105,20 +106,20 @@ impl HizState {
         // the scatter pass. TextureView keeps the texture alive, so the texture
         // handle is not stored.
         let prev_depth = storage_texture("hiz_prev_depth", 1);
-        let prev_depth_storage_view = prev_depth.create_view(&wgpu::TextureViewDescriptor {
+        let prev_depth_storage_view = prev_depth.create_view(&crate::gpu::TextureViewDescriptor {
             label: Some("hiz_prev_depth_storage"),
             ..Default::default()
         });
-        let prev_depth_sampled_view = prev_depth.create_view(&wgpu::TextureViewDescriptor {
+        let prev_depth_sampled_view = prev_depth.create_view(&crate::gpu::TextureViewDescriptor {
             label: Some("hiz_prev_depth_sampled"),
             ..Default::default()
         });
 
         // Pyramid.
         let pyramid = storage_texture("hiz_pyramid", mips);
-        let all_view = pyramid.create_view(&wgpu::TextureViewDescriptor::default());
+        let all_view = pyramid.create_view(&crate::gpu::TextureViewDescriptor::default());
         let single_mip_view = |level: u32| {
-            pyramid.create_view(&wgpu::TextureViewDescriptor {
+            pyramid.create_view(&crate::gpu::TextureViewDescriptor {
                 label: Some("hiz_mip_view"),
                 base_mip_level: level,
                 mip_level_count: Some(1),
@@ -128,55 +129,55 @@ impl HizState {
         let storage_views: Vec<_> = (0..mips).map(single_mip_view).collect();
         let sampled_views: Vec<_> = (0..mips).map(single_mip_view).collect();
 
-        let scatter_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let scatter_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("hiz_scatter_buf"),
             size: (w as u64 * h as u64 * 4).max(4),
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: crate::gpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let reproj_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let reproj_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("hiz_reproj_uniform"),
             size: std::mem::size_of::<ReprojUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let compute = wgpu::ShaderStages::COMPUTE;
-        let storage_tex_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+        let compute = crate::gpu::ShaderStages::COMPUTE;
+        let storage_tex_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
             binding,
             visibility: compute,
-            ty: wgpu::BindingType::StorageTexture {
-                access: wgpu::StorageTextureAccess::WriteOnly,
-                format: wgpu::TextureFormat::R32Float,
-                view_dimension: wgpu::TextureViewDimension::D2,
+            ty: crate::gpu::BindingType::StorageTexture {
+                access: crate::gpu::StorageTextureAccess::WriteOnly,
+                format: crate::gpu::TextureFormat::R32Float,
+                view_dimension: crate::gpu::TextureViewDimension::D2,
             },
             count: None,
         };
-        let sampled_tex_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+        let sampled_tex_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
             binding,
             visibility: compute,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
+            ty: crate::gpu::BindingType::Texture {
+                sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                view_dimension: crate::gpu::TextureViewDimension::D2,
                 multisampled: false,
             },
             count: None,
         };
-        let buffer_entry = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
+        let buffer_entry = |binding: u32, read_only: bool| crate::gpu::BindGroupLayoutEntry {
             binding,
             visibility: compute,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only },
+            ty: crate::gpu::BindingType::Buffer {
+                ty: crate::gpu::BufferBindingType::Storage { read_only },
                 has_dynamic_offset: false,
                 min_binding_size: None,
             },
             count: None,
         };
-        let uniform_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+        let uniform_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
             binding,
             visibility: compute,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
+            ty: crate::gpu::BindingType::Buffer {
+                ty: crate::gpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
                 min_binding_size: None,
             },
@@ -204,15 +205,15 @@ impl HizState {
         );
 
         // depth -> prev_depth (texture_depth_2d in, R32Float storage out).
-        let copy_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let copy_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("hiz_copy_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: compute,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -222,7 +223,7 @@ impl HizState {
         });
         // Reprojection (init + scatter share this layout; init ignores the
         // texture binding, which is allowed).
-        let reproj_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let reproj_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("hiz_reproj_bgl"),
             entries: &[
                 uniform_entry(0),
@@ -230,20 +231,23 @@ impl HizState {
                 buffer_entry(2, false),
             ],
         });
-        let to_texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("hiz_to_texture_bgl"),
-            entries: &[buffer_entry(0, true), storage_tex_entry(1)],
-        });
-        let reduce_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let to_texture_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("hiz_to_texture_bgl"),
+                entries: &[buffer_entry(0, true), storage_tex_entry(1)],
+            });
+        let reduce_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("hiz_reduce_bgl"),
             entries: &[sampled_tex_entry(0), storage_tex_entry(1)],
         });
 
-        let pipeline =
-            |label: &str, bgl: &wgpu::BindGroupLayout, module: &wgpu::ShaderModule, ep: &str| {
-                let layout = crate::resources::builders::pipeline_layout(device, label, &[bgl]);
-                crate::resources::builders::compute_pipeline(device, label, &layout, module, ep)
-            };
+        let pipeline = |label: &str,
+                        bgl: &crate::gpu::BindGroupLayout,
+                        module: &crate::gpu::ShaderModule,
+                        ep: &str| {
+            let layout = crate::resources::builders::pipeline_layout(device, label, &[bgl]);
+            crate::resources::builders::compute_pipeline(device, label, &layout, module, ep)
+        };
         let copy_pipeline = pipeline("hiz_copy_pipeline", &copy_bgl, &copy_shader, "copy_depth");
         let init_pipeline = pipeline("hiz_init_pipeline", &reproj_bgl, &reproject_shader, "init");
         let scatter_pipeline = pipeline(
@@ -261,53 +265,53 @@ impl HizState {
         let reduce_pipeline =
             pipeline("hiz_reduce_pipeline", &reduce_bgl, &reduce_shader, "reduce");
 
-        let reproj_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let reproj_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("hiz_reproj_bg"),
             layout: &reproj_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: reproj_uniform_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&prev_depth_sampled_view),
+                    resource: crate::gpu::BindingResource::TextureView(&prev_depth_sampled_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: scatter_buf.as_entire_binding(),
                 },
             ],
         });
-        let to_texture_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let to_texture_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("hiz_to_texture_bg"),
             layout: &to_texture_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: scatter_buf.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&storage_views[0]),
+                    resource: crate::gpu::BindingResource::TextureView(&storage_views[0]),
                 },
             ],
         });
         let reduce_bind_groups: Vec<_> = (1..mips)
             .map(|level| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("hiz_reduce_bg"),
                     layout: &reduce_bgl,
                     entries: &[
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 0,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 &sampled_views[(level - 1) as usize],
                             ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 1,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 &storage_views[level as usize],
                             ),
                         },
@@ -337,7 +341,7 @@ impl HizState {
     }
 
     /// Full-mip view the cull shader binds at group 0 binding 6.
-    pub(crate) fn cull_view(&self) -> &wgpu::TextureView {
+    pub(crate) fn cull_view(&self) -> &crate::gpu::TextureView {
         &self.all_view
     }
 
@@ -346,27 +350,29 @@ impl HizState {
     /// depth-aspect view of the scene depth target.
     pub(crate) fn store_prev_depth(
         &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        encoder: &mut crate::gpu::CommandEncoder,
+        depth_view: &crate::gpu::TextureView,
         view_proj: [[f32; 4]; 4],
     ) {
         let [w, h] = self.dims;
-        let copy_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let copy_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("hiz_copy_bg"),
             layout: &self.copy_bgl,
             entries: &[
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
+                    resource: crate::gpu::BindingResource::TextureView(depth_view),
                 },
-                wgpu::BindGroupEntry {
+                crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.prev_depth_storage_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        &self.prev_depth_storage_view,
+                    ),
                 },
             ],
         });
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
             label: Some("hiz_store_prev_depth"),
             timestamp_writes: None,
         });
@@ -385,8 +391,8 @@ impl HizState {
     /// a resize runs the cull frustum-only.
     pub(crate) fn build_reprojected(
         &self,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        queue: &crate::gpu::Queue,
+        encoder: &mut crate::gpu::CommandEncoder,
         cur_view_proj: [[f32; 4]; 4],
     ) -> bool {
         if !self.has_prev_depth {
@@ -411,7 +417,7 @@ impl HizState {
 
         // Clear the scatter target to far, then scatter the reprojected depth.
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("hiz_reproject_init"),
                 timestamp_writes: None,
             });
@@ -420,7 +426,7 @@ impl HizState {
             pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("hiz_reproject_scatter"),
                 timestamp_writes: None,
             });
@@ -430,7 +436,7 @@ impl HizState {
         }
         // Scattered depth -> mip 0.
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("hiz_reproject_to_texture"),
                 timestamp_writes: None,
             });
@@ -442,7 +448,7 @@ impl HizState {
         let mips = self.storage_views.len() as u32;
         for level in 1..mips {
             let (lw, lh) = level_dims(w, h, level);
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("hiz_reduce_pass"),
                 timestamp_writes: None,
             });
@@ -460,9 +466,9 @@ impl crate::resources::ViewportCullState {
     /// Allocates or resizes the HiZ state to match the depth target.
     pub(crate) fn store_hiz_prev_depth(
         &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
+        device: &crate::gpu::Device,
+        encoder: &mut crate::gpu::CommandEncoder,
+        depth_view: &crate::gpu::TextureView,
         w: u32,
         h: u32,
         view_proj: [[f32; 4]; 4],
@@ -484,8 +490,8 @@ impl crate::resources::ViewportCullState {
     /// Returns true when a pyramid was built and is safe to sample this frame.
     pub(crate) fn build_hiz_reprojected(
         &self,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        queue: &crate::gpu::Queue,
+        encoder: &mut crate::gpu::CommandEncoder,
         cur_view_proj: [[f32; 4]; 4],
     ) -> bool {
         match self.hiz.as_ref() {
@@ -497,7 +503,7 @@ impl crate::resources::ViewportCullState {
     /// HiZ view plus its mip-0 dimensions for the cull's occlusion test, or
     /// `None` when no pyramid exists. Only valid to sample on a frame where
     /// `build_hiz_reprojected` returned true.
-    pub(crate) fn hiz_cull_view(&self) -> Option<(&wgpu::TextureView, [f32; 2])> {
+    pub(crate) fn hiz_cull_view(&self) -> Option<(&crate::gpu::TextureView, [f32; 2])> {
         self.hiz
             .as_ref()
             .map(|s| (s.cull_view(), [s.dims[0] as f32, s.dims[1] as f32]))

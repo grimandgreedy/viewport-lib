@@ -7,8 +7,8 @@ impl DeviceResources {
     /// The gizmo mesh is small (~300 vertices), so re-uploading every frame is acceptable.
     pub fn update_gizmo_mesh(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mode: crate::interaction::manipulation::gizmo::GizmoMode,
         hovered: crate::interaction::manipulation::gizmo::GizmoAxis,
         space_orientation: glam::Quat,
@@ -24,18 +24,18 @@ impl DeviceResources {
 
         // Recreate buffers if the new mesh is larger than the current allocation.
         if vert_bytes.len() as u64 > self.gizmo_vertex_buffer.size() {
-            self.gizmo_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            self.gizmo_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("gizmo_vertex_buf"),
                 size: vert_bytes.len() as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
         if idx_bytes.len() as u64 > self.gizmo_index_buffer.size() {
-            self.gizmo_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            self.gizmo_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("gizmo_index_buf"),
                 size: idx_bytes.len() as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
@@ -46,7 +46,7 @@ impl DeviceResources {
     }
 
     /// Update the gizmo model matrix uniform (translation to gizmo center + scale for screen size).
-    pub fn update_gizmo_uniform(&self, queue: &wgpu::Queue, model: glam::Mat4) {
+    pub fn update_gizmo_uniform(&self, queue: &crate::gpu::Queue, model: glam::Mat4) {
         let uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
             model: model.to_cols_array_2d(),
         };
@@ -56,14 +56,14 @@ impl DeviceResources {
     /// Create a line-list overlay for an active transform constraint.
     pub fn create_constraint_overlay(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         overlay: &crate::interaction::query::snap::ConstraintOverlay,
     ) -> (
-        wgpu::Buffer,
-        wgpu::Buffer,
+        crate::gpu::Buffer,
+        crate::gpu::Buffer,
         u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     ) {
         use bytemuck::cast_slice;
 
@@ -108,19 +108,19 @@ impl DeviceResources {
         };
         let indices: Vec<u32> = (0..vertices.len() as u32).collect();
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("constraint_overlay_vbuf"),
             size: (std::mem::size_of::<OverlayVertex>() * vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
         vertex_buffer.unmap();
 
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("constraint_overlay_ibuf"),
             size: (std::mem::size_of::<u32>() * indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&indices));
@@ -130,10 +130,10 @@ impl DeviceResources {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             colour,
         };
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("constraint_overlay_ubuf"),
             size: std::mem::size_of::<OverlayUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -142,10 +142,10 @@ impl DeviceResources {
         );
         uniform_buffer.unmap();
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("constraint_overlay_bg"),
             layout: &self.overlay_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
             }],
@@ -165,14 +165,14 @@ impl DeviceResources {
     /// Produces a semi-transparent filled quad at the plane's world position.
     pub(crate) fn create_clip_plane_fill_overlay(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         overlay: &crate::interaction::manipulation::clip_plane::ClipPlaneOverlay,
     ) -> (
-        wgpu::Buffer,
-        wgpu::Buffer,
+        crate::gpu::Buffer,
+        crate::gpu::Buffer,
         u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     ) {
         use crate::interaction::manipulation::clip_plane::plane_tangents;
         use bytemuck::cast_slice;
@@ -198,19 +198,19 @@ impl DeviceResources {
         // Two triangles: (0,1,2) and (0,2,3).
         let indices: Vec<u32> = vec![0, 1, 2, 0, 2, 3];
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_plane_fill_vbuf"),
             size: (std::mem::size_of::<OverlayVertex>() * vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
         vertex_buffer.unmap();
 
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_plane_fill_ibuf"),
             size: (std::mem::size_of::<u32>() * indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&indices));
@@ -220,10 +220,10 @@ impl DeviceResources {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             colour: overlay.fill_colour,
         };
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_plane_fill_ubuf"),
             size: std::mem::size_of::<OverlayUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -232,10 +232,10 @@ impl DeviceResources {
         );
         uniform_buffer.unmap();
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("clip_plane_fill_bg"),
             layout: &self.overlay_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
             }],
@@ -255,14 +255,14 @@ impl DeviceResources {
     /// Produces 4 border edges around the quad and a short line along the normal direction.
     pub(crate) fn create_clip_plane_line_overlay(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         overlay: &crate::interaction::manipulation::clip_plane::ClipPlaneOverlay,
     ) -> (
-        wgpu::Buffer,
-        wgpu::Buffer,
+        crate::gpu::Buffer,
+        crate::gpu::Buffer,
         u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     ) {
         use crate::interaction::manipulation::clip_plane::plane_tangents;
         use bytemuck::cast_slice;
@@ -321,19 +321,19 @@ impl DeviceResources {
         ];
         let indices: Vec<u32> = (0..vertices.len() as u32).collect();
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_plane_line_vbuf"),
             size: (std::mem::size_of::<OverlayVertex>() * vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
         vertex_buffer.unmap();
 
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_plane_line_ibuf"),
             size: (std::mem::size_of::<u32>() * indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&indices));
@@ -343,10 +343,10 @@ impl DeviceResources {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             colour: overlay.border_colour,
         };
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("clip_plane_line_ubuf"),
             size: std::mem::size_of::<OverlayUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -355,10 +355,10 @@ impl DeviceResources {
         );
         uniform_buffer.unmap();
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("clip_plane_line_bg"),
             layout: &self.overlay_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
             }],
@@ -378,15 +378,15 @@ impl DeviceResources {
     /// Uses the overlay pipeline (position-only vertices + flat colour uniform).
     pub(crate) fn upload_cap_geometry(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         cap: &crate::geometry::cap_geometry::CapMesh,
         colour: [f32; 4],
     ) -> (
-        wgpu::Buffer,
-        wgpu::Buffer,
+        crate::gpu::Buffer,
+        crate::gpu::Buffer,
         u32,
-        wgpu::Buffer,
-        wgpu::BindGroup,
+        crate::gpu::Buffer,
+        crate::gpu::BindGroup,
     ) {
         use bytemuck::cast_slice;
 
@@ -396,19 +396,19 @@ impl DeviceResources {
             .map(|p| OverlayVertex { position: *p })
             .collect();
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cap_vbuf"),
             size: (std::mem::size_of::<OverlayVertex>() * vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(&vertices));
         vertex_buffer.unmap();
 
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cap_ibuf"),
             size: (std::mem::size_of::<u32>() * cap.indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(&cap.indices));
@@ -418,10 +418,10 @@ impl DeviceResources {
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             colour,
         };
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cap_ubuf"),
             size: std::mem::size_of::<OverlayUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         crate::resources::builders::write_mapped(
@@ -430,10 +430,10 @@ impl DeviceResources {
         );
         uniform_buffer.unmap();
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("cap_bg"),
             layout: &self.overlay_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
+            entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
             }],
@@ -463,14 +463,14 @@ pub struct OverlayVertex {
 
 impl OverlayVertex {
     /// wgpu vertex buffer layout matching shader location 0 (position vec3f).
-    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<OverlayVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
+    pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
+        crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayVertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
+            attributes: &[crate::gpu::VertexAttribute {
                 offset: 0,
                 shader_location: 0,
-                format: wgpu::VertexFormat::Float32x3,
+                format: crate::gpu::VertexFormat::Float32x3,
             }],
         }
     }
@@ -494,20 +494,20 @@ pub(crate) struct BackdropBlurState {
     /// instead of directly to the surface so the result can be sampled. Kept
     /// alive so the matching view remains valid.
     #[allow(dead_code)]
-    pub intermediate_texture: wgpu::Texture,
-    pub intermediate_view: wgpu::TextureView,
+    pub intermediate_texture: crate::gpu::Texture,
+    pub intermediate_view: crate::gpu::TextureView,
     /// Half-resolution blur ping-pong texture A. Kept alive for its view.
     #[allow(dead_code)]
-    pub blur_a_texture: wgpu::Texture,
-    pub blur_a_view: wgpu::TextureView,
+    pub blur_a_texture: crate::gpu::Texture,
+    pub blur_a_view: crate::gpu::TextureView,
     /// Half-resolution blur ping-pong texture B. Kept alive for its view.
     #[allow(dead_code)]
-    pub blur_b_texture: wgpu::Texture,
-    pub blur_b_view: wgpu::TextureView,
+    pub blur_b_texture: crate::gpu::Texture,
+    pub blur_b_view: crate::gpu::TextureView,
     /// Viewport physical size the textures were created for.
     pub size: [u32; 2],
     /// Format the textures were created with.
-    pub format: wgpu::TextureFormat,
+    pub format: crate::gpu::TextureFormat,
 }
 
 /// Uniform buffer layout for the full-screen ground plane shader.

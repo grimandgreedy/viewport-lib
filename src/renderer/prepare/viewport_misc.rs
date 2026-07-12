@@ -6,8 +6,8 @@ use super::*;
 impl ViewportRenderer {
     pub(super) fn prepare_splat_sort(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ------------------------------------------------------------------
@@ -73,8 +73,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_splat_wireframe(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // Gaussian splat wireframe overlay.
@@ -115,8 +115,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_sprite_wireframe(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // Sprite wireframe overlay: quad outline per sprite (<=100) or AABB box (>100).
@@ -150,7 +150,7 @@ impl ViewportRenderer {
         }
     }
 
-    pub(super) fn prepare_debug_buffer(&mut self, device: &wgpu::Device, frame: &FrameData) {
+    pub(super) fn prepare_debug_buffer(&mut self, device: &crate::gpu::Device, frame: &FrameData) {
         // Debug fragment buffer: allocate or resize when debug_vis is active.
         // Must use physical pixels: clip_pos in the shader is in physical pixels,
         // and viewport_width in ClipPlanesUniform (the buffer stride) is now physical too.
@@ -164,10 +164,10 @@ impl ViewportRenderer {
 
             if debug_active && slot.debug_frag_dims != (vw, vh) {
                 let size = (vw as u64) * (vh as u64) * 16;
-                let new_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let new_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("debug_frag_buf"),
                     size: size.max(16),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 });
                 let new_bg = self.resources.create_camera_bind_group(
@@ -202,7 +202,7 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_atlas_blit(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         viewport_fx: &ViewportEffects<'_>,
     ) {

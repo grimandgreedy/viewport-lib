@@ -17,15 +17,15 @@
 pub enum SubmitSink<'q> {
     /// Submit each buffer immediately on the given queue: the historical
     /// behaviour, unchanged, for callers already on the device-driving thread.
-    Inline(&'q wgpu::Queue),
+    Inline(&'q crate::gpu::Queue),
     /// Collect buffers in submission order so the caller can submit them all on
     /// the driving thread once the (worker-side) encoding is done.
-    Deferred(Vec<wgpu::CommandBuffer>),
+    Deferred(Vec<crate::gpu::CommandBuffer>),
 }
 
 impl<'q> SubmitSink<'q> {
     /// A sink that submits on `queue` the moment a buffer is pushed.
-    pub fn inline(queue: &'q wgpu::Queue) -> Self {
+    pub fn inline(queue: &'q crate::gpu::Queue) -> Self {
         Self::Inline(queue)
     }
 
@@ -37,7 +37,7 @@ impl<'q> SubmitSink<'q> {
     /// Hand one finished command buffer to the sink. In [`Inline`](Self::Inline)
     /// mode it is submitted at once; in [`Deferred`](Self::Deferred) mode it is
     /// appended, preserving submission order.
-    pub fn push(&mut self, buffer: wgpu::CommandBuffer) {
+    pub fn push(&mut self, buffer: crate::gpu::CommandBuffer) {
         match self {
             Self::Inline(queue) => {
                 queue.submit(std::iter::once(buffer));
@@ -49,7 +49,7 @@ impl<'q> SubmitSink<'q> {
     /// Hand several finished command buffers to the sink in one go. In inline mode
     /// they are submitted as a single ordered submission, matching a direct
     /// `queue.submit(bufs)`.
-    pub fn extend(&mut self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) {
+    pub fn extend(&mut self, buffers: impl IntoIterator<Item = crate::gpu::CommandBuffer>) {
         match self {
             Self::Inline(queue) => {
                 queue.submit(buffers);
@@ -60,7 +60,7 @@ impl<'q> SubmitSink<'q> {
 
     /// Take the collected buffers. Empty for an [`Inline`](Self::Inline) sink,
     /// whose buffers were already submitted.
-    pub fn into_buffers(self) -> Vec<wgpu::CommandBuffer> {
+    pub fn into_buffers(self) -> Vec<crate::gpu::CommandBuffer> {
         match self {
             Self::Inline(_) => Vec::new(),
             Self::Deferred(buffers) => buffers,

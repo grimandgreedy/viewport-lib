@@ -5,7 +5,11 @@
 use super::*;
 
 impl ViewportRenderer {
-    pub(crate) fn paint_to<'rp>(&self, render_pass: &mut wgpu::RenderPass<'rp>, frame: &FrameData) {
+    pub(crate) fn paint_to<'rp>(
+        &self,
+        render_pass: &mut crate::gpu::RenderPass<'rp>,
+        frame: &FrameData,
+    ) {
         let vp_idx = frame.camera.viewport_index;
         let camera_bg = self.viewport_camera_bind_group(vp_idx);
         let grid_bg = self.viewport_grid_bind_group(vp_idx);
@@ -77,8 +81,10 @@ impl ViewportRenderer {
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         if let Some(edge_buf) = &mesh.edge_index_buffer {
-                            render_pass
-                                .set_index_buffer(edge_buf.slice(..), wgpu::IndexFormat::Uint32);
+                            render_pass.set_index_buffer(
+                                edge_buf.slice(..),
+                                crate::gpu::IndexFormat::Uint32,
+                            );
                             render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
                         }
                     }

@@ -7,7 +7,7 @@ use super::*;
 impl ViewportRenderer {
     pub(super) fn prepare_clip_uniforms(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         viewport_fx: &ViewportEffects<'_>,
     ) {
@@ -273,8 +273,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_interaction_state(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         viewport_fx: &ViewportEffects<'_>,
     ) {
@@ -306,17 +306,17 @@ impl ViewportRenderer {
                     deform_flags: resources.deform.flag_bits(item.mesh_id),
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("outline_mask_uniform_buf"),
                     size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
                     }],
@@ -345,17 +345,17 @@ impl ViewportRenderer {
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("outline_mask_uniform_buf"),
                     size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
                     }],
@@ -381,17 +381,17 @@ impl ViewportRenderer {
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("outline_mask_uniform_buf"),
                     size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
                     }],
@@ -470,10 +470,10 @@ impl ViewportRenderer {
                     let pixel_radius = pixel_radius.max(1.0);
 
                     let position_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("splat_outline_pos_buf"),
                             contents: bytemuck::cast_slice(gpu_set.cpu_positions.as_slice()),
-                            usage: wgpu::BufferUsages::VERTEX,
+                            usage: crate::gpu::BufferUsages::VERTEX,
                         });
 
                     let uniform = SplatOutlineMaskUniform {
@@ -484,15 +484,15 @@ impl ViewportRenderer {
                         _pad: [0.0; 9],
                     };
                     let uniform_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("splat_outline_uniform_buf"),
                             contents: bytemuck::cast_slice(&[uniform]),
-                            usage: wgpu::BufferUsages::UNIFORM,
+                            usage: crate::gpu::BufferUsages::UNIFORM,
                         });
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("splat_outline_bg"),
                         layout: &resources.outline.bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
+                        entries: &[crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
                         }],
@@ -500,11 +500,12 @@ impl ViewportRenderer {
 
                     let n = gpu_set.cpu_positions.len();
                     let size_data: Vec<f32> = vec![pixel_radius; n];
-                    let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("splat_outline_size_buf"),
-                        contents: bytemuck::cast_slice(&size_data),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let size_buf =
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                            label: Some("splat_outline_size_buf"),
+                            contents: bytemuck::cast_slice(&size_data),
+                            usage: crate::gpu::BufferUsages::VERTEX,
+                        });
 
                     splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
                         position_buf,
@@ -588,30 +589,31 @@ impl ViewportRenderer {
                         _pad: [0.0; 9],
                     };
                     let uniform_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("splat_sel_outline_uniform_buf"),
                             contents: bytemuck::cast_slice(&[uniform]),
-                            usage: wgpu::BufferUsages::UNIFORM,
+                            usage: crate::gpu::BufferUsages::UNIFORM,
                         });
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("splat_sel_outline_bg"),
                         layout: &resources.outline.bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
+                        entries: &[crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
                         }],
                     });
                     let position_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("splat_sel_outline_pos_buf"),
                             contents: bytemuck::cast_slice(&positions),
-                            usage: wgpu::BufferUsages::VERTEX,
+                            usage: crate::gpu::BufferUsages::VERTEX,
                         });
-                    let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("splat_sel_outline_size_buf"),
-                        contents: bytemuck::cast_slice(&sizes),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let size_buf =
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                            label: Some("splat_sel_outline_size_buf"),
+                            contents: bytemuck::cast_slice(&sizes),
+                            usage: crate::gpu::BufferUsages::VERTEX,
+                        });
                     splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
                         position_buf,
                         size_buf,
@@ -631,10 +633,10 @@ impl ViewportRenderer {
                 if item.settings.selected {
                     // Object-level: outline all points.
                     let position_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("pc_outline_pos_buf"),
                             contents: bytemuck::cast_slice(item.positions.as_slice()),
-                            usage: wgpu::BufferUsages::VERTEX,
+                            usage: crate::gpu::BufferUsages::VERTEX,
                         });
                     let uniform = SplatOutlineMaskUniform {
                         model: item.model,
@@ -644,26 +646,27 @@ impl ViewportRenderer {
                         _pad: [0.0; 9],
                     };
                     let uniform_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("pc_outline_uniform_buf"),
                             contents: bytemuck::cast_slice(&[uniform]),
-                            usage: wgpu::BufferUsages::UNIFORM,
+                            usage: crate::gpu::BufferUsages::UNIFORM,
                         });
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pc_outline_bg"),
                         layout: &self.resources.outline.bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
+                        entries: &[crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
                         }],
                     });
                     let n = item.positions.len();
                     let size_data: Vec<f32> = vec![pixel_radius; n];
-                    let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("pc_outline_size_buf"),
-                        contents: bytemuck::cast_slice(&size_data),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let size_buf =
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                            label: Some("pc_outline_size_buf"),
+                            contents: bytemuck::cast_slice(&size_data),
+                            usage: crate::gpu::BufferUsages::VERTEX,
+                        });
                     splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
                         position_buf,
                         size_buf,
@@ -701,31 +704,32 @@ impl ViewportRenderer {
                         _pad: [0.0; 9],
                     };
                     let uniform_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("pc_sel_outline_uniform_buf"),
                             contents: bytemuck::cast_slice(&[uniform]),
-                            usage: wgpu::BufferUsages::UNIFORM,
+                            usage: crate::gpu::BufferUsages::UNIFORM,
                         });
-                    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pc_sel_outline_bg"),
                         layout: &self.resources.outline.bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
+                        entries: &[crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
                         }],
                     });
                     let position_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("pc_sel_outline_pos_buf"),
                             contents: bytemuck::cast_slice(&selected_positions),
-                            usage: wgpu::BufferUsages::VERTEX,
+                            usage: crate::gpu::BufferUsages::VERTEX,
                         });
                     let size_data = vec![pixel_radius; n];
-                    let size_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("pc_sel_outline_size_buf"),
-                        contents: bytemuck::cast_slice(&size_data),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                    let size_buf =
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                            label: Some("pc_sel_outline_size_buf"),
+                            contents: bytemuck::cast_slice(&size_data),
+                            usage: crate::gpu::BufferUsages::VERTEX,
+                        });
                     splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
                         position_buf,
                         size_buf,
@@ -828,15 +832,15 @@ impl ViewportRenderer {
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                let buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                     label: Some("curve_outline_uniform_buf"),
                     contents: bytemuck::cast_slice(&[uniform]),
-                    usage: wgpu::BufferUsages::UNIFORM,
+                    usage: crate::gpu::BufferUsages::UNIFORM,
                 });
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("curve_outline_mask_bg"),
                     layout: &self.resources.outline.bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
                     }],
@@ -955,16 +959,18 @@ impl ViewportRenderer {
                 };
                 let verts: [[f32; 3]; 4] = [v0, v1, v2, v3];
                 let indices: [u32; 6] = [0, 1, 2, 0, 2, 3];
-                let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("image_slice_outline_verts"),
-                    contents: bytemuck::cast_slice(&verts),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("image_slice_outline_indices"),
-                    contents: bytemuck::cast_slice(&indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+                let vertex_buf =
+                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                        label: Some("image_slice_outline_verts"),
+                        contents: bytemuck::cast_slice(&verts),
+                        usage: crate::gpu::BufferUsages::VERTEX,
+                    });
+                let index_buf =
+                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                        label: Some("image_slice_outline_indices"),
+                        contents: bytemuck::cast_slice(&indices),
+                        usage: crate::gpu::BufferUsages::INDEX,
+                    });
                 let uniform = OutlineUniform {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
                     colour: [0.0; 4],
@@ -973,17 +979,17 @@ impl ViewportRenderer {
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
-                let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("outline_mask_uniform_buf"),
                     size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: uniform_buf.as_entire_binding(),
                     }],
@@ -1047,15 +1053,15 @@ impl ViewportRenderer {
                         ndc_max: [ndc_max_x, ndc_max_y],
                     };
                     let uniform_buf =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                             label: Some("screen_rect_outline_uniform"),
                             contents: bytemuck::bytes_of(&uniform_data),
-                            usage: wgpu::BufferUsages::UNIFORM,
+                            usage: crate::gpu::BufferUsages::UNIFORM,
                         });
-                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("screen_rect_outline_bg"),
                         layout: bgl,
-                        entries: &[wgpu::BindGroupEntry {
+                        entries: &[crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: uniform_buf.as_entire_binding(),
                         }],
@@ -1103,17 +1109,17 @@ impl ViewportRenderer {
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("mc_outline_uniform_buf"),
                     size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("mc_outline_bg"),
                     layout: &self.resources.outline.bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
                     }],
@@ -1131,8 +1137,8 @@ impl ViewportRenderer {
         // X-ray buffers for selected objects.
         let mut xray_object_buffers: Vec<(
             crate::resources::mesh::mesh_store::MeshId,
-            wgpu::Buffer,
-            wgpu::BindGroup,
+            crate::gpu::Buffer,
+            crate::gpu::BindGroup,
         )> = Vec::new();
         if frame.interaction.xray_selected {
             let resources = &self.resources;
@@ -1148,17 +1154,17 @@ impl ViewportRenderer {
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("xray_uniform_buf"),
                     size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("xray_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
+                    entries: &[crate::gpu::BindGroupEntry {
                         binding: 0,
                         resource: buf.as_entire_binding(),
                     }],
@@ -1407,10 +1413,11 @@ impl ViewportRenderer {
             if let Some(verts) = axes_verts {
                 let byte_size = std::mem::size_of_val(verts.as_slice()) as u64;
                 if byte_size > slot.axes_vertex_buffer.size() {
-                    slot.axes_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    slot.axes_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                         label: Some("vp_axes_vertex_buf"),
                         size: byte_size,
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        usage: crate::gpu::BufferUsages::VERTEX
+                            | crate::gpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
                 }
@@ -1425,18 +1432,20 @@ impl ViewportRenderer {
                 let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
                 let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
                 if vert_bytes.len() as u64 > slot.gizmo_vertex_buffer.size() {
-                    slot.gizmo_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("vp_gizmo_vertex_buf"),
-                        size: vert_bytes.len() as u64,
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
+                    slot.gizmo_vertex_buffer =
+                        device.create_buffer(&crate::gpu::BufferDescriptor {
+                            label: Some("vp_gizmo_vertex_buf"),
+                            size: vert_bytes.len() as u64,
+                            usage: crate::gpu::BufferUsages::VERTEX
+                                | crate::gpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        });
                 }
                 if idx_bytes.len() as u64 > slot.gizmo_index_buffer.size() {
-                    slot.gizmo_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    slot.gizmo_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                         label: Some("vp_gizmo_index_buf"),
                         size: idx_bytes.len() as u64,
-                        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                        usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
                 }
@@ -1453,8 +1462,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_outline_pass(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) {
@@ -1581,12 +1590,12 @@ impl ViewportRenderer {
                 as *const Vec<crate::resources::volume::implicit::ImplicitGpuItem>;
             let mc_gpu_data_ptr = &self.mc_gpu_data
                 as *const Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>;
-            let camera_bg_ptr = &slot_ref.camera_bind_group as *const wgpu::BindGroup;
+            let camera_bg_ptr = &slot_ref.camera_bind_group as *const crate::gpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
-            let mask_view_ptr = &slot_hdr.outline_mask_view as *const wgpu::TextureView;
-            let colour_view_ptr = &slot_hdr.outline_colour_view as *const wgpu::TextureView;
-            let depth_view_ptr = &slot_hdr.outline_depth_view as *const wgpu::TextureView;
-            let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const wgpu::BindGroup;
+            let mask_view_ptr = &slot_hdr.outline_mask_view as *const crate::gpu::TextureView;
+            let colour_view_ptr = &slot_hdr.outline_colour_view as *const crate::gpu::TextureView;
+            let depth_view_ptr = &slot_hdr.outline_depth_view as *const crate::gpu::TextureView;
+            let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const crate::gpu::BindGroup;
             // SAFETY: slot fields remain valid for the duration of this function;
             // no other code modifies these fields here.
             let (
@@ -1651,28 +1660,29 @@ impl ViewportRenderer {
                 )
             };
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("outline_offscreen_encoder"),
-            });
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("outline_offscreen_encoder"),
+                });
 
             // Pass 1: render selected objects to R8 mask texture.
             {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                     label: Some("outline_mask_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                         view: mask_view,
                         resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
+                            store: crate::gpu::StoreOp::Store,
                         },
                         depth_slice: None,
                     })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
                         view: depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Discard,
+                        depth_ops: Some(crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(1.0),
+                            store: crate::gpu::StoreOp::Discard,
                         }),
                         stencil_ops: None,
                     }),
@@ -1689,7 +1699,7 @@ impl ViewportRenderer {
                     let Some(mesh) = self.resources.mesh_store.get(outlined.mesh_id) else {
                         continue;
                     };
-                    let pipeline: &wgpu::RenderPipeline = if outlined.two_sided {
+                    let pipeline: &crate::gpu::RenderPipeline = if outlined.two_sided {
                         &self.resources.outline.mask_two_sided_pipeline
                     } else {
                         &self.resources.outline.mask_pipeline
@@ -1715,7 +1725,7 @@ impl ViewportRenderer {
                         Some(f) => (&f.index_buffer, f.index_count),
                         None => (&mesh.index_buffer, mesh.index_count),
                     };
-                    pass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_index_buffer(index_buf.slice(..), crate::gpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..index_count, 0, 0..1);
                 }
 
@@ -1744,7 +1754,7 @@ impl ViewportRenderer {
                                 pass.set_vertex_buffer(0, glyph.mesh_vertex_buffer.slice(..));
                                 pass.set_index_buffer(
                                     glyph.mesh_index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 match instance_filter {
                                     None => {
@@ -1783,7 +1793,7 @@ impl ViewportRenderer {
                                 pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
                                 pass.set_index_buffer(
                                     tg.mesh_index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 match instance_filter {
                                     None => {
@@ -1840,7 +1850,7 @@ impl ViewportRenderer {
                                 pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
                                 pass.set_index_buffer(
                                     vol.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
+                                    crate::gpu::IndexFormat::Uint32,
                                 );
                                 pass.draw_indexed(0..36, 0, 0..1);
                             }
@@ -1860,7 +1870,7 @@ impl ViewportRenderer {
                     pass.set_bind_group(1, &raw.mask_bind_group, &[]);
                     pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
                     pass.set_vertex_buffer(0, raw.vertex_buf.slice(..));
-                    pass.set_index_buffer(raw.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_index_buffer(raw.index_buf.slice(..), crate::gpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..raw.index_count, 0, 0..1);
                 }
 
@@ -1939,7 +1949,7 @@ impl ViewportRenderer {
                             pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
                             pass.set_index_buffer(
                                 gpu.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
+                                crate::gpu::IndexFormat::Uint32,
                             );
                             pass.draw_indexed(0..gpu.index_count, 0, 0..1);
                         }
@@ -1969,14 +1979,14 @@ impl ViewportRenderer {
 
             // Pass 2: fullscreen edge detection (reads mask, writes colour).
             {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                     label: Some("outline_edge_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                         view: colour_view,
                         resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
+                        ops: crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
+                            store: crate::gpu::StoreOp::Store,
                         },
                         depth_slice: None,
                     })],
@@ -1995,8 +2005,8 @@ impl ViewportRenderer {
 
     pub(super) fn prepare_sub_highlight(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;

@@ -13,8 +13,8 @@ impl ViewportRenderer {
         scene_items: &[SceneRenderItem],
         instanceable: &[bool],
         frame_index: u64,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> u32 {
         // Count of per-item bind groups actually (re)built this frame, reported
@@ -341,10 +341,11 @@ impl ViewportRenderer {
                     };
                     let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
                     let entry = mesh_uniforms.cache.entry(key).or_insert_with(|| {
-                        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                             label: Some("per_item_object_uniform"),
                             size: uniform_size,
-                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            usage: crate::gpu::BufferUsages::UNIFORM
+                                | crate::gpu::BufferUsages::COPY_DST,
                             mapped_at_creation: false,
                         });
                         crate::renderer::per_object_state::PerObjectCacheEntry {
@@ -481,55 +482,57 @@ impl ViewportRenderer {
 
             // Grow the buffer/bind-group pools if needed. We never shrink them.
             while mesh_uniforms.wireframe_uniform_bufs.len() < n {
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("wireframe_item_uniform"),
                     size: uniform_size,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("wireframe_item_bg"),
                     layout: &resources.object_bind_group_layout,
                     entries: &[
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 0,
                             resource: buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 1,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 &resources.fallback_texture.view,
                             ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&resources.material_sampler),
+                            resource: crate::gpu::BindingResource::Sampler(
+                                &resources.material_sampler,
+                            ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 3,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 &resources.fallback_normal_map_view,
                             ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 4,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 &resources.fallback_ao_map_view,
                             ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 5,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 &resources.content.fallback_lut_view,
                             ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 6,
                             resource: resources.content.fallback_scalar_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 7,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 resources
                                     .content
                                     .fallback_matcap_view
@@ -537,41 +540,41 @@ impl ViewportRenderer {
                                     .unwrap_or(&resources.fallback_texture.view),
                             ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 8,
                             resource: resources
                                 .content
                                 .fallback_face_colour_buf
                                 .as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 9,
                             resource: resources.content.fallback_warp_buf.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 10,
-                            resource: wgpu::BindingResource::Sampler(&resources.lut_sampler),
+                            resource: crate::gpu::BindingResource::Sampler(&resources.lut_sampler),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 11,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 &resources.fallback_metallic_roughness_texture_view,
                             ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 12,
-                            resource: wgpu::BindingResource::TextureView(
+                            resource: crate::gpu::BindingResource::TextureView(
                                 &resources.fallback_emissive_texture_view,
                             ),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 13,
                             resource: resources
                                 .content
                                 .fallback_position_override_buf
                                 .as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry {
+                        crate::gpu::BindGroupEntry {
                             binding: 14,
                             resource: resources
                                 .content
@@ -610,7 +613,11 @@ impl ViewportRenderer {
     /// and object motion do not re-record; changes to the item set, material
     /// bind groups, or LOD-resolved meshes do (via the key hash and the
     /// bind-groups-built counter).
-    pub(super) fn update_per_object_bundle(&mut self, device: &wgpu::Device, frame: &FrameData) {
+    pub(super) fn update_per_object_bundle(
+        &mut self,
+        device: &crate::gpu::Device,
+        frame: &FrameData,
+    ) {
         /// Below this many opaque items the recording cost is not worth
         /// caching against.
         const MIN_BUNDLE_ITEMS: usize = 64;
@@ -751,9 +758,9 @@ impl ViewportRenderer {
     /// needs the wireframe/attribute/filter/deform variants.
     fn record_per_object_bundle(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         key: u64,
-        camera_bg: wgpu::BindGroup,
+        camera_bg: crate::gpu::BindGroup,
         transparent: Vec<usize>,
         hdr: bool,
     ) -> crate::renderer::per_object_state::PerObjectBundle {
@@ -764,7 +771,7 @@ impl ViewportRenderer {
         // (`stencil_ops: None`). A read-only stencil declaration is valid in
         // both (the mesh pipelines never touch stencil).
         let (colour_format, sample_count) = if hdr {
-            (wgpu::TextureFormat::Rgba16Float, 1)
+            (crate::gpu::TextureFormat::Rgba16Float, 1)
         } else {
             (resources.target_format, resources.sample_count)
         };
@@ -786,7 +793,7 @@ impl ViewportRenderer {
             device,
             "per_object_bundle",
             &[Some(colour_format)],
-            Some(wgpu::RenderBundleDepthStencil {
+            Some(crate::gpu::RenderBundleDepthStencil {
                 format: crate::resources::SCENE_DEPTH_FORMAT,
                 depth_read_only: false,
                 stencil_read_only: true,
@@ -821,13 +828,13 @@ impl ViewportRenderer {
             );
             if cur_mesh != Some(item.mesh_id) {
                 enc.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                enc.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                enc.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
                 cur_mesh = Some(item.mesh_id);
             }
             enc.draw_indexed(0..mesh.index_count, 0, 0..1);
         }
 
-        let bundle = enc.finish(&wgpu::RenderBundleDescriptor {
+        let bundle = enc.finish(&crate::gpu::RenderBundleDescriptor {
             label: Some("per_object_bundle"),
         });
         crate::renderer::per_object_state::PerObjectBundle {

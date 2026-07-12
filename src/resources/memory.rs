@@ -116,7 +116,7 @@ impl crate::resources::DeviceResources {
     /// reports per backend.
     pub fn vram_budget(
         &self,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
     ) -> Option<crate::resources::types::VramBudget> {
         vram_budget(device)
     }
@@ -128,7 +128,7 @@ impl crate::resources::DeviceResources {
 /// nothing, and a `device` whose backend does not match this build resolves to
 /// `None`. `total_bytes` is the total device-local memory; `available_bytes` is
 /// the backend's live free estimate, present on Metal and `None` on Vulkan.
-pub fn vram_budget(device: &wgpu::Device) -> Option<VramBudget> {
+pub fn vram_budget(device: &crate::gpu::Device) -> Option<VramBudget> {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         vram_budget_metal(device)
@@ -140,10 +140,10 @@ pub fn vram_budget(device: &wgpu::Device) -> Option<VramBudget> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn vram_budget_metal(device: &wgpu::Device) -> Option<VramBudget> {
+fn vram_budget_metal(device: &crate::gpu::Device) -> Option<VramBudget> {
     // Safety: we only read the MTLDevice's reported sizes and drop the hal
     // guard immediately; the device is never destroyed or mutated.
-    let hal_device = unsafe { device.as_hal::<wgpu::hal::api::Metal>() }?;
+    let hal_device = unsafe { device.as_hal::<crate::gpu::hal::api::Metal>() }?;
     let raw = hal_device.raw_device().lock();
     let total = raw.recommended_max_working_set_size();
     let used = raw.current_allocated_size() as u64;
@@ -154,10 +154,10 @@ fn vram_budget_metal(device: &wgpu::Device) -> Option<VramBudget> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn vram_budget_vulkan(device: &wgpu::Device) -> Option<VramBudget> {
+fn vram_budget_vulkan(device: &crate::gpu::Device) -> Option<VramBudget> {
     // Safety: we read the physical device's memory-heap sizes through the
     // instance and drop the hal guard immediately; nothing is destroyed.
-    let hal_device = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    let hal_device = unsafe { device.as_hal::<crate::gpu::hal::api::Vulkan>() }?;
     let phys = hal_device.raw_physical_device();
     let instance = hal_device.shared_instance().raw_instance();
     let props = unsafe { instance.get_physical_device_memory_properties(phys) };
@@ -182,15 +182,17 @@ fn vram_budget_vulkan(device: &wgpu::Device) -> Option<VramBudget> {
 mod tests {
     use super::vram_budget;
 
-    fn try_make_device() -> Option<wgpu::Device> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<crate::gpu::Device> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default()))
             .ok()
             .map(|(device, _queue)| device)
     }
@@ -219,7 +221,7 @@ mod tests {
         // The `DeviceResources::vram_budget` wrapper must agree with the free
         // function it delegates to.
         let resources =
-            crate::DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+            crate::DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         assert_eq!(resources.vram_budget(&device), vram_budget(&device));
     }
 }

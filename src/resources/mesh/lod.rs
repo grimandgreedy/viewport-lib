@@ -506,15 +506,17 @@ mod registration_tests {
     use crate::geometry::primitives;
     use crate::resources::{AttributeData, MeshData};
 
-    fn try_make_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
     fn with_attr(mut data: MeshData, name: &str) -> MeshData {
@@ -528,7 +530,7 @@ mod registration_tests {
     /// takes, made one call for the tests.
     fn register(
         res: &mut DeviceResources,
-        device: &wgpu::Device,
+        device: &crate::gpu::Device,
         levels: &[(MeshData, f32)],
     ) -> ViewportResult<LodGroupId> {
         let mut ids = Vec::with_capacity(levels.len());
@@ -546,7 +548,7 @@ mod registration_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let id = register(
             &mut res,
             &device,
@@ -567,7 +569,7 @@ mod registration_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = register(
             &mut res,
             &device,
@@ -585,7 +587,7 @@ mod registration_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = register(
             &mut res,
             &device,
@@ -606,7 +608,7 @@ mod registration_tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        let mut res = DeviceResources::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         let err = res.register_lod_group(&[], &[]);
         assert!(matches!(err, Err(ViewportError::LodGroupEmpty)));
     }

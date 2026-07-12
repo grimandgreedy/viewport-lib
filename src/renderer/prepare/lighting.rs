@@ -17,11 +17,11 @@ impl ViewportRenderer {
         last_frustum_culled_lights: &mut u32,
         viewport_slots: &[ViewportSlot],
         scene_fx: &SceneEffects<'_>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
-        ts_query_set: Option<&wgpu::QuerySet>,
+        ts_query_set: Option<&crate::gpu::QuerySet>,
         ts_written_mask: &std::sync::atomic::AtomicU32,
     ) -> LightingFrame {
         let lighting = scene_fx.lighting;
@@ -855,9 +855,10 @@ impl ViewportRenderer {
                 .clustered
                 .write_active_lights(queue, &active_lights);
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("cluster_frame_encoder"),
-            });
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("cluster_frame_encoder"),
+                });
             // Pass 0 when below threshold so dispatch_frame runs the clear
             // (keeping the buffers in a defined state) but skips the build.
             let build_count = if use_clusters { active_count } else { 0 };

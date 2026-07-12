@@ -10,13 +10,13 @@
 #[derive(Default)]
 pub(crate) struct OitResources {
     /// OIT mesh pipeline (non-instanced, mesh_oit.wgsl, two colour targets).
-    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
     /// OIT instanced mesh pipeline (mesh_instanced_oit.wgsl / mesh_instanced with OIT targets).
-    pub(crate) instanced_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) instanced_pipeline: Option<crate::gpu::RenderPipeline>,
     /// OIT composite pipeline (oit_composite.wgsl, fullscreen tri, no depth).
-    pub(crate) composite_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) composite_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the OIT composite pass (group 0: accum + reveal + sampler).
-    pub(crate) composite_bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) composite_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear clamp sampler shared by the OIT composite pass.
-    pub(crate) composite_sampler: Option<wgpu::Sampler>,
+    pub(crate) composite_sampler: Option<crate::gpu::Sampler>,
 }

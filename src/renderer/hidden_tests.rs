@@ -22,19 +22,22 @@ use crate::renderer::PickId;
 use crate::resources::{GpuImplicitItem, ImplicitPrimitive};
 use crate::scene::material::ItemSettings;
 
-fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
+fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+    let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+    let adapter = pollster::block_on(instance.request_adapter(
+        &crate::gpu::RequestAdapterOptions {
+            power_preference: crate::gpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        },
+    ))
     .ok()?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("hidden_tests"),
-        ..Default::default()
-    }))
-    .ok()?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+            label: Some("hidden_tests"),
+            ..Default::default()
+        }))
+        .ok()?;
     Some((device, queue))
 }
 
@@ -73,7 +76,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         eprintln!("skipping non_mesh_pipelines_drop_hidden_items_at_upload: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
     // -----------------------------------------------------------------
     // Point cloud

@@ -32,7 +32,7 @@ impl DeviceResources {
     /// Lazily create sub-object highlight pipelines for both the HDR path
     /// (`Rgba16Float` colour target) and the LDR path (swapchain `target_format`).
     /// Idempotent: returns immediately if already created.
-    pub(crate) fn ensure_sub_highlight_pipelines(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_sub_highlight_pipelines(&mut self, device: &crate::gpu::Device) {
         if self.sub_highlight.fill_pipeline.is_some() {
             return;
         }
@@ -41,7 +41,7 @@ impl DeviceResources {
         let bgl = crate::resources::builders::uniform_bgl(
             device,
             "sub_highlight_bgl",
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
         );
 
         let layout = crate::resources::builders::pipeline_layout(
@@ -67,49 +67,49 @@ impl DeviceResources {
         );
 
         // Inline helper: build one fill pipeline for the given colour format.
-        let make_fill = |label: &'static str, fmt: wgpu::TextureFormat| {
+        let make_fill = |label: &'static str, fmt: crate::gpu::TextureFormat| {
             crate::resources::builders::render_pipeline(
                 device,
                 crate::resources::builders::RenderPipelineDesc {
                     label,
                     layout: &layout,
-                    vertex: wgpu::VertexState {
+                    vertex: crate::gpu::VertexState {
                         module: &fill_shader,
                         entry_point: Some("vs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[wgpu::VertexBufferLayout {
+                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                        buffers: &[crate::gpu::VertexBufferLayout {
                             array_stride: 12,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                            step_mode: crate::gpu::VertexStepMode::Vertex,
+                            attributes: &crate::gpu::vertex_attr_array![0 => Float32x3],
                         }],
                     },
-                    fragment: Some(wgpu::FragmentState {
+                    fragment: Some(crate::gpu::FragmentState {
                         module: &fill_shader,
                         entry_point: Some("fs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
+                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(crate::gpu::ColorTargetState {
                             format: fmt,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
+                            blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                            write_mask: crate::gpu::ColorWrites::ALL,
                         })],
                     }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
+                    primitive: crate::gpu::PrimitiveState {
+                        topology: crate::gpu::PrimitiveTopology::TriangleList,
                         cull_mode: None,
                         ..Default::default()
                     },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_stencil: Some(crate::gpu::DepthStencilState {
+                        format: crate::gpu::TextureFormat::Depth24PlusStencil8,
                         depth_write_enabled: false,
-                        depth_compare: wgpu::CompareFunction::LessEqual,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState {
+                        depth_compare: crate::gpu::CompareFunction::LessEqual,
+                        stencil: crate::gpu::StencilState::default(),
+                        bias: crate::gpu::DepthBiasState {
                             constant: -2,
                             slope_scale: -1.0,
                             clamp: 0.0,
                         },
                     }),
-                    multisample: wgpu::MultisampleState {
+                    multisample: crate::gpu::MultisampleState {
                         count: 1,
                         ..Default::default()
                     },
@@ -117,34 +117,34 @@ impl DeviceResources {
                 },
             )
         };
-        let make_edge = |label: &'static str, fmt: wgpu::TextureFormat| {
+        let make_edge = |label: &'static str, fmt: crate::gpu::TextureFormat| {
             crate::resources::builders::render_pipeline(
                 device,
                 crate::resources::builders::RenderPipelineDesc {
                     label,
                     layout: &layout,
-                    vertex: wgpu::VertexState {
+                    vertex: crate::gpu::VertexState {
                         module: &edge_shader,
                         entry_point: Some("vs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[wgpu::VertexBufferLayout {
+                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                        buffers: &[crate::gpu::VertexBufferLayout {
                             array_stride: 24,
-                            step_mode: wgpu::VertexStepMode::Instance,
-                            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                            step_mode: crate::gpu::VertexStepMode::Instance,
+                            attributes: &crate::gpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
                         }],
                     },
-                    fragment: Some(wgpu::FragmentState {
+                    fragment: Some(crate::gpu::FragmentState {
                         module: &edge_shader,
                         entry_point: Some("fs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
+                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(crate::gpu::ColorTargetState {
                             format: fmt,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
+                            blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                            write_mask: crate::gpu::ColorWrites::ALL,
                         })],
                     }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
+                    primitive: crate::gpu::PrimitiveState {
+                        topology: crate::gpu::PrimitiveTopology::TriangleList,
                         cull_mode: None,
                         ..Default::default()
                     },
@@ -153,9 +153,9 @@ impl DeviceResources {
                     // where the control curve sits inside the rendered mesh).
                     depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                         false,
-                        wgpu::CompareFunction::Always,
+                        crate::gpu::CompareFunction::Always,
                     )),
-                    multisample: wgpu::MultisampleState {
+                    multisample: crate::gpu::MultisampleState {
                         count: 1,
                         ..Default::default()
                     },
@@ -163,34 +163,34 @@ impl DeviceResources {
                 },
             )
         };
-        let make_sprite = |label: &'static str, fmt: wgpu::TextureFormat| {
+        let make_sprite = |label: &'static str, fmt: crate::gpu::TextureFormat| {
             crate::resources::builders::render_pipeline(
                 device,
                 crate::resources::builders::RenderPipelineDesc {
                     label,
                     layout: &layout,
-                    vertex: wgpu::VertexState {
+                    vertex: crate::gpu::VertexState {
                         module: &sprite_shader,
                         entry_point: Some("vs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[wgpu::VertexBufferLayout {
+                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                        buffers: &[crate::gpu::VertexBufferLayout {
                             array_stride: 12,
-                            step_mode: wgpu::VertexStepMode::Instance,
-                            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                            step_mode: crate::gpu::VertexStepMode::Instance,
+                            attributes: &crate::gpu::vertex_attr_array![0 => Float32x3],
                         }],
                     },
-                    fragment: Some(wgpu::FragmentState {
+                    fragment: Some(crate::gpu::FragmentState {
                         module: &sprite_shader,
                         entry_point: Some("fs_main"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
+                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(crate::gpu::ColorTargetState {
                             format: fmt,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
+                            blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
+                            write_mask: crate::gpu::ColorWrites::ALL,
                         })],
                     }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
+                    primitive: crate::gpu::PrimitiveState {
+                        topology: crate::gpu::PrimitiveTopology::TriangleList,
                         cull_mode: None,
                         ..Default::default()
                     },
@@ -198,9 +198,9 @@ impl DeviceResources {
                     // the control point is inside a 3D solid (e.g. tube/streamtube).
                     depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                         false,
-                        wgpu::CompareFunction::Always,
+                        crate::gpu::CompareFunction::Always,
                     )),
-                    multisample: wgpu::MultisampleState {
+                    multisample: crate::gpu::MultisampleState {
                         count: 1,
                         ..Default::default()
                     },
@@ -212,15 +212,15 @@ impl DeviceResources {
         let ldr_fmt = self.target_format;
         self.sub_highlight.fill_pipeline = Some(make_fill(
             "sub_highlight_fill_hdr",
-            wgpu::TextureFormat::Rgba16Float,
+            crate::gpu::TextureFormat::Rgba16Float,
         ));
         self.sub_highlight.edge_pipeline = Some(make_edge(
             "sub_highlight_edge_hdr",
-            wgpu::TextureFormat::Rgba16Float,
+            crate::gpu::TextureFormat::Rgba16Float,
         ));
         self.sub_highlight.sprite_pipeline = Some(make_sprite(
             "sub_highlight_sprite_hdr",
-            wgpu::TextureFormat::Rgba16Float,
+            crate::gpu::TextureFormat::Rgba16Float,
         ));
         self.sub_highlight.fill_ldr_pipeline = Some(make_fill("sub_highlight_fill_ldr", ldr_fmt));
         self.sub_highlight.edge_ldr_pipeline = Some(make_edge("sub_highlight_edge_ldr", ldr_fmt));
@@ -243,8 +243,8 @@ impl DeviceResources {
     /// Pass an empty slice when there are no extra edges.
     pub(crate) fn build_sub_highlight(
         &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         sel: Option<&SubSelectionRef>,
         _splat_positions: &std::collections::HashMap<u64, Vec<[f32; 3]>>,
         extra_edge_data: &[f32],
@@ -503,12 +503,12 @@ impl DeviceResources {
 
         // Helper: create a VERTEX | COPY_DST buffer from a byte slice, or a 1-byte
         // placeholder when the slice is empty (wgpu requires non-zero size).
-        let make_buf = |label: &str, data: &[u8]| -> wgpu::Buffer {
+        let make_buf = |label: &str, data: &[u8]| -> crate::gpu::Buffer {
             let size = data.len().max(1) as u64;
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some(label),
                 size,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             if !data.is_empty() {
@@ -545,10 +545,10 @@ impl DeviceResources {
             viewport_width,
             viewport_height,
         };
-        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("sub_hl_uniform"),
             size: std::mem::size_of::<SubHighlightUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
@@ -556,26 +556,26 @@ impl DeviceResources {
         let (fill_bind_group, edge_bind_group, sprite_bind_group) = {
             let bgl = self.sub_highlight.bgl.as_ref().unwrap();
             let binding = uniform_buf.as_entire_binding();
-            let fill_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let fill_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("sub_hl_fill_bg"),
                 layout: bgl,
-                entries: &[wgpu::BindGroupEntry {
+                entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: binding.clone(),
                 }],
             });
-            let edge_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let edge_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("sub_hl_edge_bg"),
                 layout: bgl,
-                entries: &[wgpu::BindGroupEntry {
+                entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: binding.clone(),
                 }],
             });
-            let sprite_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let sprite_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("sub_hl_sprite_bg"),
                 layout: bgl,
-                entries: &[wgpu::BindGroupEntry {
+                entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: binding,
                 }],
@@ -627,8 +627,8 @@ pub(crate) struct OutlineObjectBuffers {
     /// drawn with that bind group so the selection halo tracks the deformed
     /// silhouette.
     pub deform_instance: Option<u32>,
-    pub _mask_uniform_buf: wgpu::Buffer,
-    pub mask_bind_group: wgpu::BindGroup,
+    pub _mask_uniform_buf: crate::gpu::Buffer,
+    pub mask_bind_group: crate::gpu::BindGroup,
 }
 
 /// Per-item uniform for the Gaussian splat outline mask pass (112 bytes).
@@ -649,15 +649,15 @@ pub(crate) struct SplatOutlineMaskUniform {
 /// Per-frame GPU buffers for one selected Gaussian splat set's outline mask draw.
 pub(crate) struct SplatOutlineBuffers {
     /// Object-space positions as `[f32; 3]` per splat, instance-stepped.
-    pub(crate) position_buf: wgpu::Buffer,
+    pub(crate) position_buf: crate::gpu::Buffer,
     /// Per-instance pixel radius as `f32`, instance-stepped.
-    pub(crate) size_buf: wgpu::Buffer,
+    pub(crate) size_buf: crate::gpu::Buffer,
     /// Number of splats (= instance count).
     pub(crate) instance_count: u32,
     /// Uniform buffer kept alive for the duration of the frame.
-    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _uniform_buf: crate::gpu::Buffer,
     /// Bind group for group 1 (SplatOutlineMaskUniform).
-    pub(crate) bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: crate::gpu::BindGroup,
 }
 
 /// Inline geometry outline buffers for flat world-space quads (image slices).
@@ -665,12 +665,12 @@ pub(crate) struct SplatOutlineBuffers {
 /// Unlike `OutlineObjectBuffers`, the vertex/index data is owned here rather than
 /// looked up via a `MeshId`.
 pub(crate) struct RawGeomOutlineBuffers {
-    pub vertex_buf: wgpu::Buffer,
-    pub index_buf: wgpu::Buffer,
+    pub vertex_buf: crate::gpu::Buffer,
+    pub index_buf: crate::gpu::Buffer,
     pub index_count: u32,
     pub two_sided: bool,
-    pub _uniform_buf: wgpu::Buffer,
-    pub mask_bind_group: wgpu::BindGroup,
+    pub _uniform_buf: crate::gpu::Buffer,
+    pub mask_bind_group: crate::gpu::BindGroup,
 }
 
 /// Per-frame outline item for a tube/streamtube/ribbon mesh.
@@ -680,14 +680,14 @@ pub(crate) struct RawGeomOutlineBuffers {
 pub(crate) struct CurveMeshOutlineItem {
     pub index: usize,
     pub two_sided: bool,
-    pub _mask_uniform_buf: wgpu::Buffer,
-    pub mask_bind_group: wgpu::BindGroup,
+    pub _mask_uniform_buf: crate::gpu::Buffer,
+    pub mask_bind_group: crate::gpu::BindGroup,
 }
 
 /// NDC-space rect outline for screen image overlays.
 pub(crate) struct ScreenRectOutlineBuffers {
-    pub _uniform_buf: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
+    pub _uniform_buf: crate::gpu::Buffer,
+    pub bind_group: crate::gpu::BindGroup,
 }
 
 /// Uniform for the fullscreen outline edge-detection pass (32 bytes).
@@ -723,18 +723,18 @@ pub(crate) struct SubHighlightUniform {
 /// [`SubHighlightUniform`] buffer bound at group 1.
 pub(crate) struct SubHighlightGpuData {
     // Face fill : flat triangle vertex list (xyz f32, 12 bytes each, non-indexed).
-    pub(crate) fill_vertex_buf: wgpu::Buffer,
+    pub(crate) fill_vertex_buf: crate::gpu::Buffer,
     pub(crate) fill_vertex_count: u32,
     // Edge lines : segment instances (pos_a xyz + pos_b xyz, 24 bytes each).
-    pub(crate) edge_vertex_buf: wgpu::Buffer,
+    pub(crate) edge_vertex_buf: crate::gpu::Buffer,
     pub(crate) edge_segment_count: u32,
     // Vertex / point sprites : positions (xyz padded to 16 bytes).
-    pub(crate) sprite_vertex_buf: wgpu::Buffer,
+    pub(crate) sprite_vertex_buf: crate::gpu::Buffer,
     pub(crate) sprite_point_count: u32,
     // Shared uniform buffer.
-    pub(crate) _uniform_buf: wgpu::Buffer,
+    pub(crate) _uniform_buf: crate::gpu::Buffer,
     // Per-pass bind groups (group 1: SubHighlightUniform).
-    pub(crate) fill_bind_group: wgpu::BindGroup,
-    pub(crate) edge_bind_group: wgpu::BindGroup,
-    pub(crate) sprite_bind_group: wgpu::BindGroup,
+    pub(crate) fill_bind_group: crate::gpu::BindGroup,
+    pub(crate) edge_bind_group: crate::gpu::BindGroup,
+    pub(crate) sprite_bind_group: crate::gpu::BindGroup,
 }

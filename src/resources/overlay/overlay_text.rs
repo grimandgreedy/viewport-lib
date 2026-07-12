@@ -5,11 +5,11 @@
 #[derive(Default)]
 pub(crate) struct OverlayTextResources {
     /// Render pipeline for screen-space text and solid overlay quads.
-    pub(crate) pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout (group 0: atlas texture + sampler).
-    pub(crate) bgl: Option<wgpu::BindGroupLayout>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear sampler for the glyph atlas texture.
-    pub(crate) sampler: Option<wgpu::Sampler>,
+    pub(crate) sampler: Option<crate::gpu::Sampler>,
 }
 
 impl crate::resources::DeviceResources {
@@ -17,7 +17,7 @@ impl crate::resources::DeviceResources {
     ///
     /// No-op if already created.  Called from `prepare_viewport_internal()` when
     /// `frame.overlays.labels` is non-empty.
-    pub(crate) fn ensure_overlay_text_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_overlay_text_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.overlay_text.pipeline.is_some() {
             return;
         }
@@ -27,7 +27,7 @@ impl crate::resources::DeviceResources {
         let bgl = crate::resources::builders::texture_sampler_bgl(
             device,
             "overlay_text_bgl",
-            wgpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::FRAGMENT,
         );
 
         let sampler =
@@ -47,41 +47,41 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_text_pipeline",
                 layout: &layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     buffers: &[OverlayTextVertex::buffer_layout()],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::Always,
+                    crate::gpu::CompareFunction::Always,
                 )),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
+                multisample: crate::gpu::MultisampleState::default(),
+                fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
+                    targets: &[Some(crate::gpu::ColorTargetState {
                         format: self.target_format,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::SrcAlpha,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
+                        blend: Some(crate::gpu::BlendState {
+                            color: crate::gpu::BlendComponent {
+                                src_factor: crate::gpu::BlendFactor::SrcAlpha,
+                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: crate::gpu::BlendOperation::Add,
                             },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
+                            alpha: crate::gpu::BlendComponent {
+                                src_factor: crate::gpu::BlendFactor::One,
+                                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: crate::gpu::BlendOperation::Add,
                             },
                         }),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask: crate::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
                 cache: None,
             },
@@ -113,34 +113,34 @@ pub(crate) struct OverlayTextVertex {
 
 impl OverlayTextVertex {
     /// wgpu vertex buffer layout matching `overlay_text.wgsl`.
-    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<OverlayTextVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
+    pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
+        crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayTextVertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
             attributes: &[
                 // location 0: position vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 1: uv vec2f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 8,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 2: colour vec4f
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 16,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 3: use_texture f32
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 32,
                     shader_location: 3,
-                    format: wgpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
             ],
         }
@@ -150,9 +150,9 @@ impl OverlayTextVertex {
 /// Per-frame GPU data for batched overlay label rendering.
 pub(crate) struct LabelGpuData {
     /// Vertex buffer containing all label geometry for this frame.
-    pub vertex_buf: wgpu::Buffer,
+    pub vertex_buf: crate::gpu::Buffer,
     /// Number of vertices to draw.
     pub vertex_count: u32,
     /// Bind group referencing the glyph atlas texture and sampler.
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: crate::gpu::BindGroup,
 }

@@ -30,10 +30,10 @@ pub(crate) struct PerObjectKey {
 /// One cached per-object draw resource.
 pub(crate) struct PerObjectCacheEntry {
     /// This object's own uniform buffer (rewritten each frame; its transform changes).
-    pub(crate) uniform_buf: wgpu::Buffer,
+    pub(crate) uniform_buf: crate::gpu::Buffer,
     /// Bind group pairing the uniform with the object's mesh textures.
     /// `None` until first built.
-    pub(crate) bind_group: Option<wgpu::BindGroup>,
+    pub(crate) bind_group: Option<crate::gpu::BindGroup>,
     /// Material/texture fingerprint the bind group was built from.
     pub(crate) cache_key: u64,
     /// Last `ObjectUniform` written to `uniform_buf`, used to skip the uniform
@@ -51,7 +51,7 @@ pub(crate) struct PerObjectCacheEntry {
 /// every frame through the uniform buffers the bundle's bind groups reference.
 pub(crate) struct PerObjectBundle {
     /// The recorded opaque draws.
-    pub(crate) bundle: wgpu::RenderBundle,
+    pub(crate) bundle: crate::gpu::RenderBundle,
     /// Hash of the item facts the recording depends on (order, mesh ids,
     /// pipeline selection, pick ids, opacity split). A mismatch re-records.
     pub(crate) key: u64,
@@ -63,7 +63,7 @@ pub(crate) struct PerObjectBundle {
     /// The camera bind group recorded into the bundle. Paint only replays the
     /// bundle when its pass camera bind group is this exact resource, so a
     /// different viewport (or a rebuilt slot) falls back to immediate draws.
-    pub(crate) camera_bg: wgpu::BindGroup,
+    pub(crate) camera_bg: crate::gpu::BindGroup,
     /// Indices (into the prepared item list) of blended items, which are
     /// excluded from the bundle and drawn immediately, depth-sorted.
     pub(crate) transparent: Vec<usize>,
@@ -109,17 +109,17 @@ pub(crate) struct PerObjectState {
     /// Per-item bind groups for the current frame, indexed by the item's position
     /// in the frame's item list. Populated from `cache` each frame (cheap
     /// reference-counted clones) so the render path can index by item slot.
-    pub(crate) bind_groups: Vec<Option<wgpu::BindGroup>>,
+    pub(crate) bind_groups: Vec<Option<crate::gpu::BindGroup>>,
     /// Per-item uniform buffers used in wireframe mode.
-    pub(crate) wireframe_uniform_bufs: Vec<wgpu::Buffer>,
+    pub(crate) wireframe_uniform_bufs: Vec<crate::gpu::Buffer>,
     /// Per-item bind groups pairing wireframe uniforms with fallback textures.
-    pub(crate) wireframe_bind_groups: Vec<wgpu::BindGroup>,
+    pub(crate) wireframe_bind_groups: Vec<crate::gpu::BindGroup>,
     /// TransparentVolumeMesh boundary wireframe mesh IDs to draw.
     pub(crate) tvm_wireframe_draws: Vec<MeshId>,
     /// Shared wireframe uniform (identity matrix, wireframe = 1) for TVM draws.
-    pub(crate) tvm_wireframe_buf: Option<wgpu::Buffer>,
+    pub(crate) tvm_wireframe_buf: Option<crate::gpu::Buffer>,
     /// Bind group for the TVM wireframe draws.
-    pub(crate) tvm_wireframe_bg: Option<wgpu::BindGroup>,
+    pub(crate) tvm_wireframe_bg: Option<crate::gpu::BindGroup>,
 }
 
 impl PerObjectState {

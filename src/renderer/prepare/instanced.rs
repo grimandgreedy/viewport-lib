@@ -12,8 +12,8 @@ impl ViewportRenderer {
         instancing: &mut InstancingState,
         instanceable: &[bool],
         scene_items: &[SceneRenderItem],
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> (u32, u32) {
         let mut batches_reuploaded = 0u32;
@@ -331,10 +331,10 @@ impl ViewportRenderer {
         resources: &mut DeviceResources,
         cull_state: &mut crate::resources::ViewportCullState,
         instancing: &mut InstancingState,
-        ts_query_set: Option<&wgpu::QuerySet>,
+        ts_query_set: Option<&crate::gpu::QuerySet>,
         ts_written_mask: &std::sync::atomic::AtomicU32,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) {
@@ -390,9 +390,10 @@ impl ViewportRenderer {
             let cpu_frustum = crate::camera::frustum::Frustum::from_view_proj(&vp_mat);
 
             let cull = instancing.cull_resources.as_ref().unwrap();
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("cull_encoder"),
-            });
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("cull_encoder"),
+                });
             let sub = crate::plugin_api::CullSubmission {
                 instance_aabbs: aabb_buf,
                 instance_count,
@@ -456,10 +457,11 @@ impl ViewportRenderer {
                     < total_bytes
                 {
                     instancing.indirect_readback_buf =
-                        Some(device.create_buffer(&wgpu::BufferDescriptor {
+                        Some(device.create_buffer(&crate::gpu::BufferDescriptor {
                             label: Some("indirect_readback_buf"),
                             size: total_bytes,
-                            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                            usage: crate::gpu::BufferUsages::COPY_DST
+                                | crate::gpu::BufferUsages::MAP_READ,
                             mapped_at_creation: false,
                         }));
                 }

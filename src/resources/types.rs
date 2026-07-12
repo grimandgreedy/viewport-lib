@@ -217,40 +217,40 @@ pub struct Vertex {
 
 impl Vertex {
     /// wgpu vertex buffer layout matching shader locations 0, 1, 2, 3, 4.
-    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
+    pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
+        crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
             attributes: &[
                 // location 0: position (vec3f) : offset 0
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
                 // location 1: normal (vec3f) : offset 12
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 12,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
                 // location 2: colour (vec4f) : offset 24
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 24,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 3: uv (vec2f) : offset 40
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 40,
                     shader_location: 3,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 4: tangent (vec4f) : offset 48
-                wgpu::VertexAttribute {
+                crate::gpu::VertexAttribute {
                     offset: 48,
                     shader_location: 4,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],
         }
@@ -688,9 +688,9 @@ pub struct MeshInstanceGpuData {
     /// Number of instances in this batch (= draw instance count).
     pub(crate) instance_count: u32,
     /// Bind group (group 1): instance storage buf + albedo / sampler / normal / AO.
-    pub(crate) bind_group: wgpu::BindGroup,
+    pub(crate) bind_group: crate::gpu::BindGroup,
     /// Blend mode selected by the host. Drives pipeline selection at draw time.
     pub(crate) blend: crate::renderer::SpriteBlend,
     // Keep buffers alive for the lifetime of this struct.
-    pub(crate) _instance_buf: wgpu::Buffer,
+    pub(crate) _instance_buf: crate::gpu::Buffer,
 }

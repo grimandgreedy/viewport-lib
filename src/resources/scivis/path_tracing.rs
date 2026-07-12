@@ -5,7 +5,7 @@ impl DeviceResources {
     ///
     /// No-op if already created. Called from `render.rs` when transparent_volume_meshes
     /// is non-empty. Also ensures the bind group layout exists.
-    pub(crate) fn ensure_pt_pipeline(&mut self, device: &wgpu::Device) {
+    pub(crate) fn ensure_pt_pipeline(&mut self, device: &crate::gpu::Device) {
         if self.pt.pipeline.is_some() {
             return;
         }
@@ -36,28 +36,28 @@ impl DeviceResources {
         );
 
         // Blend states match the existing OIT mesh pipeline.
-        let accum_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
+        let accum_blend = crate::gpu::BlendState {
+            color: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::One,
+                dst_factor: crate::gpu::BlendFactor::One,
+                operation: crate::gpu::BlendOperation::Add,
             },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
+            alpha: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::One,
+                dst_factor: crate::gpu::BlendFactor::One,
+                operation: crate::gpu::BlendOperation::Add,
             },
         };
-        let reveal_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::OneMinusSrc,
-                operation: wgpu::BlendOperation::Add,
+        let reveal_blend = crate::gpu::BlendState {
+            color: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::Zero,
+                dst_factor: crate::gpu::BlendFactor::OneMinusSrc,
+                operation: crate::gpu::BlendOperation::Add,
             },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::OneMinusSrc,
-                operation: wgpu::BlendOperation::Add,
+            alpha: crate::gpu::BlendComponent {
+                src_factor: crate::gpu::BlendFactor::Zero,
+                dst_factor: crate::gpu::BlendFactor::OneMinusSrc,
+                operation: crate::gpu::BlendOperation::Add,
             },
         };
 
@@ -66,39 +66,39 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "pt_pipeline",
                 layout: &layout,
-                vertex: wgpu::VertexState {
+                vertex: crate::gpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     buffers: &[], // all data comes from storage buffer via instance_index
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 },
-                fragment: Some(wgpu::FragmentState {
+                fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
                     targets: &[
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba16Float,
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::Rgba16Float,
                             blend: Some(accum_blend),
-                            write_mask: wgpu::ColorWrites::ALL,
+                            write_mask: crate::gpu::ColorWrites::ALL,
                         }),
-                        Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::R8Unorm,
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R8Unorm,
                             blend: Some(reveal_blend),
-                            write_mask: wgpu::ColorWrites::RED,
+                            write_mask: crate::gpu::ColorWrites::RED,
                         }),
                     ],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None, // bounding quad can have any winding
                     ..Default::default()
                 },
                 depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
                     false,
-                    wgpu::CompareFunction::LessEqual,
+                    crate::gpu::CompareFunction::LessEqual,
                 )),
-                multisample: wgpu::MultisampleState {
+                multisample: crate::gpu::MultisampleState {
                     count: 1,
                     ..Default::default()
                 },
