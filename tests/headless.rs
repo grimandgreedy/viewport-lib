@@ -4,9 +4,9 @@
 //! resource APIs. Requires a GPU adapter (software or hardware).
 
 use viewport_lib::{
-    BackfacePolicy, Camera, GlyphItem, GlyphType, ItemSettings, Material, MeshId, PickBackend,
-    PickId, PickMask, PickPoll, PolylineItem, RibbonItem, Scene, Selection, SpriteItem,
-    SpriteSizeMode, VolumeMeshItem,
+    BackfacePolicy, Camera, DecalItem, GlyphItem, GlyphType, ItemSettings, Material, MeshId,
+    PickBackend, PickId, PickMask, PickPoll, PolylineItem, RibbonItem, Scene, Selection,
+    SpriteItem, SpriteSizeMode, VolumeMeshItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
@@ -919,6 +919,44 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
         }
     }
     assert!(resolved, "async pick never resolved");
+}
+
+#[test]
+fn gpu_pick_hits_decal_box() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+
+    // A decal is the unit box [-0.5, 0.5]^3 mapped by `transform`; the default
+    // transform places it at the origin. The GPU pick rasterises that box as a
+    // proxy and reads back its pick_id.
+    let mut decal = DecalItem::default();
+    decal.settings.pick_id = PickId(77);
+    frame.scene.decals = vec![decal];
+
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(77)));
 }
 
 #[test]

@@ -274,6 +274,23 @@ impl ViewportRenderer {
             self.resources.ensure_polyline_pick_pipeline(device);
         }
 
+        // Decals rasterise their projection box (the unit cube mapped by
+        // `transform`) as an object-level proxy. Ensure the shared cube mesh
+        // exists when a decal is pickable and the query asks for OBJECT. Computed
+        // as a plain `MeshId` before `draws` borrows `self`, so pushing the decal
+        // draws later needs no further `self` mutation.
+        let decal_cube = if mask.intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+            && frame
+                .scene
+                .decals
+                .iter()
+                .any(|d| !d.settings.hidden && d.settings.pick_id != PickId::NONE)
+        {
+            self.ensure_decal_pick_cube(device)
+        } else {
+            None
+        };
+
         // --- build PickInstance data ---
         // Every mesh-backed pickable item draws through the surface pipeline:
         // scene surfaces, plus volume-mesh boundaries (both opaque and
@@ -345,6 +362,32 @@ impl ViewportRenderer {
                         instance_from(gpu.model, gpu.pick_id),
                     ));
                 }
+            }
+        }
+
+        // Decals: rasterise the unit-cube projection box under each decal's
+        // transform, tagged with its pick_id. Object-level. The box silhouette
+        // can extend past the projected footprint into empty space, so a click
+        // near a decal but off its receiver can still select it, matching the CPU
+        // decal pick. Degenerate (non-invertible) transforms are skipped.
+        if let Some(cube_id) = decal_cube {
+            for d in frame
+                .scene
+                .decals
+                .iter()
+                .filter(|d| !d.settings.hidden && d.settings.pick_id != PickId::NONE)
+            {
+                if glam::Mat4::from_cols_array_2d(&d.transform)
+                    .determinant()
+                    .abs()
+                    < 1e-12
+                {
+                    continue;
+                }
+                draws.push((
+                    PickGeom::Mesh(cube_id),
+                    instance_from(d.transform, d.settings.pick_id),
+                ));
             }
         }
 
@@ -917,6 +960,26 @@ impl ViewportRenderer {
         })
     }
 
+    /// Upload once (and return) the shared unit-cube mesh used as the decal pick
+    /// proxy. Reused across picks; re-uploaded if the cached handle was freed
+    /// (e.g. after device recreation). Returns `None` only if the upload fails.
+    fn ensure_decal_pick_cube(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Option<crate::resources::mesh::mesh_store::MeshId> {
+        if let Some(id) = self.decal_pick_cube {
+            if self.resources.mesh_store.get(id).is_some() {
+                return Some(id);
+            }
+        }
+        let id = self
+            .resources
+            .upload_mesh_data(device, &unit_cube_mesh_data())
+            .ok()?;
+        self.decal_pick_cube = Some(id);
+        Some(id)
+    }
+
     /// Begin a non-blocking GPU object pick under `cursor`: submit the id pass
     /// and park the in-flight staging buffers on the renderer. The result is read
     /// on a later [`pick_object_poll`](Self::pick_object_poll) call, so the
@@ -1040,4 +1103,30 @@ impl PendingPick {
             depth,
         })
     }
+}
+
+/// A unit cube spanning `[-0.5, 0.5]^3` as `MeshData`, used as the decal pick
+/// proxy. The pick pass reads only vertex positions; the per-face normals exist
+/// solely to satisfy mesh-upload validation. Indices wind all six faces.
+fn unit_cube_mesh_data() -> crate::resources::MeshData {
+    let positions = vec![
+        [-0.5, -0.5, -0.5],
+        [0.5, -0.5, -0.5],
+        [0.5, 0.5, -0.5],
+        [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5],
+        [0.5, -0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [-0.5, 0.5, 0.5],
+    ];
+    let normals = vec![[0.0, 0.0, 1.0]; 8];
+    let indices = vec![
+        0, 1, 2, 2, 3, 0, 4, 6, 5, 6, 4, 7, 0, 3, 7, 7, 4, 0, 1, 5, 6, 6, 2, 1, 3, 2, 6, 6, 7, 3,
+        0, 4, 5, 5, 1, 0,
+    ];
+    let mut mesh = crate::resources::MeshData::default();
+    mesh.positions = positions;
+    mesh.normals = normals;
+    mesh.indices = indices;
+    mesh
 }
