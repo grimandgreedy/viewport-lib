@@ -735,7 +735,10 @@ impl ViewportRenderer {
         let (solid, solid_two_sided) = if hdr {
             (
                 self.resources.hdr_solid_pipeline.as_ref().unwrap(),
-                self.resources.hdr_solid_two_sided_pipeline.as_ref().unwrap(),
+                self.resources
+                    .hdr_solid_two_sided_pipeline
+                    .as_ref()
+                    .unwrap(),
             )
         } else {
             (
