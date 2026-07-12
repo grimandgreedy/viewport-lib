@@ -77,6 +77,8 @@ impl ViewportRenderer {
                 }
             });
             let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("ldr_render_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: scene_colour_view,
@@ -285,6 +287,8 @@ impl ViewportRenderer {
             {
                 let mut overlay_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                        #[cfg(feature = "wgpu29")]
+                        multiview_mask: None,
                         label: Some("ldr_overlay_blur_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                             view: overlay_colour_view,
@@ -367,6 +371,8 @@ impl ViewportRenderer {
                 .unwrap()
                 .upscale_bind_group;
             let mut upscale_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("dyn_res_upscale_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: output_view,
@@ -406,6 +412,8 @@ impl ViewportRenderer {
                 ],
             });
             let mut blit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("backdrop_blit_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: output_view,

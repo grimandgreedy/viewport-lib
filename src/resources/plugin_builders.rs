@@ -426,8 +426,10 @@ impl DeviceResources {
                 primitive: opts.primitive,
                 depth_stencil: Some(crate::gpu::DepthStencilState {
                     format: desc.depth_format,
-                    depth_write_enabled: true,
-                    depth_compare: crate::gpu::CompareFunction::LessEqual,
+                    depth_write_enabled: crate::resources::builders::dwrite(true),
+                    depth_compare: crate::resources::builders::dcompare(
+                        crate::gpu::CompareFunction::LessEqual,
+                    ),
                     stencil: crate::gpu::StencilState::default(),
                     bias: crate::gpu::DepthBiasState {
                         constant: 2,

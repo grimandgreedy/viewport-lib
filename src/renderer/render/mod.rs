@@ -143,6 +143,8 @@ impl ViewportRenderer {
             let grid_bg = &slot.grid_bind_group;
 
             let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("ldr_dyn_res_render_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: colour_view,
@@ -1053,6 +1055,8 @@ impl ViewportRenderer {
         });
         {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("backdrop_downsample"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: &bs.blur_a_view,
@@ -1101,6 +1105,8 @@ impl ViewportRenderer {
         });
         {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("backdrop_blur_h"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: &bs.blur_b_view,
@@ -1146,6 +1152,8 @@ impl ViewportRenderer {
         });
         {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("backdrop_blur_v"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                     view: &bs.blur_a_view,

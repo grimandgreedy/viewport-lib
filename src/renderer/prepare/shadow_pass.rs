@@ -53,6 +53,8 @@ impl ViewportRenderer {
                 label: Some("shadow_clear_encoder"),
             });
             let _ = enc.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("shadow_clear_pass"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
@@ -256,6 +258,8 @@ impl ViewportRenderer {
                 });
                 let mut shadow_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                        #[cfg(feature = "wgpu29")]
+                        multiview_mask: None,
                         label: Some("shadow_pass"),
                         color_attachments: &[],
                         depth_stencil_attachment: Some(
@@ -1048,6 +1052,8 @@ impl ViewportRenderer {
                             }
                         });
                     let mut pass = enc.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                        #[cfg(feature = "wgpu29")]
+                        multiview_mask: None,
                         label: Some("point_shadow_face_pass"),
                         color_attachments: &[],
                         depth_stencil_attachment: Some(

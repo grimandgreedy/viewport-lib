@@ -1668,6 +1668,8 @@ impl ViewportRenderer {
             // Pass 1: render selected objects to R8 mask texture.
             {
                 let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                    #[cfg(feature = "wgpu29")]
+                    multiview_mask: None,
                     label: Some("outline_mask_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                         view: mask_view,
@@ -1980,6 +1982,8 @@ impl ViewportRenderer {
             // Pass 2: fullscreen edge detection (reads mask, writes colour).
             {
                 let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                    #[cfg(feature = "wgpu29")]
+                    multiview_mask: None,
                     label: Some("outline_edge_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
                         view: colour_view,

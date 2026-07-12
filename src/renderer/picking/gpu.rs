@@ -856,6 +856,8 @@ impl ViewportRenderer {
         });
         {
             let mut pick_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                #[cfg(feature = "wgpu29")]
+                multiview_mask: None,
                 label: Some("pick_pass"),
                 color_attachments: &[
                     Some(crate::gpu::RenderPassColorAttachment {

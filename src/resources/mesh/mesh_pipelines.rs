@@ -61,7 +61,7 @@ pub(crate) fn build_ldr_mesh_pipelines(
                     conservative: false,
                 },
                 depth_stencil: Some(crate::gpu::DepthStencilState {
-                    depth_write_enabled: depth_write,
+                    depth_write_enabled: crate::resources::builders::dwrite(depth_write),
                     ..depth_stencil.clone()
                 }),
                 multisample: crate::gpu::MultisampleState {
@@ -376,8 +376,10 @@ pub(crate) fn build_shadow_pipeline(
             },
             depth_stencil: Some(crate::gpu::DepthStencilState {
                 format: crate::gpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: crate::gpu::CompareFunction::Less,
+                depth_write_enabled: crate::resources::builders::dwrite(true),
+                depth_compare: crate::resources::builders::dcompare(
+                    crate::gpu::CompareFunction::Less,
+                ),
                 stencil: crate::gpu::StencilState::default(),
                 bias: if cull_mode.is_none() {
                     CSM_SHADOW_BIAS_TWO_SIDED

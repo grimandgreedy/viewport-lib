@@ -139,7 +139,7 @@ pub fn vram_budget(device: &crate::gpu::Device) -> Option<VramBudget> {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(all(any(target_os = "macos", target_os = "ios"), feature = "wgpu27"))]
 fn vram_budget_metal(device: &crate::gpu::Device) -> Option<VramBudget> {
     // Safety: we only read the MTLDevice's reported sizes and drop the hal
     // guard immediately; the device is never destroyed or mutated.
@@ -151,6 +151,16 @@ fn vram_budget_metal(device: &crate::gpu::Device) -> Option<VramBudget> {
         total_bytes: total,
         available_bytes: Some(total.saturating_sub(used)),
     })
+}
+
+// wgpu 29 rewrote the Metal backend onto objc2 bindings: the hal's `raw_device`
+// is now a `Retained<ProtocolObject<dyn MTLDevice>>` rather than a metal-rs
+// `Device`, so the working-set query needs an objc2-metal reimplementation.
+// Until that lands the Metal VRAM budget is unavailable on the 29 leg (a
+// documented per-leg gap); callers fall back to `ResidentBytes` for sizing.
+#[cfg(all(any(target_os = "macos", target_os = "ios"), feature = "wgpu29"))]
+fn vram_budget_metal(_device: &crate::gpu::Device) -> Option<VramBudget> {
+    None
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]

@@ -182,9 +182,23 @@ pub(crate) fn repeat_linear_sampler(
         address_mode_w: crate::gpu::AddressMode::Repeat,
         mag_filter: crate::gpu::FilterMode::Linear,
         min_filter: crate::gpu::FilterMode::Linear,
-        mipmap_filter,
+        mipmap_filter: dmipmap(mipmap_filter),
         ..Default::default()
     })
+}
+
+/// Wrap a mip filter for the current wgpu version's `SamplerDescriptor`. 27
+/// reuses `FilterMode` for the mip filter; 28 split it into `MipmapFilterMode`.
+#[cfg(feature = "wgpu27")]
+pub(crate) fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::FilterMode {
+    filter
+}
+#[cfg(feature = "wgpu29")]
+pub(crate) fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::MipmapFilterMode {
+    match filter {
+        crate::gpu::FilterMode::Nearest => crate::gpu::MipmapFilterMode::Nearest,
+        crate::gpu::FilterMode::Linear => crate::gpu::MipmapFilterMode::Linear,
+    }
 }
 
 /// Sampler for an equirectangular environment map: horizontal wrap (Repeat u),
@@ -197,7 +211,7 @@ pub(crate) fn env_sampler(device: &crate::gpu::Device, label: &str) -> crate::gp
         address_mode_v: crate::gpu::AddressMode::ClampToEdge,
         mag_filter: crate::gpu::FilterMode::Linear,
         min_filter: crate::gpu::FilterMode::Linear,
-        mipmap_filter: crate::gpu::FilterMode::Linear,
+        mipmap_filter: dmipmap(crate::gpu::FilterMode::Linear),
         ..Default::default()
     })
 }
@@ -439,11 +453,25 @@ pub(crate) fn pipeline_layout<'a>(
     label: impl Into<crate::gpu::Label<'a>>,
     bind_group_layouts: &[&crate::gpu::BindGroupLayout],
 ) -> crate::gpu::PipelineLayout {
-    device.create_pipeline_layout(&crate::gpu::PipelineLayoutDescriptor {
+    // 27 takes `push_constant_ranges` and a `&[&BindGroupLayout]`; 29 replaced
+    // push constants with `immediate_size` and takes `&[Option<&BindGroupLayout>]`.
+    #[cfg(feature = "wgpu27")]
+    let layout = device.create_pipeline_layout(&crate::gpu::PipelineLayoutDescriptor {
         label: label.into(),
         bind_group_layouts,
         push_constant_ranges: &[],
-    })
+    });
+    #[cfg(feature = "wgpu29")]
+    let layout = {
+        let bgls: Vec<Option<&crate::gpu::BindGroupLayout>> =
+            bind_group_layouts.iter().map(|b| Some(*b)).collect();
+        device.create_pipeline_layout(&crate::gpu::PipelineLayoutDescriptor {
+            label: label.into(),
+            bind_group_layouts: &bgls,
+            immediate_size: 0,
+        })
+    };
+    layout
 }
 
 /// Pipeline layout with the standard scene binding convention:
@@ -488,9 +516,38 @@ pub(crate) fn render_pipeline(
         primitive: desc.primitive,
         depth_stencil: desc.depth_stencil,
         multisample: desc.multisample,
+        // 29 renamed `multiview` to the `multiview_mask` bitmask form.
+        #[cfg(feature = "wgpu27")]
         multiview: None,
+        #[cfg(feature = "wgpu29")]
+        multiview_mask: None,
         cache: desc.cache,
     })
+}
+
+/// Wrap a depth-write flag for the current wgpu version's `DepthStencilState`.
+/// 27 takes a bare `bool`; 29 takes `Option<bool>`.
+#[cfg(feature = "wgpu27")]
+pub(crate) fn dwrite(enabled: bool) -> bool {
+    enabled
+}
+#[cfg(feature = "wgpu29")]
+pub(crate) fn dwrite(enabled: bool) -> Option<bool> {
+    Some(enabled)
+}
+
+/// Wrap a depth-compare function for the current wgpu version's
+/// `DepthStencilState`. 27 takes a bare `CompareFunction`; 29 takes
+/// `Option<CompareFunction>`.
+#[cfg(feature = "wgpu27")]
+pub(crate) fn dcompare(compare: crate::gpu::CompareFunction) -> crate::gpu::CompareFunction {
+    compare
+}
+#[cfg(feature = "wgpu29")]
+pub(crate) fn dcompare(
+    compare: crate::gpu::CompareFunction,
+) -> Option<crate::gpu::CompareFunction> {
+    Some(compare)
 }
 
 /// A depth-stencil state with the given format, depth write flag, and compare
@@ -503,8 +560,8 @@ pub(crate) fn depth_stencil(
 ) -> crate::gpu::DepthStencilState {
     crate::gpu::DepthStencilState {
         format,
-        depth_write_enabled,
-        depth_compare,
+        depth_write_enabled: dwrite(depth_write_enabled),
+        depth_compare: dcompare(depth_compare),
         stencil: crate::gpu::StencilState::default(),
         bias: crate::gpu::DepthBiasState::default(),
     }
@@ -551,7 +608,15 @@ pub(crate) fn render_bundle_encoder<'a>(
 /// written. This is the one place the crate maps a buffer for writing, so the
 /// mapped-view API change across wgpu versions is audited here.
 pub(crate) fn write_mapped(slice: crate::gpu::BufferSlice, bytes: &[u8]) {
+    // 27's mapped view derefs to `[u8]` and is indexed directly; 29's
+    // `BufferViewMut` is write-only and exposes a `slice(..)` -> `WriteOnly`.
+    #[cfg(feature = "wgpu27")]
     slice.get_mapped_range_mut()[..bytes.len()].copy_from_slice(bytes);
+    #[cfg(feature = "wgpu29")]
+    slice
+        .get_mapped_range_mut()
+        .slice(..bytes.len())
+        .copy_from_slice(bytes);
 }
 
 /// Comparison sampler for shadow-map PCF: linear filtering with a depth compare
@@ -584,7 +649,7 @@ pub(crate) fn clamp_linear_mip_sampler(
         address_mode_w: crate::gpu::AddressMode::ClampToEdge,
         mag_filter: crate::gpu::FilterMode::Linear,
         min_filter: crate::gpu::FilterMode::Linear,
-        mipmap_filter: crate::gpu::FilterMode::Linear,
+        mipmap_filter: dmipmap(crate::gpu::FilterMode::Linear),
         ..Default::default()
     })
 }
@@ -597,10 +662,22 @@ pub(crate) fn capture_validation<T>(
     device: &crate::gpu::Device,
     f: impl FnOnce() -> T,
 ) -> (T, Option<crate::gpu::Error>) {
-    device.push_error_scope(crate::gpu::ErrorFilter::Validation);
-    let value = f();
-    let captured = block_on_simple(device.pop_error_scope());
-    (value, captured)
+    // 27 pops the scope through a `Device::pop_error_scope` future; 29's
+    // `push_error_scope` returns a guard whose `pop()` is the future.
+    #[cfg(feature = "wgpu27")]
+    {
+        device.push_error_scope(crate::gpu::ErrorFilter::Validation);
+        let value = f();
+        let captured = block_on_simple(device.pop_error_scope());
+        (value, captured)
+    }
+    #[cfg(feature = "wgpu29")]
+    {
+        let guard = device.push_error_scope(crate::gpu::ErrorFilter::Validation);
+        let value = f();
+        let captured = block_on_simple(guard.pop());
+        (value, captured)
+    }
 }
 
 /// Tiny sync executor that polls a future until it resolves. wgpu's

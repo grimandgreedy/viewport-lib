@@ -100,8 +100,10 @@ impl DeviceResources {
                     },
                     depth_stencil: Some(crate::gpu::DepthStencilState {
                         format: crate::gpu::TextureFormat::Depth24PlusStencil8,
-                        depth_write_enabled: false,
-                        depth_compare: crate::gpu::CompareFunction::LessEqual,
+                        depth_write_enabled: crate::resources::builders::dwrite(false),
+                        depth_compare: crate::resources::builders::dcompare(
+                            crate::gpu::CompareFunction::LessEqual,
+                        ),
                         stencil: crate::gpu::StencilState::default(),
                         bias: crate::gpu::DepthBiasState {
                             constant: -2,
