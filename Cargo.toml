@@ -59,6 +59,17 @@ future = []
 [dev-dependencies]
 iced = { version = "0.14", features = ["wgpu"] }
 eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
+# egui 0.35 pairs with wgpu 29. Kept as a renamed dep alongside eframe 0.33 so
+# the wgpu29 example can pair egui 0.35 with viewport-lib's 29 leg without
+# moving the other eframe examples (still on 0.33 / the 27 leg). Only the
+# `eframe-minimal-wgpu29` example, gated on `required-features = ["wgpu29"]`,
+# pulls it; a 27-leg build never resolves wgpu 29 through it.
+eframe035 = { package = "eframe", version = "0.35", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
+# Slint pairs with wgpu 29 through its unstable-wgpu-29 feature (tilde
+# requirement per Slint's own guidance: the feature is re-issued per wgpu
+# major). Only the `slint-minimal` example, gated on
+# `required-features = ["wgpu29"]`, uses it.
+slint = { version = "~1.17", features = ["unstable-wgpu-29", "renderer-femtovg-wgpu"] }
 winit = "0.30"
 pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -83,6 +94,16 @@ required-features = ["wgpu27"]
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
 required-features = ["wgpu27"]
+
+[[example]]
+name = "eframe-minimal-wgpu29"
+path = "examples/eframe_minimal_wgpu29/main.rs"
+required-features = ["wgpu29"]
+
+[[example]]
+name = "slint-minimal"
+path = "examples/slint_minimal/main.rs"
+required-features = ["wgpu29"]
 
 [[example]]
 name = "debug-light"
