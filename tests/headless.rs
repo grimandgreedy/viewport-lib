@@ -3,6 +3,12 @@
 //! These tests create a real wgpu device (headless) and exercise the GPU
 //! resource APIs. Requires a GPU adapter (software or hardware).
 
+// On the 27 leg the plain `wgpu` dependency is active and `wgpu::` resolves to
+// it directly. On the 29 leg that dependency is inactive, so name wgpu through
+// the library's re-export instead, which tracks whichever leg is built.
+#[cfg(feature = "wgpu29")]
+use viewport_lib::wgpu;
+
 use viewport_lib::{
     Aabb, BackfacePolicy, Camera, DecalItem, GlyphItem, GlyphType, ItemSettings, Material, MeshId,
     PickBackend, PickId, PickMask, PickPoll, PolylineItem, RibbonItem, ScatterVolume,
@@ -18,7 +24,7 @@ use viewport_lib::{
 
 /// Create a headless wgpu device + queue for testing.
 fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let instance = viewport_lib::wgpu::default_instance();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None,
@@ -1459,11 +1465,13 @@ impl ItemTypePlugin for MockPickPlugin {
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mock_pick_layout"),
-            bind_group_layouts: &[shared.group0_layout, &id_bgl],
-            push_constant_ranges: &[],
-        });
+        // Build through the library's version-portability helpers (see
+        // `viewport_lib::wgpu`) so this test stays free of per-wgpu-version cfg.
+        let layout = viewport_lib::wgpu::pipeline_layout(
+            &device,
+            "mock_pick_layout",
+            &[shared.group0_layout, &id_bgl],
+        );
 
         let color = |format| {
             Some(wgpu::ColorTargetState {
@@ -1472,41 +1480,41 @@ impl ItemTypePlugin for MockPickPlugin {
                 write_mask: wgpu::ColorWrites::ALL,
             })
         };
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mock_pick_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                buffers: &[],
-                compilation_options: Default::default(),
+        let pipeline = viewport_lib::wgpu::render_pipeline(
+            &device,
+            viewport_lib::wgpu::RenderPipelineDesc {
+                label: "mock_pick_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("viewport_pick_fs"),
+                    targets: &[
+                        color(PICK_COLOR_FORMAT),
+                        color(PICK_COLOR_FORMAT),
+                        color(PICK_DEPTH_CHANNEL_FORMAT),
+                    ],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(viewport_lib::wgpu::depth_stencil(
+                    SCENE_DEPTH_FORMAT,
+                    true,
+                    wgpu::CompareFunction::LessEqual,
+                )),
+                multisample: wgpu::MultisampleState::default(),
+                cache: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("viewport_pick_fs"),
-                targets: &[
-                    color(PICK_COLOR_FORMAT),
-                    color(PICK_COLOR_FORMAT),
-                    color(PICK_DEPTH_CHANNEL_FORMAT),
-                ],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: SCENE_DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        );
 
         self.id_bgl = Some(id_bgl);
         self.pipeline = Some(pipeline);

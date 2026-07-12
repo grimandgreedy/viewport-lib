@@ -380,7 +380,7 @@ mod tests {
     }
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let instance = crate::gpu::default_instance();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

@@ -63,7 +63,9 @@ winit = "0.30"
 pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 viewport-lib-io = { version = "0.2.0", path = "../viewport-lib-io" }
-viewport-lib-testkit = { path = "../viewport-lib-testkit" }
+# `default-features = false` so the testkit does not force the wgpu27 leg onto a
+# wgpu29 test build; it inherits whichever leg this build selects.
+viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false }
 
 
 

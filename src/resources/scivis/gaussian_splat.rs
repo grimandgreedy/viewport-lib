@@ -513,7 +513,7 @@ impl DeviceResources {
     /// ```no_run
     /// # use viewport_lib::error::ViewportError;
     /// # use viewport_lib::renderer::{GaussianSplatData, ViewportRenderer};
-    /// # fn demo(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// # fn demo(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device, queue: &viewport_lib::wgpu::Queue) {
     /// let result = renderer.upload_gaussian_splat(device, queue, &GaussianSplatData::default());
     /// assert!(matches!(result, Err(ViewportError::InvalidGaussianSplatData { .. })));
     /// # }
@@ -1066,7 +1066,7 @@ mod async_tests {
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let instance = crate::gpu::default_instance();
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
                 power_preference: crate::gpu::PowerPreference::LowPower,

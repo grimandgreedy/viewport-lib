@@ -190,11 +190,11 @@ pub(crate) fn repeat_linear_sampler(
 /// Wrap a mip filter for the current wgpu version's `SamplerDescriptor`. 27
 /// reuses `FilterMode` for the mip filter; 28 split it into `MipmapFilterMode`.
 #[cfg(feature = "wgpu27")]
-pub(crate) fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::FilterMode {
+pub fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::FilterMode {
     filter
 }
 #[cfg(feature = "wgpu29")]
-pub(crate) fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::MipmapFilterMode {
+pub fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::MipmapFilterMode {
     match filter {
         crate::gpu::FilterMode::Nearest => crate::gpu::MipmapFilterMode::Nearest,
         crate::gpu::FilterMode::Linear => crate::gpu::MipmapFilterMode::Linear,
@@ -448,7 +448,7 @@ pub(crate) fn compute_pipeline(
 /// ranges (nothing in the crate uses push constants). This is the one place the
 /// crate calls `create_pipeline_layout`, so the push-constant field that churns
 /// across wgpu versions only has to be audited here.
-pub(crate) fn pipeline_layout<'a>(
+pub fn pipeline_layout<'a>(
     device: &crate::gpu::Device,
     label: impl Into<crate::gpu::Label<'a>>,
     bind_group_layouts: &[&crate::gpu::BindGroupLayout],
@@ -489,7 +489,7 @@ pub(crate) fn standard_scene_layout(
 /// that churn across wgpu versions (`multiview`, always `None`; `cache`, passed
 /// through) are filled by [`render_pipeline`], so a version bump only touches
 /// that one function instead of every descriptor literal.
-pub(crate) struct RenderPipelineDesc<'a> {
+pub struct RenderPipelineDesc<'a> {
     pub label: &'a str,
     pub layout: &'a crate::gpu::PipelineLayout,
     pub vertex: crate::gpu::VertexState<'a>,
@@ -504,7 +504,7 @@ pub(crate) struct RenderPipelineDesc<'a> {
 /// filling `multiview: None`. This is the one place the crate calls
 /// `create_render_pipeline`, so the `multiview` field that changes shape across
 /// wgpu versions only has to be audited here.
-pub(crate) fn render_pipeline(
+pub fn render_pipeline(
     device: &crate::gpu::Device,
     desc: RenderPipelineDesc,
 ) -> crate::gpu::RenderPipeline {
@@ -528,11 +528,11 @@ pub(crate) fn render_pipeline(
 /// Wrap a depth-write flag for the current wgpu version's `DepthStencilState`.
 /// 27 takes a bare `bool`; 29 takes `Option<bool>`.
 #[cfg(feature = "wgpu27")]
-pub(crate) fn dwrite(enabled: bool) -> bool {
+pub fn dwrite(enabled: bool) -> bool {
     enabled
 }
 #[cfg(feature = "wgpu29")]
-pub(crate) fn dwrite(enabled: bool) -> Option<bool> {
+pub fn dwrite(enabled: bool) -> Option<bool> {
     Some(enabled)
 }
 
@@ -540,20 +540,18 @@ pub(crate) fn dwrite(enabled: bool) -> Option<bool> {
 /// `DepthStencilState`. 27 takes a bare `CompareFunction`; 29 takes
 /// `Option<CompareFunction>`.
 #[cfg(feature = "wgpu27")]
-pub(crate) fn dcompare(compare: crate::gpu::CompareFunction) -> crate::gpu::CompareFunction {
+pub fn dcompare(compare: crate::gpu::CompareFunction) -> crate::gpu::CompareFunction {
     compare
 }
 #[cfg(feature = "wgpu29")]
-pub(crate) fn dcompare(
-    compare: crate::gpu::CompareFunction,
-) -> Option<crate::gpu::CompareFunction> {
+pub fn dcompare(compare: crate::gpu::CompareFunction) -> Option<crate::gpu::CompareFunction> {
     Some(compare)
 }
 
 /// A depth-stencil state with the given format, depth write flag, and compare
 /// function, using the default stencil state and depth bias. Centralises the
 /// `DepthStencilState` construction that changes shape across wgpu versions.
-pub(crate) fn depth_stencil(
+pub fn depth_stencil(
     format: crate::gpu::TextureFormat,
     depth_write_enabled: bool,
     depth_compare: crate::gpu::CompareFunction,
@@ -570,7 +568,7 @@ pub(crate) fn depth_stencil(
 /// The scene depth-stencil state: `Depth24PlusStencil8` shared by every scene
 /// render pass, parameterised by the depth write flag and compare function that
 /// vary per pipeline.
-pub(crate) fn scene_depth_stencil(
+pub fn scene_depth_stencil(
     depth_write_enabled: bool,
     depth_compare: crate::gpu::CompareFunction,
 ) -> crate::gpu::DepthStencilState {

@@ -1552,7 +1552,7 @@ impl ViewportRenderer {
     /// ```no_run
     /// # use viewport_lib::error::ViewportError;
     /// # use viewport_lib::renderer::{GaussianSplatData, ViewportRenderer};
-    /// # fn demo(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// # fn demo(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device, queue: &viewport_lib::wgpu::Queue) {
     /// let result = renderer.upload_gaussian_splat(device, queue, &GaussianSplatData::default());
     /// assert!(matches!(result, Err(ViewportError::InvalidGaussianSplatData { .. })));
     /// # }
@@ -1588,7 +1588,7 @@ impl ViewportRenderer {
     /// ```no_run
     /// # use viewport_lib::error::ViewportError;
     /// # use viewport_lib::renderer::ViewportRenderer;
-    /// # fn demo(renderer: &mut ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// # fn demo(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device, queue: &viewport_lib::wgpu::Queue) {
     /// // 2x2 RGBA image requires exactly 16 floats.
     /// let result = renderer.upload_environment_map(device, queue, &[0.0f32; 12], 2, 2);
     /// assert!(matches!(result, Err(ViewportError::InvalidTextureData { expected: 16, actual: 12 })));

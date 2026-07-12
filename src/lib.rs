@@ -69,8 +69,13 @@
 //! queue.submit([cmd0, cmd1]);
 //! ```
 
-/// Internal alias for the selected wgpu version. See [`gpu`] itself.
-pub(crate) mod gpu;
+// Internal alias for the selected wgpu version (see the module). Also
+// re-exported as `viewport_lib::wgpu` so consumers, tests, and the testkit can
+// name the exact wgpu the library was built with, whichever leg is active.
+#[doc(hidden)]
+pub mod gpu;
+#[doc(hidden)]
+pub use crate::gpu as wgpu;
 
 /// Error types for the viewport library.
 pub mod error;
