@@ -319,6 +319,7 @@ impl DeviceResources {
             mesh_edge_index_buffer: mesh_edge_ibuf,
             mesh_edge_index_count: mesh_edge_count,
             instance_count,
+            pick_id: item.settings.pick_id,
             wireframe,
             uniform_bind_group,
             instance_bind_group,
@@ -713,6 +714,7 @@ impl DeviceResources {
             mesh_edge_index_buffer: mesh_edge_ibuf,
             mesh_edge_index_count: mesh_edge_count,
             instance_count,
+            pick_id: item.settings.pick_id,
             wireframe,
             uniform_bind_group,
             instance_bind_group,
@@ -1146,6 +1148,9 @@ pub struct GlyphGpuData {
     pub(crate) mesh_edge_index_count: u32,
     /// Number of glyph instances.
     pub(crate) instance_count: u32,
+    /// Object-level pick id shared by every instance in the set (from the item's
+    /// `settings.pick_id`); `PickId::NONE` when the set is not pickable.
+    pub(crate) pick_id: crate::PickId,
     /// Whether this batch should be drawn with the wireframe pipeline.
     pub(crate) wireframe: bool,
     /// Bind group (group 1): glyph uniform + LUT texture + sampler.
@@ -1174,6 +1179,9 @@ pub struct TensorGlyphGpuData {
     pub(crate) mesh_edge_index_count: u32,
     /// Number of tensor glyph instances.
     pub(crate) instance_count: u32,
+    /// Object-level pick id shared by every instance in the set (from the item's
+    /// `settings.pick_id`); `PickId::NONE` when the set is not pickable.
+    pub(crate) pick_id: crate::PickId,
     /// Whether this batch should be drawn with the wireframe pipeline.
     pub(crate) wireframe: bool,
     /// Bind group (group 1): uniform + LUT texture + sampler.

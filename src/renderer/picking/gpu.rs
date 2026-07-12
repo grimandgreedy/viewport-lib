@@ -19,6 +19,9 @@ enum PickItemType {
     /// owned connected mesh each frame into the renderer's tube gpu-data vecs
     /// rather than living in `mesh_store`. Object-level only.
     Curve,
+    /// Glyph and tensor-glyph sets: instanced base meshes drawn with a dedicated
+    /// pick pipeline that reuses the render vertex transform. Object-level only.
+    Glyph,
 }
 
 impl PickItemType {
@@ -39,8 +42,23 @@ impl PickItemType {
             PickItemType::Curve => {
                 mask.intersects(PickMask::OBJECT | PickMask::SEGMENT | PickMask::STRIP)
             }
+            // Glyph sets answer the object mask plus the per-instance level.
+            PickItemType::Glyph => mask.intersects(PickMask::OBJECT | PickMask::INSTANCE),
         }
     }
+}
+
+/// One glyph or tensor-glyph set to draw into the pick pass. The group-1 bind
+/// group (the set uniform + a per-set object-id uniform) is owned; the pipeline,
+/// instance bind group, and mesh buffers are borrowed from prepared state.
+struct GlyphPickDraw<'a> {
+    pipeline: &'a wgpu::RenderPipeline,
+    id_bind_group: wgpu::BindGroup,
+    instance_bind_group: &'a wgpu::BindGroup,
+    vertex_buffer: &'a wgpu::Buffer,
+    index_buffer: &'a wgpu::Buffer,
+    index_count: u32,
+    instance_count: u32,
 }
 
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
@@ -141,6 +159,23 @@ impl ViewportRenderer {
 
         // --- lazy pipeline init ---
         self.resources.ensure_pick_pipeline(device);
+        let glyph_wanted = PickItemType::Glyph.satisfies(mask);
+        let has_pickable_glyphs = glyph_wanted
+            && self
+                .glyph_gpu_data
+                .iter()
+                .any(|g| g.pick_id != PickId::NONE && g.instance_count > 0);
+        let has_pickable_tensor = glyph_wanted
+            && self
+                .tensor_glyph_gpu_data
+                .iter()
+                .any(|g| g.pick_id != PickId::NONE && g.instance_count > 0);
+        if has_pickable_glyphs {
+            self.resources.ensure_glyph_pick_pipeline(device);
+        }
+        if has_pickable_tensor {
+            self.resources.ensure_tensor_glyph_pick_pipeline(device);
+        }
 
         // --- build PickInstance data ---
         // Every mesh-backed pickable item draws through the surface pipeline:
@@ -216,7 +251,91 @@ impl ViewportRenderer {
             }
         }
 
-        if draws.is_empty() {
+        // Glyph and tensor-glyph sets draw with their own pick pipelines. Each
+        // set builds a group-1 bind group (the set uniform + a per-set object-id
+        // uniform) here so it outlives the render pass. The buffers behind the
+        // bind group stay alive through it, so the temporary id buffer can drop.
+        let mut glyph_draws: Vec<GlyphPickDraw> = Vec::new();
+        if has_pickable_glyphs || has_pickable_tensor {
+            let id_bgl = self
+                .resources
+                .pick
+                .glyph_pick_id_bgl
+                .as_ref()
+                .expect("glyph pick id bgl");
+            let make_id_bg = |pick_id: PickId, uniform_buf: &wgpu::Buffer| {
+                let id_data = [pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("glyph_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("glyph_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: id_buf.as_entire_binding(),
+                        },
+                    ],
+                })
+            };
+            if has_pickable_glyphs {
+                let pipeline = self
+                    .resources
+                    .pick
+                    .glyph_pipeline
+                    .as_ref()
+                    .expect("glyph pick pipeline");
+                for gpu in self
+                    .glyph_gpu_data
+                    .iter()
+                    .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
+                {
+                    glyph_draws.push(GlyphPickDraw {
+                        pipeline,
+                        id_bind_group: make_id_bg(gpu.pick_id, &gpu._uniform_buf),
+                        instance_bind_group: &gpu.instance_bind_group,
+                        vertex_buffer: gpu.mesh_vertex_buffer,
+                        index_buffer: gpu.mesh_index_buffer,
+                        index_count: gpu.mesh_index_count,
+                        instance_count: gpu.instance_count,
+                    });
+                }
+            }
+            if has_pickable_tensor {
+                let pipeline = self
+                    .resources
+                    .pick
+                    .tensor_glyph_pipeline
+                    .as_ref()
+                    .expect("tensor glyph pick pipeline");
+                for gpu in self
+                    .tensor_glyph_gpu_data
+                    .iter()
+                    .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
+                {
+                    glyph_draws.push(GlyphPickDraw {
+                        pipeline,
+                        id_bind_group: make_id_bg(gpu.pick_id, &gpu._uniform_buf),
+                        instance_bind_group: &gpu.instance_bind_group,
+                        vertex_buffer: gpu.mesh_vertex_buffer,
+                        index_buffer: gpu.mesh_index_buffer,
+                        index_count: gpu.mesh_index_count,
+                        instance_count: gpu.instance_count,
+                    });
+                }
+            }
+        }
+
+        if draws.is_empty() && glyph_draws.is_empty() {
             return None;
         }
 
@@ -451,6 +570,19 @@ impl ViewportRenderer {
                         pick_pass.draw_indexed(0..*index_count, 0, slot..slot + 1);
                     }
                 }
+            }
+
+            // Glyph / tensor-glyph sets: each draws its instanced base mesh with a
+            // dedicated pipeline that reuses the render vertex transform and writes
+            // the set's object id.
+            for gd in &glyph_draws {
+                pick_pass.set_pipeline(gd.pipeline);
+                pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
+                pick_pass.set_bind_group(1, &gd.id_bind_group, &[]);
+                pick_pass.set_bind_group(2, gd.instance_bind_group, &[]);
+                pick_pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
+                pick_pass.set_index_buffer(gd.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pick_pass.draw_indexed(0..gd.index_count, 0, 0..gd.instance_count);
             }
         }
 

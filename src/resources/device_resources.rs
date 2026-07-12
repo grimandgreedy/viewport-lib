@@ -257,6 +257,14 @@ pub(crate) struct PickResources {
     pub(crate) bind_group_layout_1: Option<wgpu::BindGroupLayout>,
     /// Minimal camera-only bind group layout (group 0).
     pub(crate) camera_bgl: Option<wgpu::BindGroupLayout>,
+    /// Pick pipeline for glyph sets. Reuses the render glyph transform and writes
+    /// the set's object id.
+    pub(crate) glyph_pipeline: Option<wgpu::RenderPipeline>,
+    /// Pick pipeline for tensor glyph sets.
+    pub(crate) tensor_glyph_pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 1 layout shared by the glyph and tensor glyph pick pipelines: the
+    /// set's uniform (binding 0) plus the object-id uniform (binding 3).
+    pub(crate) glyph_pick_id_bgl: Option<wgpu::BindGroupLayout>,
 }
 
 /// GPU implicit-surface ray-march pipeline and layout. Lazily built.
@@ -1383,4 +1391,184 @@ impl DeviceResources {
         self.pick.bind_group_layout_1 = Some(pick_instance_bgl);
         self.pick.pipeline = Some(pipeline);
     }
+
+    /// Group 1 layout for the glyph and tensor glyph pick pipelines: the set's
+    /// uniform (binding 0) plus the object-id uniform (binding 3). Built once and
+    /// shared by both pipelines.
+    fn ensure_glyph_pick_id_bgl(&mut self, device: &wgpu::Device) {
+        if self.pick.glyph_pick_id_bgl.is_some() {
+            return;
+        }
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("glyph_pick_id_bgl"),
+            entries: &[
+                // binding 0: the set's glyph / tensor uniform (model + params).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 3: object id to write for this set.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        self.pick.glyph_pick_id_bgl = Some(bgl);
+    }
+
+    /// Lazily create the glyph pick pipeline. Reuses the render glyph vertex
+    /// transform (same instance buffer + uniform) with a fragment that writes the
+    /// set's object id.
+    pub(crate) fn ensure_glyph_pick_pipeline(&mut self, device: &wgpu::Device) {
+        if self.pick.glyph_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        self.ensure_glyph_pipeline(device);
+        self.ensure_glyph_pick_id_bgl(device);
+
+        let camera_bgl = self.pick.camera_bgl.as_ref().expect("pick camera bgl");
+        let id_bgl = self
+            .pick
+            .glyph_pick_id_bgl
+            .as_ref()
+            .expect("glyph pick id bgl");
+        let instance_bgl = self
+            .glyph
+            .instance_bgl
+            .as_ref()
+            .expect("glyph instance bgl");
+
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "glyph_pick_shader",
+            crate::resources::builders::wgsl_source!("glyph_pick"),
+        );
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("glyph_pick_pipeline_layout"),
+            bind_group_layouts: &[camera_bgl, id_bgl, instance_bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = build_glyph_pick_pipeline(device, "glyph_pick_pipeline", &layout, &shader);
+        self.pick.glyph_pipeline = Some(pipeline);
+    }
+
+    /// Lazily create the tensor glyph pick pipeline. Reuses the render tensor
+    /// glyph vertex transform (same instance buffer + uniform) with a fragment
+    /// that writes the set's object id.
+    pub(crate) fn ensure_tensor_glyph_pick_pipeline(&mut self, device: &wgpu::Device) {
+        if self.pick.tensor_glyph_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        self.ensure_tensor_glyph_pipeline(device);
+        self.ensure_glyph_pick_id_bgl(device);
+
+        let camera_bgl = self.pick.camera_bgl.as_ref().expect("pick camera bgl");
+        let id_bgl = self
+            .pick
+            .glyph_pick_id_bgl
+            .as_ref()
+            .expect("glyph pick id bgl");
+        let instance_bgl = self
+            .tensor_glyph
+            .instance_bgl
+            .as_ref()
+            .expect("tensor glyph instance bgl");
+
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "tensor_glyph_pick_shader",
+            crate::resources::builders::wgsl_source!("tensor_glyph_pick"),
+        );
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("tensor_glyph_pick_pipeline_layout"),
+            bind_group_layouts: &[camera_bgl, id_bgl, instance_bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline =
+            build_glyph_pick_pipeline(device, "tensor_glyph_pick_pipeline", &layout, &shader);
+        self.pick.tensor_glyph_pipeline = Some(pipeline);
+    }
+}
+
+/// Build a glyph / tensor glyph pick pipeline. Both share the same fragment
+/// targets as the surface pick pipeline (R32Uint object id + R32Uint primitive
+/// id + R32Float depth) and the same depth-stencil setup; only the shader and
+/// layout differ.
+fn build_glyph_pick_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    // Reuse the full 64-byte Vertex layout so the glyph base mesh binds as-is and
+    // the shader reads position + normal like the render path.
+    let vertex_layout = Vertex::buffer_layout();
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[vertex_layout],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[
+                Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::R32Uint,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+                Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::R32Uint,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+                Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::R32Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+            ],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            // Glyphs are viewed from any direction; pick both faces like the
+            // surface pick pipeline does.
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24PlusStencil8,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+    })
 }
