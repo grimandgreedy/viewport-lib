@@ -14,6 +14,12 @@ pub(crate) struct MeshPrep {
     /// source `MeshData` did not carry its own tangents. `None` means the
     /// source tangents (if any) should be used directly.
     pub computed_tangents: Option<Vec<[f32; 4]>>,
+    /// CPU copies retained on the mesh for picking. Cloned here rather
+    /// than in `assemble_mesh_data` so the async path pays the memcpy on
+    /// the worker thread instead of inside the apply step.
+    pub cpu_positions: Vec<[f32; 3]>,
+    pub cpu_normals: Vec<[f32; 3]>,
+    pub cpu_indices: Vec<u32>,
 }
 
 impl DeviceResources {
@@ -158,6 +164,9 @@ impl DeviceResources {
         MeshPrep {
             vertices,
             computed_tangents,
+            cpu_positions: data.positions.clone(),
+            cpu_normals: data.normals.clone(),
+            cpu_indices: data.indices.clone(),
         }
     }
 
@@ -173,6 +182,9 @@ impl DeviceResources {
         let MeshPrep {
             vertices,
             computed_tangents,
+            cpu_positions,
+            cpu_normals,
+            cpu_indices,
         } = prep;
         let tangent_slice = data.tangents.as_deref().or(computed_tangents.as_deref());
 
@@ -197,9 +209,9 @@ impl DeviceResources {
             &data.indices,
             None,
         );
-        mesh.cpu_positions = Some(data.positions.clone());
-        mesh.cpu_normals = Some(data.normals.clone());
-        mesh.cpu_indices = Some(data.indices.clone());
+        mesh.cpu_positions = Some(cpu_positions);
+        mesh.cpu_normals = Some(cpu_normals);
+        mesh.cpu_indices = Some(cpu_indices);
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
                 device,

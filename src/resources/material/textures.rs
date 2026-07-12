@@ -53,11 +53,13 @@ impl DeviceResources {
 
     /// Start an asynchronous albedo texture upload.
     ///
-    /// Returns a `JobId` immediately. The texture and bind group are built
-    /// on a worker thread; `queue.write_texture` queues the pixel copy and
-    /// the runner gates the job on a fresh submission that flushes those
-    /// writes. Once the status is `Ready`, take the resulting texture id
-    /// with `upload_result_texture` and store it in `Material::texture_id`.
+    /// Returns a `JobId` immediately. The mip chain is built on a worker
+    /// thread; the texture creation and pixel copy then run on the device
+    /// thread during a `process_uploads` call, under the frame budget when
+    /// one is set, and the runner gates the job on a submission that
+    /// flushes those writes. Once the status is `Ready`, take the resulting
+    /// texture id with `upload_result_texture` and store it in
+    /// `Material::texture_id`.
     ///
     /// `rgba` transfers into the worker; clone at the call site to retain
     /// it. Format and binding match the synchronous `upload_texture`.
@@ -281,10 +283,14 @@ impl DeviceResources {
     ) -> crate::resources::JobId {
         let slot = crate::resources::ResultSlot::<crate::resources::TextureId>::new();
         let slot_for_apply = slot.clone();
+        // The GPU stage receives device and queue from `process` on the
+        // device thread; the handles passed in here are unused, kept so the
+        // public entry points keep their signatures.
+        let _ = (device, queue);
 
-        // Clone the fallback views and the bind-group layout into the
-        // worker so it can build the GpuTexture and bind group without
-        // touching `self` from the worker thread.
+        // Clone the fallback views and the bind-group layout into the job
+        // so its stages can build the GpuTexture and bind group without
+        // touching `self`.
         let bgl = self.texture_bind_group_layout.clone();
         let fallback_albedo_view = self.fallback_texture.view.clone();
         let fallback_normal_view = self.fallback_normal_map_view.clone();
@@ -320,11 +326,15 @@ impl DeviceResources {
 
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_with_gpu(device, queue, move |dev, q, progress| {
+            runner.submit_cpu_then_gpu(move |progress| {
                 // A single supplied level means an uncompressed RGBA base
                 // image: build its mip chain here on the worker so minified
                 // sampling is trilinear instead of full-resolution fetches.
                 // Compressed uploads pass their own chains and skip this.
+                // The chain build is pure CPU and by far the expensive part
+                // of the job, so it must not run on the render thread; only
+                // the texture creation and copy below need the device
+                // thread.
                 let mip_levels = if mip_levels.len() == 1
                     && matches!(
                         format,
@@ -338,38 +348,47 @@ impl DeviceResources {
                     mip_levels
                 };
                 progress.set(0.2);
-                let gpu_texture = build_gpu_texture(
-                    dev,
-                    q,
-                    width,
-                    height,
-                    format,
-                    is_normal_map,
-                    &mip_levels,
-                    &bgl,
-                    &fallback_albedo_view,
-                    &fallback_normal_view,
-                    &fallback_ao_view,
-                );
-                progress.set(0.9);
+                Ok(Box::new(
+                    move |dev: &wgpu::Device,
+                          q: &wgpu::Queue,
+                          progress: &crate::resources::ProgressHandle| {
+                        let gpu_texture = build_gpu_texture(
+                            dev,
+                            q,
+                            width,
+                            height,
+                            format,
+                            is_normal_map,
+                            &mip_levels,
+                            &bgl,
+                            &fallback_albedo_view,
+                            &fallback_normal_view,
+                            &fallback_ao_view,
+                        );
+                        progress.set(0.9);
 
-                // Flush so the runner has a submission to gate on. Implicit
-                // writes queued above are folded into this submit by wgpu.
-                let encoder = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("async_texture_flush"),
-                });
-                let submission = q.submit(std::iter::once(encoder.finish()));
-                progress.set(1.0);
+                        // Flush so the runner has a submission to gate on.
+                        // Implicit writes queued above are folded into this
+                        // submit by wgpu.
+                        let encoder = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("async_texture_flush"),
+                        });
+                        let submission = q.submit(std::iter::once(encoder.finish()));
+                        progress.set(1.0);
 
-                Ok(
-                    crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
-                        submission,
-                        Box::new(move |resources: &mut DeviceResources| {
-                            let tex_id = resources.content.textures.insert(gpu_texture, data_bytes);
-                            slot_for_apply.set(tex_id);
-                        }),
-                    ),
+                        Ok(
+                            crate::resources::upload_jobs::JobProduct::with_gpu_and_apply(
+                                submission,
+                                Box::new(move |resources: &mut DeviceResources| {
+                                    let tex_id =
+                                        resources.content.textures.insert(gpu_texture, data_bytes);
+                                    slot_for_apply.set(tex_id);
+                                }),
+                            ),
+                        )
+                    },
                 )
+                    as crate::resources::upload_jobs::GpuWorkFn)
             })
         };
 

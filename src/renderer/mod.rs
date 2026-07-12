@@ -874,15 +874,17 @@ impl ViewportRenderer {
         self.resources.occlusion_culling_enabled()
     }
 
-    /// Cap the per-frame cost of running upload-job apply closures.
+    /// Cap the per-frame cost of upload-job work on the render thread.
     ///
     /// `None` is the default and matches the historical behaviour:
-    /// `prepare` drains every completed upload's apply step in one
-    /// shot. `Some(d)` switches `prepare` over to
-    /// `process_uploads_with_budget` so applies that overflow the
-    /// budget spill to the next frame. Useful when a stress load lands
-    /// many heavy completions on the same frame and the bunched apply
-    /// work shows up as one fat frame at the end of the load.
+    /// `prepare` drains every completed upload's apply step and every
+    /// queued GPU-job stage in one shot. `Some(d)` switches `prepare`
+    /// over to `process_uploads_with_budget` so work that overflows the
+    /// budget spills to the next frame. The budget covers both the
+    /// apply drain and the deferred GPU stages of texture uploads (the
+    /// texture creation and pixel copies), checked between items; a
+    /// single large item still runs to completion once started, so the
+    /// cap is soft.
     pub fn set_upload_budget(&mut self, budget: Option<std::time::Duration>) {
         self.upload_budget = budget;
     }

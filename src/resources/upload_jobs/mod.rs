@@ -157,15 +157,17 @@ impl ProgressHandle {
 /// built textures, buffers, and bind groups into `DeviceResources`.
 pub type ApplyFn = Box<dyn FnOnce(&mut super::DeviceResources) + Send>;
 
-/// Boxed GPU-submitting work for a `submit_with_gpu` job.
+/// Boxed GPU-submitting work for a `submit_with_gpu` or
+/// `submit_cpu_then_gpu` job.
 ///
 /// Unlike CPU jobs, this runs on the main thread inside `process`, not on a
 /// rayon worker: some drivers (notably the NVIDIA Linux Vulkan driver)
 /// corrupt the command pushbuffer (NVRM Xid 32, surfacing as a lost device)
 /// when GPU commands are submitted from a thread other than the one driving
 /// the device. CPU-side preparation still belongs on worker threads via
-/// `submit_cpu`; only the GPU calls are funnelled here.
-type GpuWorkFn = Box<
+/// `submit_cpu` or the CPU stage of `submit_cpu_then_gpu`; only the GPU
+/// calls are funnelled here.
+pub(crate) type GpuWorkFn = Box<
     dyn FnOnce(&wgpu::Device, &wgpu::Queue, &ProgressHandle) -> Result<JobProduct, ViewportError>
         + Send,
 >;
@@ -338,6 +340,10 @@ impl FrameBudget {
 #[allow(dead_code)]
 enum WorkerOutcome {
     Done(JobProduct, Duration),
+    /// The CPU stage of a `submit_cpu_then_gpu` job finished and handed
+    /// back GPU work. `process` moves it onto the deferred queue; the
+    /// deferred run reports `Done` or `Failed` through the same channel.
+    NeedsGpu(GpuWorkFn, Duration),
     Failed(ViewportError, Duration),
 }
 
@@ -362,6 +368,10 @@ pub struct Completion {
 
 struct JobSlot {
     progress: ProgressHandle,
+    /// Sender side of the outcome channel, retained so a `NeedsGpu`
+    /// hand-off can requeue the job's GPU stage as a deferred job that
+    /// reports through the same channel.
+    tx: mpsc::Sender<WorkerOutcome>,
     rx: mpsc::Receiver<WorkerOutcome>,
     /// Once the worker has reported, the GPU submission to gate on (if any)
     /// and the apply closure to run when the GPU side finishes.
@@ -486,6 +496,7 @@ impl JobRunner {
         let progress = ProgressHandle::new();
         let worker_progress = progress.clone();
         let (tx, rx) = mpsc::channel();
+        let worker_tx = tx.clone();
 
         rayon::spawn(move || {
             let t0 = Instant::now();
@@ -500,13 +511,62 @@ impl JobRunner {
                 ),
             };
             // Receiver going away is fine; the runner was probably dropped.
-            let _ = tx.send(outcome);
+            let _ = worker_tx.send(outcome);
         });
 
         self.slots.insert(
             id.0,
             JobSlot {
                 progress,
+                tx,
+                rx,
+                awaiting: None,
+                callback: None,
+            },
+        );
+        id
+    }
+
+    /// Schedule a job whose CPU stage runs on the background pool and
+    /// whose GPU stage runs on the device thread during a later `process`
+    /// call.
+    ///
+    /// The worker does its CPU work (decode, mip-chain build, repack) on a
+    /// rayon thread and returns the boxed GPU work; `process` executes
+    /// that work under the same per-call cap and frame budget as
+    /// `submit_with_gpu` jobs. Prefer this over `submit_with_gpu` whenever
+    /// the job has real CPU cost: with `submit_with_gpu` the whole
+    /// closure, CPU work included, runs on the device thread.
+    pub(crate) fn submit_cpu_then_gpu<F>(&mut self, work: F) -> JobId
+    where
+        F: FnOnce(&ProgressHandle) -> Result<GpuWorkFn, ViewportError> + Send + 'static,
+    {
+        let id = self.issue_id();
+        let progress = ProgressHandle::new();
+        let worker_progress = progress.clone();
+        let (tx, rx) = mpsc::channel();
+        let worker_tx = tx.clone();
+
+        rayon::spawn(move || {
+            let t0 = Instant::now();
+            let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
+                Ok(Ok(gpu_work)) => WorkerOutcome::NeedsGpu(gpu_work, t0.elapsed()),
+                Ok(Err(e)) => WorkerOutcome::Failed(e, t0.elapsed()),
+                Err(_) => WorkerOutcome::Failed(
+                    ViewportError::JobWorkerLost {
+                        reason: "worker panicked",
+                    },
+                    t0.elapsed(),
+                ),
+            };
+            let _ = worker_tx.send(outcome);
+        });
+
+        self.slots.insert(
+            id.0,
+            JobSlot {
+                progress,
+                tx,
                 rx,
                 awaiting: None,
                 callback: None,
@@ -548,13 +608,14 @@ impl JobRunner {
         self.deferred_gpu.push_back(DeferredGpuJob {
             work: Box::new(work),
             progress: progress.clone(),
-            tx,
+            tx: tx.clone(),
         });
 
         self.slots.insert(
             id.0,
             JobSlot {
                 progress,
+                tx,
                 rx,
                 awaiting: None,
                 callback: None,
@@ -650,15 +711,34 @@ impl JobRunner {
     /// `callback` if present. Splitting these out lets the caller drop any
     /// external lock around the runner before mutating renderer state.
     pub fn process(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<Completion> {
+        self.process_budgeted(device, queue, &FrameBudget::unbounded())
+    }
+
+    /// `process` with a time bound on the deferred GPU-job drain.
+    ///
+    /// Deferred jobs run one at a time until `budget` elapses (checked
+    /// between jobs; the first job of a call always runs so a tight budget
+    /// still makes progress), on top of the fixed per-call cap. Everything
+    /// else behaves like `process`.
+    pub fn process_budgeted(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        budget: &FrameBudget,
+    ) -> Vec<Completion> {
         // Drop the previous frame's retention window. Callers that needed
         // those results have already taken them.
         self.finished.clear();
 
-        // Run deferred GPU jobs on this (the device-owning) thread, bounded so
-        // a large batch spreads across frames. Each result is sent into the
-        // job's channel, picked up by the slot loop below in this same call.
+        // Run deferred GPU jobs on this (the device-owning) thread, bounded
+        // by the frame budget and a fixed cap so a large batch spreads
+        // across frames. Each result is sent into the job's channel, picked
+        // up by the slot loop below in this same call.
         let n = self.deferred_gpu.len().min(MAX_GPU_JOBS_PER_PROCESS);
-        for _ in 0..n {
+        for i in 0..n {
+            if i > 0 && budget.exhausted() {
+                break;
+            }
             let Some(job) = self.deferred_gpu.pop_front() else {
                 break;
             };
@@ -694,7 +774,8 @@ impl JobRunner {
                     .expect("slot existed");
                 match outcome {
                     Ok(WorkerOutcome::Done(product, worker_dur)) => {
-                        self.durations.insert(id, worker_dur);
+                        let entry = self.durations.entry(id).or_insert(Duration::ZERO);
+                        *entry = entry.saturating_add(worker_dur);
                         let JobProduct { gpu, apply } = product;
                         match gpu {
                             None => {
@@ -708,8 +789,26 @@ impl JobRunner {
                             }
                         }
                     }
+                    Ok(WorkerOutcome::NeedsGpu(work, worker_dur)) => {
+                        let entry = self.durations.entry(id).or_insert(Duration::ZERO);
+                        *entry = entry.saturating_add(worker_dur);
+                        // The CPU stage is done; queue the GPU stage for a
+                        // later drain. The slot stays in place and the
+                        // deferred run reports through the same channel, so
+                        // this same loop picks up the final outcome.
+                        if let Some((progress, tx)) = self
+                            .slots
+                            .get(&id)
+                            .map(|s| (s.progress.clone(), s.tx.clone()))
+                        {
+                            self.deferred_gpu
+                                .push_back(DeferredGpuJob { work, progress, tx });
+                        }
+                        continue;
+                    }
                     Ok(WorkerOutcome::Failed(e, worker_dur)) => {
-                        self.durations.insert(id, worker_dur);
+                        let entry = self.durations.entry(id).or_insert(Duration::ZERO);
+                        *entry = entry.saturating_add(worker_dur);
                         self.finish(id, UploadStatus::Failed(e), None, &mut completions);
                         continue;
                     }
@@ -830,11 +929,12 @@ impl super::DeviceResources {
     /// `UploadStatus::Pending` until their apply runs, so the typed
     /// result is never observably available before it is in place.
     ///
-    /// The budget covers only the main-thread apply work and the
-    /// preceding device poll. Worker-thread time is independent. The
-    /// check happens between applies, so a single long-running apply
-    /// may push past the deadline once it has started; the budget is a
-    /// soft cap, not a hard deadline.
+    /// The budget covers the main-thread work: deferred GPU-job stages
+    /// (texture creation and copies queued by `begin_upload_texture` and
+    /// friends), the device poll, and the apply drain. Worker-thread time
+    /// is independent. The check happens between jobs and between applies,
+    /// so a single long-running stage may push past the deadline once it
+    /// has started; the budget is a soft cap, not a hard deadline.
     pub fn process_uploads_with_budget(
         &mut self,
         device: &wgpu::Device,
@@ -847,7 +947,7 @@ impl super::DeviceResources {
         // hide errors from consumers.
         let completions = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.process(device, queue)
+            runner.process_budgeted(device, queue, &budget)
         };
         for Completion {
             id: _,
@@ -1273,6 +1373,85 @@ mod tests {
             drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
         });
         assert!(matches!(runner.status(id), UploadStatus::Ready));
+    }
+
+    #[test]
+    fn cpu_then_gpu_job_completes() {
+        let mut runner = JobRunner::new();
+        let id = runner.submit_cpu_then_gpu(|p| {
+            p.set(0.5);
+            Ok(
+                Box::new(|_d: &wgpu::Device, _q: &wgpu::Queue, p: &ProgressHandle| {
+                    p.set(1.0);
+                    Ok(JobProduct::empty())
+                }) as GpuWorkFn,
+            )
+        });
+
+        with_test_gpu(|device, queue| {
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
+        });
+
+        assert!(matches!(runner.status(id), UploadStatus::Ready));
+        assert!(runner.all_complete());
+    }
+
+    #[test]
+    fn cpu_then_gpu_cpu_stage_error_surfaces_as_failed() {
+        let mut runner = JobRunner::new();
+        let id = runner.submit_cpu_then_gpu(|_p| {
+            Err(ViewportError::JobWorkerLost {
+                reason: "cpu stage error",
+            })
+        });
+
+        with_test_gpu(|device, queue| {
+            drain_until(&mut runner, device, queue, 200, |r| r.all_complete());
+        });
+
+        assert!(matches!(runner.status(id), UploadStatus::Failed(_)));
+    }
+
+    #[test]
+    fn deferred_gpu_drain_respects_budget() {
+        // Three two-stage jobs whose CPU stages finish immediately. With an
+        // already-elapsed budget, each process call may run at most one
+        // deferred GPU stage (the first job of a call always runs so a
+        // tight budget still makes progress).
+        let mut runner = JobRunner::new();
+        let ran = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for _ in 0..3 {
+            let ran = ran.clone();
+            runner.submit_cpu_then_gpu(move |_p| {
+                Ok(Box::new(
+                    move |_d: &wgpu::Device, _q: &wgpu::Queue, _p: &ProgressHandle| {
+                        ran.fetch_add(1, Ordering::Relaxed);
+                        Ok(JobProduct::empty())
+                    },
+                ) as GpuWorkFn)
+            });
+        }
+
+        with_test_gpu(|device, queue| {
+            let mut max_per_call = 0usize;
+            for _ in 0..400 {
+                let before = ran.load(Ordering::Relaxed);
+                let _ =
+                    runner.process_budgeted(device, queue, &FrameBudget::from_now(Duration::ZERO));
+                let delta = ran.load(Ordering::Relaxed) - before;
+                max_per_call = max_per_call.max(delta);
+                if runner.all_complete() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(runner.all_complete(), "jobs never drained");
+            assert_eq!(ran.load(Ordering::Relaxed), 3);
+            assert!(
+                max_per_call <= 1,
+                "budget did not bound the deferred drain: {max_per_call} stages in one call"
+            );
+        });
     }
 
     #[test]
