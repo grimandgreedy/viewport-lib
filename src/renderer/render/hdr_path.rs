@@ -720,6 +720,18 @@ impl ViewportRenderer {
                         (pos - eye).length()
                     };
 
+                    // When prepare cached an HDR render bundle for this item
+                    // set and this pass's camera bind group, replay it instead
+                    // of encoding one draw per opaque item. Bundled draws run
+                    // in submission order rather than the front-to-back sort
+                    // below: encode savings traded against early-z, the same
+                    // trade the LDR bundle makes. Transparent items are routed
+                    // to the OIT pass either way.
+                    let bundle_hit = self
+                        .per_object_bundle
+                        .as_ref()
+                        .filter(|pb| pb.hdr && pb.camera_bg == *camera_bg);
+
                     let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
                     let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
                     for (idx, item) in scene_items.iter().enumerate() {
@@ -729,7 +741,7 @@ impl ViewportRenderer {
                         }
                         if item.settings.opacity < 1.0 || item.material.is_blend() {
                             transparent.push((idx, item));
-                        } else {
+                        } else if bundle_hit.is_none() {
                             opaque.push((idx, item));
                         }
                     }
@@ -743,6 +755,13 @@ impl ViewportRenderer {
                             .partial_cmp(&dist_from_eye(a))
                             .unwrap_or(std::cmp::Ordering::Equal)
                     });
+
+                    if let Some(pb) = bundle_hit {
+                        render_pass.execute_bundles(std::iter::once(&pb.bundle));
+                        // Bundle execution resets all render-pass state;
+                        // restore the camera bind group for the draws below.
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                    }
 
                     let per_item_bgs = &self.mesh_uniforms.bind_groups;
                     let draw_item_hdr =

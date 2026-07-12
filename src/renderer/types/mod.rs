@@ -412,7 +412,7 @@ macro_rules! emit_draw_calls {
                 // item; only the blended items still draw immediately (their
                 // back-to-front order depends on the camera every frame).
                 let bundle_hit: Option<&crate::renderer::per_object_state::PerObjectBundle> =
-                    po_bundle.filter(|pb| pb.camera_bg == *camera_bg);
+                    po_bundle.filter(|pb| !pb.hdr && pb.camera_bg == *camera_bg);
 
                 let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
                 let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();

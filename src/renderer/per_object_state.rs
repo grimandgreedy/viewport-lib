@@ -55,6 +55,11 @@ pub(crate) struct PerObjectBundle {
     /// Hash of the item facts the recording depends on (order, mesh ids,
     /// pipeline selection, pick ids, opacity split). A mismatch re-records.
     pub(crate) key: u64,
+    /// Whether the bundle was recorded for the HDR scene pass (Rgba16Float,
+    /// HDR pipelines) or the LDR path (target format, LDR pipelines). A
+    /// bundle only replays in the pass family it was recorded for; `key`
+    /// also hashes this, so switching paths re-records.
+    pub(crate) hdr: bool,
     /// The camera bind group recorded into the bundle. Paint only replays the
     /// bundle when its pass camera bind group is this exact resource, so a
     /// different viewport (or a rebuilt slot) falls back to immediate draws.

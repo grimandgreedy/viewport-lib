@@ -620,9 +620,13 @@ impl ViewportRenderer {
             return;
         }
 
+        // Post-processing selects the HDR path; the bundle records against
+        // that pass's formats and pipelines instead of being disabled. The
+        // HDR pipelines build on the first HDR frame, so frame one records
+        // nothing and the bundle starts on frame two.
+        let hdr = frame.effects.post_process.enabled;
         let plan = 'plan: {
-            if frame.effects.post_process.enabled
-                || frame.viewport.wireframe_mode
+            if frame.viewport.wireframe_mode
                 || !self.compute_filter_results.is_empty()
                 || !self.instancing.use_instancing
                 || !self.instancing.batches.is_empty()
@@ -631,8 +635,15 @@ impl ViewportRenderer {
             {
                 break 'plan None;
             }
+            if hdr
+                && (self.resources.hdr_solid_pipeline.is_none()
+                    || self.resources.hdr_solid_two_sided_pipeline.is_none())
+            {
+                break 'plan None;
+            }
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
+            hdr.hash(&mut h);
             frame.camera.viewport_index.hash(&mut h);
             self.prepared_surfaces.len().hash(&mut h);
             let mut transparent: Vec<usize> = Vec::new();
@@ -693,7 +704,7 @@ impl ViewportRenderer {
                 .is_some_and(|pb| pb.key == key && pb.camera_bg == camera_bg);
         if !reusable {
             self.per_object_bundle =
-                Some(self.record_per_object_bundle(device, key, camera_bg, transparent));
+                Some(self.record_per_object_bundle(device, key, camera_bg, transparent, hdr));
         }
         self.last_stats.per_object_bundle_cached = true;
     }
@@ -708,21 +719,39 @@ impl ViewportRenderer {
         key: u64,
         camera_bg: wgpu::BindGroup,
         transparent: Vec<usize>,
+        hdr: bool,
     ) -> crate::renderer::per_object_state::PerObjectBundle {
         let resources = &self.resources;
+        // The HDR scene pass renders Rgba16Float at sample count 1 with a
+        // writable stencil aspect; the LDR passes render the surface format
+        // at the configured sample count with the stencil attached read-only
+        // (`stencil_ops: None`). A read-only stencil declaration is valid in
+        // both (the mesh pipelines never touch stencil).
+        let (colour_format, sample_count) = if hdr {
+            (wgpu::TextureFormat::Rgba16Float, 1)
+        } else {
+            (resources.target_format, resources.sample_count)
+        };
+        let (solid, solid_two_sided) = if hdr {
+            (
+                self.resources.hdr_solid_pipeline.as_ref().unwrap(),
+                self.resources.hdr_solid_two_sided_pipeline.as_ref().unwrap(),
+            )
+        } else {
+            (
+                &resources.solid_pipeline,
+                &resources.solid_two_sided_pipeline,
+            )
+        };
         let mut enc = device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
             label: Some("per_object_bundle"),
-            color_formats: &[Some(resources.target_format)],
+            color_formats: &[Some(colour_format)],
             depth_stencil: Some(wgpu::RenderBundleDepthStencil {
                 format: crate::resources::SCENE_DEPTH_FORMAT,
                 depth_read_only: false,
-                // The scene passes attach the stencil aspect with
-                // `stencil_ops: None` (read-only); the bundle must declare the
-                // same or replay fails validation. The mesh pipelines never
-                // touch stencil.
                 stencil_read_only: true,
             }),
-            sample_count: resources.sample_count,
+            sample_count,
             multiview: None,
         });
         enc.set_bind_group(0, &camera_bg, &[]);
@@ -739,11 +768,7 @@ impl ViewportRenderer {
             };
             let two_sided = item.material.is_two_sided();
             if cur_two_sided != Some(two_sided) {
-                enc.set_pipeline(if two_sided {
-                    &resources.solid_two_sided_pipeline
-                } else {
-                    &resources.solid_pipeline
-                });
+                enc.set_pipeline(if two_sided { solid_two_sided } else { solid });
                 cur_two_sided = Some(two_sided);
             }
             enc.set_bind_group(
@@ -769,6 +794,7 @@ impl ViewportRenderer {
         crate::renderer::per_object_state::PerObjectBundle {
             bundle,
             key,
+            hdr,
             camera_bg,
             transparent,
         }
