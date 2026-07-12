@@ -270,6 +270,12 @@ pub(crate) struct PickResources {
     pub(crate) polyline_pipeline: Option<wgpu::RenderPipeline>,
     /// Group 2 layout for the polyline pick pipeline (per-draw object-id uniform).
     pub(crate) polyline_pick_id_bgl: Option<wgpu::BindGroupLayout>,
+    /// Pick pipeline for voxel volumes: rasterises the volume bounding cube and
+    /// raymarches to the first in-threshold voxel, writing the item's object id
+    /// and that voxel's depth. Reuses the volume render group-1 layout.
+    pub(crate) volume_pipeline: Option<wgpu::RenderPipeline>,
+    /// Group 2 layout for the volume pick pipeline (per-item object-id uniform).
+    pub(crate) volume_pick_id_bgl: Option<wgpu::BindGroupLayout>,
 }
 
 /// GPU implicit-surface ray-march pipeline and layout. Lazily built.
@@ -1751,6 +1757,123 @@ impl DeviceResources {
 
         self.pick.polyline_pick_id_bgl = Some(pick_id_bgl);
         self.pick.polyline_pipeline = Some(pipeline);
+    }
+
+    /// Build the voxel-volume pick pipeline: rasterise the volume bounding cube
+    /// and raymarch to the first in-threshold voxel, writing the item's object id
+    /// and that voxel's depth. Group 0 is the minimal pick camera (camera +
+    /// clip-volume, matching `volume_pick.wgsl`), group 1 reuses the volume
+    /// render layout, group 2 is a per-item object-id uniform. No-op if the
+    /// volume render layout has not been built yet (no volumes prepared).
+    pub(crate) fn ensure_volume_pick_pipeline(&mut self, device: &wgpu::Device) {
+        if self.pick.volume_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        if self.volume.bgl.is_none() {
+            return;
+        }
+
+        let pick_id_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("volume_pick_id_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        // Group 0 is the full scene camera layout (camera + clip volume, both
+        // FRAGMENT-visible here), not the minimal pick camera: the volume pick
+        // fragment reads `view_proj` for the hit depth and the clip volume.
+        let camera_bgl = &self.camera_bind_group_layout;
+        let volume_bgl = self.volume.bgl.as_ref().expect("checked is_some above");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "volume_pick_shader",
+            crate::resources::builders::wgsl_source!("volume_pick"),
+        );
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("volume_pick_pipeline_layout"),
+            bind_group_layouts: &[camera_bgl, volume_bgl, &pick_id_bgl],
+            push_constant_ranges: &[],
+        });
+
+        // Position-only unit-cube vertex buffer, matching the volume render cube.
+        let vert_layout = wgpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            }],
+        };
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("volume_pick_pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[vert_layout],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_pick"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            // Draw both cube faces (like the volume render): the eye ray march is
+            // identical from either face, and back faces keep the volume pickable
+            // when the camera is inside the box.
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            // The fragment writes `frag_depth` at the hit voxel, so the volume
+            // occludes and is occluded by other pick geometry per voxel.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                ..Default::default()
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        self.pick.volume_pick_id_bgl = Some(pick_id_bgl);
+        self.pick.volume_pipeline = Some(pipeline);
     }
 }
 

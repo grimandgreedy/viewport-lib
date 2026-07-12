@@ -4,9 +4,9 @@
 //! resource APIs. Requires a GPU adapter (software or hardware).
 
 use viewport_lib::{
-    BackfacePolicy, Camera, DecalItem, GlyphItem, GlyphType, ItemSettings, Material, MeshId,
-    PickBackend, PickId, PickMask, PickPoll, PolylineItem, RibbonItem, Scene, Selection,
-    SpriteItem, SpriteSizeMode, VolumeMeshItem,
+    Aabb, BackfacePolicy, Camera, DecalItem, GlyphItem, GlyphType, ItemSettings, Material, MeshId,
+    PickBackend, PickId, PickMask, PickPoll, PolylineItem, RibbonItem, ScatterVolume,
+    ScatterVolumeItem, Scene, Selection, SpriteItem, SpriteSizeMode, VolumeItem, VolumeMeshItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
@@ -919,6 +919,135 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
         }
     }
     assert!(resolved, "async pick never resolved");
+}
+
+#[test]
+fn gpu_pick_hits_voxel_volume() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // A fully dense 8^3 volume: every voxel is in-threshold, so the raymarch pick
+    // hits on the first sample anywhere the bounding cube covers.
+    let dims = [8u32, 8, 8];
+    let data = vec![1.0f32; (dims[0] * dims[1] * dims[2]) as usize];
+    let volume_id = renderer
+        .resources_mut()
+        .upload_volume(&device, &queue, &data, dims);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+
+    // Centre the bounding cube on the origin so the default camera sees it.
+    let mut vol = VolumeItem::default();
+    vol.volume_id = volume_id;
+    vol.scalar_range = (0.0, 1.0);
+    vol.threshold_min = 0.0;
+    vol.threshold_max = 1.0;
+    vol.bbox_min = [-0.5, -0.5, -0.5];
+    vol.bbox_max = [0.5, 0.5, 0.5];
+    vol.settings.pick_id = PickId(63);
+    frame.scene.volumes = vec![vol];
+
+    // prepare builds the per-volume GPU data (bind group + cube) the pick reuses.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::all(),
+    );
+    assert_eq!(hit.map(|h| h.id), Some(63));
+}
+
+fn scatter_pick_frame() -> FrameData {
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    frame
+}
+
+#[test]
+fn gpu_pick_hits_box_scatter_volume() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = scatter_pick_frame();
+
+    // A box scatter volume centred on the origin. The pick rasterises the actual
+    // box (cube proxy) and reads back its id.
+    let aabb = Aabb {
+        min: glam::Vec3::splat(-0.5),
+        max: glam::Vec3::splat(0.5),
+    };
+    let mut item = ScatterVolumeItem::new(ScatterVolume::box_uniform(aabb, 1.0, [1.0, 1.0, 1.0]));
+    item.settings.pick_id = PickId(41);
+    frame.scene.scatter_volumes = vec![item];
+
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(41)));
+}
+
+#[test]
+fn gpu_pick_hits_sphere_scatter_volume() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = scatter_pick_frame();
+
+    // A sphere scatter volume centred on the origin. The pick rasterises the
+    // icosphere proxy and reads back its id at the viewport centre.
+    let mut item = ScatterVolumeItem::new(ScatterVolume::sphere_uniform(
+        [0.0, 0.0, 0.0],
+        0.5,
+        1.0,
+        [1.0, 1.0, 1.0],
+    ));
+    item.settings.pick_id = PickId(42);
+    frame.scene.scatter_volumes = vec![item];
+
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(42)));
 }
 
 #[test]

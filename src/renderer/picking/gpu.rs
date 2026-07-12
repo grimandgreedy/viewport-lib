@@ -96,6 +96,17 @@ struct PolylinePickDraw<'a> {
     segment_count: u32,
 }
 
+/// One voxel volume to draw into the pick pass. The owned group-2 bind group
+/// holds the object id; the group-1 render bind group (volume uniform + 3D
+/// texture + samplers) and the unit-cube buffers are borrowed from prepared
+/// `VolumeGpuData`.
+struct VolumePickDraw<'a> {
+    id_bind_group: wgpu::BindGroup,
+    render_bind_group: &'a wgpu::BindGroup,
+    vertex_buffer: &'a wgpu::Buffer,
+    index_buffer: &'a wgpu::Buffer,
+}
+
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
 /// in `mesh_store`; tube-family items reference the owned per-frame buffers built
 /// during prepare.
@@ -274,6 +285,19 @@ impl ViewportRenderer {
             self.resources.ensure_polyline_pick_pipeline(device);
         }
 
+        // Voxel volumes raymarch their bounding cube to the first in-threshold
+        // voxel. Object-level; wireframe volumes render an OBB polyline instead,
+        // so they are picked as polylines, not here.
+        let has_pickable_volumes = mask
+            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+            && self
+                .volume_gpu_data
+                .iter()
+                .any(|v| !v.wireframe && v.pick_id != PickId::NONE);
+        if has_pickable_volumes {
+            self.resources.ensure_volume_pick_pipeline(device);
+        }
+
         // Decals rasterise their projection box (the unit cube mapped by
         // `transform`) as an object-level proxy. Ensure the shared cube mesh
         // exists when a decal is pickable and the query asks for OBJECT. Computed
@@ -289,6 +313,40 @@ impl ViewportRenderer {
             self.ensure_decal_pick_cube(device)
         } else {
             None
+        };
+
+        // Scatter volumes pick against their actual shape: a box (the shared cube)
+        // or a sphere (the shared icosphere), world-space and unrotated, matching
+        // the CPU analytic `ray_intersect`. Ensure whichever proxies are needed.
+        let (scatter_cube, scatter_sphere) = if mask
+            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+        {
+            let mut want_box = false;
+            let mut want_sphere = false;
+            for it in frame
+                .scene
+                .scatter_volumes
+                .iter()
+                .filter(|s| !s.settings.hidden && s.settings.pick_id != PickId::NONE)
+            {
+                match it.volume.shape {
+                    crate::scene::scatter_volume::ScatterShape::Box(_) => want_box = true,
+                    crate::scene::scatter_volume::ScatterShape::Sphere { .. } => want_sphere = true,
+                }
+            }
+            let cube = if want_box {
+                self.ensure_decal_pick_cube(device)
+            } else {
+                None
+            };
+            let sphere = if want_sphere {
+                self.ensure_scatter_pick_sphere(device)
+            } else {
+                None
+            };
+            (cube, sphere)
+        } else {
+            (None, None)
         };
 
         // --- build PickInstance data ---
@@ -388,6 +446,50 @@ impl ViewportRenderer {
                     PickGeom::Mesh(cube_id),
                     instance_from(d.transform, d.settings.pick_id),
                 ));
+            }
+        }
+
+        // Scatter volumes: box -> cube proxy (exact), sphere -> icosphere proxy.
+        // The shapes are world-space and unrotated, so a translate + scale places
+        // the proxy on the shape. Matches the CPU analytic scatter pick.
+        for it in frame
+            .scene
+            .scatter_volumes
+            .iter()
+            .filter(|s| !s.settings.hidden && s.settings.pick_id != PickId::NONE)
+        {
+            match it.volume.shape {
+                crate::scene::scatter_volume::ScatterShape::Box(b) => {
+                    let Some(cube_id) = scatter_cube else {
+                        continue;
+                    };
+                    let min = b.min;
+                    let max = b.max;
+                    let extent = max - min;
+                    if extent.min_element() <= 0.0 {
+                        continue;
+                    }
+                    let model = glam::Mat4::from_translation((min + max) * 0.5)
+                        * glam::Mat4::from_scale(extent);
+                    draws.push((
+                        PickGeom::Mesh(cube_id),
+                        instance_from(model.to_cols_array_2d(), it.settings.pick_id),
+                    ));
+                }
+                crate::scene::scatter_volume::ScatterShape::Sphere { center, radius } => {
+                    let Some(sphere_id) = scatter_sphere else {
+                        continue;
+                    };
+                    if radius <= 0.0 {
+                        continue;
+                    }
+                    let model = glam::Mat4::from_translation(glam::Vec3::from(center))
+                        * glam::Mat4::from_scale(glam::Vec3::splat(radius));
+                    draws.push((
+                        PickGeom::Mesh(sphere_id),
+                        instance_from(model.to_cols_array_2d(), it.settings.pick_id),
+                    ));
+                }
             }
         }
 
@@ -557,6 +659,47 @@ impl ViewportRenderer {
             }
         }
 
+        // Voxel volumes: one draw of the bounding cube per pickable, non-wireframe
+        // volume, with a group-2 object-id uniform. The group-1 render bind group
+        // (volume uniform + 3D texture) is reused from prepared `VolumeGpuData`.
+        let mut volume_draws: Vec<VolumePickDraw> = Vec::new();
+        if has_pickable_volumes && self.resources.pick.volume_pipeline.is_some() {
+            let id_bgl = self
+                .resources
+                .pick
+                .volume_pick_id_bgl
+                .as_ref()
+                .expect("volume pick id bgl built with the pipeline");
+            for gpu in self
+                .volume_gpu_data
+                .iter()
+                .filter(|v| !v.wireframe && v.pick_id != PickId::NONE)
+            {
+                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("volume_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("volume_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                volume_draws.push(VolumePickDraw {
+                    id_bind_group,
+                    render_bind_group: &gpu.bind_group,
+                    vertex_buffer: &gpu.vertex_buffer,
+                    index_buffer: &gpu.index_buffer,
+                });
+            }
+        }
+
         // Registered plugins draw their own pick-ids into the pass. Treat them
         // as object-level: run the pass for them when the mask asks for OBJECT
         // and a plugin has a non-empty collection this frame. Their draws are not
@@ -569,6 +712,7 @@ impl ViewportRenderer {
             && glyph_draws.is_empty()
             && sprite_draws.is_empty()
             && polyline_draws.is_empty()
+            && volume_draws.is_empty()
             && !has_plugin_pick
         {
             return PickBegin::Miss;
@@ -860,6 +1004,26 @@ impl ViewportRenderer {
                 }
             }
 
+            // Voxel volumes: raymarch each bounding cube. Group 0 is the full
+            // scene camera bind group (the volume pick fragment reads view_proj
+            // and the clip volume); group 1 is the reused volume render bind
+            // group; group 2 is the per-item object id.
+            if let Some(volume_pipeline) = self.resources.pick.volume_pipeline.as_ref() {
+                if !volume_draws.is_empty() {
+                    pick_pass.set_pipeline(volume_pipeline);
+                    pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                    for vd in &volume_draws {
+                        pick_pass.set_bind_group(1, vd.render_bind_group, &[]);
+                        pick_pass.set_bind_group(2, &vd.id_bind_group, &[]);
+                        pick_pass.set_vertex_buffer(0, vd.vertex_buffer.slice(..));
+                        pick_pass
+                            .set_index_buffer(vd.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        // The volume cube is 36 indices (12 triangles).
+                        pick_pass.draw_indexed(0..36, 0, 0..1);
+                    }
+                }
+            }
+
             // Item-type plugins render their own pick-ids last. They build their
             // pipelines against the full shared group-0 layout, so bind the full
             // camera bind group (the same one the sprite draws use) before
@@ -960,9 +1124,10 @@ impl ViewportRenderer {
         })
     }
 
-    /// Upload once (and return) the shared unit-cube mesh used as the decal pick
-    /// proxy. Reused across picks; re-uploaded if the cached handle was freed
-    /// (e.g. after device recreation). Returns `None` only if the upload fails.
+    /// Upload once (and return) the shared unit-cube mesh used as the box pick
+    /// proxy (decals and box scatter volumes). Reused across picks; re-uploaded
+    /// if the cached handle was freed (e.g. after device recreation). Returns
+    /// `None` only if the upload fails.
     fn ensure_decal_pick_cube(
         &mut self,
         device: &wgpu::Device,
@@ -977,6 +1142,26 @@ impl ViewportRenderer {
             .upload_mesh_data(device, &unit_cube_mesh_data())
             .ok()?;
         self.decal_pick_cube = Some(id);
+        Some(id)
+    }
+
+    /// Upload once (and return) the shared unit-radius icosphere used as the pick
+    /// proxy for sphere scatter volumes. Reused across picks; re-uploaded if the
+    /// cached handle was freed. Returns `None` only if the upload fails.
+    fn ensure_scatter_pick_sphere(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Option<crate::resources::mesh::mesh_store::MeshId> {
+        if let Some(id) = self.scatter_pick_sphere {
+            if self.resources.mesh_store.get(id).is_some() {
+                return Some(id);
+            }
+        }
+        // Two subdivisions: a close spherical silhouette for object-level picking
+        // without much geometry.
+        let mesh = crate::geometry::primitives::icosphere(1.0, 2);
+        let id = self.resources.upload_mesh_data(device, &mesh).ok()?;
+        self.scatter_pick_sphere = Some(id);
         Some(id)
     }
 

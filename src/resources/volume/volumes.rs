@@ -735,6 +735,7 @@ impl DeviceResources {
             _dims: dims,
             _uniform_buf: uniform_buf,
             wireframe: false,
+            pick_id: item.settings.pick_id,
         }
     }
 }
@@ -886,6 +887,9 @@ pub struct VolumeGpuData {
     pub(crate) _uniform_buf: wgpu::Buffer,
     /// When true, skip the volume ray-march draw; an OBB wireframe polyline is rendered instead.
     pub(crate) wireframe: bool,
+    /// Item pick id, used by the GPU pick pass to raymarch this volume's cube and
+    /// tag the first in-threshold voxel. `NONE` when the item is not pickable.
+    pub(crate) pick_id: crate::renderer::PickId,
 }
 
 /// Per-frame GPU data for one image slice item, created in `prepare()`.
