@@ -2482,6 +2482,11 @@ impl App {
                         };
                         _t.colour = [1.0, 0.9, 0.7];
                         _t.intensity = 2.0;
+                        // Warm fill only. With two hard casters the shadows
+                        // overlap as a two-tone shape with a seam; one key
+                        // caster plus non-casting fill is the intended
+                        // lighting pattern.
+                        _t.cast_shadows = false;
                         _t
                     });
                 }
@@ -2527,6 +2532,10 @@ impl App {
                             };
                             _t.colour = [1.0, 0.97, 0.93];
                             _t.intensity = 2.0;
+                            // Fill light for the normal-map highlights; not a
+                            // shadow caster, so the directional's shadow stays
+                            // a single clean shape.
+                            _t.cast_shadows = false;
                             _t
                         },
                     ];
