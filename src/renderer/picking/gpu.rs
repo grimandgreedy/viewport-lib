@@ -156,6 +156,13 @@ impl ViewportRenderer {
     /// so a typed query (say an instance-only mask) is never occluded by an
     /// object of a type the caller did not ask for. Types with no pick pipeline
     /// yet do not draw, so they read back as no hit rather than a wrong hit.
+    ///
+    /// This blocks: it submits the id pass then drains the GPU queue
+    /// (`device.poll(Wait)`) before reading the pixel. On a GPU-bound scene the
+    /// wait costs the pick pass plus the frame backlog. For a non-blocking pick,
+    /// use [`pick_object_begin`](Self::pick_object_begin) /
+    /// [`pick_object_poll`](Self::pick_object_poll), which read the result on a
+    /// later call instead of stalling here.
     pub(crate) fn pick_scene_gpu_masked(
         &mut self,
         device: &wgpu::Device,
@@ -172,6 +179,38 @@ impl ViewportRenderer {
             return None;
         }
 
+        let pending = match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
+            PickBegin::Miss => return None,
+            PickBegin::Pending(p) => p,
+        };
+
+        // Synchronous resolve: wait on this pick's submission (and thus its
+        // staging maps), then read the pixel. The wait is targeted at the pick
+        // submission index, so it does not drain frames queued after it.
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(pending.submission.clone()),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        pending.read_hit()
+    }
+
+    /// Encode and submit the id pass for a point pick, map its staging buffers,
+    /// and return the in-flight [`PendingPick`] without waiting. Shared by the
+    /// blocking [`pick_scene_gpu_masked`](Self::pick_scene_gpu_masked) and the
+    /// async [`pick_object_begin`](Self::pick_object_begin); the caller decides
+    /// where the read-back wait lands. Returns [`PickBegin::Miss`] when the cursor
+    /// is out of bounds or nothing pickable would draw, so there is no pass to
+    /// submit.
+    fn pick_scene_gpu_begin(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        cursor: glam::Vec2,
+        frame: &FrameData,
+        mask: crate::interaction::select::pick_mask::PickMask,
+    ) -> PickBegin {
         // Read scene items from the surface submission.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
@@ -189,7 +228,7 @@ impl ViewportRenderer {
             || vp_w == 0
             || vp_h == 0
         {
-            return None;
+            return PickBegin::Miss;
         }
 
         // Physical pixel under the cursor. Used both to scissor the pass to a
@@ -480,7 +519,7 @@ impl ViewportRenderer {
             && sprite_draws.is_empty()
             && polyline_draws.is_empty()
         {
-            return None;
+            return PickBegin::Miss;
         }
 
         let pick_instances: Vec<PickInstance> = draws.iter().map(|(_, inst)| *inst).collect();
@@ -832,47 +871,152 @@ impl ViewportRenderer {
             },
         );
 
-        queue.submit(std::iter::once(encoder.finish()));
+        let submission = queue.submit(std::iter::once(encoder.finish()));
 
-        // --- map and read ---
-        let (tx_id, rx_id) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
-        let (tx_dep, rx_dep) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
-        id_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx_id.send(r);
+        // Start the maps now but do not wait. `map_async` callbacks fire once the
+        // device has processed this submission; the caller drives that in a
+        // blocking wait (`pick_scene_gpu_masked`) or a targeted one
+        // (`pick_object_poll`) and reads the pixel through `PendingPick::read_hit`
+        // once both maps have landed. The callbacks flip `ready` to 2.
+        let ready = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for staging in [&id_staging, &depth_staging] {
+            let ready = ready.clone();
+            staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                if r.is_ok() {
+                    ready.fetch_add(1, std::sync::atomic::Ordering::Release);
+                }
             });
-        depth_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx_dep.send(r);
-            });
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .unwrap();
-        let _ = rx_id.recv().unwrap_or(Err(wgpu::BufferAsyncError));
-        let _ = rx_dep.recv().unwrap_or(Err(wgpu::BufferAsyncError));
+        }
 
+        PickBegin::Pending(PendingPick {
+            id_staging,
+            depth_staging,
+            ready,
+            submission,
+            cursor,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            view_proj: frame.camera.render_camera.view_proj(),
+        })
+    }
+
+    /// Begin a non-blocking GPU object pick under `cursor`: submit the id pass
+    /// and park the in-flight staging buffers on the renderer. The result is read
+    /// on a later [`pick_object_poll`](Self::pick_object_poll) call, so the
+    /// calling thread never blocks on the GPU queue.
+    ///
+    /// Any pick already in flight is dropped and replaced. Returns `true` when a
+    /// pass was submitted, `false` when the cursor is out of bounds or nothing
+    /// pickable would draw (in which case `pick_object_poll` reports no hit).
+    ///
+    /// `mask` selects item types exactly as
+    /// [`pick_object`](Self::pick_object) does. Object-level only, like the rest
+    /// of the GPU backend.
+    pub fn pick_object_begin(
+        &mut self,
+        cursor: glam::Vec2,
+        frame: &FrameData,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mask: crate::interaction::select::pick_mask::PickMask,
+    ) -> bool {
+        match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
+            PickBegin::Miss => {
+                self.pending_pick = None;
+                false
+            }
+            PickBegin::Pending(p) => {
+                self.pending_pick = Some(p);
+                true
+            }
+        }
+    }
+
+    /// Poll the pick started by [`pick_object_begin`](Self::pick_object_begin).
+    ///
+    /// Non-blocking: it drives the device's map callbacks with a non-waiting poll
+    /// and returns [`PickPoll::Pending`] until both staging maps have landed
+    /// (typically the next frame, once the render loop's own submissions have
+    /// flushed the pick pass through). When they have, it reads the pixel, clears
+    /// the pending slot, and returns [`PickPoll::Ready`] with the hit (or `None`
+    /// for empty space). [`PickPoll::Idle`] means no pick is in flight.
+    ///
+    /// This never waits on the GPU queue, so unlike the blocking
+    /// [`pick_scene_gpu_masked`](Self::pick_scene_gpu_masked) it cannot stall the
+    /// calling thread behind queued frames. It does assume the app keeps
+    /// rendering (or otherwise polls the device); a caller that submits no other
+    /// work between polls should use the blocking path instead.
+    pub fn pick_object_poll(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> crate::renderer::picking::PickPoll {
+        use crate::renderer::picking::PickPoll;
+        if self.pending_pick.is_none() {
+            return PickPoll::Idle;
+        }
+
+        // Drive map callbacks without waiting on the queue. This processes work
+        // that has already completed; it does not block for the pick submission.
+        let _ = device.poll(wgpu::PollType::Poll);
+
+        let pending = self.pending_pick.as_ref().expect("pending checked above");
+        if pending.ready.load(std::sync::atomic::Ordering::Acquire) < 2 {
+            return PickPoll::Pending;
+        }
+
+        let pending = self.pending_pick.take().expect("pending checked above");
+        let hit = pending
+            .read_hit()
+            .map(|h| h.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj));
+        PickPoll::Ready(hit)
+    }
+}
+
+/// Outcome of encoding a point pick pass. `Miss` short-circuits before any GPU
+/// work when there is nothing to draw; `Pending` carries the submitted staging
+/// buffers for the caller to read back.
+enum PickBegin {
+    Miss,
+    Pending(PendingPick),
+}
+
+/// An in-flight GPU object pick: the submitted staging buffers plus the cursor
+/// state needed to turn the read-back pixel into a `PickHit`. Held on the
+/// renderer between [`ViewportRenderer::pick_object_begin`] and
+/// [`ViewportRenderer::pick_object_poll`].
+pub(crate) struct PendingPick {
+    id_staging: wgpu::Buffer,
+    depth_staging: wgpu::Buffer,
+    /// Reaches 2 when both `map_async` callbacks have signalled success.
+    ready: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Submission index of the id pass, so a reader can wait on this pick alone
+    /// rather than draining the whole queue.
+    submission: wgpu::SubmissionIndex,
+    cursor: glam::Vec2,
+    viewport_size: glam::Vec2,
+    view_proj: glam::Mat4,
+}
+
+impl PendingPick {
+    /// Read the object id and depth from the mapped staging buffers and unmap
+    /// them. Only valid once both maps have completed (the caller has waited or
+    /// seen `ready == 2`). Returns `None` for id 0, which is the clear value and
+    /// so means empty space or a non-pickable surface.
+    fn read_hit(&self) -> Option<crate::interaction::query::picking::GpuPickHit> {
         let object_id = {
-            let data = id_staging.slice(..).get_mapped_range();
+            let data = self.id_staging.slice(..).get_mapped_range();
             u32::from_le_bytes([data[0], data[1], data[2], data[3]])
         };
-        id_staging.unmap();
+        self.id_staging.unmap();
 
         let depth = {
-            let data = depth_staging.slice(..).get_mapped_range();
+            let data = self.depth_staging.slice(..).get_mapped_range();
             f32::from_le_bytes([data[0], data[1], data[2], data[3]])
         };
-        depth_staging.unmap();
+        self.depth_staging.unmap();
 
-        // 0 = miss (clear colour or non-pickable surface).
         if object_id == 0 {
             return None;
         }
-
         Some(crate::interaction::query::picking::GpuPickHit {
             object_id: PickId(object_id as u64),
             depth,

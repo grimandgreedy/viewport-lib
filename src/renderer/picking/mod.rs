@@ -3,6 +3,7 @@ use super::*;
 mod helpers;
 use helpers::*;
 mod gpu;
+pub(crate) use gpu::PendingPick;
 mod point;
 mod rect;
 
@@ -92,6 +93,21 @@ pub enum PickBackend {
     /// the object count, so it is the backend for large scenes. For sub-object
     /// identity, run the [`Cpu`](Self::Cpu) backend on the object it returns.
     Gpu,
+}
+
+/// Outcome of polling a non-blocking GPU pick with
+/// [`ViewportRenderer::pick_object_poll`].
+#[derive(Clone, Debug)]
+pub enum PickPoll {
+    /// No pick is in flight: none has been started, or the last one was already
+    /// read.
+    Idle,
+    /// A pick was submitted but its read-back has not completed yet. Poll again
+    /// on a later frame.
+    Pending,
+    /// The pick resolved. `Some` is the hit under the cursor; `None` is empty
+    /// space (or a type the GPU pass cannot draw).
+    Ready(Option<crate::interaction::query::picking::PickHit>),
 }
 
 impl ViewportRenderer {

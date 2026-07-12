@@ -5,7 +5,8 @@
 
 use viewport_lib::{
     BackfacePolicy, Camera, GlyphItem, GlyphType, Material, MeshId, PickBackend, PickId, PickMask,
-    PolylineItem, RibbonItem, Scene, Selection, SpriteItem, SpriteSizeMode, VolumeMeshItem,
+    PickPoll, PolylineItem, RibbonItem, Scene, Selection, SpriteItem, SpriteSizeMode,
+    VolumeMeshItem,
     error::ViewportError,
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
@@ -767,6 +768,153 @@ fn gpu_pick_returns_object_id_under_cursor() {
     // multi-target pick pass (object id + primitive id + depth).
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(7)));
+}
+
+#[test]
+fn gpu_pick_async_begin_poll_returns_hit() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.settings.pick_id = PickId(7);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    // Poll before starting anything: no pick is in flight.
+    assert!(matches!(renderer.pick_object_poll(&device), PickPoll::Idle));
+
+    // Begin submits the pass without blocking on the queue.
+    let started = renderer.pick_object_begin(
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::all(),
+    );
+    assert!(started);
+
+    // Poll until the read-back lands. The poll is non-blocking, so drive the
+    // device between polls the way a render loop's own submissions would, and
+    // bound the loop so a stuck map fails the test instead of hanging.
+    let mut hit = None;
+    let mut saw_pending = false;
+    for _ in 0..1000 {
+        match renderer.pick_object_poll(&device) {
+            PickPoll::Pending => {
+                saw_pending = true;
+                let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                queue.submit(std::iter::once(enc.finish()));
+                continue;
+            }
+            PickPoll::Ready(h) => {
+                hit = h;
+                break;
+            }
+            PickPoll::Idle => panic!("poll went Idle while a pick was in flight"),
+        }
+    }
+    // The read-back should not be ready on the very first poll (that would mean
+    // the poll blocked); it lands after the device is driven.
+    assert!(
+        saw_pending,
+        "expected at least one Pending before the pick resolved"
+    );
+    assert_eq!(hit.map(|h| h.id), Some(7));
+
+    // The slot is cleared once read: a further poll is Idle.
+    assert!(matches!(renderer.pick_object_poll(&device), PickPoll::Idle));
+}
+
+#[test]
+fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.settings.pick_id = PickId(7);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    // A corner pixel misses the centred box. The pass still runs (there is
+    // pickable geometry), so begin submits; the read-back resolves to no hit.
+    let started = renderer.pick_object_begin(
+        glam::Vec2::new(1.0, 1.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::all(),
+    );
+    assert!(started);
+
+    let mut resolved = false;
+    for _ in 0..1000 {
+        match renderer.pick_object_poll(&device) {
+            PickPoll::Pending => {
+                let enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                queue.submit(std::iter::once(enc.finish()));
+                continue;
+            }
+            PickPoll::Ready(h) => {
+                assert!(h.is_none(), "corner pixel should miss the box");
+                resolved = true;
+                break;
+            }
+            PickPoll::Idle => panic!("poll went Idle while a pick was in flight"),
+        }
+    }
+    assert!(resolved, "async pick never resolved");
 }
 
 #[test]

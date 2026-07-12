@@ -18,7 +18,7 @@ use shadow_state::ShadowState;
 mod paths;
 pub use paths::{OwnedPath, PassPath, PassView};
 mod picking;
-pub use picking::{PickBackend, PickRectResult};
+pub use picking::{PickBackend, PickPoll, PickRectResult};
 mod point_shadow_pool;
 mod prepare;
 mod render;
@@ -493,6 +493,11 @@ pub struct ViewportRenderer {
     /// of all inline geometry. Enable with `set_cpu_pick_cache(true)`.
     cpu_pick_cache_enabled: bool,
 
+    /// In-flight async GPU pick, if any. `pick_object_begin` submits the id pass
+    /// and parks the staging buffers here; `pick_object_poll` reads them back
+    /// without blocking on the GPU queue. `None` when no async pick is pending.
+    pending_pick: Option<picking::PendingPick>,
+
     // --- GPU timestamp queries ---
     /// Timestamp query set with `2 * GPU_TS_SLOTS` entries: a begin/end pair per
     /// measured pass (see the `GPU_TS_*` slot constants). `None` when
@@ -738,6 +743,7 @@ impl ViewportRenderer {
             pick_implicit_items: Vec::new(),
             pick_mc_items: Vec::new(),
             cpu_pick_cache_enabled: false,
+            pending_pick: None,
             ts_query_set: None,
             ts_query_set_prev: None,
             ts_prev_mask: 0,
