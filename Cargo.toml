@@ -15,7 +15,14 @@ publish = true
 exclude = ["examples/"]
 
 [dependencies]
-wgpu = { version = "27.0", features = ["metal", "vulkan"] }
+# Exactly one wgpu version is compiled, picked by the mutually exclusive
+# `wgpu27` / `wgpu29` features (see `src/gpu.rs`). The primary (27) version keeps
+# the plain `wgpu` name so tests, doctests, and examples that name `wgpu::`
+# directly need no changes; `wgpu29` is the same crates.io crate under a local
+# alias. Cargo unifies the enabled version with the host's `wgpu` so device
+# types match across the boundary.
+wgpu = { version = "27.0", features = ["metal", "vulkan"], optional = true }
+wgpu29 = { package = "wgpu", version = "29.0", features = ["metal", "vulkan"], optional = true }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 parry3d = "0.26"
@@ -36,8 +43,14 @@ metal = "0.32"
 ash = "0.38"
 
 [features]
-default = ["serde"]
+default = ["serde", "wgpu27"]
 serde = ["dep:serde", "glam/serde", "bitflags/serde"]
+# wgpu version selection. Enable exactly one; `src/gpu.rs` emits a
+# `compile_error!` for zero or both. `wgpu27` activates the plain `wgpu`
+# dependency (the 27 crate keeps its real name); `wgpu29` activates the aliased
+# 29 crate.
+wgpu27 = ["dep:wgpu"]
+wgpu29 = ["dep:wgpu29"]
 # Enables the `JobHandle` future wrapper. Off by default so the crate stays
 # free of `std::future` plumbing for consumers that do not run an async
 # runtime.
@@ -57,77 +70,96 @@ viewport-lib-testkit = { path = "../viewport-lib-testkit" }
 [[example]]
 name = "perf-bench"
 path = "examples/perf_bench/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "catalogue-viewer"
 path = "examples/catalogue_viewer/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "debug-light"
 path = "examples/debug_light/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-lighting-shadows"
 path = "examples/eframe_lighting_shadows/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-render-paths"
 path = "examples/eframe_render_paths/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "headless-shadow-debug"
 path = "examples/headless_shadow_debug/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-testing"
 path = "examples/eframe_testing/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-primitives"
 path = "examples/eframe_primitives/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-input-controllers"
 path = "examples/eframe_input_controllers/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-showcase"
 path = "examples/eframe_showcase/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-multi-viewport"
 path = "examples/eframe_multi_viewport/main.rs"
+required-features = ["wgpu27"]
 
 
 [[example]]
 name = "winit-viewport"
 path = "examples/winit_viewport/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "winit-minimal"
 path = "examples/winit_minimal/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "winit-multi-viewport"
 path = "examples/winit_multi_viewport/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "winit-hdr"
 path = "examples/winit_hdr/main.rs"
+required-features = ["wgpu27"]
 
 
 [[example]]
 name = "iced-viewport"
 path = "examples/iced_viewport/main.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "runtime-jobs"
 path = "examples/runtime_jobs.rs"
+required-features = ["wgpu27"]
 
 [[example]]
 name = "offthread-submit-spike"
 path = "examples/offthread_submit_spike.rs"
+required-features = ["wgpu27"]
