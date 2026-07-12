@@ -776,12 +776,20 @@ impl App {
                 });
 
                 ui.add_space(4.0);
-                ui.label("Filter:");
-                ui.horizontal(|ui| {
+                ui.label("Filter (cheapest to most expensive):");
+                ui.horizontal_wrapped(|ui| {
+                    ui.radio_value(&mut self.shadow_filter, ShadowFilter::Hard, "Hard");
                     ui.radio_value(&mut self.shadow_filter, ShadowFilter::Pcf, "PCF");
+                    ui.radio_value(&mut self.shadow_filter, ShadowFilter::PcfHigh, "PCF high");
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.radio_value(&mut self.shadow_filter, ShadowFilter::PcssFast, "PCSS fast");
                     ui.radio_value(&mut self.shadow_filter, ShadowFilter::Pcss, "PCSS");
                 });
-                if self.shadow_filter == ShadowFilter::Pcss {
+                if matches!(
+                    self.shadow_filter,
+                    ShadowFilter::Pcss | ShadowFilter::PcssFast
+                ) {
                     ui.add(
                         egui::Slider::new(&mut self.pcss_light_radius, 0.001..=0.2)
                             .text("PCSS radius"),

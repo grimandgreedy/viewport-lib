@@ -30,6 +30,22 @@ const POISSON_DISK: array<vec2<f32>, 32> = array<vec2<f32>, 32>(
     vec2<f32>(-0.57774330,  0.80459740), vec2<f32>( 0.18238670, -0.37596540),
 );
 
+// Dedicated 8-point disk for the low-tap loops: a golden-angle (Vogel)
+// spiral, re-centered to exactly zero mean and normalized to unit radius.
+// The first 8 entries of POISSON_DISK are not usable here: that subset is
+// rim-heavy and its mean sits off-center, which shifts the filtered edge
+// and reads as directional smearing.
+const VOGEL_DISK_8: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
+    vec2<f32>( 0.31464070,  0.04091435),
+    vec2<f32>(-0.29848084,  0.35593042),
+    vec2<f32>( 0.09802772, -0.55883789),
+    vec2<f32>( 0.47882237,  0.60624698),
+    vec2<f32>(-0.75000488, -0.09978023),
+    vec2<f32>( 0.79886215, -0.43838142),
+    vec2<f32>(-0.20662848,  0.97841948),
+    vec2<f32>(-0.43523875, -0.88451169),
+);
+
 struct ShadowSample {
     factor: f32,
     cascade_idx: u32,
@@ -38,6 +54,15 @@ struct ShadowSample {
     biased_depth: f32,
     surface_depth: f32,
     normal_bias_world: f32,
+}
+
+// Tap direction for the variable-count loops: the well-distributed 8-point
+// disk when the loop runs 8 taps, the full Poisson table otherwise.
+fn shadow_tap_dir(i: u32, use_vogel8: bool) -> vec2<f32> {
+    if use_vogel8 {
+        return VOGEL_DISK_8[i];
+    }
+    return POISSON_DISK[i];
 }
 
 fn sample_shadow_csm(
@@ -202,7 +227,7 @@ fn sample_shadow_csm(
         var blocker_sum = 0.0;
         var blocker_count = 0.0;
         for (var i = 0u; i < blocker_taps; i++) {
-            let d = POISSON_DISK[i];
+            let d = shadow_tap_dir(i, tier == 4u);
             let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
             let sample_uv = atlas_uv + rd * search_radius;
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
@@ -240,7 +265,7 @@ fn sample_shadow_csm(
     let pcf_radius = select(4.0, 1.5, primary_light_type == 0u) * texel_size;
     var shadow = 0.0;
     for (var i = 0u; i < taps; i++) {
-        let d = POISSON_DISK[i];
+        let d = shadow_tap_dir(i, taps == 8u);
         let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
         let sample_uv = atlas_uv + rd * pcf_radius;
         let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
