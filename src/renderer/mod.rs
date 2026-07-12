@@ -392,8 +392,11 @@ pub struct ViewportRenderer {
     /// Cached render bundle for the opaque per-object draws, rebuilt by
     /// `prepare()` when the item set changes and replayed by the paint path.
     /// `None` when the current frame is ineligible (instanced batches active,
-    /// wireframe/attribute/deform features in play, HDR path, small scenes).
+    /// wireframe/attribute/deform features in play, small scenes) or the
+    /// churn gate has backed off to immediate draws.
     per_object_bundle: Option<per_object_state::PerObjectBundle>,
+    /// Backs the bundle off to immediate draws while the item set churns.
+    per_object_bundle_gate: per_object_state::BundleChurnGate,
     /// Scene surface items after the per-frame LOD resolve, in submission order
     /// and length. Filled at the end of `prepare_scene_internal` so the paint
     /// pass draws the resolved level meshes and skips culled items: without
@@ -709,6 +712,7 @@ impl ViewportRenderer {
             compute_filter_results: Vec::new(),
             mesh_uniforms: PerObjectState::new(),
             per_object_bundle: None,
+            per_object_bundle_gate: Default::default(),
             prepared_surfaces: Vec::new(),
             shadow: ShadowState::new(),
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,

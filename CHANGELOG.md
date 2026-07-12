@@ -44,7 +44,7 @@ Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin:
 
 - **At most 8 point lights cast shadows per frame**, chosen by distance to the camera weighted by `importance`. Lights default to `cast_shadows = true`, so a scene with hundreds of default-constructed lights used to render hundreds of shadow maps per frame and crawl. The rest render unshadowed.
 
-- **The per-object path is cheaper.** Opaque per-object draws are recorded once into a render bundle and replayed until the item set changes, and the draw loops skip redundant binds. The bundle covers both the LDR and HDR paths (it previously only engaged with post-processing off). `FrameStats::per_object_bundle_cached` reports when the bundle is in use.
+- **The per-object path is cheaper.** Opaque per-object draws are recorded once into a render bundle and replayed until the item set changes, and the draw loops skip redundant binds. The bundle covers both the LDR and HDR paths (it previously only engaged with post-processing off). `FrameStats::per_object_bundle_cached` reports when the bundle is in use. Under sustained item-set churn (spawn/despawn every few frames) the bundle backs off to immediate draws and re-arms once the set stabilises: re-recording every frame costs more than it saves, and repeatedly dropped bundles leak in wgpu 27 (gfx-rs/wgpu#8656).
 
 - **Shadow casters are culled per cascade on the CPU** when the device lacks `INDIRECT_FIRST_INSTANCE`, matching what the GPU path already did.
 

@@ -694,13 +694,46 @@ impl ViewportRenderer {
             return;
         };
 
+        // Churn gate. A single isolated change re-records immediately (the
+        // measured cost of one re-record is a wash against immediate draws),
+        // but a set that changes twice in short succession backs the bundle
+        // off entirely: record + replay encodes every draw twice per frame,
+        // and dropping a just-recorded bundle every frame leaks it in
+        // wgpu 27 (gfx-rs/wgpu#8656). The gate re-arms once the set has
+        // been stable for a stretch.
+        const SUPPRESS_WINDOW: u32 = 8;
+        const REARM_STABLE: u32 = 30;
+        // A rebuilt per-item bind group means the recorded one is stale even
+        // though the key (which hashes item facts, not resource identity)
+        // still matches, so it counts as a change too.
+        let dirty = self.last_stats.per_object_bind_groups_built > 0;
+        let changed = dirty || self.per_object_bundle_gate.last_key != Some(key);
+        self.per_object_bundle_gate.last_key = Some(key);
+        if changed {
+            if self.per_object_bundle_gate.frames_since_change < SUPPRESS_WINDOW {
+                self.per_object_bundle_gate.suppressed = true;
+            }
+            self.per_object_bundle_gate.frames_since_change = 0;
+        } else {
+            self.per_object_bundle_gate.frames_since_change = self
+                .per_object_bundle_gate
+                .frames_since_change
+                .saturating_add(1);
+            if self.per_object_bundle_gate.suppressed
+                && self.per_object_bundle_gate.frames_since_change >= REARM_STABLE
+            {
+                self.per_object_bundle_gate.suppressed = false;
+            }
+        }
+        if self.per_object_bundle_gate.suppressed {
+            self.per_object_bundle = None;
+            return;
+        }
+
         let camera_bg = self
             .viewport_camera_bind_group(frame.camera.viewport_index)
             .clone();
-        // A rebuilt per-item bind group means the recorded one is stale even
-        // though the key (which hashes item facts, not resource identity)
-        // still matches.
-        let reusable = self.last_stats.per_object_bind_groups_built == 0
+        let reusable = !dirty
             && self
                 .per_object_bundle
                 .as_ref()

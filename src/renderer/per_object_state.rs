@@ -69,6 +69,36 @@ pub(crate) struct PerObjectBundle {
     pub(crate) transparent: Vec<usize>,
 }
 
+/// Hysteresis for the per-object bundle under item-set churn.
+///
+/// Re-recording the bundle every frame is a net loss: record plus replay
+/// encodes every draw twice, and dropping a just-recorded bundle each frame
+/// leaks it in wgpu 27 (gfx-rs/wgpu#8656), which compounds into unbounded
+/// memory growth when the churn also creates fresh bind groups. A single
+/// isolated change still re-records immediately (measured hitchless); the
+/// gate only engages when the set changes twice in short succession, and
+/// re-arms after a stretch of stable frames.
+pub(crate) struct BundleChurnGate {
+    /// Plan key from the previous prepare.
+    pub(crate) last_key: Option<u64>,
+    /// Frames since the plan key or a per-item bind group last changed.
+    pub(crate) frames_since_change: u32,
+    /// While set, the bundle is not recorded and draws stay immediate.
+    pub(crate) suppressed: bool,
+}
+
+impl Default for BundleChurnGate {
+    fn default() -> Self {
+        Self {
+            last_key: None,
+            // Large so the very first plan key does not read as a second
+            // change in quick succession.
+            frames_since_change: u32::MAX,
+            suppressed: false,
+        }
+    }
+}
+
 pub(crate) struct PerObjectState {
     /// Per-object draw resources keyed by [`PerObjectKey`].
     pub(crate) cache: HashMap<PerObjectKey, PerObjectCacheEntry>,
