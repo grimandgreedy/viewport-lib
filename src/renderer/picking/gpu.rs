@@ -3,24 +3,27 @@
 
 use super::*;
 
-/// Item types the GPU pick pass can draw.
+/// Item types the GPU pick pass can draw with the shared surface pick pipeline.
 ///
-/// Each variant owns a pipeline and knows which pick masks it can answer. Only
-/// surfaces are wired today; other types are added as variants here as their
-/// pick pipelines land, which keeps "make a type GPU-pickable" to registering a
-/// pipeline and a draw rather than editing the pass.
+/// Each variant knows which pick masks it can answer. A type contributes draws
+/// only when the caller asked for a level it can resolve, so the mask selects
+/// which geometry is rasterised rather than filtering the read-back id. Types
+/// with their own pick pipeline (glyphs, sprites, polylines) are handled in
+/// their own pass blocks, not here.
 #[derive(Clone, Copy)]
 enum PickItemType {
+    /// Mesh-backed surfaces: scene surfaces and volume-mesh boundaries, resolved
+    /// against `mesh_store`.
     Surface,
+    /// Tube-family geometry: streamtubes, tubes, and ribbons. These build an
+    /// owned connected mesh each frame into the renderer's tube gpu-data vecs
+    /// rather than living in `mesh_store`. Object-level only.
+    Curve,
 }
 
 impl PickItemType {
-    /// Every type the pass can draw, in draw order.
-    const ALL: &'static [PickItemType] = &[PickItemType::Surface];
-
     /// Whether this type answers any level requested in `mask`. A type is drawn
-    /// only when the caller asked for something it can resolve, so the mask
-    /// selects which pipelines run rather than filtering the read-back id.
+    /// only when the caller asked for something it can resolve.
     fn satisfies(self, mask: crate::interaction::select::pick_mask::PickMask) -> bool {
         use crate::interaction::select::pick_mask::PickMask;
         match self {
@@ -31,8 +34,27 @@ impl PickItemType {
                     | PickMask::EDGE
                     | PickMask::CELL,
             ),
+            // Tubes and ribbons are object-level only; they answer the whole
+            // object mask plus the segment/strip levels a curve query may ask.
+            PickItemType::Curve => {
+                mask.intersects(PickMask::OBJECT | PickMask::SEGMENT | PickMask::STRIP)
+            }
         }
     }
+}
+
+/// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
+/// in `mesh_store`; tube-family items reference the owned per-frame buffers built
+/// during prepare.
+enum PickGeom<'a> {
+    /// A mesh handle resolved against `mesh_store`.
+    Mesh(crate::resources::mesh::mesh_store::MeshId),
+    /// Direct buffer references for a tube-family connected mesh.
+    Tube {
+        vertex_buffer: &'a wgpu::Buffer,
+        index_buffer: &'a wgpu::Buffer,
+        index_count: u32,
+    },
 }
 
 impl ViewportRenderer {
@@ -139,13 +161,23 @@ impl ViewportRenderer {
             }
         };
 
-        let mut draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)> = Vec::new();
+        let instance_from = |model: [[f32; 4]; 4], pick_id: PickId| PickInstance {
+            model_c0: model[0],
+            model_c1: model[1],
+            model_c2: model[2],
+            model_c3: model[3],
+            object_id: pick_id.0 as u32,
+            _pad: [0; 3],
+        };
+
+        let mut draws: Vec<(PickGeom, PickInstance)> = Vec::new();
+
         // Surfaces and volume-mesh boundaries draw through the Surface pipeline;
         // skip building their instance data when the mask asks for none of the
         // levels that type answers.
         if PickItemType::Surface.satisfies(mask) {
             for item in scene_items.iter().filter(|i| pickable(i)) {
-                draws.push((item.mesh_id, to_instance(item)));
+                draws.push((PickGeom::Mesh(item.mesh_id), to_instance(item)));
             }
             for ri in frame
                 .scene
@@ -154,7 +186,33 @@ impl ViewportRenderer {
                 .map(|vm| vm.to_render_item())
                 .filter(pickable)
             {
-                draws.push((ri.mesh_id, to_instance(&ri)));
+                draws.push((PickGeom::Mesh(ri.mesh_id), to_instance(&ri)));
+            }
+        }
+
+        // Streamtubes, tubes, and ribbons build owned connected meshes into these
+        // vecs during prepare(); each entry carries its source item's pick_id and
+        // model. The streamtube shader applies the model to the buffer positions,
+        // so the pick pass uses the same matrix and its silhouette matches.
+        if PickItemType::Curve.satisfies(mask) {
+            for family in [
+                self.streamtube_gpu_data.as_slice(),
+                self.tube_gpu_data.as_slice(),
+                self.ribbon_gpu_data.as_slice(),
+            ] {
+                for gpu in family
+                    .iter()
+                    .filter(|g| g.pick_id != PickId::NONE && g.index_count > 0)
+                {
+                    draws.push((
+                        PickGeom::Tube {
+                            vertex_buffer: &gpu.vertex_buffer,
+                            index_buffer: &gpu.index_buffer,
+                            index_count: gpu.index_count,
+                        },
+                        instance_from(gpu.model, gpu.pick_id),
+                    ));
+                }
             }
         }
 
@@ -352,40 +410,45 @@ impl ViewportRenderer {
                 occlusion_query_set: None,
             });
 
+            // Surface-pipeline draws: scene surfaces, volume-mesh boundaries, and
+            // tube-family geometry all rasterise with the shared pick pipeline.
+            // Type-level mask filtering already happened while building `draws`,
+            // so an unbuilt or unrequested type contributes nothing and reads
+            // back as no hit. Instance index in the storage buffer = position in
+            // `draws`.
+            pick_pass.set_pipeline(
+                self.resources
+                    .pick
+                    .pipeline
+                    .as_ref()
+                    .expect("ensure_pick_pipeline must be called first"),
+            );
             pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
+            pick_pass.set_bind_group(1, &pick_instance_bg, &[]);
 
-            // Pick pass registry: draw every item type that answers the mask.
-            // Only surfaces are wired today; other types register as variants of
-            // PickItemType as their pick pipelines land. A type that answers no
-            // requested bit is skipped, so an unbuilt type reads back as no hit.
-            for item_type in PickItemType::ALL {
-                if !item_type.satisfies(mask) {
-                    continue;
-                }
-                match item_type {
-                    PickItemType::Surface => {
-                        pick_pass.set_pipeline(
-                            self.resources
-                                .pick
-                                .pipeline
-                                .as_ref()
-                                .expect("ensure_pick_pipeline must be called first"),
+            for (instance_slot, (geom, _)) in draws.iter().enumerate() {
+                let slot = instance_slot as u32;
+                match geom {
+                    PickGeom::Mesh(mesh_id) => {
+                        let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
+                            continue;
+                        };
+                        pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pick_pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
                         );
-                        pick_pass.set_bind_group(1, &pick_instance_bg, &[]);
-
-                        // Instance index in the storage buffer = position in draws.
-                        for (instance_slot, (mesh_id, _)) in draws.iter().enumerate() {
-                            let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
-                                continue;
-                            };
-                            pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            pick_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            let slot = instance_slot as u32;
-                            pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
-                        }
+                        pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
+                    }
+                    PickGeom::Tube {
+                        vertex_buffer,
+                        index_buffer,
+                        index_count,
+                    } => {
+                        pick_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                        pick_pass
+                            .set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        pick_pass.draw_indexed(0..*index_count, 0, slot..slot + 1);
                     }
                 }
             }

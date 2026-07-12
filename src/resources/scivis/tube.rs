@@ -473,6 +473,13 @@ impl DeviceResources {
             wireframe,
             uniform_bind_group,
             blend: crate::renderer::SpriteBlend::AlphaBlend,
+            pick_id: crate::renderer::PickId::NONE,
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             _uniform_buf: uniform_buf,
         }
     }
@@ -812,6 +819,13 @@ impl DeviceResources {
             wireframe,
             uniform_bind_group,
             blend: crate::renderer::SpriteBlend::AlphaBlend,
+            pick_id: crate::renderer::PickId::NONE,
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             _uniform_buf: uniform_buf,
         }
     }
@@ -1170,6 +1184,13 @@ impl DeviceResources {
             wireframe,
             uniform_bind_group,
             blend: item.blend,
+            pick_id: crate::renderer::PickId::NONE,
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             _uniform_buf: uniform_buf,
         }
     }
@@ -1623,6 +1644,12 @@ pub struct StreamtubeGpuData {
     /// Blend mode for the draw. Streamtubes always set this to
     /// `SpriteBlend::AlphaBlend`; ribbons honour the value from `RibbonItem`.
     pub(crate) blend: crate::renderer::SpriteBlend,
+    /// Object pick id for GPU picking, set by the prepare loop from the source
+    /// item's `settings.pick_id`. `PickId::NONE` (0) when the item is not pickable.
+    pub(crate) pick_id: crate::renderer::PickId,
+    /// Model matrix the streamtube shader applies to `vertex_buffer`. The pick
+    /// pass uses the same matrix so its silhouette matches the rendered tube.
+    pub(crate) model: [[f32; 4]; 4],
     // Keep uniform buffer alive.
     pub(crate) _uniform_buf: wgpu::Buffer,
 }

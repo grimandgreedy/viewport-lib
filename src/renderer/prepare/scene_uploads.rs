@@ -696,8 +696,10 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data =
+                let mut gpu_data =
                     resources.upload_streamtube_per_frame(device, queue, item, wireframe);
+                gpu_data.pick_id = item.settings.pick_id;
+                gpu_data.model = item.model;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
                         streamtube_selected_gpu_indices.push(streamtube_gpu_data.len());
@@ -722,6 +724,8 @@ impl ViewportRenderer {
                 };
                 queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 let mut gpu_data = entry;
+                gpu_data.pick_id = ref_item.settings.pick_id;
+                gpu_data.model = ref_item.model;
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
@@ -747,7 +751,9 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data = resources.upload_tube_per_frame(device, queue, item, wireframe);
+                let mut gpu_data = resources.upload_tube_per_frame(device, queue, item, wireframe);
+                gpu_data.pick_id = item.settings.pick_id;
+                gpu_data.model = item.model;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
                         tube_selected_gpu_indices.push(tube_gpu_data.len());
@@ -772,6 +778,8 @@ impl ViewportRenderer {
                 };
                 queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 let mut gpu_data = entry;
+                gpu_data.pick_id = ref_item.settings.pick_id;
+                gpu_data.model = ref_item.model;
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
@@ -797,7 +805,10 @@ impl ViewportRenderer {
                     continue;
                 }
                 let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data = resources.upload_ribbon_per_frame(device, queue, item, wireframe);
+                let mut gpu_data =
+                    resources.upload_ribbon_per_frame(device, queue, item, wireframe);
+                gpu_data.pick_id = item.settings.pick_id;
+                gpu_data.model = item.model;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
                         ribbon_selected_gpu_indices.push(ribbon_gpu_data.len());
@@ -822,6 +833,8 @@ impl ViewportRenderer {
                 };
                 queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
                 let mut gpu_data = entry;
+                gpu_data.pick_id = ref_item.settings.pick_id;
+                gpu_data.model = ref_item.model;
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
