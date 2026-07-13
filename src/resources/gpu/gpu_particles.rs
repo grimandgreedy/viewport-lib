@@ -224,15 +224,26 @@ pub(crate) struct SimParamsGpu {
 pub(crate) struct ParticleSystem {
     pub capacity: u32,
     pub render: ParticleRender,
-    /// `capacity` particles in `GpuParticle` layout. STORAGE + VERTEX usage so
-    /// the draw pipeline can bind it directly.
-    pub particle_buf: crate::gpu::Buffer,
+    /// `capacity` particles in `GpuParticle` layout. STORAGE + VERTEX usage;
+    /// bound through `sim_bg` and the draw bind groups, which keep it alive.
+    pub _particle_buf: crate::gpu::Buffer,
     /// Single atomic u32 counter rewritten by the host before each emit
     /// dispatch and decremented by emit threads as they claim slots. Reused
     /// across frames; nothing is preserved between dispatches.
     pub emit_counter_buf: crate::gpu::Buffer,
     /// Bind group for the sim/emit compute pipelines (group 1).
     pub sim_bg: crate::gpu::BindGroup,
+    /// Persistent uniform rewritten via `write_buffer` before each emit
+    /// dispatch. Creating fresh buffers and bind groups per frame costs
+    /// tens of microseconds of CPU per system; these are allocated once.
+    pub emit_params_buf: crate::gpu::Buffer,
+    /// Persistent uniform rewritten via `write_buffer` before each sim
+    /// dispatch.
+    pub sim_params_buf: crate::gpu::Buffer,
+    /// Group 0 bind group over `emit_params_buf`.
+    pub emit_params_bg: crate::gpu::BindGroup,
+    /// Group 0 bind group over `sim_params_buf`.
+    pub sim_params_bg: crate::gpu::BindGroup,
     /// Bind group for the sprite draw pipeline (group 1). `None` when the
     /// system's render route is not `Sprite`.
     pub draw_bg: Option<crate::gpu::BindGroup>,
@@ -377,6 +388,41 @@ impl crate::resources::DeviceResources {
                     resource: emit_counter_buf.as_entire_binding(),
                 },
             ],
+        });
+
+        // Persistent params uniforms + bind groups, rewritten per frame.
+        let params_bgl = self
+            .particle
+            .params_bgl
+            .as_ref()
+            .expect("ensure_particle_pipelines failed to create params BGL");
+        let emit_params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("gpu_particle_emit_params"),
+            size: std::mem::size_of::<EmitParamsGpu>() as u64,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let sim_params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("gpu_particle_sim_params"),
+            size: std::mem::size_of::<SimParamsGpu>() as u64,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let emit_params_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("gpu_particle_emit_params_bg"),
+            layout: params_bgl,
+            entries: &[crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: emit_params_buf.as_entire_binding(),
+            }],
+        });
+        let sim_params_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("gpu_particle_sim_params_bg"),
+            layout: params_bgl,
+            entries: &[crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: sim_params_buf.as_entire_binding(),
+            }],
         });
 
         // Per-route draw resources. Exactly one of `sprite_draw_bg` and
@@ -562,9 +608,13 @@ impl crate::resources::DeviceResources {
         let system = ParticleSystem {
             capacity,
             render: config.render.clone(),
-            particle_buf,
+            _particle_buf: particle_buf,
             emit_counter_buf,
             sim_bg,
+            emit_params_buf,
+            sim_params_buf,
+            emit_params_bg,
+            sim_params_bg,
             draw_bg: sprite_draw_bg,
             draw_bg_mesh: mesh_draw_bg,
             draw_lit_normal_bg: sprite_lit_normal_bg,
@@ -981,17 +1031,19 @@ impl crate::resources::DeviceResources {
             .as_ref()
             .expect("particle pipelines should exist after ensure")
             .clone();
-        let params_bgl = self
-            .particle
-            .params_bgl
-            .as_ref()
-            .expect("particle params BGL")
-            .clone();
-
+        // Stage every system's uniform writes first, then encode all the
+        // dispatches into one compute pass. Params buffers and bind groups
+        // are persistent per system; the per-frame device work is three
+        // `write_buffer` calls and the dispatch encoding.
+        struct Staged {
+            workgroups: u32,
+            spawn: bool,
+            sim_bg: crate::gpu::BindGroup,
+            emit_params_bg: crate::gpu::BindGroup,
+            sim_params_bg: crate::gpu::BindGroup,
+        }
         let mut frame_data: Vec<ParticleFrameData> = Vec::with_capacity(items.len());
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("particle_compute_encoder"),
-        });
+        let mut staged: Vec<Staged> = Vec::with_capacity(items.len());
 
         for item in items {
             let idx = item.system_id.0;
@@ -1008,101 +1060,39 @@ impl crate::resources::DeviceResources {
             };
 
             let hidden = item.settings.hidden;
+            let system = self.particle.systems[idx].as_mut().unwrap();
+            let dt = item.time_step.max(0.0);
+            system.spawn_accumulator += item.emitter.rate * dt;
+            let spawn_count = system.spawn_accumulator.floor() as u32;
+            system.spawn_accumulator -= spawn_count as f32;
+            system.frame_counter = system.frame_counter.wrapping_add(1);
+            let capacity = system.capacity;
 
-            // Pull mutable state out, build dispatch state outside the borrow.
-            let (
-                capacity,
-                particle_buf_binding,
-                emit_counter_binding,
-                sim_bg,
-                spawn_count,
-                frame_counter,
-            ) = {
-                let system = self.particle.systems[idx].as_mut().unwrap();
-                let dt = item.time_step.max(0.0);
-                system.spawn_accumulator += item.emitter.rate * dt;
-                let spawn_count = system.spawn_accumulator.floor() as u32;
-                system.spawn_accumulator -= spawn_count as f32;
-                system.frame_counter = system.frame_counter.wrapping_add(1);
-                let frame_counter = system.frame_counter;
-                (
-                    system.capacity,
-                    system.particle_buf.as_entire_binding(),
-                    system.emit_counter_buf.as_entire_binding(),
-                    // Need to clone the bind group; wgpu allows this cheaply (Arc inside).
-                    system.sim_bg.clone(),
-                    spawn_count,
-                    frame_counter,
-                )
-            };
-            let _ = (particle_buf_binding, emit_counter_binding); // bound through sim_bg
-
-            let workgroups = capacity.div_ceil(64);
-
-            // ----- Emit -----
             if spawn_count > 0 {
                 queue.write_buffer(
-                    &self.particle.systems[idx]
-                        .as_ref()
-                        .unwrap()
-                        .emit_counter_buf,
+                    &system.emit_counter_buf,
                     0,
                     bytemuck::bytes_of(&spawn_count),
                 );
-
                 let emit_params =
-                    build_emit_params(&item.emitter, capacity, spawn_count, frame_counter);
-                let emit_uniform =
-                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                        label: Some("particle_emit_params"),
-                        contents: bytemuck::bytes_of(&emit_params),
-                        usage: crate::gpu::BufferUsages::UNIFORM,
-                    });
-                let emit_params_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("particle_emit_params_bg"),
-                    layout: &params_bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: emit_uniform.as_entire_binding(),
-                    }],
-                });
-
-                let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
-                    label: Some("particle_emit_pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&emit_pipeline);
-                pass.set_bind_group(0, &emit_params_bg, &[]);
-                pass.set_bind_group(1, &sim_bg, &[]);
-                pass.dispatch_workgroups(workgroups, 1, 1);
+                    build_emit_params(&item.emitter, capacity, spawn_count, system.frame_counter);
+                queue.write_buffer(
+                    &system.emit_params_buf,
+                    0,
+                    bytemuck::bytes_of(&emit_params),
+                );
             }
-
-            // ----- Sim -----
             let sim_params = build_sim_params(item.time_step, capacity, &item.forces);
-            let sim_uniform = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                label: Some("particle_sim_params"),
-                contents: bytemuck::bytes_of(&sim_params),
-                usage: crate::gpu::BufferUsages::UNIFORM,
-            });
-            let sim_params_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("particle_sim_params_bg"),
-                layout: &params_bgl,
-                entries: &[crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: sim_uniform.as_entire_binding(),
-                }],
-            });
+            queue.write_buffer(&system.sim_params_buf, 0, bytemuck::bytes_of(&sim_params));
 
-            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
-                label: Some("particle_sim_pass"),
-                timestamp_writes: None,
+            staged.push(Staged {
+                workgroups: capacity.div_ceil(64),
+                spawn: spawn_count > 0,
+                // Bind group clones are cheap (Arc inside).
+                sim_bg: system.sim_bg.clone(),
+                emit_params_bg: system.emit_params_bg.clone(),
+                sim_params_bg: system.sim_params_bg.clone(),
             });
-            pass.set_pipeline(&sim_pipeline);
-            pass.set_bind_group(0, &sim_params_bg, &[]);
-            pass.set_bind_group(1, &sim_bg, &[]);
-            pass.dispatch_workgroups(workgroups, 1, 1);
-            drop(pass);
-
             frame_data.push(ParticleFrameData {
                 system_idx: idx,
                 blend,
@@ -1111,6 +1101,36 @@ impl crate::resources::DeviceResources {
             });
         }
 
+        if staged.is_empty() {
+            return frame_data;
+        }
+
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("particle_compute_encoder"),
+        });
+        {
+            // One pass for every system. All emits run first, then all sims;
+            // dispatches within a pass are ordered, so each system's emit
+            // still precedes its sim.
+            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+                label: Some("particle_compute_pass"),
+                timestamp_writes: None,
+            });
+            if staged.iter().any(|s| s.spawn) {
+                pass.set_pipeline(&emit_pipeline);
+                for s in staged.iter().filter(|s| s.spawn) {
+                    pass.set_bind_group(0, &s.emit_params_bg, &[]);
+                    pass.set_bind_group(1, &s.sim_bg, &[]);
+                    pass.dispatch_workgroups(s.workgroups, 1, 1);
+                }
+            }
+            pass.set_pipeline(&sim_pipeline);
+            for s in &staged {
+                pass.set_bind_group(0, &s.sim_params_bg, &[]);
+                pass.set_bind_group(1, &s.sim_bg, &[]);
+                pass.dispatch_workgroups(s.workgroups, 1, 1);
+            }
+        }
         sink.push(encoder.finish());
         frame_data
     }
