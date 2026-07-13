@@ -504,7 +504,8 @@ impl ViewportRenderer {
                 if item.settings.hidden || item.primitives.is_empty() {
                     continue;
                 }
-                let gpu = resources.upload_implicit_item(device, item);
+                let mut gpu = resources.upload_implicit_item(device, item);
+                gpu.pick_id = item.settings.pick_id;
                 implicit_gpu_data.push(gpu);
                 if item.settings.pick_id != PickId::NONE {
                     pick_implicit_items.push(GpuImplicitPickItem {

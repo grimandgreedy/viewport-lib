@@ -110,6 +110,9 @@ pub(crate) struct ImplicitUniformRaw {
 pub(crate) struct ImplicitGpuItem {
     pub _uniform_buf: crate::gpu::Buffer,
     pub bind_group: crate::gpu::BindGroup,
+    /// Object pick id, set by the prepare loop from the source item's
+    /// `settings.pick_id`. `PickId::NONE` (0) when the item is not pickable.
+    pub pick_id: crate::renderer::PickId,
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +270,8 @@ impl DeviceResources {
         ImplicitGpuItem {
             _uniform_buf: uniform_buf,
             bind_group,
+            // Set by the prepare loop from the source item's settings.
+            pick_id: crate::renderer::PickId::NONE,
         }
     }
 }

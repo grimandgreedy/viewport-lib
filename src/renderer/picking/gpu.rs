@@ -128,6 +128,23 @@ struct VolumePickDraw<'a> {
     index_buffer: &'a crate::gpu::Buffer,
 }
 
+/// One GPU implicit-surface item to draw into the pick pass. The owned group-2
+/// bind group holds the object id; the group-1 render bind group (the implicit
+/// uniform) is borrowed from prepared `ImplicitGpuItem`. The pipeline and the
+/// full camera bind group (group 0) are shared across items.
+struct ImplicitPickDraw<'a> {
+    id_bind_group: crate::gpu::BindGroup,
+    render_bind_group: &'a crate::gpu::BindGroup,
+}
+
+/// One GPU marching-cubes job to draw into the pick pass. The owned group-1 bind
+/// group holds the object id; each slab contributes a borrowed (vertex buffer,
+/// indirect-args buffer) pair drawn with the reused MC surface indirect args.
+struct McPickDraw<'a> {
+    id_bind_group: crate::gpu::BindGroup,
+    slabs: Vec<(&'a crate::gpu::Buffer, &'a crate::gpu::Buffer)>,
+}
+
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
 /// in `mesh_store`; tube-family items reference the owned per-frame buffers built
 /// during prepare.
@@ -353,6 +370,27 @@ impl ViewportRenderer {
                 .any(|v| !v.wireframe && v.pick_id != PickId::NONE);
         if has_pickable_volumes {
             self.resources.ensure_volume_pick_pipeline(device);
+        }
+
+        // GPU implicit SDF surfaces raymarch the isosurface on a full-screen
+        // quad. Object-level.
+        let has_pickable_implicit = mask
+            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+            && self
+                .implicit_gpu_data
+                .iter()
+                .any(|g| g.pick_id != PickId::NONE);
+        if has_pickable_implicit {
+            self.resources.ensure_implicit_pick_pipeline(device);
+        }
+
+        // GPU marching-cubes surfaces rasterise their generated vertex buffer.
+        // Object-level.
+        let has_pickable_mc = mask
+            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+            && self.mc_gpu_data.iter().any(|m| m.pick_id != PickId::NONE);
+        if has_pickable_mc {
+            self.resources.ensure_mc_pick_pipeline(device);
         }
 
         // Decals rasterise their projection box (the unit cube mapped by
@@ -757,6 +795,95 @@ impl ViewportRenderer {
             }
         }
 
+        // GPU implicit SDF surfaces: one full-screen raymarch draw per pickable
+        // item, with a group-2 object-id uniform. Group 1 is the reused implicit
+        // render bind group (the SDF uniform).
+        let mut implicit_draws: Vec<ImplicitPickDraw> = Vec::new();
+        if has_pickable_implicit && self.resources.pick.implicit_pipeline.is_some() {
+            let id_bgl = self
+                .resources
+                .pick
+                .implicit_pick_id_bgl
+                .as_ref()
+                .expect("implicit pick id bgl built with the pipeline");
+            for gpu in self
+                .implicit_gpu_data
+                .iter()
+                .filter(|g| g.pick_id != PickId::NONE)
+            {
+                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("implicit_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("implicit_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                implicit_draws.push(ImplicitPickDraw {
+                    id_bind_group,
+                    render_bind_group: &gpu.bind_group,
+                });
+            }
+        }
+
+        // GPU marching-cubes surfaces: one indirect draw per slab of each pickable
+        // job, with a group-1 object-id uniform. The generated MC vertex buffer and
+        // surface indirect args are reused from the render path.
+        let mut mc_draws: Vec<McPickDraw> = Vec::new();
+        if has_pickable_mc && self.resources.pick.mc_pipeline.is_some() {
+            let id_bgl = self
+                .resources
+                .pick
+                .mc_pick_id_bgl
+                .as_ref()
+                .expect("mc pick id bgl built with the pipeline");
+            for mc in self
+                .mc_gpu_data
+                .iter()
+                .filter(|m| m.pick_id != PickId::NONE)
+            {
+                let Some(vol) = self.resources.mc.volumes.get(mc.volume_idx) else {
+                    continue;
+                };
+                if vol.slabs.is_empty() {
+                    continue;
+                }
+                let id_data = [mc.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("mc_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("mc_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                let slabs = vol
+                    .slabs
+                    .iter()
+                    .map(|s| (&s.vertex_buf, &s.indirect_buf))
+                    .collect();
+                mc_draws.push(McPickDraw {
+                    id_bind_group,
+                    slabs,
+                });
+            }
+        }
+
         // Registered plugins draw their own pick-ids into the pass. Treat them
         // as object-level: run the pass for them when the mask asks for OBJECT
         // and a plugin has a non-empty collection this frame. Their draws are not
@@ -770,6 +897,8 @@ impl ViewportRenderer {
             && sprite_draws.is_empty()
             && polyline_draws.is_empty()
             && volume_draws.is_empty()
+            && implicit_draws.is_empty()
+            && mc_draws.is_empty()
             && !has_plugin_pick
         {
             return PickBegin::Miss;
@@ -1089,6 +1218,39 @@ impl ViewportRenderer {
                         );
                         // The volume cube is 36 indices (12 triangles).
                         pick_pass.draw_indexed(0..36, 0, 0..1);
+                    }
+                }
+            }
+
+            // GPU implicit SDF surfaces: raymarch the isosurface on a full-screen
+            // quad. Group 0 is the full scene camera bind group (the fragment reads
+            // inv_view_proj to reconstruct the ray); group 1 is the reused implicit
+            // uniform; group 2 is the per-item object id.
+            if let Some(implicit_pipeline) = self.resources.pick.implicit_pipeline.as_ref() {
+                if !implicit_draws.is_empty() {
+                    pick_pass.set_pipeline(implicit_pipeline);
+                    pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                    for id in &implicit_draws {
+                        pick_pass.set_bind_group(1, id.render_bind_group, &[]);
+                        pick_pass.set_bind_group(2, &id.id_bind_group, &[]);
+                        pick_pass.draw(0..6, 0..1);
+                    }
+                }
+            }
+
+            // GPU marching-cubes surfaces: rasterise each slab's generated vertex
+            // buffer via its surface indirect args. Group 0 is the shared minimal
+            // pick camera; group 1 is the per-job object id.
+            if let Some(mc_pipeline) = self.resources.pick.mc_pipeline.as_ref() {
+                if !mc_draws.is_empty() {
+                    pick_pass.set_pipeline(mc_pipeline);
+                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
+                    for md in &mc_draws {
+                        pick_pass.set_bind_group(1, &md.id_bind_group, &[]);
+                        for (vertex_buf, indirect_buf) in &md.slabs {
+                            pick_pass.set_vertex_buffer(0, vertex_buf.slice(..));
+                            pick_pass.draw_indirect(indirect_buf, 0);
+                        }
                     }
                 }
             }

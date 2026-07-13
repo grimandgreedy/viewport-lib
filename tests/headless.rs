@@ -1547,6 +1547,90 @@ fn gpu_pick_surface_resolves_face_and_vertex() {
 }
 
 // ---------------------------------------------------------------------------
+// GPU pick: non-rasterized surface types (G7c/G7d)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gpu_pick_hits_implicit_surface() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    // One SDF sphere of radius 1.5 at the origin. The pick pass raymarches the
+    // isosurface on a full-screen quad and writes the item's pick id at the hit.
+    let prim = viewport_lib::ImplicitPrimitive {
+        kind: 1, // sphere
+        blend: 0.0,
+        _pad: [0.0; 2],
+        params: [0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0],
+        colour: [1.0, 1.0, 1.0, 1.0],
+    };
+    let mut item = viewport_lib::GpuImplicitItem::default();
+    item.primitives.push(prim);
+    item.settings.pick_id = PickId(909);
+    frame.scene.gpu_implicit.push(item);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(909)));
+}
+
+#[test]
+fn gpu_pick_hits_marching_cubes() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    // A radial scalar field centred at the origin: the isosurface at value 1.5 is
+    // a sphere of radius 1.5. Grid spans roughly [-2.3, 2.3]^3.
+    let dims = [24u32, 24, 24];
+    let spacing = [0.2f32; 3];
+    let origin = [-(23.0 * 0.2) / 2.0; 3];
+    let mut data = vec![0.0f32; (dims[0] * dims[1] * dims[2]) as usize];
+    for z in 0..dims[2] {
+        for y in 0..dims[1] {
+            for x in 0..dims[0] {
+                let wx = origin[0] + x as f32 * spacing[0];
+                let wy = origin[1] + y as f32 * spacing[1];
+                let wz = origin[2] + z as f32 * spacing[2];
+                let idx = (x + y * dims[0] + z * dims[0] * dims[1]) as usize;
+                data[idx] = (wx * wx + wy * wy + wz * wz).sqrt();
+            }
+        }
+    }
+    let vol = viewport_lib::VolumeData {
+        data,
+        dims,
+        origin,
+        spacing,
+    };
+    let volume_id = renderer
+        .resources_mut()
+        .upload_volume_for_mc(&device, &queue, &vol)
+        .expect("mc volume upload");
+
+    let mut job = viewport_lib::GpuMarchingCubesJob {
+        volume_id,
+        isovalue: 1.5,
+        material: Material::default(),
+        settings: ItemSettings::default(),
+        cpu_data: None,
+    };
+    job.settings.pick_id = PickId(717);
+    frame.scene.gpu_mc_jobs.push(job);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(717)));
+}
+
+// ---------------------------------------------------------------------------
 // GPU pick: item-type plugin hook (render_pick)
 // ---------------------------------------------------------------------------
 

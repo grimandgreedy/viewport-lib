@@ -124,6 +124,9 @@ pub(crate) struct McFrameData {
     pub wireframe: bool,
     /// Per-slab bind groups for the wireframe pipeline (binding 0 = vertex storage buffer).
     pub wire_slab_bgs: Vec<crate::gpu::BindGroup>,
+    /// Object pick id from the job's `settings.pick_id`. `PickId::NONE` (0) when
+    /// the job is not pickable. Used by the GPU pick pass to tag the isosurface.
+    pub pick_id: crate::renderer::PickId,
 }
 
 /// Per-selected MC job data for the outline mask pass.
@@ -1132,6 +1135,7 @@ impl DeviceResources {
                 render_bg,
                 wireframe: job.settings.wireframe,
                 wire_slab_bgs,
+                pick_id: job.settings.pick_id,
             });
         }
 
