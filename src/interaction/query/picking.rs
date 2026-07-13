@@ -139,6 +139,18 @@ pub struct GpuPickHit {
     /// let world = view_proj_inv.project_point3(ndc);
     /// ```
     pub depth: f32,
+    /// Raw sub-primitive index read back from the pick pass's second channel.
+    ///
+    /// What it means depends on the hit item type: the triangle index for
+    /// triangle-meshed types (surfaces, tubes), the instance index for glyphs /
+    /// sprites, or the segment index for polylines. It is `0` when the pick pass
+    /// wrote no sub-primitive (object-level proxies, or a device without
+    /// `SHADER_PRIMITIVE_INDEX` for triangle-meshed types).
+    ///
+    /// Prefer the resolved [`PickHit::sub_object`] from
+    /// [`ViewportRenderer::pick_object`](crate::renderer::ViewportRenderer::pick_object):
+    /// this raw index is only meaningful alongside the item's type and geometry.
+    pub sub_primitive: u32,
 }
 
 impl GpuPickHit {
@@ -1457,6 +1469,7 @@ mod tests {
         let hit = GpuPickHit {
             object_id: crate::renderer::PickId(42),
             depth: 0.5,
+            sub_primitive: 0,
         };
         let viewport_size = glam::Vec2::new(800.0, 600.0);
         // Cursor at the viewport centre -> NDC (0, 0).

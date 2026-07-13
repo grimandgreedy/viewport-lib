@@ -60,6 +60,96 @@ pub(super) fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f3
 }
 
 // ---------------------------------------------------------------------------
+// Surface sub-object refinement (shared by CPU pick and GPU sub-object readback)
+// ---------------------------------------------------------------------------
+
+/// Nearest triangle corner (as a vertex index) of `face` to `world_pos`.
+///
+/// `positions` / `indices` are the item's mesh, `model` its world transform.
+/// Returns `None` if the face is out of range. Mirrors the face -> vertex step
+/// in the CPU surface picker so both backends resolve the same vertex.
+pub(super) fn nearest_triangle_vertex(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    model: glam::Mat4,
+    face: usize,
+    world_pos: glam::Vec3,
+) -> Option<u32> {
+    let base = face * 3;
+    if base + 2 >= indices.len() {
+        return None;
+    }
+    let corners = [
+        indices[base] as usize,
+        indices[base + 1] as usize,
+        indices[base + 2] as usize,
+    ];
+    let mut best: Option<(u32, f32)> = None;
+    for &vi in &corners {
+        let p = model.transform_point3(glam::Vec3::from(*positions.get(vi)?));
+        let d = p.distance(world_pos);
+        if best.map_or(true, |(_, bd)| d < bd) {
+            best = Some((vi as u32, d));
+        }
+    }
+    best.map(|(vi, _)| vi)
+}
+
+/// Ray-cast a single object's mesh and return the hit `(triangle_index,
+/// world_pos)`, or `None` on a miss.
+///
+/// Used by the GPU sub-object path as the fallback when the device lacks
+/// `SHADER_PRIMITIVE_INDEX`: the object is already known from the GPU id pass,
+/// so this refines the triangle on that one object rather than the whole scene.
+/// Backface indices (parry offsets them by the triangle count for solid meshes)
+/// are normalised to the front-face triangle index.
+pub(super) fn cpu_face_under_ray(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    model: glam::Mat4,
+    ray_origin: glam::Vec3,
+    ray_dir: glam::Vec3,
+) -> Option<(usize, glam::Vec3)> {
+    use parry3d::math::{Pose, Vector};
+    use parry3d::query::{Ray, RayCast};
+
+    let verts: Vec<Vector> = positions
+        .iter()
+        .map(|p| {
+            let wp = model.transform_point3(glam::Vec3::from(*p));
+            Vector::new(wp.x, wp.y, wp.z)
+        })
+        .collect();
+    let tris: Vec<[u32; 3]> = indices
+        .chunks(3)
+        .filter(|c| c.len() == 3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+    if tris.is_empty() {
+        return None;
+    }
+    let trimesh = parry3d::shape::TriMesh::new(verts, tris).ok()?;
+    let ray = Ray::new(
+        Vector::new(ray_origin.x, ray_origin.y, ray_origin.z),
+        Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
+    );
+    let hit = trimesh.cast_ray_and_get_normal(&Pose::identity(), &ray, f32::MAX, true)?;
+    let face = match hit.feature {
+        parry3d::shape::FeatureId::Face(i) => {
+            let n_tri = indices.len() / 3;
+            if (i as usize) >= n_tri {
+                i as usize - n_tri
+            } else {
+                i as usize
+            }
+        }
+        _ => return None,
+    };
+    let world_pos = ray_origin + ray_dir * hit.time_of_impact;
+    Some((face, world_pos))
+}
+
+// ---------------------------------------------------------------------------
 // Strip index helpers (shared by polyline, tube, ribbon picking)
 // ---------------------------------------------------------------------------
 

@@ -87,11 +87,13 @@ pub enum PickBackend {
     /// per the mask, and reads the per-frame pick cache, which must be enabled
     /// with [`set_cpu_pick_cache`](ViewportRenderer::set_cpu_pick_cache).
     Cpu,
-    /// GPU object-id readback. Object-level only: `sub_object` is always `None`,
-    /// even when the mask asks for a sub-object level, until sub-object picking
-    /// reads back the primitive channel. Its cost tracks the render rather than
-    /// the object count, so it is the backend for large scenes. For sub-object
-    /// identity, run the [`Cpu`](Self::Cpu) backend on the object it returns.
+    /// GPU object-id readback. Resolves sub-object identity from the pass's
+    /// second channel: the hit instance (glyphs, sprites), segment (polylines),
+    /// or, with `SHADER_PRIMITIVE_INDEX`, the hit face / cell / tube segment for
+    /// triangle-meshed types. Without that feature triangle-meshed types stay
+    /// object-level unless the CPU pick cache is enabled, in which case the hit
+    /// object is refined by a single-object CPU ray-cast. Cost tracks the render
+    /// rather than the object count, so it is the backend for large scenes.
     Gpu,
 }
 
@@ -116,10 +118,12 @@ impl ViewportRenderer {
     ///
     /// The camera and viewport size come from `frame`. `mask` chooses which item
     /// types and sub-object levels participate. Both backends use it to select
-    /// item types; the CPU backend also fills the sub-object level, while the GPU
-    /// backend answers object identity only (`sub_object` is `None`). A type the
-    /// GPU pass has no pipeline for yet is simply not drawn, so it returns no hit
-    /// rather than a wrong one.
+    /// item types and to fill the sub-object level of the returned
+    /// [`PickHit`](crate::interaction::query::picking::PickHit); see
+    /// [`PickBackend::Gpu`] for the sub-object levels the GPU backend resolves and
+    /// its `SHADER_PRIMITIVE_INDEX` requirement. A type the GPU pass has no
+    /// pipeline for yet is simply not drawn, so it returns no hit rather than a
+    /// wrong one.
     pub fn pick_object(
         &mut self,
         backend: PickBackend,
@@ -131,11 +135,10 @@ impl ViewportRenderer {
     ) -> Option<crate::interaction::query::picking::PickHit> {
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
+        let _ = (viewport_size, view_proj);
         match backend {
             PickBackend::Cpu => self.pick(cursor, viewport_size, view_proj, mask),
-            PickBackend::Gpu => self
-                .pick_scene_gpu_masked(device, queue, cursor, frame, mask)
-                .map(|hit| hit.to_pick_hit(cursor, viewport_size, view_proj)),
+            PickBackend::Gpu => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
         }
     }
 

@@ -241,12 +241,24 @@ impl DeviceResources {
 
         let mut verts: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
+        // Per-triangle segment / strip maps, filled in lockstep with `indices`
+        // (one entry per triangle) so a GPU pick's `primitive_index` resolves to
+        // a `SubObjectRef::Segment` / `Strip`. `seg_acc` accumulates the global
+        // segment base per strip the same way the CPU picker's `strip_for_segment`
+        // walks `strip_lengths` (each strip owns `len - 1` segments), so both
+        // backends agree on segment numbering.
+        let mut tri_segment: Vec<u32> = Vec::new();
+        let mut tri_strip: Vec<u32> = Vec::new();
+        let mut seg_acc: u32 = 0;
 
         let positions = &item.positions;
         let mut strip_start = 0usize;
 
-        for &strip_len in &item.strip_lengths {
+        for (strip_idx, &strip_len) in item.strip_lengths.iter().enumerate() {
+            let strip_idx = strip_idx as u32;
             let strip_len = strip_len as usize;
+            let seg_base = seg_acc;
+            seg_acc += strip_len.saturating_sub(1) as u32;
             let strip_end = (strip_start + strip_len).min(positions.len());
             let pts: Vec<glam::Vec3> = positions[strip_start..strip_end]
                 .iter()
@@ -324,6 +336,7 @@ impl DeviceResources {
                 if k > 0 {
                     let r0 = ring_base + ((k - 1) * SIDES) as u32;
                     let r1 = ring_base + (k * SIDES) as u32;
+                    let seg = seg_base + (k - 1) as u32;
                     for s in 0..SIDES {
                         let s1 = (s + 1) % SIDES;
                         indices.push(r0 + s as u32);
@@ -333,9 +346,18 @@ impl DeviceResources {
                         indices.push(r0 + s1 as u32);
                         indices.push(r1 + s1 as u32);
                         indices.push(r1 + s as u32);
+
+                        tri_segment.push(seg);
+                        tri_segment.push(seg);
+                        tri_strip.push(strip_idx);
+                        tri_strip.push(strip_idx);
                     }
                 }
             }
+
+            // Segment index for the caps: the end cap belongs to the last segment
+            // of the strip, the start cap to the first.
+            let last_seg = seg_base + (n_rings - 2) as u32;
 
             // End cap (flat fan at last ring, facing forward = outward at tube end).
             // CCW from the forward direction: (center, s, s1).
@@ -355,6 +377,8 @@ impl DeviceResources {
                     indices.push(cap_center_idx);
                     indices.push(last_ring + s as u32);
                     indices.push(last_ring + s1 as u32);
+                    tri_segment.push(last_seg);
+                    tri_strip.push(strip_idx);
                 }
             }
 
@@ -375,6 +399,8 @@ impl DeviceResources {
                     indices.push(cap_center_idx);
                     indices.push(ring_base + s1 as u32);
                     indices.push(ring_base + s as u32);
+                    tri_segment.push(seg_base);
+                    tri_strip.push(strip_idx);
                 }
             }
         }
@@ -480,6 +506,8 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            tri_segment,
+            tri_strip,
             _uniform_buf: uniform_buf,
         }
     }
@@ -589,12 +617,20 @@ impl DeviceResources {
 
         let mut verts: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
+        // Per-triangle segment / strip maps (see the streamtube builder for the
+        // numbering convention). One entry per triangle in `indices`.
+        let mut tri_segment: Vec<u32> = Vec::new();
+        let mut tri_strip: Vec<u32> = Vec::new();
+        let mut seg_acc: u32 = 0;
 
         let positions = &item.positions;
         let mut strip_start = 0usize;
 
-        for &strip_len in &item.strip_lengths {
+        for (strip_idx, &strip_len) in item.strip_lengths.iter().enumerate() {
+            let strip_idx = strip_idx as u32;
             let strip_len = strip_len as usize;
+            let seg_base = seg_acc;
+            seg_acc += strip_len.saturating_sub(1) as u32;
             let strip_end = (strip_start + strip_len).min(positions.len());
             let pts: Vec<glam::Vec3> = positions[strip_start..strip_end]
                 .iter()
@@ -672,6 +708,7 @@ impl DeviceResources {
                 if k > 0 {
                     let r0 = ring_base + ((k - 1) * sides) as u32;
                     let r1 = ring_base + (k * sides) as u32;
+                    let seg = seg_base + (k - 1) as u32;
                     for s in 0..sides {
                         let s1 = (s + 1) % sides;
                         indices.push(r0 + s as u32);
@@ -681,9 +718,16 @@ impl DeviceResources {
                         indices.push(r0 + s1 as u32);
                         indices.push(r1 + s1 as u32);
                         indices.push(r1 + s as u32);
+
+                        tri_segment.push(seg);
+                        tri_segment.push(seg);
+                        tri_strip.push(strip_idx);
+                        tri_strip.push(strip_idx);
                     }
                 }
             }
+
+            let last_seg = seg_base + (n_rings - 2) as u32;
 
             // End cap.
             {
@@ -703,6 +747,8 @@ impl DeviceResources {
                     indices.push(cap_center_idx);
                     indices.push(last_ring + s as u32);
                     indices.push(last_ring + s1 as u32);
+                    tri_segment.push(last_seg);
+                    tri_strip.push(strip_idx);
                 }
             }
 
@@ -723,6 +769,8 @@ impl DeviceResources {
                     indices.push(cap_center_idx);
                     indices.push(ring_base + s1 as u32);
                     indices.push(ring_base + s as u32);
+                    tri_segment.push(seg_base);
+                    tri_strip.push(strip_idx);
                 }
             }
         }
@@ -826,6 +874,8 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            tri_segment,
+            tri_strip,
             _uniform_buf: uniform_buf,
         }
     }
@@ -941,12 +991,21 @@ impl DeviceResources {
 
         let mut verts: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
+        // Per-triangle segment / strip maps (see the streamtube builder for the
+        // numbering convention). Ribbons emit two triangles per segment and no
+        // caps.
+        let mut tri_segment: Vec<u32> = Vec::new();
+        let mut tri_strip: Vec<u32> = Vec::new();
+        let mut seg_acc: u32 = 0;
 
         let positions = &item.positions;
         let mut strip_start = 0usize;
 
-        for &strip_len in &item.strip_lengths {
+        for (strip_idx, &strip_len) in item.strip_lengths.iter().enumerate() {
+            let strip_idx = strip_idx as u32;
             let strip_len = strip_len as usize;
+            let seg_base = seg_acc;
+            seg_acc += strip_len.saturating_sub(1) as u32;
             let strip_end = (strip_start + strip_len).min(positions.len());
             let pts: Vec<glam::Vec3> = positions[strip_start..strip_end]
                 .iter()
@@ -1066,6 +1125,12 @@ impl DeviceResources {
                     indices.push(r0 + 1);
                     indices.push(r1 + 1);
                     indices.push(r1);
+
+                    let seg = seg_base + (k - 1) as u32;
+                    tri_segment.push(seg);
+                    tri_segment.push(seg);
+                    tri_strip.push(strip_idx);
+                    tri_strip.push(strip_idx);
                 }
             }
         }
@@ -1191,6 +1256,8 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            tri_segment,
+            tri_strip,
             _uniform_buf: uniform_buf,
         }
     }
@@ -1658,6 +1725,15 @@ pub struct StreamtubeGpuData {
     /// Model matrix the streamtube shader applies to `vertex_buffer`. The pick
     /// pass uses the same matrix so its silhouette matches the rendered tube.
     pub(crate) model: [[f32; 4]; 4],
+    /// Per-triangle segment index, one entry per triangle in `index_buffer`
+    /// (i.e. `index_count / 3` entries). Maps a GPU pick's `primitive_index`
+    /// (the hit triangle) to the source curve segment, so a sub-object GPU pick
+    /// resolves `SubObjectRef::Segment`. End/start cap triangles map to the last
+    /// / first segment of their strip. Empty when the item is not pickable.
+    pub(crate) tri_segment: Vec<u32>,
+    /// Per-triangle strip index, parallel to [`tri_segment`](Self::tri_segment),
+    /// used to resolve `SubObjectRef::Strip`. Empty when not pickable.
+    pub(crate) tri_strip: Vec<u32>,
     // Keep uniform buffer alive.
     pub(crate) _uniform_buf: crate::gpu::Buffer,
 }

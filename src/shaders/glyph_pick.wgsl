@@ -96,7 +96,10 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       world_pos: vec3<f32>,
+    @location(0)                    world_pos:      vec3<f32>,
+    // The instance index, forwarded flat so the fragment can write it into the
+    // primitive-id channel for sub-object (per-instance) picking.
+    @location(1) @interpolate(flat) instance_index: u32,
 };
 
 // Identical to rotation_to_align_y in glyph.wgsl.
@@ -149,6 +152,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
     out.clip_pos  = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
+    out.instance_index = in.instance_index;
     return out;
 }
 
@@ -163,7 +167,7 @@ fn fs_main(in: VertexOut) -> FragOut {
     if !clip_volume_test(in.world_pos) { discard; }
     var out: FragOut;
     out.object_id    = pick.id;
-    out.primitive_id = 0u;
+    out.primitive_id = in.instance_index;
     out.depth        = in.clip_pos.z;
     return out;
 }

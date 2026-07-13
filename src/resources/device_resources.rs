@@ -1328,11 +1328,27 @@ impl DeviceResources {
                 }],
             });
 
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "pick_id_shader",
-            crate::resources::builders::wgsl_source!("pick_id"),
-        );
+        // The default fragment writes a constant `0u` into the primitive-id
+        // channel. When the device supports SHADER_PRIMITIVE_INDEX, rewrite it to
+        // read `@builtin(primitive_index)` and write the hit triangle index, which
+        // sub-object readback maps to a face / cell / tube segment. The builtin
+        // requires the feature, so it can only appear in the module on a device
+        // that has it; otherwise shader-module validation would reject it.
+        let base_src = crate::resources::builders::wgsl_source!("pick_id");
+        let shader = if device
+            .features()
+            .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE)
+        {
+            let src = base_src
+                .replace(
+                    "fn fs_main(in: VertexOut) -> FragOut {",
+                    "fn fs_main(in: VertexOut, @builtin(primitive_index) prim_index: u32) -> FragOut {",
+                )
+                .replace("out.primitive_id = 0u;", "out.primitive_id = prim_index;");
+            crate::resources::builders::wgsl_module(device, "pick_id_shader", src)
+        } else {
+            crate::resources::builders::wgsl_module(device, "pick_id_shader", base_src)
+        };
 
         let layout = crate::resources::builders::pipeline_layout(
             device,

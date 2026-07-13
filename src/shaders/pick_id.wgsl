@@ -82,8 +82,11 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
 
 struct FragOut {
     @location(0) object_id: u32,
-    // Primitive index for sub-object picking. Written as 0 until sub-object
-    // picking reads it back and maps it to a face, cell, or instance.
+    // Triangle index for sub-object picking. This is `0u` by default; when the
+    // device has SHADER_PRIMITIVE_INDEX, `ensure_pick_pipeline` rewrites the
+    // fragment (see the marker below) to read `@builtin(primitive_index)` and
+    // write the hit triangle here, which readback maps to a face / cell / tube
+    // segment.
     @location(1) primitive_id: u32,
     @location(2) depth: f32,
 };

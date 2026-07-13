@@ -62,6 +62,27 @@ impl PickItemType {
     }
 }
 
+/// How to turn a pick's read-back sub-primitive index into a [`SubObjectRef`],
+/// keyed by the hit object's `pick_id`. Built at submit time from the same
+/// collections the pass draws, then consulted on read-back. Types that only
+/// answer object level (decals, scatter volumes, voxel volumes, plugins) are
+/// absent from the map and resolve to no sub-object.
+#[derive(Clone, Copy)]
+enum PickSubKind {
+    /// Mesh surface or volume-mesh boundary: `primitive_index` is the triangle,
+    /// refined to face / cell / vertex against the retained CPU pick cache.
+    Surface,
+    /// Glyph, tensor-glyph, or sprite set: `instance_index` is the instance.
+    Instance,
+    /// Polyline: `instance_index` is the segment; strip is resolved against the
+    /// retained polyline items.
+    Polyline,
+    /// Streamtube, tube, or ribbon: `primitive_index` is a connected-mesh
+    /// triangle, mapped to a segment / strip through the item's `tri_segment` /
+    /// `tri_strip` tables.
+    Curve,
+}
+
 /// One glyph or tensor-glyph set to draw into the pick pass. The group-1 bind
 /// group (the set uniform + a per-set object-id uniform) is owned; the pipeline,
 /// instance bind group, and mesh buffers are borrowed from prepared state.
@@ -205,6 +226,42 @@ impl ViewportRenderer {
             })
             .unwrap();
         pending.read_hit()
+    }
+
+    /// Blocking GPU point pick that resolves sub-object identity: submits the id
+    /// pass, waits on this pick's own submission, reads back the pixel, and maps
+    /// the primitive channel to a [`SubObjectRef`] per the mask. This is the
+    /// object-plus-sub-object counterpart to
+    /// [`pick_scene_gpu_masked`](Self::pick_scene_gpu_masked), which stays
+    /// object-level for backward compatibility.
+    pub(crate) fn pick_object_gpu_blocking(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        cursor: glam::Vec2,
+        frame: &FrameData,
+        mask: crate::interaction::select::pick_mask::PickMask,
+    ) -> Option<crate::interaction::query::picking::PickHit> {
+        // Mirror the Playback throttle in pick_scene_gpu_masked.
+        if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
+            && self.frame_counter % 4 != 0
+        {
+            return None;
+        }
+
+        let pending = match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
+            PickBegin::Miss => return None,
+            PickBegin::Pending(p) => p,
+        };
+        device
+            .poll(crate::gpu::PollType::Wait {
+                submission_index: Some(pending.submission.clone()),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        pending
+            .read_hit()
+            .map(|h| self.resolve_pending_hit(&pending, h))
     }
 
     /// Encode and submit the id pass for a point pick, map its staging buffers,
@@ -1056,6 +1113,12 @@ impl ViewportRenderer {
             usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        let prim_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("pick_prim_staging"),
+            size: bytes_per_row_aligned as u64,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
         let depth_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_depth_staging"),
             size: bytes_per_row_aligned as u64,
@@ -1074,6 +1137,27 @@ impl ViewportRenderer {
             },
             crate::gpu::TexelCopyBufferInfo {
                 buffer: &id_staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row_aligned),
+                    rows_per_image: Some(1),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &pick_prim_texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &prim_staging,
                 layout: crate::gpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row_aligned),
@@ -1114,9 +1198,9 @@ impl ViewportRenderer {
         // device has processed this submission; the caller drives that in a
         // blocking wait (`pick_scene_gpu_masked`) or a targeted one
         // (`pick_object_poll`) and reads the pixel through `PendingPick::read_hit`
-        // once both maps have landed. The callbacks flip `ready` to 2.
+        // once all three maps have landed. The callbacks flip `ready` to 3.
         let ready = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        for staging in [&id_staging, &depth_staging] {
+        for staging in [&id_staging, &prim_staging, &depth_staging] {
             let ready = ready.clone();
             staging
                 .slice(..)
@@ -1127,14 +1211,26 @@ impl ViewportRenderer {
                 });
         }
 
+        // Map each drawn object's pick_id to how its second-channel index is
+        // decoded into a SubObjectRef on read-back. Built from the same draw
+        // sets above; ids-only, so it is cheap and needs no geometry retained.
+        let kinds = self.build_pick_sub_kinds(frame, scene_items);
+        let primitive_index_supported = device
+            .features()
+            .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE);
+
         PickBegin::Pending(PendingPick {
             id_staging,
+            prim_staging,
             depth_staging,
             ready,
             submission,
             cursor,
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             view_proj: frame.camera.render_camera.view_proj(),
+            mask,
+            kinds,
+            primitive_index_supported,
         })
     }
 
@@ -1239,15 +1335,279 @@ impl ViewportRenderer {
         let _ = device.poll(crate::gpu::PollType::Poll);
 
         let pending = self.pending_pick.as_ref().expect("pending checked above");
-        if pending.ready.load(std::sync::atomic::Ordering::Acquire) < 2 {
+        if pending.ready.load(std::sync::atomic::Ordering::Acquire) < 3 {
             return PickPoll::Pending;
         }
 
         let pending = self.pending_pick.take().expect("pending checked above");
         let hit = pending
             .read_hit()
-            .map(|h| h.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj));
+            .map(|h| self.resolve_pending_hit(&pending, h));
         PickPoll::Ready(hit)
+    }
+
+    /// Build the object-level [`PickHit`] from a raw GPU hit, then fill its
+    /// `sub_object` from the read-back primitive channel using the pick's
+    /// per-object decode map. Shared by the blocking and async paths.
+    fn resolve_pending_hit(
+        &self,
+        pending: &PendingPick,
+        gpu_hit: crate::interaction::query::picking::GpuPickHit,
+    ) -> crate::interaction::query::picking::PickHit {
+        let mut hit = gpu_hit.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj);
+        // World-space ray under the cursor, used only by the feature-absent
+        // surface refinement fallback.
+        let (ray_origin, ray_dir) = crate::interaction::query::picking::screen_to_ray(
+            pending.cursor,
+            pending.viewport_size,
+            pending.view_proj.inverse(),
+        );
+        hit.sub_object = self.resolve_gpu_sub_object(
+            gpu_hit.object_id.0,
+            gpu_hit.sub_primitive,
+            hit.world_pos,
+            pending.mask,
+            &pending.kinds,
+            pending.primitive_index_supported,
+            ray_origin,
+            ray_dir,
+        );
+        hit
+    }
+
+    /// Decode a read-back `(object_id, sub_primitive)` into a [`SubObjectRef`]
+    /// per the hit object's type. Object-level types (and any object not in the
+    /// decode map) return `None`.
+    ///
+    /// The surface and curve paths read `primitive_index`, so they only resolve
+    /// when the device had `SHADER_PRIMITIVE_INDEX`; instanced types and
+    /// polylines read `instance_index`, which needs no device feature.
+    fn resolve_gpu_sub_object(
+        &self,
+        object_id: u64,
+        sub_primitive: u32,
+        world_pos: glam::Vec3,
+        mask: crate::interaction::select::pick_mask::PickMask,
+        kinds: &std::collections::HashMap<u64, PickSubKind>,
+        primitive_index_supported: bool,
+        ray_origin: glam::Vec3,
+        ray_dir: glam::Vec3,
+    ) -> Option<crate::interaction::select::sub_object::SubObjectRef> {
+        use crate::interaction::select::pick_mask::PickMask;
+        use crate::interaction::select::sub_object::SubObjectRef;
+
+        match kinds.get(&object_id).copied()? {
+            PickSubKind::Instance => {
+                if mask.intersects(PickMask::INSTANCE) {
+                    Some(SubObjectRef::Instance(sub_primitive))
+                } else {
+                    None
+                }
+            }
+            PickSubKind::Polyline => {
+                if mask.intersects(PickMask::STRIP) {
+                    let strip = self
+                        .pick_polyline_items
+                        .iter()
+                        .find(|p| p.settings.pick_id.0 == object_id)
+                        .map(|p| strip_for_segment(sub_primitive, &p.strip_lengths))
+                        .unwrap_or(0);
+                    Some(SubObjectRef::Strip(strip))
+                } else if mask.intersects(PickMask::SEGMENT | PickMask::POLY_NODE) {
+                    Some(SubObjectRef::Segment(sub_primitive))
+                } else {
+                    None
+                }
+            }
+            PickSubKind::Curve => {
+                if !primitive_index_supported {
+                    return None;
+                }
+                let gpu = self
+                    .streamtube_gpu_data
+                    .iter()
+                    .chain(self.tube_gpu_data.iter())
+                    .chain(self.ribbon_gpu_data.iter())
+                    .find(|g| g.pick_id.0 == object_id)?;
+                if mask.intersects(PickMask::STRIP) {
+                    gpu.tri_strip
+                        .get(sub_primitive as usize)
+                        .copied()
+                        .map(SubObjectRef::Strip)
+                } else if mask.intersects(PickMask::SEGMENT) {
+                    gpu.tri_segment
+                        .get(sub_primitive as usize)
+                        .copied()
+                        .map(SubObjectRef::Segment)
+                } else {
+                    None
+                }
+            }
+            PickSubKind::Surface => self.resolve_surface_sub_object(
+                object_id,
+                sub_primitive,
+                world_pos,
+                mask,
+                primitive_index_supported,
+                ray_origin,
+                ray_dir,
+            ),
+        }
+    }
+
+    /// Resolve a surface / volume-mesh-boundary hit to a face, cell, or vertex.
+    ///
+    /// With `SHADER_PRIMITIVE_INDEX` the hit triangle comes straight from the
+    /// read-back primitive channel; without it the triangle is recovered by a
+    /// single-object CPU ray-cast (the "refine on the CPU for that one object"
+    /// fallback). Cell and vertex refinement read the retained CPU pick cache, so
+    /// they return `None` when that cache is disabled (a `FACE` mask still
+    /// resolves, since the face index alone needs no geometry).
+    fn resolve_surface_sub_object(
+        &self,
+        object_id: u64,
+        sub_primitive: u32,
+        world_pos: glam::Vec3,
+        mask: crate::interaction::select::pick_mask::PickMask,
+        primitive_index_supported: bool,
+        ray_origin: glam::Vec3,
+        ray_dir: glam::Vec3,
+    ) -> Option<crate::interaction::select::sub_object::SubObjectRef> {
+        use crate::interaction::select::pick_mask::PickMask;
+        use crate::interaction::select::sub_object::SubObjectRef;
+
+        let wants_face = mask.intersects(PickMask::FACE);
+        let wants_cell = mask.intersects(PickMask::CELL);
+        let wants_vertex = mask.intersects(PickMask::VERTEX);
+        if !(wants_face || wants_cell || wants_vertex) {
+            return None;
+        }
+
+        // Locate the item in the retained surface cache to reach its mesh
+        // geometry and model. Without the cache we can still answer FACE from the
+        // raw primitive index, but not CELL / VERTEX.
+        let item = self
+            .pick_scene_items
+            .iter()
+            .find(|i| i.settings.pick_id.0 == object_id);
+
+        // Recover the hit triangle. With the feature it is the read-back index;
+        // otherwise ray-cast this one object's mesh to find it.
+        let face: Option<usize> = if primitive_index_supported {
+            Some(sub_primitive as usize)
+        } else {
+            let item = item?;
+            let mesh = self.resources.mesh_store.get(item.mesh_id)?;
+            let positions = mesh.cpu_positions.as_ref()?;
+            let indices = mesh.cpu_indices.as_ref()?;
+            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            cpu_face_under_ray(positions, indices, model, ray_origin, ray_dir).map(|(f, _)| f)
+        };
+        let face = face?;
+
+        // FACE takes priority, matching the CPU picker's ordering.
+        if wants_face {
+            return Some(SubObjectRef::Face(face as u32));
+        }
+
+        let item = item?;
+        let mesh = self.resources.mesh_store.get(item.mesh_id)?;
+        let indices = mesh.cpu_indices.as_ref()?;
+        let model = glam::Mat4::from_cols_array_2d(&item.model);
+
+        if wants_cell {
+            let f2c = self
+                .pick_volume_mesh_items
+                .iter()
+                .find(|vm| vm.settings.pick_id.0 == object_id && !vm.face_to_cell.is_empty())
+                .map(|vm| vm.face_to_cell.as_slice());
+            if let Some(f2c) = f2c {
+                return f2c.get(face).map(|&ci| SubObjectRef::Cell(ci));
+            }
+            // No cell map: fall through to a vertex answer if the caller also
+            // asked for it, else nothing.
+            if !wants_vertex {
+                return None;
+            }
+        }
+
+        // Vertex: nearest triangle corner to the hit position.
+        let positions = mesh.cpu_positions.as_ref()?;
+        nearest_triangle_vertex(positions, indices, model, face, world_pos)
+            .map(SubObjectRef::Vertex)
+    }
+
+    /// Build the `pick_id -> PickSubKind` decode map from the same collections
+    /// the pass draws. Ids only, so no geometry is retained here.
+    fn build_pick_sub_kinds(
+        &self,
+        frame: &FrameData,
+        scene_items: &[SceneRenderItem],
+    ) -> std::collections::HashMap<u64, PickSubKind> {
+        let mut kinds: std::collections::HashMap<u64, PickSubKind> =
+            std::collections::HashMap::new();
+
+        // Surfaces and opaque/transparent volume-mesh boundaries.
+        for item in scene_items
+            .iter()
+            .filter(|i| !i.settings.hidden && i.settings.pick_id != PickId::NONE)
+        {
+            kinds.insert(item.settings.pick_id.0, PickSubKind::Surface);
+        }
+        for vm in frame.scene.volume_meshes.iter() {
+            let ri = vm.to_render_item();
+            if !ri.settings.hidden && ri.settings.pick_id != PickId::NONE {
+                kinds.insert(ri.settings.pick_id.0, PickSubKind::Surface);
+            }
+        }
+
+        // Curve families.
+        for family in [
+            self.streamtube_gpu_data.as_slice(),
+            self.tube_gpu_data.as_slice(),
+            self.ribbon_gpu_data.as_slice(),
+        ] {
+            for gpu in family
+                .iter()
+                .filter(|g| g.pick_id != PickId::NONE && g.index_count > 0)
+            {
+                kinds.insert(gpu.pick_id.0, PickSubKind::Curve);
+            }
+        }
+
+        // Instanced families.
+        for gpu in self
+            .glyph_gpu_data
+            .iter()
+            .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
+        {
+            kinds.insert(gpu.pick_id.0, PickSubKind::Instance);
+        }
+        for gpu in self
+            .tensor_glyph_gpu_data
+            .iter()
+            .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
+        {
+            kinds.insert(gpu.pick_id.0, PickSubKind::Instance);
+        }
+        for gpu in self
+            .sprite_gpu_data
+            .iter()
+            .filter(|g| g.pick_id != PickId::NONE && g.sprite_count > 0)
+        {
+            kinds.insert(gpu.pick_id.0, PickSubKind::Instance);
+        }
+
+        // Polylines.
+        for gpu in self
+            .polyline_gpu_data
+            .iter()
+            .filter(|g| g.pick_id != PickId::NONE && g.segment_count > 0)
+        {
+            kinds.insert(gpu.pick_id.0, PickSubKind::Polyline);
+        }
+
+        kinds
     }
 }
 
@@ -1265,8 +1625,10 @@ enum PickBegin {
 /// [`ViewportRenderer::pick_object_poll`].
 pub(crate) struct PendingPick {
     id_staging: crate::gpu::Buffer,
+    prim_staging: crate::gpu::Buffer,
     depth_staging: crate::gpu::Buffer,
-    /// Reaches 2 when both `map_async` callbacks have signalled success.
+    /// Reaches 3 when all three `map_async` callbacks have signalled success
+    /// (object id, primitive id, depth).
     ready: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Submission index of the id pass, so a reader can wait on this pick alone
     /// rather than draining the whole queue.
@@ -1274,12 +1636,22 @@ pub(crate) struct PendingPick {
     cursor: glam::Vec2,
     viewport_size: glam::Vec2,
     view_proj: glam::Mat4,
+    /// The mask the pick was submitted with. Decides which sub-object level the
+    /// read-back primitive index resolves to (face vs cell vs vertex, etc.).
+    mask: crate::interaction::select::pick_mask::PickMask,
+    /// Per-object decode of the primitive channel, keyed by `pick_id`.
+    kinds: std::collections::HashMap<u64, PickSubKind>,
+    /// Whether the device had `SHADER_PRIMITIVE_INDEX` when the pass ran. When
+    /// false the surface / curve pipelines wrote a constant 0 into the primitive
+    /// channel, so those types stay object-level (the instance / segment channels
+    /// do not depend on the feature).
+    primitive_index_supported: bool,
 }
 
 impl PendingPick {
     /// Read the object id and depth from the mapped staging buffers and unmap
     /// them. Only valid once both maps have completed (the caller has waited or
-    /// seen `ready == 2`). Returns `None` for id 0, which is the clear value and
+    /// seen `ready == 3`). Returns `None` for id 0, which is the clear value and
     /// so means empty space or a non-pickable surface.
     fn read_hit(&self) -> Option<crate::interaction::query::picking::GpuPickHit> {
         let object_id = {
@@ -1287,6 +1659,12 @@ impl PendingPick {
             u32::from_le_bytes([data[0], data[1], data[2], data[3]])
         };
         self.id_staging.unmap();
+
+        let sub_primitive = {
+            let data = self.prim_staging.slice(..).get_mapped_range();
+            u32::from_le_bytes([data[0], data[1], data[2], data[3]])
+        };
+        self.prim_staging.unmap();
 
         let depth = {
             let data = self.depth_staging.slice(..).get_mapped_range();
@@ -1300,6 +1678,7 @@ impl PendingPick {
         Some(crate::interaction::query::picking::GpuPickHit {
             object_id: PickId(object_id as u64),
             depth,
+            sub_primitive,
         })
     }
 }

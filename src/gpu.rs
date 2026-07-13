@@ -43,6 +43,17 @@ pub fn default_instance() -> Instance {
     Instance::new(InstanceDescriptor::new_without_display_handle())
 }
 
+/// The device feature that enables `@builtin(primitive_index)` in fragment
+/// shaders, named per wgpu leg: `SHADER_PRIMITIVE_INDEX` on wgpu 27,
+/// `PRIMITIVE_INDEX` on wgpu 29. Used by the GPU pick pass to resolve the hit
+/// triangle for sub-object picking.
+#[cfg(all(feature = "wgpu27", not(feature = "wgpu29")))]
+#[doc(hidden)]
+pub const PRIMITIVE_INDEX_FEATURE: Features = Features::SHADER_PRIMITIVE_INDEX;
+#[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
+#[doc(hidden)]
+pub const PRIMITIVE_INDEX_FEATURE: Features = Features::PRIMITIVE_INDEX;
+
 // Version-portability helpers, surfaced here (the version seam) so tests and
 // consumers that build wgpu pipelines directly can do so without their own
 // per-version `#[cfg]`. Each helper is the single place a new wgpu leg (e.g.

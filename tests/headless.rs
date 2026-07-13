@@ -39,6 +39,32 @@ fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some((device, queue))
 }
 
+/// Headless device with `SHADER_PRIMITIVE_INDEX` enabled, or `None` when no
+/// adapter is available or the adapter does not support the feature. Used by the
+/// GPU sub-object tests that read the pick pass's triangle-index channel.
+fn headless_device_with_primitive_index() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let instance = viewport_lib::wgpu::default_instance();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
+    .ok()?;
+    if !adapter
+        .features()
+        .contains(viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE)
+    {
+        return None;
+    }
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("test-primitive-index"),
+        required_features: viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE,
+        ..Default::default()
+    }))
+    .ok()?;
+    Some((device, queue))
+}
+
 /// Simple unit box mesh data for testing.
 fn box_mesh() -> MeshData {
     let positions = vec![
@@ -1364,6 +1390,160 @@ fn gpu_pick_hits_polyline() {
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(888)));
+}
+
+// ---------------------------------------------------------------------------
+// GPU pick: sub-object identity (G8)
+// ---------------------------------------------------------------------------
+
+/// A 64x64 frame with the default orbit camera and no overlays, so world origin
+/// projects to the screen centre (32, 32).
+fn sub_object_pick_frame() -> FrameData {
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame
+}
+
+#[test]
+fn gpu_pick_glyph_resolves_instance() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    // Three sphere glyphs spread along X. Instance index follows position order,
+    // so the centre glyph under the cursor is instance 1. Instance-level picking
+    // reads the instance_index channel, which needs no device feature.
+    let mut glyph = GlyphItem::default();
+    glyph.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
+    glyph.vectors = vec![[0.0, 0.0, 1.0]; 3];
+    glyph.scale = 1.0;
+    glyph.scale_by_magnitude = false;
+    glyph.glyph_type = GlyphType::Sphere;
+    glyph.settings.pick_id = PickId(555);
+    frame.scene.glyphs.push(glyph);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::INSTANCE,
+    );
+    let hit = hit.expect("centre glyph should be hit");
+    assert_eq!(hit.id, 555);
+    assert_eq!(
+        hit.sub_object,
+        Some(viewport_lib::SubObjectRef::Instance(1))
+    );
+}
+
+#[test]
+fn gpu_pick_polyline_resolves_segment() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    // Three-node strip: segment 0 spans x in [-2, -1], segment 1 spans [-1, 2].
+    // World origin (screen centre) lies on segment 1. Segment picking reads the
+    // per-segment instance_index channel, so no device feature is needed.
+    let mut polyline = PolylineItem::default();
+    polyline.positions = vec![[-2.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+    polyline.strip_lengths = vec![3];
+    polyline.line_width = 20.0;
+    polyline.settings.pick_id = PickId(888);
+    frame.scene.polylines.push(polyline);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::SEGMENT,
+    );
+    let hit = hit.expect("polyline should be hit at the centre");
+    assert_eq!(hit.id, 888);
+    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Segment(1)));
+}
+
+#[test]
+fn gpu_pick_surface_resolves_face_and_vertex() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // Vertex refinement reads the retained CPU pick cache.
+    renderer.set_cpu_pick_cache(true);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(321);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // FACE: the read-back triangle index is a valid face of the 12-triangle box.
+    let face_hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::FACE,
+        )
+        .expect("box should be hit");
+    assert_eq!(face_hit.id, 321);
+    match face_hit.sub_object {
+        Some(viewport_lib::SubObjectRef::Face(f)) => assert!(f < 12, "face {f} out of range"),
+        other => panic!("expected a Face sub-object, got {other:?}"),
+    }
+
+    // VERTEX: refines the hit face to its nearest corner (a valid box vertex).
+    let vertex_hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::VERTEX,
+        )
+        .expect("box should be hit");
+    match vertex_hit.sub_object {
+        Some(viewport_lib::SubObjectRef::Vertex(v)) => assert!(v < 8, "vertex {v} out of range"),
+        other => panic!("expected a Vertex sub-object, got {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------

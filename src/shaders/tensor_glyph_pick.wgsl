@@ -98,7 +98,9 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       world_pos: vec3<f32>,
+    @location(0)                    world_pos:      vec3<f32>,
+    // Instance index forwarded flat for per-instance sub-object picking.
+    @location(1) @interpolate(flat) instance_index: u32,
 };
 
 @vertex
@@ -118,6 +120,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
     out.clip_pos  = camera.view_proj * world_pos4;
     out.world_pos = world_pos4.xyz;
+    out.instance_index = in.instance_index;
     return out;
 }
 
@@ -132,7 +135,7 @@ fn fs_main(in: VertexOut) -> FragOut {
     if !clip_volume_test(in.world_pos) { discard; }
     var out: FragOut;
     out.object_id    = pick.id;
-    out.primitive_id = 0u;
+    out.primitive_id = in.instance_index;
     out.depth        = in.clip_pos.z;
     return out;
 }

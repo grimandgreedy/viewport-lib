@@ -95,7 +95,11 @@ struct SegmentIn {
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       world_pos: vec3<f32>,
+    @location(0)                    world_pos:   vec3<f32>,
+    // Per-segment instance index forwarded flat. Each polyline segment is one
+    // instanced draw of the 6-vertex quad, so the instance index is the segment
+    // index the fragment writes into the primitive-id channel.
+    @location(1) @interpolate(flat) segment_index: u32,
 };
 
 // Apply the per-item model matrix to a position in the consumer's input space.
@@ -125,6 +129,7 @@ fn miter_extrusion(dir_in: vec2<f32>, dir_out: vec2<f32>) -> vec2<f32> {
 @vertex
 fn vs_main(
     @builtin(vertex_index) vid: u32,
+    @builtin(instance_index) iid: u32,
     seg: SegmentIn,
 ) -> VertexOut {
     let use_b   = (vid == 1u || vid == 3u || vid == 4u);
@@ -179,6 +184,7 @@ fn vs_main(
     var out: VertexOut;
     out.clip_pos  = clip_pos;
     out.world_pos = world_pos;
+    out.segment_index = iid;
     return out;
 }
 
@@ -193,7 +199,7 @@ fn fs_main(in: VertexOut) -> FragOut {
     if !clip_volume_test(in.world_pos) { discard; }
     var out: FragOut;
     out.object_id    = pick.object_id;
-    out.primitive_id = 0u;
+    out.primitive_id = in.segment_index;
     out.depth        = in.clip_pos.z;
     return out;
 }

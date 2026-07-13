@@ -104,7 +104,10 @@ struct VertexIn {
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
-    @location(0)       world_pos: vec3<f32>,
+    @location(0)                    world_pos:      vec3<f32>,
+    // Instance index forwarded flat so the fragment can write the per-sprite
+    // instance into the primitive-id channel for sub-object picking.
+    @location(1) @interpolate(flat) instance_index: u32,
 };
 
 // Unit quad corners (two CCW triangles, matching sprite.wgsl winding).
@@ -200,6 +203,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     }
 
     out.world_pos = world_pos;
+    out.instance_index = in.instance_index;
     return out;
 }
 
@@ -221,7 +225,7 @@ fn fs_main(in: VertexOut) -> FragOut {
 
     var out: FragOut;
     out.object_id = pick.object_id;
-    out.primitive_id = 0u;
+    out.primitive_id = in.instance_index;
     out.depth = in.clip_pos.z;
     return out;
 }

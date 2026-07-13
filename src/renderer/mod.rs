@@ -609,6 +609,11 @@ impl ViewportRenderer {
     ///   [`new_with_pipeline_cache`](Self::new_with_pipeline_cache), so
     ///   pipeline compilation from a previous run can be reused instead of
     ///   redone (startup and first-use hitches).
+    /// - `SHADER_PRIMITIVE_INDEX` lets the GPU pick pass read the rasterizer's
+    ///   triangle index, so a GPU pick can resolve the hit face / cell / segment
+    ///   (not just the object). Without it the GPU pick stays object-level for
+    ///   triangle-meshed types; instance- and segment-level picks (glyphs,
+    ///   sprites, polylines) do not need it.
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
@@ -619,6 +624,7 @@ impl ViewportRenderer {
             crate::gpu::Features::INDIRECT_FIRST_INSTANCE,
             crate::gpu::Features::TIMESTAMP_QUERY,
             crate::gpu::Features::PIPELINE_CACHE,
+            crate::gpu::PRIMITIVE_INDEX_FEATURE,
         ] {
             if adapter.features().contains(feature) {
                 features |= feature;
