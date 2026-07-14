@@ -19,14 +19,14 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, FrameData, GaussianSplatData,
-    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
-    GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
-    LightingSettings, Material, McVolumeId, MeshId, NodeId, PickId, PickMask, PickRectResult,
-    PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, SceneRenderItem,
-    ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
-    TensorGlyphItem, TextureId, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData,
-    VolumeMeshItem, VolumeSurfaceSliceItem,
+    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
+    GpuImplicitOptions, GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive,
+    ItemSettings, LightingSettings, Material, McVolumeId, MeshId, NodeId, PickBackend, PickId,
+    PickMask, PickRectResult, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem,
+    SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem,
+    SubObjectRef, SubSelectionRef, TensorGlyphItem, TextureId, TubeItem, ViewportRenderer,
+    VolumeData, VolumeMeshData, VolumeMeshItem, VolumeSurfaceSliceItem,
 };
 
 use crate::App;
@@ -321,6 +321,9 @@ pub(crate) struct PlState {
     pub unified_mode: bool,
     /// Active mask for the unified section.
     pub unified_mask: PlUnifiedMask,
+    /// Backend for the unified API section: `renderer.pick_object()` /
+    /// `pick_rect_objects()`. Defaults to GPU, the fast path for large scenes.
+    pub pick_backend: PickBackend,
     pub level: PlPickLevel,
     pub cube_mesh_id: MeshId,
     pub hemi_mesh_id: MeshId,
@@ -409,6 +412,7 @@ impl Default for PlState {
             built: false,
             unified_mode: true,
             unified_mask: PlUnifiedMask::default(),
+            pick_backend: PickBackend::Gpu,
             level: PlPickLevel::default(),
             cube_mesh_id: MeshId::INVALID,
             hemi_mesh_id: MeshId::INVALID,
@@ -1349,17 +1353,20 @@ impl App {
 // ---------------------------------------------------------------------------
 
 impl App {
-    /// Handle a left-click using renderer.pick() with the active PickMask.
+    /// Handle a left-click using renderer.pick_object() with the active
+    /// PickMask and backend (CPU ray-cast or GPU object-id readback).
     pub(crate) fn handle_pl_unified_click(
         &mut self,
         pos: glam::Vec2,
-        vp_size: glam::Vec2,
-        view_proj: glam::Mat4,
         shift: bool,
-        renderer: &ViewportRenderer,
+        renderer: &mut ViewportRenderer,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        frame: &FrameData,
     ) {
         let mask = self.pl_state.unified_mask.to_pick_mask();
-        let Some(hit) = renderer.pick(pos, vp_size, view_proj, mask) else {
+        let backend = self.pl_state.pick_backend;
+        let Some(hit) = renderer.pick_object(backend, pos, frame, device, queue, mask) else {
             if !shift {
                 self.pl_state.clear_selection();
             }
@@ -1416,16 +1423,18 @@ impl App {
         self.pl_state.hit_marker = Some(hit.world_pos);
     }
 
-    /// Handle a rubber-band box selection using renderer.pick_rect() with the
-    /// active PickMask.
+    /// Handle a rubber-band box selection using renderer.pick_rect_objects()
+    /// with the active PickMask and backend. GPU rect picking is not
+    /// implemented yet, so the Gpu backend falls back to the CPU rect pick
+    /// internally; the call is still routed through the backend-choosing entry
+    /// point so the UI toggle reflects the real API surface.
     pub(crate) fn handle_pl_unified_box_select(
         &mut self,
         rect_min: glam::Vec2,
         rect_max: glam::Vec2,
-        vp_size: glam::Vec2,
-        view_proj: glam::Mat4,
         shift: bool,
-        renderer: &ViewportRenderer,
+        renderer: &mut ViewportRenderer,
+        frame: &FrameData,
     ) {
         let r_min = glam::Vec2::new(rect_min.x.min(rect_max.x), rect_min.y.min(rect_max.y));
         let r_max = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y));
@@ -1435,7 +1444,8 @@ impl App {
         }
 
         let mask = self.pl_state.unified_mask.to_pick_mask();
-        let result: PickRectResult = renderer.pick_rect(r_min, r_max, vp_size, view_proj, mask);
+        let backend = self.pl_state.pick_backend;
+        let result: PickRectResult = renderer.pick_rect_objects(backend, r_min, r_max, frame, mask);
 
         for id in &result.objects {
             self.pl_state.selection.add(*id);
@@ -1561,7 +1571,12 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
         // -------------------------------------------------------------------
         // Unified API section
         // -------------------------------------------------------------------
-        ui.label(egui::RichText::new("renderer.pick() / pick_rect()").strong());
+        ui.label(egui::RichText::new("renderer.pick_object() / pick_rect_objects()").strong());
+        ui.label("Backend:");
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut app.pl_state.pick_backend, PickBackend::Gpu, "GPU");
+            ui.radio_value(&mut app.pl_state.pick_backend, PickBackend::Cpu, "CPU");
+        });
         ui.label("Mask:");
         ui.horizontal_wrapped(|ui| {
             for mask in [
@@ -2189,6 +2204,33 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
 pub(crate) fn pl_configure_frame(app: &App, fd: &mut FrameData) {
     fd.viewport.wireframe_mode = app.pl_state.wireframe;
     fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0];
+}
+
+/// Build a standalone `FrameData` for the unified pick handlers.
+///
+/// `renderer.pick_object()` / `pick_rect_objects()` read the scene straight
+/// from the passed-in `FrameData` (surfaces, volume meshes, point clouds,
+/// splats, ...), not from a stored copy, so a click handler needs a `FrameData`
+/// that matches what is actually on screen. This mirrors the showcase 33 arm
+/// of `App::build_frame_data` (camera, scene items, wireframe, and per-frame
+/// scivis item submission) without picking up state changes from every other
+/// showcase mode's frame-builder arm.
+pub(crate) fn pl_build_pick_frame(
+    app: &mut App,
+    w: f32,
+    h: f32,
+    pixels_per_point: f32,
+) -> FrameData {
+    let (items, _lighting, scene_gen, sel_gen) = pl_collect_scene_items(app);
+    let mut fd = FrameData::new(
+        CameraFrame::from_camera(&app.camera, [w, h]).with_pixels_per_point(pixels_per_point),
+        SceneFrame::from_surface_items(items),
+    );
+    fd.scene.generation = scene_gen;
+    fd.interaction.selection_generation = sel_gen;
+    pl_configure_frame(app, &mut fd);
+    submit_pl_items(app, &mut fd);
+    fd
 }
 
 /// Returns true if the selection outline should be active for showcase 33.

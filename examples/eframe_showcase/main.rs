@@ -957,16 +957,24 @@ impl eframe::App for App {
                             if (drag_end - drag_start).length() > 4.0 {
                                 let shift = self.pl_state.shift_held;
                                 if self.pl_state.unified_mode {
-                                    let vp_size = glam::Vec2::new(rect.width(), rect.height());
-                                    let view_proj = self.camera.view_proj_matrix();
+                                    let pick_frame =
+                                        showcase_33_picking_levels::pl_build_pick_frame(
+                                            self,
+                                            rect.width(),
+                                            rect.height(),
+                                            ctx.pixels_per_point(),
+                                        );
                                     let rs = frame.wgpu_render_state().expect("wgpu required");
-                                    let guard = rs.renderer.read();
+                                    let mut guard = rs.renderer.write();
                                     if let Some(renderer) =
-                                        guard.callback_resources.get::<ViewportRenderer>()
+                                        guard.callback_resources.get_mut::<ViewportRenderer>()
                                     {
                                         self.handle_pl_unified_box_select(
-                                            drag_start, drag_end, vp_size, view_proj, shift,
+                                            drag_start,
+                                            drag_end,
+                                            shift,
                                             renderer,
+                                            &pick_frame,
                                         );
                                     }
                                 } else {
@@ -1198,16 +1206,30 @@ impl eframe::App for App {
                 // ----- Click-to-select (non-Interaction modes) -----
                 if response.clicked() && self.mode != ShowcaseMode::Interaction {
                     let pick_pos = self.interact_state.last_cursor_viewport;
-                    // Unified pick for PickLevels showcase uses renderer.pick().
+                    // Unified pick for PickLevels showcase uses renderer.pick_object(),
+                    // which dispatches to the GPU or CPU backend per the UI toggle.
                     if self.mode == ShowcaseMode::PickLevels && self.pl_state.unified_mode {
-                        let vp_size = glam::Vec2::new(rect.width(), rect.height());
-                        let view_proj = self.camera.view_proj_matrix();
                         let shift = self.pl_state.shift_held;
+                        let device = self.device.clone();
+                        let queue = self.queue.clone();
+                        let pick_frame = showcase_33_picking_levels::pl_build_pick_frame(
+                            self,
+                            rect.width(),
+                            rect.height(),
+                            ctx.pixels_per_point(),
+                        );
                         let rs = frame.wgpu_render_state().expect("wgpu required");
-                        let guard = rs.renderer.read();
-                        if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
+                        let mut guard = rs.renderer.write();
+                        if let Some(renderer) =
+                            guard.callback_resources.get_mut::<ViewportRenderer>()
+                        {
                             self.handle_pl_unified_click(
-                                pick_pos, vp_size, view_proj, shift, renderer,
+                                pick_pos,
+                                shift,
+                                renderer,
+                                &device,
+                                &queue,
+                                &pick_frame,
                             );
                         }
                     } else if self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built {
