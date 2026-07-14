@@ -2,7 +2,7 @@
 //!
 //! [`SubObjectRef`] is the single canonical way to identify a face, vertex,
 //! edge, or point-cloud point relative to its parent object. It is carried
-//! inside [`PickHit::sub_object`](crate::interaction::query::picking::PickHit::sub_object)
+//! inside [`PickHit::sub_object`](crate::renderer::picking::PickHit::sub_object)
 //! and used as the key type in [`SubSelection`].
 //!
 //! [`SubSelection`] is the sub-object counterpart to
@@ -21,7 +21,7 @@ use crate::interaction::select::selection::NodeId;
 /// A typed reference to a sub-object within a parent scene object.
 ///
 /// Produced by all pick functions when a specific surface feature is hit, and
-/// stored in [`PickHit::sub_object`](crate::interaction::query::picking::PickHit::sub_object).
+/// stored in [`PickHit::sub_object`](crate::renderer::picking::PickHit::sub_object).
 ///
 /// # Variants
 ///

@@ -25,11 +25,8 @@ impl ViewportRenderer {
         rect_max: glam::Vec2,
         viewport_size: glam::Vec2,
         view_proj: glam::Mat4,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
     ) -> PickRectResult {
-        use crate::interaction::select::pick_mask::PickMask;
-        use crate::interaction::select::sub_object::SubObjectRef;
-
         let mut result = PickRectResult::default();
 
         if !self.cpu_pick_cache_enabled {

@@ -116,6 +116,7 @@ pub use interaction::query::picking;
 pub use interaction::query::snap;
 pub use interaction::select::selection;
 pub use interaction::widgets::axes_indicator;
+pub use renderer::sub_object;
 pub use scene::aabb;
 pub use scene::material;
 pub use scene::scatter_volume;
@@ -191,20 +192,13 @@ pub use interaction::manipulation::clip_plane::{
     project_drag_onto_normal, ray_plane_intersection, snap_plane_distance,
 };
 pub use interaction::query::picking::{
-    GpuPickHit, PickHit, ProbeBinding, RectPickResult, nearest_vertex_on_hit,
-    pick_gaussian_splat_cpu, pick_gaussian_splat_rect, pick_point_cloud_cpu,
-    pick_scene_accelerated_with_probe_cpu, pick_scene_nodes_with_probe_cpu,
-    pick_scene_with_probe_cpu, pick_transparent_volume_mesh_cpu, pick_transparent_volume_mesh_rect,
-    pick_volume_cpu, pick_volume_rect, voxel_world_aabb,
+    ProbeBinding, RectPickResult, nearest_vertex_on_hit, pick_gaussian_splat_cpu,
+    pick_gaussian_splat_rect, pick_point_cloud_cpu, pick_scene_accelerated_with_probe_cpu,
+    pick_scene_nodes_with_probe_cpu, pick_scene_with_probe_cpu, pick_transparent_volume_mesh_cpu,
+    pick_transparent_volume_mesh_rect, pick_volume_cpu, pick_volume_rect, voxel_world_aabb,
 };
 pub use interaction::query::snap::{ConstraintOverlay, SnapConfig};
-pub use interaction::select::pick_mask::PickMask;
 pub use interaction::select::selection::{NodeId, Selection};
-pub use interaction::select::sub_object;
-pub use interaction::select::sub_object::{
-    CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
-    VolumeSelectionInfo,
-};
 
 pub use interaction::widgets::axes_indicator::AxisView;
 
@@ -214,28 +208,29 @@ pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
 };
 pub use renderer::{
-    AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape,
-    ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity,
-    DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, EffectsFrame,
-    EmitterConfig, EnvironmentMap, FilterMode, ForceField, FrameData, GaussianSplatData,
-    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType,
-    GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
-    InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
-    LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MeshInstanceItem,
-    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing,
-    OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
-    OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, ParticleMeshAlign, PassPath,
-    PassView, PathTrack, PickBackend, PickId, PickPoll, PickRectResult, PointCloudItem,
-    PointCloudRefItem, PointRenderMode, PolylineItem, PolylineRefItem, PostProcessSettings,
-    RenderCamera, RepeatMode, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
-    ScalarBarOrientation, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
-    SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape,
-    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteOrientation, SpriteSetRefItem,
-    SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission,
-    TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
-    TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
-    ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
-    VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, CellSelectionInfo, ClipObject,
+    ClipShape, ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode,
+    DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
+    EffectsFrame, EmitterConfig, EnvironmentMap, FilterMode, ForceField, FrameData,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType,
+    GpuParticleSystemItem, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor,
+    ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind,
+    LightSource, LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem,
+    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem,
+    OverlayRectItem, OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath,
+    ParticleMeshAlign, PassPath, PassView, PathTrack, PickBackend, PickHit, PickId, PickMask,
+    PickPoll, PickRectResult, PointCloudItem, PointCloudRefItem, PointRenderMode, PolylineItem,
+    PolylineRefItem, PolylineSelectionInfo, PostProcessSettings, RenderCamera, RepeatMode,
+    RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
+    ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend,
+    SpriteInstanceSetRefItem, SpriteItem, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
+    StreamtubeItem, StreamtubeRefItem, SubObjectRef, SubSelection, SubSelectionRef,
+    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
+    ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSelectionInfo,
+    VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 

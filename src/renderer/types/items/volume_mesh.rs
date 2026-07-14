@@ -48,7 +48,7 @@ pub struct VolumeMeshItem {
     ///
     /// `face_to_cell[face_index]` is the cell index in the original
     /// [`VolumeMeshData::cells`](crate::VolumeMeshData::cells) array.
-    /// Used to convert a [`SubObjectRef::Face`](crate::interaction::select::sub_object::SubObjectRef::Face)
+    /// Used to convert a [`SubObjectRef::Face`](crate::renderer::SubObjectRef::Face)
     /// pick hit into a cell index.
     pub face_to_cell: Vec<u32>,
     /// Projected-tet GPU handle. `None` for items uploaded via

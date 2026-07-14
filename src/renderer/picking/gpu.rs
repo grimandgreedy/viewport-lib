@@ -44,7 +44,10 @@ fn screen_image_hit_at(
 ) -> Option<u64> {
     use crate::ImageAnchor;
     for item in items {
-        if item.settings.pick_id == crate::renderer::PickId::NONE || item.width == 0 || item.height == 0 {
+        if item.settings.pick_id == crate::renderer::PickId::NONE
+            || item.width == 0
+            || item.height == 0
+        {
             continue;
         }
         let img_w = item.width as f32 * item.scale;
@@ -82,7 +85,10 @@ fn screen_image_hits_in_rect(
     use crate::ImageAnchor;
     let mut hits = Vec::new();
     for item in items {
-        if item.settings.pick_id == crate::renderer::PickId::NONE || item.width == 0 || item.height == 0 {
+        if item.settings.pick_id == crate::renderer::PickId::NONE
+            || item.width == 0
+            || item.height == 0
+        {
             continue;
         }
         let img_w = item.width as f32 * item.scale;
@@ -111,8 +117,7 @@ fn screen_image_hits_in_rect(
 impl PickItemType {
     /// Whether this type answers any level requested in `mask`. A type is drawn
     /// only when the caller asked for something it can resolve.
-    fn satisfies(self, mask: crate::interaction::select::pick_mask::PickMask) -> bool {
-        use crate::interaction::select::pick_mask::PickMask;
+    fn satisfies(self, mask: PickMask) -> bool {
         match self {
             PickItemType::Surface => mask.intersects(
                 PickMask::OBJECT
@@ -547,14 +552,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         cursor: glam::Vec2,
         frame: &FrameData,
-    ) -> Option<crate::interaction::query::picking::GpuPickHit> {
-        self.pick_scene_gpu_masked(
-            device,
-            queue,
-            cursor,
-            frame,
-            crate::interaction::select::pick_mask::PickMask::all(),
-        )
+    ) -> Option<GpuPickHit> {
+        self.pick_scene_gpu_masked(device, queue, cursor, frame, PickMask::all())
     }
 
     /// GPU object-ID pick restricted to the item types `mask` selects.
@@ -576,8 +575,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         cursor: glam::Vec2,
         frame: &FrameData,
-        mask: crate::interaction::select::pick_mask::PickMask,
-    ) -> Option<crate::interaction::query::picking::GpuPickHit> {
+        mask: PickMask,
+    ) -> Option<GpuPickHit> {
         // In Playback mode, throttle picking to every 4th frame to reduce overhead
         // during animation. Interactive, Paused, and Capture modes always pick.
         if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
@@ -615,8 +614,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         cursor: glam::Vec2,
         frame: &FrameData,
-        mask: crate::interaction::select::pick_mask::PickMask,
-    ) -> Option<crate::interaction::query::picking::PickHit> {
+        mask: PickMask,
+    ) -> Option<PickHit> {
         // Mirror the Playback throttle in pick_scene_gpu_masked.
         if self.runtime_mode == crate::renderer::stats::RuntimeMode::Playback
             && self.frame_counter % 4 != 0
@@ -630,7 +629,7 @@ impl ViewportRenderer {
         // (matching the CPU backend, where these carry toi = 0.0 : see
         // `point.rs` section 10).
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
-        if mask.intersects(crate::interaction::select::pick_mask::PickMask::OBJECT) {
+        if mask.intersects(PickMask::OBJECT) {
             if let Some(id) = screen_image_hit_at(&frame.scene.screen_images, viewport_size, cursor)
             {
                 let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
@@ -640,7 +639,7 @@ impl ViewportRenderer {
                     view_proj_inv,
                 );
                 #[allow(deprecated)]
-                return Some(crate::interaction::query::picking::PickHit {
+                return Some(PickHit {
                     id,
                     sub_object: None,
                     world_pos: ray_origin + ray_dir * 0.001,
@@ -680,7 +679,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         cursor: glam::Vec2,
         frame: &FrameData,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
     ) -> PickBegin {
         // Read scene items from the surface submission.
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
@@ -879,7 +878,7 @@ impl ViewportRenderer {
         &mut self,
         device: &crate::gpu::Device,
         frame: &FrameData,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
     ) -> PickPipelineFlags {
         // --- lazy pipeline init ---
         self.resources.ensure_pick_pipeline(device);
@@ -920,8 +919,7 @@ impl ViewportRenderer {
         // Voxel volumes raymarch their bounding cube to the first in-threshold
         // voxel. Object-level; wireframe volumes render an OBB polyline instead,
         // so they are picked as polylines, not here.
-        let has_pickable_volumes = mask
-            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+        let has_pickable_volumes = mask.intersects(PickMask::OBJECT)
             && self
                 .volume_gpu_data
                 .iter()
@@ -932,8 +930,7 @@ impl ViewportRenderer {
 
         // GPU implicit SDF surfaces raymarch the isosurface on a full-screen
         // quad. Object-level.
-        let has_pickable_implicit = mask
-            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+        let has_pickable_implicit = mask.intersects(PickMask::OBJECT)
             && self
                 .implicit_gpu_data
                 .iter()
@@ -944,8 +941,7 @@ impl ViewportRenderer {
 
         // GPU marching-cubes surfaces rasterise their generated vertex buffer.
         // Object-level.
-        let has_pickable_mc = mask
-            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+        let has_pickable_mc = mask.intersects(PickMask::OBJECT)
             && self.mc_gpu_data.iter().any(|m| m.pick_id != PickId::NONE);
         if has_pickable_mc {
             self.resources.ensure_mc_pick_pipeline(device);
@@ -954,13 +950,11 @@ impl ViewportRenderer {
         // Point clouds: each renders as a screen-space quad per point (approach
         // B), so the pick reuses that expansion. CLOUD_POINT sub-object comes
         // from the forwarded instance index.
-        let has_pickable_point_clouds = mask.intersects(
-            crate::interaction::select::pick_mask::PickMask::OBJECT
-                | crate::interaction::select::pick_mask::PickMask::CLOUD_POINT,
-        ) && self
-            .point_cloud_gpu_data
-            .iter()
-            .any(|g| g.pick_id != PickId::NONE && g.point_count > 0);
+        let has_pickable_point_clouds = mask.intersects(PickMask::OBJECT | PickMask::CLOUD_POINT)
+            && self
+                .point_cloud_gpu_data
+                .iter()
+                .any(|g| g.pick_id != PickId::NONE && g.point_count > 0);
         if has_pickable_point_clouds {
             self.resources.ensure_point_cloud_pick_pipeline(device);
         }
@@ -969,21 +963,18 @@ impl ViewportRenderer {
         // Occlusion is resolved by the pick pass's own depth test, so the
         // existing per-viewport sorted-index buffer (built for back-to-front
         // render blending) can be reused without re-sorting.
-        let has_pickable_splats = mask.intersects(
-            crate::interaction::select::pick_mask::PickMask::OBJECT
-                | crate::interaction::select::pick_mask::PickMask::SPLAT,
-        ) && self
-            .gaussian_splat_draw_data
-            .iter()
-            .any(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0);
+        let has_pickable_splats = mask.intersects(PickMask::OBJECT | PickMask::SPLAT)
+            && self
+                .gaussian_splat_draw_data
+                .iter()
+                .any(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0);
         if has_pickable_splats {
             self.resources.ensure_gaussian_splat_pick_pipeline(device);
         }
 
         // Image slices and volume surface slices: textured world-space quads.
         // Object-level only.
-        let has_pickable_image_slices = mask
-            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+        let has_pickable_image_slices = mask.intersects(PickMask::OBJECT)
             && self
                 .image_slice_gpu_data
                 .iter()
@@ -991,8 +982,7 @@ impl ViewportRenderer {
         if has_pickable_image_slices {
             self.resources.ensure_image_slice_pick_pipeline(device);
         }
-        let has_pickable_volume_surface_slices = mask
-            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+        let has_pickable_volume_surface_slices = mask.intersects(PickMask::OBJECT)
             && self
                 .volume_surface_slice_gpu_data
                 .iter()
@@ -1007,7 +997,7 @@ impl ViewportRenderer {
         // exists when a decal is pickable and the query asks for OBJECT. Computed
         // as a plain `MeshId` before `draws` borrows `self`, so pushing the decal
         // draws later needs no further `self` mutation.
-        let decal_cube = if mask.intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+        let decal_cube = if mask.intersects(PickMask::OBJECT)
             && frame
                 .scene
                 .decals
@@ -1022,9 +1012,7 @@ impl ViewportRenderer {
         // Scatter volumes pick against their actual shape: a box (the shared cube)
         // or a sphere (the shared icosphere), world-space and unrotated, matching
         // the CPU analytic `ray_intersect`. Ensure whichever proxies are needed.
-        let (scatter_cube, scatter_sphere) = if mask
-            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
-        {
+        let (scatter_cube, scatter_sphere) = if mask.intersects(PickMask::OBJECT) {
             let mut want_box = false;
             let mut want_sphere = false;
             for it in frame
@@ -1086,7 +1074,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
         scene_items: &'a [SceneRenderItem],
         flags: &PickPipelineFlags,
     ) -> PickDrawSet<'a> {
@@ -1722,9 +1710,8 @@ impl ViewportRenderer {
         // as object-level: run the pass for them when the mask asks for OBJECT
         // and a plugin has a non-empty collection this frame. Their draws are not
         // in `draws`/`glyph_draws`/etc.; they are issued via `dispatch_plugin_pick`.
-        let has_plugin_pick = mask
-            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
-            && self.any_plugin_pick_items(frame);
+        let has_plugin_pick =
+            mask.intersects(PickMask::OBJECT) && self.any_plugin_pick_items(frame);
 
         // Registered plugins are object-level: dispatched directly in
         // `record_pick_pass_draws`, not collected here.
@@ -2122,10 +2109,8 @@ impl ViewportRenderer {
         rect_min: glam::Vec2,
         rect_max: glam::Vec2,
         frame: &FrameData,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
     ) -> crate::renderer::picking::PickRectResult {
-        use crate::interaction::select::pick_mask::PickMask;
-
         if !mask.intersects(PickMask::OBJECT) {
             return crate::renderer::picking::PickRectResult::default();
         }
@@ -2249,10 +2234,8 @@ impl ViewportRenderer {
             })
             .unwrap();
 
-        let mut seen: std::collections::HashSet<u32> = screen_image_objects
-            .iter()
-            .map(|&id| id as u32)
-            .collect();
+        let mut seen: std::collections::HashSet<u32> =
+            screen_image_objects.iter().map(|&id| id as u32).collect();
         let mut objects = std::mem::take(&mut screen_image_objects);
         {
             let data = id_staging.slice(..).get_mapped_range();
@@ -2298,7 +2281,7 @@ impl ViewportRenderer {
         frame: &FrameData,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
     ) -> bool {
         match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
             PickBegin::Miss => {
@@ -2354,11 +2337,7 @@ impl ViewportRenderer {
     /// Build the object-level [`PickHit`] from a raw GPU hit, then fill its
     /// `sub_object` from the read-back primitive channel using the pick's
     /// per-object decode map. Shared by the blocking and async paths.
-    fn resolve_pending_hit(
-        &self,
-        pending: &PendingPick,
-        gpu_hit: crate::interaction::query::picking::GpuPickHit,
-    ) -> crate::interaction::query::picking::PickHit {
+    fn resolve_pending_hit(&self, pending: &PendingPick, gpu_hit: GpuPickHit) -> PickHit {
         let mut hit = gpu_hit.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj);
         // World-space ray under the cursor, used only by the feature-absent
         // surface refinement fallback.
@@ -2392,15 +2371,12 @@ impl ViewportRenderer {
         object_id: u64,
         sub_primitive: u32,
         world_pos: glam::Vec3,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
         kinds: &std::collections::HashMap<u64, PickSubKind>,
         primitive_index_supported: bool,
         ray_origin: glam::Vec3,
         ray_dir: glam::Vec3,
-    ) -> Option<crate::interaction::select::sub_object::SubObjectRef> {
-        use crate::interaction::select::pick_mask::PickMask;
-        use crate::interaction::select::sub_object::SubObjectRef;
-
+    ) -> Option<SubObjectRef> {
         match kinds.get(&object_id).copied()? {
             PickSubKind::Instance => {
                 if mask.intersects(PickMask::INSTANCE) {
@@ -2487,14 +2463,11 @@ impl ViewportRenderer {
         object_id: u64,
         sub_primitive: u32,
         world_pos: glam::Vec3,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
         primitive_index_supported: bool,
         ray_origin: glam::Vec3,
         ray_dir: glam::Vec3,
-    ) -> Option<crate::interaction::select::sub_object::SubObjectRef> {
-        use crate::interaction::select::pick_mask::PickMask;
-        use crate::interaction::select::sub_object::SubObjectRef;
-
+    ) -> Option<SubObjectRef> {
         let wants_face = mask.intersects(PickMask::FACE);
         let wants_cell = mask.intersects(PickMask::CELL);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
@@ -2675,7 +2648,7 @@ pub(crate) struct PendingPick {
     view_proj: glam::Mat4,
     /// The mask the pick was submitted with. Decides which sub-object level the
     /// read-back primitive index resolves to (face vs cell vs vertex, etc.).
-    mask: crate::interaction::select::pick_mask::PickMask,
+    mask: PickMask,
     /// Per-object decode of the primitive channel, keyed by `pick_id`.
     kinds: std::collections::HashMap<u64, PickSubKind>,
     /// Whether the device had `SHADER_PRIMITIVE_INDEX` when the pass ran. When
@@ -2690,7 +2663,7 @@ impl PendingPick {
     /// them. Only valid once both maps have completed (the caller has waited or
     /// seen `ready == 3`). Returns `None` for id 0, which is the clear value and
     /// so means empty space or a non-pickable surface.
-    fn read_hit(&self) -> Option<crate::interaction::query::picking::GpuPickHit> {
+    fn read_hit(&self) -> Option<GpuPickHit> {
         let object_id = {
             let data = self.id_staging.slice(..).get_mapped_range();
             u32::from_le_bytes([data[0], data[1], data[2], data[3]])
@@ -2712,7 +2685,7 @@ impl PendingPick {
         if object_id == 0 {
             return None;
         }
-        Some(crate::interaction::query::picking::GpuPickHit {
+        Some(GpuPickHit {
             object_id: PickId(object_id as u64),
             depth,
             sub_primitive,

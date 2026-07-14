@@ -18,7 +18,11 @@ use shadow_state::ShadowState;
 mod paths;
 pub use paths::{OwnedPath, PassPath, PassView};
 mod picking;
-pub use picking::{PickBackend, PickPoll, PickRectResult};
+pub use picking::sub_object;
+pub use picking::{
+    CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickMask, PickPoll, PickRectResult,
+    PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo,
+};
 mod point_shadow_pool;
 mod prepare;
 mod render;

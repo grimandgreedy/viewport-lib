@@ -13,8 +13,8 @@
 
 use std::any::Any;
 
-use crate::interaction::query::picking::PickHit;
 use crate::plugin_api::SharedBindings;
+use crate::renderer::PickHit;
 use crate::renderer::PickId;
 use crate::scene::material::ItemSettings;
 

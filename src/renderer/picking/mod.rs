@@ -4,8 +4,20 @@ mod helpers;
 use helpers::*;
 mod gpu;
 pub(crate) use gpu::PendingPick;
+/// Pick mask for controlling item types and sub-element levels in pick calls.
+pub mod pick_mask;
 mod point;
 mod rect;
+/// Typed sub-object reference and sub-object selection set.
+pub mod sub_object;
+mod types;
+
+pub use pick_mask::PickMask;
+pub use sub_object::{
+    CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
+    VolumeSelectionInfo,
+};
+pub use types::{GpuPickHit, PickHit, PickRectResult};
 
 impl ViewportRenderer {
     /// Copy this frame's pickable items into the CPU pick caches so `pick()` and
@@ -79,7 +91,7 @@ impl ViewportRenderer {
 
 /// Which backend the object-level pick entry points run.
 ///
-/// Both backends return the same [`PickHit`](crate::interaction::query::picking::PickHit)
+/// Both backends return the same [`PickHit`]
 /// so a caller can switch between them without changing how it reads the result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickBackend {
@@ -109,17 +121,17 @@ pub enum PickPoll {
     Pending,
     /// The pick resolved. `Some` is the hit under the cursor; `None` is empty
     /// space (or a type the GPU pass cannot draw).
-    Ready(Option<crate::interaction::query::picking::PickHit>),
+    Ready(Option<PickHit>),
 }
 
 impl ViewportRenderer {
     /// Pick the nearest object under `cursor`, running `backend` and returning a
-    /// shared [`PickHit`](crate::interaction::query::picking::PickHit).
+    /// shared [`PickHit`].
     ///
     /// The camera and viewport size come from `frame`. `mask` chooses which item
     /// types and sub-object levels participate. Both backends use it to select
     /// item types and to fill the sub-object level of the returned
-    /// [`PickHit`](crate::interaction::query::picking::PickHit); see
+    /// [`PickHit`]; see
     /// [`PickBackend::Gpu`] for the sub-object levels the GPU backend resolves and
     /// its `SHADER_PRIMITIVE_INDEX` requirement. A type the GPU pass has no
     /// pipeline for yet is simply not drawn, so it returns no hit rather than a
@@ -131,8 +143,8 @@ impl ViewportRenderer {
         frame: &FrameData,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        mask: crate::interaction::select::pick_mask::PickMask,
-    ) -> Option<crate::interaction::query::picking::PickHit> {
+        mask: PickMask,
+    ) -> Option<PickHit> {
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
         let _ = (viewport_size, view_proj);
@@ -161,7 +173,7 @@ impl ViewportRenderer {
         frame: &FrameData,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        mask: crate::interaction::select::pick_mask::PickMask,
+        mask: PickMask,
     ) -> PickRectResult {
         match backend {
             PickBackend::Cpu => {
@@ -171,31 +183,5 @@ impl ViewportRenderer {
             }
             PickBackend::Gpu => self.pick_rect_gpu(device, queue, rect_min, rect_max, frame, mask),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PickRectResult
-// ---------------------------------------------------------------------------
-
-/// Result of a [`ViewportRenderer::pick_rect`] call.
-#[derive(Clone, Debug, Default)]
-pub struct PickRectResult {
-    /// IDs of whole items that have geometry inside the pick rect.
-    ///
-    /// Populated when [`crate::interaction::select::pick_mask::PickMask::OBJECT`] is set.
-    pub objects: Vec<u64>,
-    /// Sub-elements inside the pick rect as `(item_id, sub_object)` pairs.
-    ///
-    /// Populated when any sub-element bit is set in the mask. All entries
-    /// belong to the same geometric dimension when the mask is
-    /// dimension-homogeneous (the common case).
-    pub elements: Vec<(u64, crate::interaction::select::sub_object::SubObjectRef)>,
-}
-
-impl PickRectResult {
-    /// Returns `true` when no objects or elements were found.
-    pub fn is_empty(&self) -> bool {
-        self.objects.is_empty() && self.elements.is_empty()
     }
 }

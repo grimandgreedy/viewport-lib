@@ -21,7 +21,7 @@ pub struct RuntimeFrameContext {
     pub input: ActionFrame,
     /// Pick result under the cursor for this frame. Supply from CPU or GPU picking.
     /// None if no picking was done or nothing was hit.
-    pub pick_hit: Option<crate::interaction::query::picking::PickHit>,
+    pub pick_hit: Option<crate::renderer::PickHit>,
     /// True on the frame the primary pointer button was clicked (pressed and released without drag).
     pub clicked: bool,
     /// True on the frame a primary drag began.
@@ -57,7 +57,7 @@ pub struct RuntimeStepContext<'a> {
     /// Accumulate selection changes and contact events here.
     pub output: &'a mut RuntimeOutput,
     /// Forwarded from RuntimeFrameContext for plugins that need the current pick result.
-    pub pick_hit: Option<crate::interaction::query::picking::PickHit>,
+    pub pick_hit: Option<crate::renderer::PickHit>,
     /// Shared typed resource registry. Plugins use this to coordinate through
     /// engine-owned state without custom wiring in the application.
     ///

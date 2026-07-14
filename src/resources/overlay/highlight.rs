@@ -1,4 +1,4 @@
-use crate::interaction::select::sub_object::{SubObjectRef, SubSelectionRef};
+use crate::renderer::{SubObjectRef, SubSelectionRef};
 use crate::resources::types::DeviceResources;
 
 /// Recover the two world-space endpoint positions for a global polyline segment index.

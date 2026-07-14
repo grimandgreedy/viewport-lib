@@ -522,10 +522,7 @@ impl ViewportRenderer {
                         .flat_map(|s| s.items.iter())
                         .filter_map(|(node_id, sub)| {
                             if *node_id == item.settings.pick_id.0 {
-                                if let crate::interaction::select::sub_object::SubObjectRef::Splat(
-                                    i,
-                                ) = sub
-                                {
+                                if let crate::renderer::SubObjectRef::Splat(i) = sub {
                                     return Some(*i);
                                 }
                             }
@@ -682,10 +679,7 @@ impl ViewportRenderer {
                         .flat_map(|s| s.items.iter())
                         .filter_map(|(node_id, sub)| {
                             if *node_id == item.settings.pick_id.0 {
-                                if let crate::interaction::select::sub_object::SubObjectRef::Point(
-                                    i,
-                                ) = sub
-                                {
+                                if let crate::renderer::SubObjectRef::Point(i) = sub {
                                     return item.positions.get(*i as usize).copied();
                                 }
                             }
@@ -760,10 +754,7 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.settings.pick_id.0 {
-                                    if let crate::interaction::select::sub_object::SubObjectRef::Instance(
-                                        i,
-                                    ) = sub
-                                    {
+                                    if let crate::renderer::SubObjectRef::Instance(i) = sub {
                                         return Some(*i);
                                     }
                                 }
@@ -803,10 +794,7 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.settings.pick_id.0 {
-                                    if let crate::interaction::select::sub_object::SubObjectRef::Instance(
-                                        idx,
-                                    ) = sub
-                                    {
+                                    if let crate::renderer::SubObjectRef::Instance(idx) = sub {
                                         return Some(*idx);
                                     }
                                 }
@@ -881,10 +869,7 @@ impl ViewportRenderer {
                             .flat_map(|s| s.items.iter())
                             .filter_map(|(node_id, sub)| {
                                 if *node_id == item.settings.pick_id.0 {
-                                    if let crate::interaction::select::sub_object::SubObjectRef::Instance(
-                                        i,
-                                    ) = sub
-                                    {
+                                    if let crate::renderer::SubObjectRef::Instance(i) = sub {
                                         return Some(*i);
                                     }
                                 }

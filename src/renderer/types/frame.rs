@@ -1,7 +1,7 @@
 use super::*;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode};
 use crate::interaction::query::snap::ConstraintOverlay;
-use crate::interaction::select::sub_object::SubSelectionRef;
+use crate::renderer::SubSelectionRef;
 use crate::resources::CameraUniform;
 
 // ---------------------------------------------------------------------------
