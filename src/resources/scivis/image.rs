@@ -222,6 +222,7 @@ impl DeviceResources {
         Some(crate::resources::ImageSliceGpuData {
             bind_group,
             _uniform_buf: uniform_buf,
+            pick_id: item.settings.pick_id,
         })
     }
 
@@ -1044,6 +1045,7 @@ impl DeviceResources {
             bind_group,
             _uniform_buf: uniform_buf,
             mesh_id: item.mesh_id,
+            pick_id: item.settings.pick_id,
         })
     }
 

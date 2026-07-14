@@ -10,9 +10,11 @@
 use viewport_lib::wgpu;
 
 use viewport_lib::{
-    Aabb, BackfacePolicy, Camera, DecalItem, GlyphItem, GlyphType, ItemSettings, Material, MeshId,
-    PickBackend, PickId, PickMask, PickPoll, PolylineItem, RibbonItem, ScatterVolume,
-    ScatterVolumeItem, Scene, Selection, SpriteItem, SpriteSizeMode, VolumeItem, VolumeMeshItem,
+    Aabb, BackfacePolicy, Camera, DecalItem, GaussianSplatData, GaussianSplatItem, GlyphItem,
+    GlyphType, ImageSliceItem, ItemSettings, Material, MeshId, PickBackend, PickId, PickMask,
+    PickPoll, PointCloudItem, PolylineItem, RibbonItem, ScatterVolume, ScatterVolumeItem, Scene,
+    Selection, ShDegree, SliceAxis, SpriteItem, SpriteSizeMode, VolumeItem, VolumeMeshItem,
+    VolumeSurfaceSliceItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
@@ -1914,4 +1916,154 @@ fn gpu_pick_skips_hidden_plugin_item() {
         PickMask::all(),
     );
     assert!(hit.is_none(), "hidden plugin item must not be pickable");
+}
+
+// ---------------------------------------------------------------------------
+// GPU pick: point clouds and Gaussian splats (G3d), image slices and volume
+// surface slices (G3e)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gpu_pick_point_cloud_resolves_point() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    // Three points spread along X. The centre point (index 1) sits at world
+    // origin, under the cursor. CLOUD_POINT picking reads the forwarded
+    // instance_index, which needs no device feature.
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
+    cloud.point_size = 20.0;
+    cloud.settings.pick_id = PickId(444);
+    frame.scene.point_clouds.push(cloud);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::CLOUD_POINT,
+    );
+    let hit = hit.expect("centre point should be hit");
+    assert_eq!(hit.id, 444);
+    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Point(1)));
+}
+
+#[test]
+fn gpu_pick_splat_resolves_splat() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    // Three splats spread along X, large enough to cover the centre pixel.
+    // The centre splat (index 1) sits at world origin, under the cursor.
+    let mut data = GaussianSplatData::default();
+    data.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
+    data.scales = vec![[0.5, 0.5, 0.5]; 3];
+    data.rotations = vec![[0.0, 0.0, 0.0, 1.0]; 3];
+    data.opacities = vec![1.0; 3];
+    data.sh_coefficients = vec![0.0; 9];
+    data.sh_degree = ShDegree::Zero;
+    let splat_id = renderer
+        .resources_mut()
+        .upload_gaussian_splat(&device, &queue, &data)
+        .expect("upload splat set");
+
+    let mut item = GaussianSplatItem::default();
+    item.source = splat_id;
+    item.settings.pick_id = PickId(777);
+    frame.scene.gaussian_splats.push(item);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::SPLAT,
+    );
+    let hit = hit.expect("centre splat should be hit");
+    assert_eq!(hit.id, 777);
+    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Splat(1)));
+}
+
+#[test]
+fn gpu_pick_hits_image_slice() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let volume_id = renderer
+        .resources_mut()
+        .upload_volume(&device, &queue, &[0.5; 8], [2, 2, 2]);
+
+    let mut slice = ImageSliceItem::default();
+    slice.volume_id = volume_id;
+    slice.axis = SliceAxis::Z;
+    slice.offset = 0.5;
+    slice.bbox_min = [-1.0, -1.0, -1.0];
+    slice.bbox_max = [1.0, 1.0, 1.0];
+    slice.settings.pick_id = PickId(222);
+    frame.scene.image_slices.push(slice);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(hit.map(|h| h.id), Some(222));
+}
+
+#[test]
+fn gpu_pick_hits_volume_surface_slice() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let volume_id = renderer
+        .resources_mut()
+        .upload_volume(&device, &queue, &[0.5; 8], [2, 2, 2]);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+
+    let mut slice = VolumeSurfaceSliceItem::default();
+    slice.volume_id = volume_id;
+    slice.mesh_id = mesh_id;
+    slice.bbox_min = [-1.0, -1.0, -1.0];
+    slice.bbox_max = [1.0, 1.0, 1.0];
+    slice.settings.pick_id = PickId(333);
+    frame.scene.volume_surface_slices.push(slice);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(hit.map(|h| h.id), Some(333));
 }

@@ -66,6 +66,7 @@ impl ViewportRenderer {
                         model: item.model,
                         count,
                         wireframe: frame.viewport.wireframe_mode || item.settings.wireframe,
+                        pick_id: item.settings.pick_id,
                     });
             }
         }

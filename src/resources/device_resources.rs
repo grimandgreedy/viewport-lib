@@ -287,6 +287,28 @@ pub(crate) struct PickResources {
     pub(crate) mc_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 1 layout for the MC pick pipeline (per-job object-id uniform).
     pub(crate) mc_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Pick pipeline for point clouds: reuses the render screen-space quad
+    /// expansion and writes the item's object id plus the hit point's instance
+    /// index.
+    pub(crate) point_cloud_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Group 2 layout for the point cloud pick pipeline (per-item object-id uniform).
+    pub(crate) point_cloud_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Pick pipeline for Gaussian splats: reuses the render covariance
+    /// projection and writes the item's object id plus the hit splat's instance
+    /// index.
+    pub(crate) gaussian_splat_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Group 2 layout for the Gaussian splat pick pipeline (per-item object-id uniform).
+    pub(crate) gaussian_splat_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Pick pipeline for image slices: reuses the render quad-from-vertex-index
+    /// expansion and writes the item's object id. Object-level.
+    pub(crate) image_slice_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Group 2 layout for the image slice pick pipeline (per-item object-id uniform).
+    pub(crate) image_slice_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Pick pipeline for volume surface slices: reuses the render mesh vertex
+    /// buffer and writes the item's object id. Object-level.
+    pub(crate) volume_surface_slice_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Group 2 layout for the volume surface slice pick pipeline (per-item object-id uniform).
+    pub(crate) volume_surface_slice_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// GPU implicit-surface ray-march pipeline and layout. Lazily built.
@@ -2116,6 +2138,437 @@ impl DeviceResources {
 
         self.pick.mc_pick_id_bgl = Some(pick_id_bgl);
         self.pick.mc_pipeline = Some(pipeline);
+    }
+
+    /// Build the point cloud pick pipeline: reuse the render screen-space quad
+    /// expansion (position buffer + `PointCloudUniform` + radius buffer, group 1
+    /// reused unchanged from the render bind group) and write the item's object
+    /// id plus the hit point's instance index. Group 0 is the full scene camera
+    /// layout (the expansion needs the viewport size carried in clip planes),
+    /// group 2 is a per-item object-id uniform. No-op if the point cloud render
+    /// layout has not been built yet (no point clouds prepared).
+    pub(crate) fn ensure_point_cloud_pick_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.pick.point_cloud_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        if self.point_cloud_bgl.is_none() {
+            return;
+        }
+
+        let pick_id_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("point_cloud_pick_id_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let camera_bgl = &self.camera_bind_group_layout;
+        let pc_bgl = self
+            .point_cloud_bgl
+            .as_ref()
+            .expect("checked is_some above");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "point_cloud_pick_shader",
+            crate::resources::builders::wgsl_source!("point_cloud_pick"),
+        );
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "point_cloud_pick_pipeline_layout",
+            &[camera_bgl, pc_bgl, &pick_id_bgl],
+        );
+
+        // Same position-per-instance vertex buffer as the point cloud render
+        // pipeline.
+        let vert_attrs = [crate::gpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: crate::gpu::VertexFormat::Float32x3,
+        }];
+        let vertex_buffers = [crate::gpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: crate::gpu::VertexStepMode::Instance,
+            attributes: &vert_attrs,
+        }];
+
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "point_cloud_pick_pipeline",
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffers,
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Less,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        );
+
+        self.pick.point_cloud_pick_id_bgl = Some(pick_id_bgl);
+        self.pick.point_cloud_pipeline = Some(pipeline);
+    }
+
+    /// Build the Gaussian splat pick pipeline: reuse the render covariance
+    /// projection (`SplatUniform` + sorted-index / position / scale / rotation
+    /// storage buffers, group 1 reused unchanged from the render bind group) and
+    /// write the item's object id plus the hit splat's instance index. Group 0
+    /// is the minimal pick camera (the fragment needs no camera access), group 2
+    /// is a per-item object-id uniform. Depth test/write is enabled (unlike the
+    /// render pipeline's blend-only depth), so occlusion between splats is
+    /// resolved per pixel regardless of draw order. No-op if the splat render
+    /// layout has not been built yet (no splat sets prepared).
+    pub(crate) fn ensure_gaussian_splat_pick_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.pick.gaussian_splat_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        if self.gaussian_splat.bgl.is_none() {
+            return;
+        }
+
+        let pick_id_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("gaussian_splat_pick_id_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let camera_bgl = self
+            .pick
+            .camera_bgl
+            .as_ref()
+            .expect("ensure_pick_pipeline built the pick camera layout");
+        let splat_bgl = self
+            .gaussian_splat
+            .bgl
+            .as_ref()
+            .expect("checked is_some above");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "gaussian_splat_pick_shader",
+            crate::resources::builders::wgsl_source!("gaussian_splat_pick"),
+        );
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "gaussian_splat_pick_pipeline_layout",
+            &[camera_bgl, splat_bgl, &pick_id_bgl],
+        );
+
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "gaussian_splat_pick_pipeline",
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Less,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        );
+
+        self.pick.gaussian_splat_pick_id_bgl = Some(pick_id_bgl);
+        self.pick.gaussian_splat_pipeline = Some(pipeline);
+    }
+
+    /// Build the image slice pick pipeline: reuse the render quad-from-vertex-
+    /// index expansion (`ImageSliceUniform`, group 1 reused unchanged from the
+    /// render bind group) and write the item's object id. Object-level: the
+    /// primitive channel stays 0. Group 0 is the minimal pick camera, group 2 is
+    /// a per-item object-id uniform. No-op if the image slice render layout has
+    /// not been built yet (no image slices prepared).
+    pub(crate) fn ensure_image_slice_pick_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.pick.image_slice_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        if self.image_slice.bgl.is_none() {
+            return;
+        }
+
+        let pick_id_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("image_slice_pick_id_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let camera_bgl = self
+            .pick
+            .camera_bgl
+            .as_ref()
+            .expect("ensure_pick_pipeline built the pick camera layout");
+        let slice_bgl = self
+            .image_slice
+            .bgl
+            .as_ref()
+            .expect("checked is_some above");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "image_slice_pick_shader",
+            crate::resources::builders::wgsl_source!("image_slice_pick"),
+        );
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "image_slice_pick_pipeline_layout",
+            &[camera_bgl, slice_bgl, &pick_id_bgl],
+        );
+
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "image_slice_pick_pipeline",
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Less,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        );
+
+        self.pick.image_slice_pick_id_bgl = Some(pick_id_bgl);
+        self.pick.image_slice_pipeline = Some(pipeline);
+    }
+
+    /// Build the volume surface slice pick pipeline: reuse the render mesh
+    /// vertex buffer and `VolumeSurfaceSliceUniform` model matrix (group 1
+    /// reused unchanged from the render bind group) and write the item's object
+    /// id. Object-level: the primitive channel stays 0. Group 0 is the minimal
+    /// pick camera, group 2 is a per-item object-id uniform. No-op if the volume
+    /// surface slice render layout has not been built yet.
+    pub(crate) fn ensure_volume_surface_slice_pick_pipeline(
+        &mut self,
+        device: &crate::gpu::Device,
+    ) {
+        if self.pick.volume_surface_slice_pipeline.is_some() {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        if self.volume.surface_slice_bgl.is_none() {
+            return;
+        }
+
+        let pick_id_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("volume_surface_slice_pick_id_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let camera_bgl = self
+            .pick
+            .camera_bgl
+            .as_ref()
+            .expect("ensure_pick_pipeline built the pick camera layout");
+        let slice_bgl = self
+            .volume
+            .surface_slice_bgl
+            .as_ref()
+            .expect("checked is_some above");
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "volume_surface_slice_pick_shader",
+            crate::resources::builders::wgsl_source!("volume_surface_slice_pick"),
+        );
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "volume_surface_slice_pick_pipeline_layout",
+            &[camera_bgl, slice_bgl, &pick_id_bgl],
+        );
+
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "volume_surface_slice_pick_pipeline",
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Less,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        );
+
+        self.pick.volume_surface_slice_pick_id_bgl = Some(pick_id_bgl);
+        self.pick.volume_surface_slice_pipeline = Some(pipeline);
     }
 }
 

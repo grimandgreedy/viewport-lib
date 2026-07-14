@@ -368,6 +368,7 @@ impl DeviceResources {
         PointCloudGpuData {
             vertex_buffer,
             point_count,
+            pick_id: item.settings.pick_id,
             bind_group,
             _uniform_buf: uniform_buf,
             _scalar_buf: scalar_buf,
@@ -557,6 +558,8 @@ pub struct PointCloudGpuData {
     pub(crate) vertex_buffer: crate::gpu::Buffer,
     /// Number of points (= draw count).
     pub(crate) point_count: u32,
+    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
+    pub(crate) pick_id: crate::PickId,
     /// Bind group (group 1): uniform + LUT + sampler + scalar + colour + radius + transparency.
     pub(crate) bind_group: crate::gpu::BindGroup,
     // Keep the buffers alive for the lifetime of this struct.

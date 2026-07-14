@@ -81,6 +81,10 @@ enum PickSubKind {
     /// triangle, mapped to a segment / strip through the item's `tri_segment` /
     /// `tri_strip` tables.
     Curve,
+    /// Point cloud: `instance_index` is the point.
+    CloudPoint,
+    /// Gaussian splat set: `instance_index` is the splat.
+    Splat,
 }
 
 /// One glyph or tensor-glyph set to draw into the pick pass. The group-1 bind
@@ -143,6 +147,45 @@ struct ImplicitPickDraw<'a> {
 struct McPickDraw<'a> {
     id_bind_group: crate::gpu::BindGroup,
     slabs: Vec<(&'a crate::gpu::Buffer, &'a crate::gpu::Buffer)>,
+}
+
+/// One point cloud to draw into the pick pass. The owned group-2 bind group
+/// holds the object id; the group-1 render bind group (uniform + LUT + radius
+/// buffer) and the position buffer are borrowed from prepared
+/// `PointCloudGpuData`.
+struct PointCloudPickDraw<'a> {
+    id_bind_group: crate::gpu::BindGroup,
+    render_bind_group: &'a crate::gpu::BindGroup,
+    vertex_buffer: &'a crate::gpu::Buffer,
+    point_count: u32,
+}
+
+/// One Gaussian splat set to draw into the pick pass. The owned group-2 bind
+/// group holds the object id; the group-1 render bind group (the per-viewport
+/// sorted-index / position / scale / rotation storage buffers) is borrowed
+/// from the splat store's prepared viewport sort.
+struct GaussianSplatPickDraw<'a> {
+    id_bind_group: crate::gpu::BindGroup,
+    render_bind_group: &'a crate::gpu::BindGroup,
+    count: u32,
+}
+
+/// One image slice to draw into the pick pass. The owned group-2 bind group
+/// holds the object id; the group-1 render bind group (`ImageSliceUniform` +
+/// volume texture) is borrowed from prepared `ImageSliceGpuData`.
+struct ImageSlicePickDraw<'a> {
+    id_bind_group: crate::gpu::BindGroup,
+    render_bind_group: &'a crate::gpu::BindGroup,
+}
+
+/// One volume surface slice to draw into the pick pass. The owned group-2 bind
+/// group holds the object id; the group-1 render bind group is borrowed from
+/// prepared `VolumeSurfaceSliceGpuData`; the mesh is resolved against
+/// `mesh_store` at draw time.
+struct VolumeSurfaceSlicePickDraw<'a> {
+    id_bind_group: crate::gpu::BindGroup,
+    render_bind_group: &'a crate::gpu::BindGroup,
+    mesh_id: crate::resources::mesh::mesh_store::MeshId,
 }
 
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
@@ -391,6 +434,57 @@ impl ViewportRenderer {
             && self.mc_gpu_data.iter().any(|m| m.pick_id != PickId::NONE);
         if has_pickable_mc {
             self.resources.ensure_mc_pick_pipeline(device);
+        }
+
+        // Point clouds: each renders as a screen-space quad per point (approach
+        // B), so the pick reuses that expansion. CLOUD_POINT sub-object comes
+        // from the forwarded instance index.
+        let has_pickable_point_clouds = mask.intersects(
+            crate::interaction::select::pick_mask::PickMask::OBJECT
+                | crate::interaction::select::pick_mask::PickMask::CLOUD_POINT,
+        ) && self
+            .point_cloud_gpu_data
+            .iter()
+            .any(|g| g.pick_id != PickId::NONE && g.point_count > 0);
+        if has_pickable_point_clouds {
+            self.resources.ensure_point_cloud_pick_pipeline(device);
+        }
+
+        // Gaussian splats: each renders as an instanced billboard per splat.
+        // Occlusion is resolved by the pick pass's own depth test, so the
+        // existing per-viewport sorted-index buffer (built for back-to-front
+        // render blending) can be reused without re-sorting.
+        let has_pickable_splats = mask.intersects(
+            crate::interaction::select::pick_mask::PickMask::OBJECT
+                | crate::interaction::select::pick_mask::PickMask::SPLAT,
+        ) && self
+            .gaussian_splat_draw_data
+            .iter()
+            .any(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0);
+        if has_pickable_splats {
+            self.resources.ensure_gaussian_splat_pick_pipeline(device);
+        }
+
+        // Image slices and volume surface slices: textured world-space quads.
+        // Object-level only.
+        let has_pickable_image_slices = mask
+            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+            && self
+                .image_slice_gpu_data
+                .iter()
+                .any(|g| g.pick_id != PickId::NONE);
+        if has_pickable_image_slices {
+            self.resources.ensure_image_slice_pick_pipeline(device);
+        }
+        let has_pickable_volume_surface_slices = mask
+            .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
+            && self
+                .volume_surface_slice_gpu_data
+                .iter()
+                .any(|g| g.pick_id != PickId::NONE);
+        if has_pickable_volume_surface_slices {
+            self.resources
+                .ensure_volume_surface_slice_pick_pipeline(device);
         }
 
         // Decals rasterise their projection box (the unit cube mapped by
@@ -884,6 +978,179 @@ impl ViewportRenderer {
             }
         }
 
+        // Point clouds: each item draws its screen-space quad expansion with a
+        // group-2 object-id uniform. The group-1 render bind group (uniform +
+        // LUT + radius buffer) is reused unchanged.
+        let mut point_cloud_draws: Vec<PointCloudPickDraw> = Vec::new();
+        if has_pickable_point_clouds && self.resources.pick.point_cloud_pipeline.is_some() {
+            let id_bgl = self
+                .resources
+                .pick
+                .point_cloud_pick_id_bgl
+                .as_ref()
+                .expect("point cloud pick id bgl built with the pipeline");
+            for gpu in self
+                .point_cloud_gpu_data
+                .iter()
+                .filter(|g| g.pick_id != PickId::NONE && g.point_count > 0)
+            {
+                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("point_cloud_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("point_cloud_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                point_cloud_draws.push(PointCloudPickDraw {
+                    id_bind_group,
+                    render_bind_group: &gpu.bind_group,
+                    vertex_buffer: &gpu.vertex_buffer,
+                    point_count: gpu.point_count,
+                });
+            }
+        }
+
+        // Gaussian splats: each item draws its covariance-projected billboard
+        // expansion with a group-2 object-id uniform. The group-1 render bind
+        // group is the same per-viewport sorted-index bind group the render
+        // path draws with; occlusion is resolved by the pick pass's own depth
+        // test, so the sort order does not matter here.
+        let mut splat_draws: Vec<GaussianSplatPickDraw> = Vec::new();
+        if has_pickable_splats && self.resources.pick.gaussian_splat_pipeline.is_some() {
+            let id_bgl = self
+                .resources
+                .pick
+                .gaussian_splat_pick_id_bgl
+                .as_ref()
+                .expect("gaussian splat pick id bgl built with the pipeline");
+            for dd in self
+                .gaussian_splat_draw_data
+                .iter()
+                .filter(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0)
+            {
+                let Some(set) = self
+                    .resources
+                    .content
+                    .gaussian_splat_store
+                    .get_by_index(dd.store_index)
+                else {
+                    continue;
+                };
+                let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) else {
+                    continue;
+                };
+                let id_data = [dd.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("gaussian_splat_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("gaussian_splat_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                splat_draws.push(GaussianSplatPickDraw {
+                    id_bind_group,
+                    render_bind_group: &vp_sort.render_bg,
+                    count: dd.count,
+                });
+            }
+        }
+
+        // Image slices: each item draws its quad-from-vertex-index expansion
+        // with a group-2 object-id uniform. Object-level only.
+        let mut image_slice_draws: Vec<ImageSlicePickDraw> = Vec::new();
+        if has_pickable_image_slices && self.resources.pick.image_slice_pipeline.is_some() {
+            let id_bgl = self
+                .resources
+                .pick
+                .image_slice_pick_id_bgl
+                .as_ref()
+                .expect("image slice pick id bgl built with the pipeline");
+            for gpu in self
+                .image_slice_gpu_data
+                .iter()
+                .filter(|g| g.pick_id != PickId::NONE)
+            {
+                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("image_slice_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("image_slice_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                image_slice_draws.push(ImageSlicePickDraw {
+                    id_bind_group,
+                    render_bind_group: &gpu.bind_group,
+                });
+            }
+        }
+
+        // Volume surface slices: each item draws its mesh with a group-2
+        // object-id uniform. Object-level only.
+        let mut volume_surface_slice_draws: Vec<VolumeSurfaceSlicePickDraw> = Vec::new();
+        if has_pickable_volume_surface_slices
+            && self.resources.pick.volume_surface_slice_pipeline.is_some()
+        {
+            let id_bgl = self
+                .resources
+                .pick
+                .volume_surface_slice_pick_id_bgl
+                .as_ref()
+                .expect("volume surface slice pick id bgl built with the pipeline");
+            for gpu in self
+                .volume_surface_slice_gpu_data
+                .iter()
+                .filter(|g| g.pick_id != PickId::NONE)
+            {
+                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
+                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("volume_surface_slice_pick_id_buf"),
+                    size: std::mem::size_of_val(&id_data) as u64,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
+                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("volume_surface_slice_pick_id_bg"),
+                    layout: id_bgl,
+                    entries: &[crate::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: id_buf.as_entire_binding(),
+                    }],
+                });
+                volume_surface_slice_draws.push(VolumeSurfaceSlicePickDraw {
+                    id_bind_group,
+                    render_bind_group: &gpu.bind_group,
+                    mesh_id: gpu.mesh_id,
+                });
+            }
+        }
+
         // Registered plugins draw their own pick-ids into the pass. Treat them
         // as object-level: run the pass for them when the mask asks for OBJECT
         // and a plugin has a non-empty collection this frame. Their draws are not
@@ -899,6 +1166,10 @@ impl ViewportRenderer {
             && volume_draws.is_empty()
             && implicit_draws.is_empty()
             && mc_draws.is_empty()
+            && point_cloud_draws.is_empty()
+            && splat_draws.is_empty()
+            && image_slice_draws.is_empty()
+            && volume_surface_slice_draws.is_empty()
             && !has_plugin_pick
         {
             return PickBegin::Miss;
@@ -1255,6 +1526,77 @@ impl ViewportRenderer {
                 }
             }
 
+            // Point clouds: each item draws its screen-space quad expansion.
+            // Group 0 is the full scene camera bind group (the expansion needs
+            // the viewport size); group 1 is the reused render bind group;
+            // group 2 is the per-item object id.
+            if let Some(point_cloud_pipeline) = self.resources.pick.point_cloud_pipeline.as_ref() {
+                if !point_cloud_draws.is_empty() {
+                    pick_pass.set_pipeline(point_cloud_pipeline);
+                    pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                    for pcd in &point_cloud_draws {
+                        pick_pass.set_bind_group(1, pcd.render_bind_group, &[]);
+                        pick_pass.set_bind_group(2, &pcd.id_bind_group, &[]);
+                        pick_pass.set_vertex_buffer(0, pcd.vertex_buffer.slice(..));
+                        pick_pass.draw(0..6, 0..pcd.point_count);
+                    }
+                }
+            }
+
+            // Gaussian splats: each item draws its covariance-projected
+            // billboard expansion. Group 0 is the minimal pick camera; group 1
+            // is the reused per-viewport sorted-index render bind group; group
+            // 2 is the per-item object id.
+            if let Some(splat_pipeline) = self.resources.pick.gaussian_splat_pipeline.as_ref() {
+                if !splat_draws.is_empty() {
+                    pick_pass.set_pipeline(splat_pipeline);
+                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
+                    for sd in &splat_draws {
+                        pick_pass.set_bind_group(1, sd.render_bind_group, &[]);
+                        pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
+                        pick_pass.draw(0..6, 0..sd.count);
+                    }
+                }
+            }
+
+            // Image slices: each item draws its quad-from-vertex-index
+            // expansion. Group 0 is the minimal pick camera; group 1 is the
+            // reused render bind group; group 2 is the per-item object id.
+            if let Some(image_slice_pipeline) = self.resources.pick.image_slice_pipeline.as_ref() {
+                if !image_slice_draws.is_empty() {
+                    pick_pass.set_pipeline(image_slice_pipeline);
+                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
+                    for isd in &image_slice_draws {
+                        pick_pass.set_bind_group(1, isd.render_bind_group, &[]);
+                        pick_pass.set_bind_group(2, &isd.id_bind_group, &[]);
+                        pick_pass.draw(0..6, 0..1);
+                    }
+                }
+            }
+
+            // Volume surface slices: each item draws its mesh. Group 0 is the
+            // minimal pick camera; group 1 is the reused render bind group;
+            // group 2 is the per-item object id.
+            if let Some(vss_pipeline) = self.resources.pick.volume_surface_slice_pipeline.as_ref() {
+                if !volume_surface_slice_draws.is_empty() {
+                    pick_pass.set_pipeline(vss_pipeline);
+                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
+                    for vsd in &volume_surface_slice_draws {
+                        let Some(mesh) = self.resources.mesh_store.get(vsd.mesh_id) else {
+                            continue;
+                        };
+                        pick_pass.set_bind_group(1, vsd.render_bind_group, &[]);
+                        pick_pass.set_bind_group(2, &vsd.id_bind_group, &[]);
+                        pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pick_pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            crate::gpu::IndexFormat::Uint32,
+                        );
+                        pick_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    }
+                }
+            }
+
             // Item-type plugins render their own pick-ids last. They build their
             // pipelines against the full shared group-0 layout, so bind the full
             // camera bind group (the same one the sprite draws use) before
@@ -1605,6 +1947,20 @@ impl ViewportRenderer {
                     None
                 }
             }
+            PickSubKind::CloudPoint => {
+                if mask.intersects(PickMask::CLOUD_POINT) {
+                    Some(SubObjectRef::Point(sub_primitive))
+                } else {
+                    None
+                }
+            }
+            PickSubKind::Splat => {
+                if mask.intersects(PickMask::SPLAT) {
+                    Some(SubObjectRef::Splat(sub_primitive))
+                } else {
+                    None
+                }
+            }
             PickSubKind::Surface => self.resolve_surface_sub_object(
                 object_id,
                 sub_primitive,
@@ -1767,6 +2123,24 @@ impl ViewportRenderer {
             .filter(|g| g.pick_id != PickId::NONE && g.segment_count > 0)
         {
             kinds.insert(gpu.pick_id.0, PickSubKind::Polyline);
+        }
+
+        // Point clouds.
+        for gpu in self
+            .point_cloud_gpu_data
+            .iter()
+            .filter(|g| g.pick_id != PickId::NONE && g.point_count > 0)
+        {
+            kinds.insert(gpu.pick_id.0, PickSubKind::CloudPoint);
+        }
+
+        // Gaussian splat sets.
+        for dd in self
+            .gaussian_splat_draw_data
+            .iter()
+            .filter(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0)
+        {
+            kinds.insert(dd.pick_id.0, PickSubKind::Splat);
         }
 
         kinds

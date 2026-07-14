@@ -896,6 +896,8 @@ pub(crate) struct ImageSliceGpuData {
     pub(crate) bind_group: crate::gpu::BindGroup,
     // Keep buffers/samplers alive.
     pub(crate) _uniform_buf: crate::gpu::Buffer,
+    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
+    pub(crate) pick_id: crate::renderer::PickId,
 }
 
 /// Per-frame GPU data for one volume surface slice item, created in `prepare()`.
@@ -906,4 +908,6 @@ pub(crate) struct VolumeSurfaceSliceGpuData {
     pub(crate) _uniform_buf: crate::gpu::Buffer,
     /// Mesh to draw (vertex + index buffers looked up from mesh_store at render time).
     pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
+    pub(crate) pick_id: crate::renderer::PickId,
 }

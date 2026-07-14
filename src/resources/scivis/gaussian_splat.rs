@@ -1277,6 +1277,8 @@ pub(crate) struct GaussianSplatDrawData {
     pub count: u32,
     /// When true, skip the splat rasterization draw; a wireframe polyline overlay is rendered instead.
     pub wireframe: bool,
+    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
+    pub pick_id: crate::PickId,
 }
 
 /// Slotted store for Gaussian splat sets with generational handles.
