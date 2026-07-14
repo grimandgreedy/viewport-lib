@@ -1076,11 +1076,7 @@ impl crate::resources::DeviceResources {
                 );
                 let emit_params =
                     build_emit_params(&item.emitter, capacity, spawn_count, system.frame_counter);
-                queue.write_buffer(
-                    &system.emit_params_buf,
-                    0,
-                    bytemuck::bytes_of(&emit_params),
-                );
+                queue.write_buffer(&system.emit_params_buf, 0, bytemuck::bytes_of(&emit_params));
             }
             let sim_params = build_sim_params(item.time_step, capacity, &item.forces);
             queue.write_buffer(&system.sim_params_buf, 0, bytemuck::bytes_of(&sim_params));
