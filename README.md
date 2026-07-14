@@ -149,29 +149,14 @@ orbit.begin_frame(ViewportContext { hovered, focused, viewport_size: [width, hei
 
 ## wgpu version
 
-viewport-lib takes a wgpu device (and, in the eframe paint-callback path, a
-render pass) from the GUI host, so its wgpu version has to match the host's.
-The ecosystem does not agree on one version, so viewport-lib compiles against a
-small window of wgpu versions picked by mutually exclusive cargo features.
-Exactly one must be enabled; enabling zero or both is a build error.
+viewport-lib's wgpu version must match the GUI host's, so it ships mutually
+exclusive cargo features, one per supported wgpu version. Select one with
+`default-features = false, features = ["serde", "wgpu29"]`.
 
 | Feature | wgpu | GUI hosts on this version |
 | --- | --- | --- |
 | `wgpu27` (default) | 27 | iced 0.14 |
 | `wgpu29` | 29 | egui/eframe 0.35, Slint, Bevy |
-
-The default is `wgpu27`, so existing consumers build unchanged. To build against
-a wgpu 29 host, turn the default off and select the 29 leg:
-
-```toml
-[dependencies]
-viewport-lib = { version = "...", default-features = false, features = ["serde", "wgpu29"] }
-```
-
-Only the enabled version's wgpu is compiled; the other is not built, so binary
-size is unchanged. Bridge hosts that take finished pixels rather than sharing a
-device (for example the gtk4 example) never constrain the version. The window is
-{27, 29} today and slides as egui, iced, Slint, and Bevy move.
 
 ## License
 
