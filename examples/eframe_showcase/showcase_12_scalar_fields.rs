@@ -322,7 +322,12 @@ fn make_wave_grid(cols: u32, rows: u32, size: f32) -> (MeshData, Vec<f32>) {
             let wave = (x * 1.2).sin() * (y * 1.0).cos();
             let z = wave * 0.5; // slight height displacement
             positions.push([x, y, z]);
-            normals.push([0.0, 0.0, 1.0]); // approximate flat normals
+            // Analytical normal from the height gradient: z = 0.5 sin(1.2x) cos(y),
+            // so dz/dx = 0.6 cos(1.2x) cos(y) and dz/dy = -0.5 sin(1.2x) sin(y).
+            let dzdx = 0.6 * (x * 1.2).cos() * (y * 1.0).cos();
+            let dzdy = -0.5 * (x * 1.2).sin() * (y * 1.0).sin();
+            let n = glam::Vec3::new(-dzdx, -dzdy, 1.0).normalize();
+            normals.push([n.x, n.y, n.z]);
             scalars.push(wave);
         }
     }
