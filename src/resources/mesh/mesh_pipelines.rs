@@ -708,6 +708,65 @@ pub(crate) fn build_hdr_instanced_mesh_pipelines(
     }
 }
 
+/// Opaque solid + two-sided pipeline pair from an already-built module.
+/// Matches the `solid` / `solid_two_sided` entries of
+/// `build_ldr_instanced_mesh_pipelines` / `build_hdr_instanced_mesh_pipelines`
+/// (no blend, depth write on, `Less`); used for the discard-free twins of the
+/// lit instanced pipelines.
+pub(crate) fn build_instanced_solid_pipelines(
+    device: &crate::gpu::Device,
+    layout: &crate::gpu::PipelineLayout,
+    shader: &crate::gpu::ShaderModule,
+    format: crate::gpu::TextureFormat,
+    sample_count: u32,
+    label_solid: &str,
+    label_two_sided: &str,
+) -> (crate::gpu::RenderPipeline, crate::gpu::RenderPipeline) {
+    let make = |label: &str, cull: Option<crate::gpu::Face>| {
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label,
+                layout,
+                vertex: crate::gpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::buffer_layout()],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: crate::gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    cull_mode: cull,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Less,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        )
+    };
+    (
+        make(label_solid, Some(crate::gpu::Face::Back)),
+        make(label_two_sided, None),
+    )
+}
+
 /// GPU-cull HDR solid pipeline: same as the HDR solid instanced pipeline
 /// but using `vs_main_cull` so the compute pass can write
 /// visibility indices.
@@ -741,7 +800,7 @@ pub(crate) fn build_hdr_instanced_cull_two_sided_pipeline(
     )
 }
 
-fn build_hdr_instanced_cull_pipeline_with(
+pub(crate) fn build_hdr_instanced_cull_pipeline_with(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,

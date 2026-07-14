@@ -28,6 +28,11 @@ pub(crate) struct InstancedBatch {
     /// must sample the albedo alpha and discard cut-out fragments instead of
     /// casting a solid silhouette.
     pub is_cutout: bool,
+    /// `true` when ANY textured item in the batch is `AlphaMode::Mask` (the
+    /// batch key does not include alpha mode, so items can mix). Gates the
+    /// discard-free early-Z pipeline: a batch with a masked instance must keep
+    /// the full shader so the per-fragment alpha discard still runs.
+    pub has_alpha_mask: bool,
 }
 
 mod clip;
@@ -239,10 +244,22 @@ macro_rules! emit_draw_calls {
                             &resources.instancing.solid_pipeline,
                             &resources.instancing.solid_two_sided_pipeline,
                         ) {
+                            // Early-Z fast path: discard-free pipeline twin for
+                            // opaque batches when no clip object or alpha-mask
+                            // instance can discard this frame.
+                            let clipping_active = frame
+                                .effects
+                                .clip_objects
+                                .iter()
+                                .any(|o| o.enabled && o.clip_geometry);
+                            let nodiscard_pipes = (
+                                resources.instancing.solid_nodiscard_pipeline.as_ref(),
+                                resources.instancing.solid_two_sided_nodiscard_pipeline.as_ref(),
+                            );
                             render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
                             // Batches are sorted with two_sided in the key, so one- and
                             // two-sided runs are contiguous; switch pipeline on change.
-                            let mut cur_two_sided: Option<bool> = None;
+                            let mut cur_pipe: Option<(bool, bool)> = None;
                             for batch in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
@@ -252,9 +269,18 @@ macro_rules! emit_draw_calls {
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
                                 let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
-                                if cur_two_sided != Some(batch.two_sided) {
-                                    render_pass.set_pipeline(if batch.two_sided { pipeline_two_sided } else { pipeline });
-                                    cur_two_sided = Some(batch.two_sided);
+                                let no_discard = !clipping_active
+                                    && !batch.has_alpha_mask
+                                    && nodiscard_pipes.0.is_some()
+                                    && nodiscard_pipes.1.is_some();
+                                if cur_pipe != Some((batch.two_sided, no_discard)) {
+                                    render_pass.set_pipeline(match (no_discard, batch.two_sided) {
+                                        (true, true) => nodiscard_pipes.1.unwrap(),
+                                        (true, false) => nodiscard_pipes.0.unwrap(),
+                                        (false, true) => pipeline_two_sided,
+                                        (false, false) => pipeline,
+                                    });
+                                    cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));

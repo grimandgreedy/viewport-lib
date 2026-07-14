@@ -1157,12 +1157,18 @@ impl DeviceResources {
         // `ensure_cull_instance_pipelines` have run.
         if let Some(base) = lookup_source("mesh_instanced.wgsl") {
             let composed = compose_shader(base, &registrations);
+            let src = crate::resources::builders::strip_mesh_discards(
+                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+            );
             let shader = crate::resources::builders::wgsl_module(
                 device,
                 "mesh_instanced_shader_composed",
-                crate::resources::builders::strip_mesh_discards(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
+                src.as_ref(),
+            );
+            let shader_nodiscard = crate::resources::builders::wgsl_module(
+                device,
+                "mesh_instanced_shader_composed_nodiscard",
+                crate::resources::builders::strip_discards(&src),
             );
 
             if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
@@ -1185,6 +1191,18 @@ impl DeviceResources {
                     self.instancing.solid_pipeline = Some(ldr.solid);
                     self.instancing.solid_two_sided_pipeline = Some(ldr.solid_two_sided);
                     self.instancing.transparent_pipeline = Some(ldr.transparent);
+                    let (nd, nd_two_sided) =
+                        crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
+                            device,
+                            &layout,
+                            &shader_nodiscard,
+                            self.target_format,
+                            self.sample_count,
+                            "solid_instanced_nodiscard_pipeline",
+                            "solid_two_sided_instanced_nodiscard_pipeline",
+                        );
+                    self.instancing.solid_nodiscard_pipeline = Some(nd);
+                    self.instancing.solid_two_sided_nodiscard_pipeline = Some(nd_two_sided);
                 }
                 if self.instancing.hdr_solid_pipeline.is_some() {
                     let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
@@ -1203,6 +1221,18 @@ impl DeviceResources {
                     self.instancing.hdr_transparent_pipeline = Some(hdr.transparent);
                     self.instancing.hdr_additive_pipeline = Some(hdr.additive);
                     self.instancing.hdr_premultiplied_pipeline = Some(hdr.premultiplied);
+                    let (nd, nd_two_sided) =
+                        crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
+                            device,
+                            &layout,
+                            &shader_nodiscard,
+                            crate::gpu::TextureFormat::Rgba16Float,
+                            1,
+                            "hdr_instanced_solid_nodiscard_pipeline",
+                            "hdr_instanced_solid_two_sided_nodiscard_pipeline",
+                        );
+                    self.instancing.hdr_solid_nodiscard_pipeline = Some(nd);
+                    self.instancing.hdr_solid_two_sided_nodiscard_pipeline = Some(nd_two_sided);
                 }
             }
             if let Some(cull_bgl) = self.cull.bind_group_layout.as_ref() {
@@ -1224,6 +1254,24 @@ impl DeviceResources {
                             device, &layout, &shader,
                         );
                     self.cull.hdr_solid_two_sided_pipeline = Some(pl_two_sided);
+                    self.cull.hdr_solid_nodiscard_pipeline = Some(
+                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
+                            device,
+                            &layout,
+                            &shader_nodiscard,
+                            "hdr_solid_instanced_cull_nodiscard_pipeline",
+                            Some(crate::gpu::Face::Back),
+                        ),
+                    );
+                    self.cull.hdr_solid_two_sided_nodiscard_pipeline = Some(
+                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
+                            device,
+                            &layout,
+                            &shader_nodiscard,
+                            "hdr_solid_instanced_cull_two_sided_nodiscard_pipeline",
+                            None,
+                        ),
+                    );
                 }
             }
         }

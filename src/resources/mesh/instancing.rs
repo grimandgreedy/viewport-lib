@@ -23,6 +23,12 @@ pub(crate) struct InstancingResources {
     /// Two-sided (`cull_mode: None`) variant of `solid_pipeline` for
     /// `Identical` backface-policy meshes.
     pub(crate) solid_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Discard-free twin of `solid_pipeline`, selected for opaque batches
+    /// when no clip planes, clip volumes, or alpha-mask instances are active
+    /// so hardware early depth rejection stays available.
+    pub(crate) solid_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Two-sided variant of `solid_nodiscard_pipeline`.
+    pub(crate) solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Instanced transparent render pipeline (TriangleList, alpha blending).
     pub(crate) transparent_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Instanced shadow render pipeline (depth-only).
@@ -45,6 +51,11 @@ pub(crate) struct InstancingResources {
     /// Two-sided (`cull_mode: None`) variant of `hdr_solid_pipeline`
     /// for `Identical` backface-policy meshes (direct draw path).
     pub(crate) hdr_solid_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Discard-free twin of `hdr_solid_pipeline` (early-Z fast path; see
+    /// `solid_nodiscard_pipeline`).
+    pub(crate) hdr_solid_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Two-sided variant of `hdr_solid_nodiscard_pipeline`.
+    pub(crate) hdr_solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) hdr_transparent_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Instanced HDR pipeline with additive blend, no depth write. Used by
     /// `MeshInstanceItem` batches that opt into [`SpriteBlend::Additive`].
@@ -74,6 +85,11 @@ pub(crate) struct CullResources {
     /// Two-sided (`cull_mode: None`) variant of `hdr_solid_pipeline`
     /// for `Identical` backface-policy meshes (indirect draw path).
     pub(crate) hdr_solid_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Discard-free twin of `hdr_solid_pipeline` (early-Z fast path; see
+    /// `InstancingResources::solid_nodiscard_pipeline`).
+    pub(crate) hdr_solid_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Two-sided variant of `hdr_solid_nodiscard_pipeline`.
+    pub(crate) hdr_solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
     /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
     pub(crate) oit_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
@@ -92,6 +108,31 @@ pub(crate) struct CullResources {
 }
 
 impl DeviceResources {
+    /// Compose the lit instanced shader with the current deform registrations
+    /// and debug-vis state, returning the module plus its discard-free twin
+    /// (see `builders::strip_discards` for why the twin exists).
+    fn instanced_shader_modules(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+    ) -> (crate::gpu::ShaderModule, crate::gpu::ShaderModule) {
+        let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"));
+        let composed = crate::resources::mesh_sidecar::registry::compose_shader(
+            base,
+            &self.deform.registrations,
+        );
+        let source = crate::resources::builders::strip_mesh_discards(
+            crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+        );
+        let module = crate::resources::builders::wgsl_module(device, label, source.as_ref());
+        let nodiscard = crate::resources::builders::wgsl_module(
+            device,
+            &format!("{label}_nodiscard"),
+            crate::resources::builders::strip_discards(&source),
+        );
+        (module, nodiscard)
+    }
+
     /// Ensure the instanced pipelines and bind group layout are created.
     /// Called lazily when the instanced draw path is first needed.
     pub(crate) fn ensure_instanced_pipelines(&mut self, device: &crate::gpu::Device) {
@@ -165,21 +206,10 @@ impl DeviceResources {
                 ],
             });
 
-        // Instanced mesh shader.
-        let instanced_shader = {
-            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"));
-            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
-                &self.deform.registrations,
-            );
-            crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_shader",
-                crate::resources::builders::strip_mesh_discards(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
-            )
-        };
+        // Instanced mesh shader (plus its discard-free twin for the early-Z
+        // fast path).
+        let (instanced_shader, instanced_shader_nodiscard) =
+            self.instanced_shader_modules(device, "mesh_instanced_shader");
 
         let instanced_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
@@ -200,6 +230,16 @@ impl DeviceResources {
         let solid_instanced = ldr_inst.solid;
         let solid_two_sided_instanced = ldr_inst.solid_two_sided;
         let transparent_instanced = ldr_inst.transparent;
+        let (solid_nodiscard, solid_two_sided_nodiscard) =
+            crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
+                device,
+                &instanced_layout,
+                &instanced_shader_nodiscard,
+                self.target_format,
+                self.sample_count,
+                "solid_instanced_nodiscard_pipeline",
+                "solid_two_sided_instanced_nodiscard_pipeline",
+            );
 
         // Shadow instanced pipeline.
         let shadow_instanced_shader = crate::resources::builders::wgsl_module(
@@ -351,6 +391,8 @@ impl DeviceResources {
         self.instancing.bind_group_layout = Some(instance_bgl);
         self.instancing.solid_pipeline = Some(solid_instanced);
         self.instancing.solid_two_sided_pipeline = Some(solid_two_sided_instanced);
+        self.instancing.solid_nodiscard_pipeline = Some(solid_nodiscard);
+        self.instancing.solid_two_sided_nodiscard_pipeline = Some(solid_two_sided_nodiscard);
         self.instancing.transparent_pipeline = Some(transparent_instanced);
         self.instancing.shadow_pipeline = Some(shadow_instanced);
         self.instancing.shadow_two_sided_pipeline = Some(shadow_instanced_two_sided);
@@ -374,20 +416,8 @@ impl DeviceResources {
             return;
         };
 
-        let inst_shader = {
-            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"));
-            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
-                &self.deform.registrations,
-            );
-            crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_shader_hdr",
-                crate::resources::builders::strip_mesh_discards(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
-            )
-        };
+        let (inst_shader, inst_shader_nodiscard) =
+            self.instanced_shader_modules(device, "mesh_instanced_shader_hdr");
         let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_pipeline_layout",
@@ -402,8 +432,21 @@ impl DeviceResources {
             &inst_layout,
             &inst_shader,
         );
+        let (hdr_solid_nodiscard, hdr_solid_two_sided_nodiscard) =
+            crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
+                device,
+                &inst_layout,
+                &inst_shader_nodiscard,
+                crate::gpu::TextureFormat::Rgba16Float,
+                1,
+                "hdr_instanced_solid_nodiscard_pipeline",
+                "hdr_instanced_solid_two_sided_nodiscard_pipeline",
+            );
         self.instancing.hdr_solid_pipeline = Some(hdr_inst.solid);
         self.instancing.hdr_solid_two_sided_pipeline = Some(hdr_inst.solid_two_sided);
+        self.instancing.hdr_solid_nodiscard_pipeline = Some(hdr_solid_nodiscard);
+        self.instancing.hdr_solid_two_sided_nodiscard_pipeline =
+            Some(hdr_solid_two_sided_nodiscard);
         self.instancing.hdr_transparent_pipeline = Some(hdr_inst.transparent);
         self.instancing.hdr_additive_pipeline = Some(hdr_inst.additive);
         self.instancing.hdr_premultiplied_pipeline = Some(hdr_inst.premultiplied);
@@ -655,20 +698,8 @@ impl DeviceResources {
         });
 
         // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
-        let instanced_shader = {
-            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"));
-            let composed = crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
-                &self.deform.registrations,
-            );
-            crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_shader_cull",
-                crate::resources::builders::strip_mesh_discards(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
-            )
-        };
+        let (instanced_shader, instanced_shader_nodiscard) =
+            self.instanced_shader_modules(device, "mesh_instanced_shader_cull");
         let inst_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_cull_pipeline_layout",
@@ -689,6 +720,22 @@ impl DeviceResources {
                 device,
                 &inst_cull_layout,
                 &instanced_shader,
+            );
+        let hdr_solid_cull_nodiscard =
+            crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
+                device,
+                &inst_cull_layout,
+                &instanced_shader_nodiscard,
+                "hdr_solid_instanced_cull_nodiscard_pipeline",
+                Some(crate::gpu::Face::Back),
+            );
+        let hdr_solid_cull_two_sided_nodiscard =
+            crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
+                device,
+                &inst_cull_layout,
+                &instanced_shader_nodiscard,
+                "hdr_solid_instanced_cull_two_sided_nodiscard_pipeline",
+                None,
             );
 
         // OIT cull pipeline: Rgba16Float + R8Unorm targets, vs_main_cull, no depth write.
@@ -723,6 +770,8 @@ impl DeviceResources {
 
         self.cull.hdr_solid_pipeline = Some(hdr_solid_cull);
         self.cull.hdr_solid_two_sided_pipeline = Some(hdr_solid_cull_two_sided);
+        self.cull.hdr_solid_nodiscard_pipeline = Some(hdr_solid_cull_nodiscard);
+        self.cull.hdr_solid_two_sided_nodiscard_pipeline = Some(hdr_solid_cull_two_sided_nodiscard);
         self.cull.oit_pipeline = Some(oit_cull);
 
         // Shadow instanced cull pipeline.

@@ -86,7 +86,43 @@ pub(crate) fn strip_mesh_discards<'a>(
              discard (clip planes, clip volumes, and alpha mask are no-ops)"
         );
     });
-    std::borrow::Cow::Owned(source.replace("discard;", "/* discard stripped */"))
+    std::borrow::Cow::Owned(strip_discards(&source))
+}
+
+/// Remove every `discard;` statement from a WGSL source.
+///
+/// A fragment shader containing `discard` restricts hardware early depth
+/// rejection for every pipeline compiled from it, even when the discard is
+/// behind a uniform branch that never fires: the classification is made per
+/// pipeline at compile time from static shader properties. The lit instanced
+/// pipelines are therefore built twice, once from the full source and once
+/// from this discard-free twin; the draw loop picks the twin for opaque
+/// batches whenever the frame has no active clip planes or clip volumes and
+/// the batch carries no alpha-mask instances, which restores early-Z on the
+/// common fully-opaque path with identical output.
+pub(crate) fn strip_discards(source: &str) -> String {
+    // Token-boundary check: composed sources include consumer-supplied
+    // deformer bodies, and a bare substring replace would corrupt an
+    // identifier like `should_discard;`. A missed strip is only a lost
+    // early-Z opportunity, never a correctness problem, so err toward
+    // keeping anything that is not exactly the statement `discard;`.
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(pos) = rest.find("discard;") {
+        let boundary_ok = rest[..pos]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        out.push_str(&rest[..pos]);
+        if boundary_ok {
+            out.push_str("/* discard stripped */");
+        } else {
+            out.push_str("discard;");
+        }
+        rest = &rest[pos + "discard;".len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Embed a WGSL file baked into `OUT_DIR` by `build.rs`, by base name (no
@@ -810,5 +846,35 @@ mod strip_debug_vis_tests {
                 "{name}: debug variant lost the write"
             );
         }
+    }
+
+    /// The discard-free twin of the lit instanced shader must lose every
+    /// `discard` statement (any survivor silently forfeits the early-Z win),
+    /// while identifiers that merely end in "discard" survive untouched:
+    /// composed sources include consumer-supplied deformer bodies, and a
+    /// substring replace would corrupt them.
+    #[test]
+    fn strips_discard_statements_but_not_identifiers() {
+        let src = super::wgsl_source!("mesh_instanced");
+        assert!(
+            src.contains("discard;"),
+            "baked mesh_instanced source has no discard; sites moved?"
+        );
+        let stripped = super::strip_discards(src);
+        assert!(
+            !stripped.contains("discard;"),
+            "discard-free twin still contains a discard statement"
+        );
+
+        let consumer = "let should_discard;\n    if x { discard; }\n";
+        let stripped = super::strip_discards(consumer);
+        assert!(
+            stripped.contains("should_discard;"),
+            "identifier ending in discard was corrupted: {stripped}"
+        );
+        assert!(
+            !stripped.contains("{ discard;"),
+            "real discard statement survived: {stripped}"
+        );
     }
 }

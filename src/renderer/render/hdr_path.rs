@@ -515,12 +515,29 @@ impl ViewportRenderer {
                             && resources.cull.hdr_solid_pipeline.is_some()
                             && cull0.indirect_args_buf.is_some();
 
+                        // Early-Z fast path: when no clip object can discard a
+                        // fragment this frame, opaque batches without alpha-mask
+                        // instances draw with the discard-free pipeline twin so
+                        // hidden fragments are depth-rejected before shading.
+                        let clipping_active = frame
+                            .effects
+                            .clip_objects
+                            .iter()
+                            .any(|o| o.enabled && o.clip_geometry);
+
                         if use_indirect {
                             if let (Some(pipeline), Some(pipeline_two_sided), Some(indirect_buf)) = (
                                 &resources.cull.hdr_solid_pipeline,
                                 &resources.cull.hdr_solid_two_sided_pipeline,
                                 &cull0.indirect_args_buf,
                             ) {
+                                let nodiscard_pipes = (
+                                    resources.cull.hdr_solid_nodiscard_pipeline.as_ref(),
+                                    resources
+                                        .cull
+                                        .hdr_solid_two_sided_nodiscard_pipeline
+                                        .as_ref(),
+                                );
                                 render_pass.set_bind_group(
                                     2,
                                     &resources.deform.dummy_bind_group,
@@ -529,7 +546,7 @@ impl ViewportRenderer {
                                 // Batches are sorted with two_sided in the key, so
                                 // one- and two-sided runs are contiguous; switch the
                                 // pipeline only when the flag changes.
-                                let mut cur_two_sided: Option<bool> = None;
+                                let mut cur_pipe: Option<(bool, bool)> = None;
                                 for (batch_global_idx, batch) in &opaque_batches {
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
@@ -544,13 +561,20 @@ impl ViewportRenderer {
                                     else {
                                         continue;
                                     };
-                                    if cur_two_sided != Some(batch.two_sided) {
-                                        render_pass.set_pipeline(if batch.two_sided {
-                                            pipeline_two_sided
-                                        } else {
-                                            pipeline
-                                        });
-                                        cur_two_sided = Some(batch.two_sided);
+                                    let no_discard = !clipping_active
+                                        && !batch.has_alpha_mask
+                                        && nodiscard_pipes.0.is_some()
+                                        && nodiscard_pipes.1.is_some();
+                                    if cur_pipe != Some((batch.two_sided, no_discard)) {
+                                        render_pass.set_pipeline(
+                                            match (no_discard, batch.two_sided) {
+                                                (true, true) => nodiscard_pipes.1.unwrap(),
+                                                (true, false) => nodiscard_pipes.0.unwrap(),
+                                                (false, true) => pipeline_two_sided,
+                                                (false, false) => pipeline,
+                                            },
+                                        );
+                                        cur_pipe = Some((batch.two_sided, no_discard));
                                     }
                                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -570,8 +594,15 @@ impl ViewportRenderer {
                             &resources.instancing.hdr_solid_pipeline,
                             &resources.instancing.hdr_solid_two_sided_pipeline,
                         ) {
+                            let nodiscard_pipes = (
+                                resources.instancing.hdr_solid_nodiscard_pipeline.as_ref(),
+                                resources
+                                    .instancing
+                                    .hdr_solid_two_sided_nodiscard_pipeline
+                                    .as_ref(),
+                            );
                             render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
-                            let mut cur_two_sided: Option<bool> = None;
+                            let mut cur_pipe: Option<(bool, bool)> = None;
                             for (_, batch) in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
@@ -586,13 +617,18 @@ impl ViewportRenderer {
                                 else {
                                     continue;
                                 };
-                                if cur_two_sided != Some(batch.two_sided) {
-                                    render_pass.set_pipeline(if batch.two_sided {
-                                        pipeline_two_sided
-                                    } else {
-                                        pipeline
+                                let no_discard = !clipping_active
+                                    && !batch.has_alpha_mask
+                                    && nodiscard_pipes.0.is_some()
+                                    && nodiscard_pipes.1.is_some();
+                                if cur_pipe != Some((batch.two_sided, no_discard)) {
+                                    render_pass.set_pipeline(match (no_discard, batch.two_sided) {
+                                        (true, true) => nodiscard_pipes.1.unwrap(),
+                                        (true, false) => nodiscard_pipes.0.unwrap(),
+                                        (false, true) => pipeline_two_sided,
+                                        (false, false) => pipeline,
                                     });
-                                    cur_two_sided = Some(batch.two_sided);
+                                    cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
