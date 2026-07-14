@@ -957,6 +957,8 @@ impl eframe::App for App {
                             if (drag_end - drag_start).length() > 4.0 {
                                 let shift = self.pl_state.shift_held;
                                 if self.pl_state.unified_mode {
+                                    let device = self.device.clone();
+                                    let queue = self.queue.clone();
                                     let pick_frame =
                                         showcase_33_picking_levels::pl_build_pick_frame(
                                             self,
@@ -974,6 +976,8 @@ impl eframe::App for App {
                                             drag_end,
                                             shift,
                                             renderer,
+                                            &device,
+                                            &queue,
                                             &pick_frame,
                                         );
                                     }

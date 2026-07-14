@@ -145,20 +145,32 @@ impl ViewportRenderer {
     /// Pick every object touching the rect, running `backend` and returning a
     /// [`PickRectResult`].
     ///
-    /// The GPU backend for rect picking is not implemented yet, so `Gpu` runs the
-    /// CPU rect pick for now. `Cpu` is the same as calling [`pick_rect`](Self::pick_rect).
+    /// The GPU backend is object-level only: it reads back the id region within
+    /// the rect and collects the unique object ids, but does not decode the
+    /// primitive channel into sub-object identity (that would mean resolving
+    /// face / cell / vertex / instance per pixel over the whole rect). A mask
+    /// with no `OBJECT` bit gets an empty result from the GPU backend rather
+    /// than a silent reinterpretation of what it asked for; use `Cpu` for
+    /// sub-object rect selection. `Cpu` is the same as calling
+    /// [`pick_rect`](Self::pick_rect).
     pub fn pick_rect_objects(
         &mut self,
         backend: PickBackend,
         rect_min: glam::Vec2,
         rect_max: glam::Vec2,
         frame: &FrameData,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
         mask: crate::interaction::select::pick_mask::PickMask,
     ) -> PickRectResult {
-        let _ = backend;
-        let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
-        let view_proj = frame.camera.render_camera.view_proj();
-        self.pick_rect(rect_min, rect_max, viewport_size, view_proj, mask)
+        match backend {
+            PickBackend::Cpu => {
+                let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
+                let view_proj = frame.camera.render_camera.view_proj();
+                self.pick_rect(rect_min, rect_max, viewport_size, view_proj, mask)
+            }
+            PickBackend::Gpu => self.pick_rect_gpu(device, queue, rect_min, rect_max, frame, mask),
+        }
     }
 }
 

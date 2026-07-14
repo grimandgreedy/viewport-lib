@@ -2067,3 +2067,53 @@ fn gpu_pick_hits_volume_surface_slice() {
     );
     assert_eq!(hit.map(|h| h.id), Some(333));
 }
+
+#[test]
+fn gpu_pick_rect_returns_unique_object_ids() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(654);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // A rect spanning the whole 64x64 frame should touch the centred box.
+    let result = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(0.0, 0.0),
+        glam::Vec2::new(64.0, 64.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(result.objects, vec![654]);
+    assert!(
+        result.elements.is_empty(),
+        "GPU rect pick is object-level only"
+    );
+
+    // A mask with no OBJECT bit gets an empty result rather than a
+    // reinterpreted one.
+    let empty = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(0.0, 0.0),
+        glam::Vec2::new(64.0, 64.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::FACE,
+    );
+    assert!(empty.is_empty());
+}

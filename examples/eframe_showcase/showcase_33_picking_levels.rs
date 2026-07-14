@@ -1424,16 +1424,17 @@ impl App {
     }
 
     /// Handle a rubber-band box selection using renderer.pick_rect_objects()
-    /// with the active PickMask and backend. GPU rect picking is not
-    /// implemented yet, so the Gpu backend falls back to the CPU rect pick
-    /// internally; the call is still routed through the backend-choosing entry
-    /// point so the UI toggle reflects the real API surface.
+    /// with the active PickMask and backend. The GPU backend is object-level
+    /// only (it never returns `elements`), so sub-object rect selection still
+    /// needs the CPU backend.
     pub(crate) fn handle_pl_unified_box_select(
         &mut self,
         rect_min: glam::Vec2,
         rect_max: glam::Vec2,
         shift: bool,
         renderer: &mut ViewportRenderer,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
         frame: &FrameData,
     ) {
         let r_min = glam::Vec2::new(rect_min.x.min(rect_max.x), rect_min.y.min(rect_max.y));
@@ -1445,7 +1446,8 @@ impl App {
 
         let mask = self.pl_state.unified_mask.to_pick_mask();
         let backend = self.pl_state.pick_backend;
-        let result: PickRectResult = renderer.pick_rect_objects(backend, r_min, r_max, frame, mask);
+        let result: PickRectResult =
+            renderer.pick_rect_objects(backend, r_min, r_max, frame, device, queue, mask);
 
         for id in &result.objects {
             self.pl_state.selection.add(*id);

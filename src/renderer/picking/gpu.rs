@@ -202,6 +202,243 @@ enum PickGeom<'a> {
     },
 }
 
+/// Which types have pickable geometry this frame, plus the shared proxy mesh
+/// handles resolved while ensuring their pick pipelines. Computed by
+/// [`ViewportRenderer::ensure_pick_pipelines`], a `&mut self` step that must
+/// finish (and drop its mutable borrow) before
+/// [`ViewportRenderer::build_pick_draws`] borrows `self` immutably to build
+/// the draw lists; splitting the two keeps `build_pick_draws`'s borrow shared,
+/// so the point and rect pick passes can call further `&self` helpers
+/// (instance/camera bind groups, draw recording) while the returned
+/// `PickDrawSet` is still alive.
+struct PickPipelineFlags {
+    has_pickable_glyphs: bool,
+    has_pickable_tensor: bool,
+    has_pickable_sprites: bool,
+    has_pickable_polylines: bool,
+    has_pickable_volumes: bool,
+    has_pickable_implicit: bool,
+    has_pickable_mc: bool,
+    has_pickable_point_clouds: bool,
+    has_pickable_splats: bool,
+    has_pickable_image_slices: bool,
+    has_pickable_volume_surface_slices: bool,
+    decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
+    scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
+    scatter_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
+}
+
+/// Every pick pipeline's draw list plus the sub-object decode map, built once
+/// per query and shared by the point and rect pick passes. Building this is
+/// query-shape-agnostic: it does not know whether the caller wants a single
+/// pixel or a whole rect region back, only which types answer `mask`.
+struct PickDrawSet<'a> {
+    draws: Vec<(PickGeom<'a>, PickInstance)>,
+    glyph_draws: Vec<GlyphPickDraw<'a>>,
+    sprite_draws: Vec<SpritePickDraw<'a>>,
+    polyline_draws: Vec<PolylinePickDraw<'a>>,
+    volume_draws: Vec<VolumePickDraw<'a>>,
+    implicit_draws: Vec<ImplicitPickDraw<'a>>,
+    mc_draws: Vec<McPickDraw<'a>>,
+    point_cloud_draws: Vec<PointCloudPickDraw<'a>>,
+    splat_draws: Vec<GaussianSplatPickDraw<'a>>,
+    image_slice_draws: Vec<ImageSlicePickDraw<'a>>,
+    volume_surface_slice_draws: Vec<VolumeSurfaceSlicePickDraw<'a>>,
+    /// Whether any registered plugin has pickable geometry this frame. Plugin
+    /// draws are not collected here; they are issued directly from
+    /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
+    has_plugin_pick: bool,
+    /// Per-object decode of the primitive channel, keyed by `pick_id`. Only
+    /// consulted by the point pick path.
+    kinds: std::collections::HashMap<u64, PickSubKind>,
+    /// Whether the device had `SHADER_PRIMITIVE_INDEX` when the draws were
+    /// built. Only consulted by the point pick path.
+    primitive_index_supported: bool,
+}
+
+impl PickDrawSet<'_> {
+    /// `true` when nothing would be drawn: the pass has nothing to submit, so
+    /// the caller can report a miss without touching the GPU.
+    fn is_empty(&self) -> bool {
+        self.draws.is_empty()
+            && self.glyph_draws.is_empty()
+            && self.sprite_draws.is_empty()
+            && self.polyline_draws.is_empty()
+            && self.volume_draws.is_empty()
+            && self.implicit_draws.is_empty()
+            && self.mc_draws.is_empty()
+            && self.point_cloud_draws.is_empty()
+            && self.splat_draws.is_empty()
+            && self.image_slice_draws.is_empty()
+            && self.volume_surface_slice_draws.is_empty()
+            && !self.has_plugin_pick
+    }
+}
+
+/// The three colour targets (object id, primitive id, depth) plus the real
+/// depth-stencil buffer the pick pass renders into, all sized to the full
+/// viewport regardless of how much of it the query's scissor covers. Shared
+/// by the point and rect pick passes so the render-pass descriptor is written
+/// once.
+struct PickTargets {
+    id_texture: crate::gpu::Texture,
+    id_view: crate::gpu::TextureView,
+    prim_texture: crate::gpu::Texture,
+    prim_view: crate::gpu::TextureView,
+    depth_colour_texture: crate::gpu::Texture,
+    depth_colour_view: crate::gpu::TextureView,
+    /// Real depth-stencil buffer; only `ds_view` is read (by the render pass),
+    /// kept here so the texture stays alive for the view's lifetime.
+    _ds_texture: crate::gpu::Texture,
+    ds_view: crate::gpu::TextureView,
+}
+
+impl PickTargets {
+    fn new(device: &crate::gpu::Device, vp_w: u32, vp_h: u32) -> Self {
+        let extent = crate::gpu::Extent3d {
+            width: vp_w,
+            height: vp_h,
+            depth_or_array_layers: 1,
+        };
+
+        let id_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("pick_id_texture"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::R32Uint,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let id_view = id_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+
+        // Primitive-id target. The pick pipelines write a sub-object index here
+        // (0 for object-level types); it is attached so the pipeline's
+        // location-1 output has a target, but only the point pick path reads
+        // it back.
+        let prim_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("pick_prim_texture"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::R32Uint,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let prim_view = prim_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+
+        let depth_colour_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("pick_depth_colour_texture"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::R32Float,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let depth_colour_view =
+            depth_colour_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+
+        let _ds_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("pick_ds_texture"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let ds_view = _ds_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+
+        Self {
+            id_texture,
+            id_view,
+            prim_texture,
+            prim_view,
+            depth_colour_texture,
+            depth_colour_view,
+            _ds_texture,
+            ds_view,
+        }
+    }
+
+    /// Begin the pick render pass against these targets: object id, primitive
+    /// id, and depth colour attachments (all cleared to the "no hit" value),
+    /// plus the real depth-stencil buffer (cleared to far). The caller sets
+    /// its own scissor rect before drawing.
+    fn begin_render_pass<'e>(
+        &self,
+        encoder: &'e mut crate::gpu::CommandEncoder,
+    ) -> crate::gpu::RenderPass<'e> {
+        encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+            #[cfg(feature = "wgpu29")]
+            multiview_mask: None,
+            label: Some("pick_pass"),
+            color_attachments: &[
+                Some(crate::gpu::RenderPassColorAttachment {
+                    view: &self.id_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: crate::gpu::StoreOp::Store,
+                    },
+                }),
+                Some(crate::gpu::RenderPassColorAttachment {
+                    view: &self.prim_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: crate::gpu::StoreOp::Store,
+                    },
+                }),
+                Some(crate::gpu::RenderPassColorAttachment {
+                    view: &self.depth_colour_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: crate::gpu::Operations {
+                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
+                            r: 1.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: crate::gpu::StoreOp::Store,
+                    },
+                }),
+            ],
+            depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                view: &self.ds_view,
+                depth_ops: Some(crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Clear(1.0),
+                    store: crate::gpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        })
+    }
+}
+
 impl ViewportRenderer {
     // -----------------------------------------------------------------------
     // GPU object-ID picking
@@ -366,6 +603,178 @@ impl ViewportRenderer {
         let px = ((cursor.x * ppp).round() as u32).min(vp_w - 1);
         let py = ((cursor.y * ppp).round() as u32).min(vp_h - 1);
 
+        let flags = self.ensure_pick_pipelines(device, frame, mask);
+        let draw_set = self.build_pick_draws(device, queue, frame, mask, scene_items, &flags);
+        if draw_set.is_empty() {
+            return PickBegin::Miss;
+        }
+
+        // The buffer half of each pair only needs to live through
+        // `create_bind_group` (which retains its own GPU-side reference), not
+        // beyond, so neither is named further.
+        let (_, pick_instance_bg) =
+            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
+
+        let targets = PickTargets::new(device, vp_w, vp_h);
+
+        // --- render pass ---
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("pick_pass_encoder"),
+        });
+        {
+            let mut pick_pass = targets.begin_render_pass(&mut encoder);
+
+            // Only the pixel under the cursor is read back, so scissor the pass to
+            // that one pixel. Rasterisation still visits every triangle, but the
+            // fragment stage runs only inside the scissor, collapsing fragment and
+            // depth-test work to a single pixel regardless of object count or
+            // overdraw. The clear applies to the full attachment (it is not
+            // scissored), so pixels outside the region stay at the "no hit" clear
+            // value; nothing outside the region is ever read.
+            pick_pass.set_scissor_rect(px, py, 1, 1);
+            self.record_pick_pass_draws(
+                &mut pick_pass,
+                &pick_camera_bg,
+                &pick_instance_bg,
+                &draw_set,
+                frame,
+            );
+        }
+
+        // --- copy 1x1 pixels to staging buffers ---
+        // R32Uint: 4 bytes per pixel, min bytes_per_row = 256 (wgpu alignment)
+        let bytes_per_row_aligned = 256u32; // wgpu requires multiples of 256
+
+        let id_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("pick_id_staging"),
+            size: bytes_per_row_aligned as u64,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let prim_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("pick_prim_staging"),
+            size: bytes_per_row_aligned as u64,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let depth_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("pick_depth_staging"),
+            size: bytes_per_row_aligned as u64,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        // `px` / `py`: physical pixel under the cursor, computed above and shared
+        // with the scissor so the pass and the read-back target the same texel.
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &targets.id_texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &id_staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row_aligned),
+                    rows_per_image: Some(1),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &targets.prim_texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &prim_staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row_aligned),
+                    rows_per_image: Some(1),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &targets.depth_colour_texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &depth_staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row_aligned),
+                    rows_per_image: Some(1),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let submission = queue.submit(std::iter::once(encoder.finish()));
+
+        // Start the maps now but do not wait. `map_async` callbacks fire once the
+        // device has processed this submission; the caller drives that in a
+        // blocking wait (`pick_scene_gpu_masked`) or a targeted one
+        // (`pick_object_poll`) and reads the pixel through `PendingPick::read_hit`
+        // once all three maps have landed. The callbacks flip `ready` to 3.
+        let ready = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for staging in [&id_staging, &prim_staging, &depth_staging] {
+            let ready = ready.clone();
+            staging
+                .slice(..)
+                .map_async(crate::gpu::MapMode::Read, move |r| {
+                    if r.is_ok() {
+                        ready.fetch_add(1, std::sync::atomic::Ordering::Release);
+                    }
+                });
+        }
+
+        PickBegin::Pending(PendingPick {
+            id_staging,
+            prim_staging,
+            depth_staging,
+            ready,
+            submission,
+            cursor,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            view_proj: frame.camera.render_camera.view_proj(),
+            mask,
+            kinds: draw_set.kinds,
+            primitive_index_supported: draw_set.primitive_index_supported,
+        })
+    }
+
+    /// Lazily build every pick pipeline the mask-selected types need, and
+    /// resolve the shared decal / scatter-volume proxy meshes. `&mut self`:
+    /// this is the only mutating step in the pick pipeline; everything after
+    /// it (`build_pick_draws` and the render pass) only reads `self`.
+    fn ensure_pick_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        frame: &FrameData,
+        mask: crate::interaction::select::pick_mask::PickMask,
+    ) -> PickPipelineFlags {
         // --- lazy pipeline init ---
         self.resources.ensure_pick_pipeline(device);
         let glyph_wanted = PickItemType::Glyph.satisfies(mask);
@@ -537,6 +946,58 @@ impl ViewportRenderer {
         } else {
             (None, None)
         };
+
+        PickPipelineFlags {
+            has_pickable_glyphs,
+            has_pickable_tensor,
+            has_pickable_sprites,
+            has_pickable_polylines,
+            has_pickable_volumes,
+            has_pickable_implicit,
+            has_pickable_mc,
+            has_pickable_point_clouds,
+            has_pickable_splats,
+            has_pickable_image_slices,
+            has_pickable_volume_surface_slices,
+            decal_cube,
+            scatter_cube,
+            scatter_sphere,
+        }
+    }
+
+    /// Build every pick pipeline's draw list for this query, plus the
+    /// sub-object decode map. Shared by the point pick pass
+    /// ([`pick_scene_gpu_begin`](Self::pick_scene_gpu_begin)) and the rect pick
+    /// pass ([`pick_rect_gpu`](Self::pick_rect_gpu)): both draw the same
+    /// mask-selected geometry into the same three-channel target, differing
+    /// only in the scissor rect and how much of the read-back they need.
+    /// Takes `&self`: pipelines are already built by
+    /// [`ensure_pick_pipelines`](Self::ensure_pick_pipelines), so this only
+    /// reads prepared per-frame GPU data and issues the small per-draw pick-id
+    /// buffer uploads.
+    fn build_pick_draws<'a>(
+        &'a self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+        mask: crate::interaction::select::pick_mask::PickMask,
+        scene_items: &'a [SceneRenderItem],
+        flags: &PickPipelineFlags,
+    ) -> PickDrawSet<'a> {
+        let has_pickable_glyphs = flags.has_pickable_glyphs;
+        let has_pickable_tensor = flags.has_pickable_tensor;
+        let has_pickable_sprites = flags.has_pickable_sprites;
+        let has_pickable_polylines = flags.has_pickable_polylines;
+        let has_pickable_volumes = flags.has_pickable_volumes;
+        let has_pickable_implicit = flags.has_pickable_implicit;
+        let has_pickable_mc = flags.has_pickable_mc;
+        let has_pickable_point_clouds = flags.has_pickable_point_clouds;
+        let has_pickable_splats = flags.has_pickable_splats;
+        let has_pickable_image_slices = flags.has_pickable_image_slices;
+        let has_pickable_volume_surface_slices = flags.has_pickable_volume_surface_slices;
+        let decal_cube = flags.decal_cube;
+        let scatter_cube = flags.scatter_cube;
+        let scatter_sphere = flags.scatter_sphere;
 
         // --- build PickInstance data ---
         // Every mesh-backed pickable item draws through the surface pipeline:
@@ -1159,25 +1620,40 @@ impl ViewportRenderer {
             .intersects(crate::interaction::select::pick_mask::PickMask::OBJECT)
             && self.any_plugin_pick_items(frame);
 
-        if draws.is_empty()
-            && glyph_draws.is_empty()
-            && sprite_draws.is_empty()
-            && polyline_draws.is_empty()
-            && volume_draws.is_empty()
-            && implicit_draws.is_empty()
-            && mc_draws.is_empty()
-            && point_cloud_draws.is_empty()
-            && splat_draws.is_empty()
-            && image_slice_draws.is_empty()
-            && volume_surface_slice_draws.is_empty()
-            && !has_plugin_pick
-        {
-            return PickBegin::Miss;
+        // Registered plugins are object-level: dispatched directly in
+        // `record_pick_pass_draws`, not collected here.
+        let kinds = self.build_pick_sub_kinds(frame, scene_items);
+        let primitive_index_supported = device
+            .features()
+            .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE);
+
+        PickDrawSet {
+            draws,
+            glyph_draws,
+            sprite_draws,
+            polyline_draws,
+            volume_draws,
+            implicit_draws,
+            mc_draws,
+            point_cloud_draws,
+            splat_draws,
+            image_slice_draws,
+            volume_surface_slice_draws,
+            has_plugin_pick,
+            kinds,
+            primitive_index_supported,
         }
+    }
 
+    /// Build the group-1 `PickInstance` storage buffer + bind group for the
+    /// surface-pipeline `draws` list. Shared by the point and rect pick passes.
+    fn build_pick_instance_bind_group(
+        &self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        draws: &[(PickGeom, PickInstance)],
+    ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
         let pick_instances: Vec<PickInstance> = draws.iter().map(|(_, inst)| *inst).collect();
-
-        // --- pick instance storage buffer + bind group ---
         let pick_instance_bytes = bytemuck::cast_slice(&pick_instances);
         let pick_instance_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("pick_instance_buf"),
@@ -1200,8 +1676,17 @@ impl ViewportRenderer {
                 resource: pick_instance_buf.as_entire_binding(),
             }],
         });
+        (pick_instance_buf, pick_instance_bg)
+    }
 
-        // --- pick camera uniform buffer + bind group ---
+    /// Build the group-0 minimal pick camera uniform buffer + bind group
+    /// (camera + clip volume). Shared by the point and rect pick passes.
+    fn build_pick_camera_bind_group(
+        &self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+    ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
         let camera_uniform = frame.camera.render_camera.camera_uniform();
         let camera_bytes = bytemuck::bytes_of(&camera_uniform);
         let pick_camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -1231,511 +1716,241 @@ impl ViewportRenderer {
                 },
             ],
         });
+        (pick_camera_buf, pick_camera_bg)
+    }
 
-        // --- offscreen pick textures (R32Uint + R32Float) + depth ---
-        let pick_id_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("pick_id_texture"),
-            size: crate::gpu::Extent3d {
-                width: vp_w,
-                height: vp_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::R32Uint,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let pick_id_view =
-            pick_id_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+    /// Record every pick pipeline's draw calls into `pick_pass`. Shared by the
+    /// point and rect pick passes: both draw the same mask-selected geometry,
+    /// differing only in the scissor rect the caller set before calling this.
+    fn record_pick_pass_draws<'rp>(
+        &'rp self,
+        pick_pass: &mut crate::gpu::RenderPass<'rp>,
+        pick_camera_bg: &'rp crate::gpu::BindGroup,
+        pick_instance_bg: &'rp crate::gpu::BindGroup,
+        draw_set: &PickDrawSet<'rp>,
+        frame: &'rp FrameData,
+    ) {
+        // Surface-pipeline draws: scene surfaces, volume-mesh boundaries, and
+        // tube-family geometry all rasterise with the shared pick pipeline.
+        // Type-level mask filtering already happened while building `draws`,
+        // so an unbuilt or unrequested type contributes nothing and reads
+        // back as no hit. Instance index in the storage buffer = position in
+        // `draws`.
+        pick_pass.set_pipeline(
+            self.resources
+                .pick
+                .pipeline
+                .as_ref()
+                .expect("ensure_pick_pipeline must be called first"),
+        );
+        pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+        pick_pass.set_bind_group(1, pick_instance_bg, &[]);
 
-        // Primitive-id target. The pick pipelines write a sub-object index here
-        // (0 for now); it is attached so the pipeline's location-1 output has a
-        // target, but it is not read back until sub-object picking uses it.
-        let pick_prim_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("pick_prim_texture"),
-            size: crate::gpu::Extent3d {
-                width: vp_w,
-                height: vp_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::R32Uint,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let pick_prim_view =
-            pick_prim_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-
-        let pick_depth_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("pick_depth_colour_texture"),
-            size: crate::gpu::Extent3d {
-                width: vp_w,
-                height: vp_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::R32Float,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let pick_depth_view =
-            pick_depth_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-
-        let depth_stencil_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("pick_ds_texture"),
-            size: crate::gpu::Extent3d {
-                width: vp_w,
-                height: vp_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth_stencil_view =
-            depth_stencil_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-
-        // --- render pass ---
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("pick_pass_encoder"),
-        });
-        {
-            let mut pick_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
-                multiview_mask: None,
-                label: Some("pick_pass"),
-                color_attachments: &[
-                    Some(crate::gpu::RenderPassColorAttachment {
-                        view: &pick_id_view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 0.0,
-                            }),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                    }),
-                    Some(crate::gpu::RenderPassColorAttachment {
-                        view: &pick_prim_view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 0.0,
-                            }),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                    }),
-                    Some(crate::gpu::RenderPassColorAttachment {
-                        view: &pick_depth_view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color {
-                                r: 1.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 0.0,
-                            }),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                    }),
-                ],
-                depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                    view: &depth_stencil_view,
-                    depth_ops: Some(crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(1.0),
-                        store: crate::gpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            // Only the pixel under the cursor is read back, so scissor the pass to
-            // that one pixel. Rasterisation still visits every triangle, but the
-            // fragment stage runs only inside the scissor, collapsing fragment and
-            // depth-test work to a single pixel regardless of object count or
-            // overdraw. The clear applies to the full attachment (it is not
-            // scissored), so pixels outside the region stay at the "no hit" clear
-            // value; nothing outside the region is ever read.
-            pick_pass.set_scissor_rect(px, py, 1, 1);
-
-            // Surface-pipeline draws: scene surfaces, volume-mesh boundaries, and
-            // tube-family geometry all rasterise with the shared pick pipeline.
-            // Type-level mask filtering already happened while building `draws`,
-            // so an unbuilt or unrequested type contributes nothing and reads
-            // back as no hit. Instance index in the storage buffer = position in
-            // `draws`.
-            pick_pass.set_pipeline(
-                self.resources
-                    .pick
-                    .pipeline
-                    .as_ref()
-                    .expect("ensure_pick_pipeline must be called first"),
-            );
-            pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
-            pick_pass.set_bind_group(1, &pick_instance_bg, &[]);
-
-            for (instance_slot, (geom, _)) in draws.iter().enumerate() {
-                let slot = instance_slot as u32;
-                match geom {
-                    PickGeom::Mesh(mesh_id) => {
-                        let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
-                            continue;
-                        };
-                        pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        pick_pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
-                    }
-                    PickGeom::Tube {
-                        vertex_buffer,
-                        index_buffer,
-                        index_count,
-                    } => {
-                        pick_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                        pick_pass.set_index_buffer(
-                            index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        pick_pass.draw_indexed(0..*index_count, 0, slot..slot + 1);
-                    }
+        for (instance_slot, (geom, _)) in draw_set.draws.iter().enumerate() {
+            let slot = instance_slot as u32;
+            match geom {
+                PickGeom::Mesh(mesh_id) => {
+                    let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
+                        continue;
+                    };
+                    pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pick_pass.set_index_buffer(
+                        mesh.index_buffer.slice(..),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
+                    pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
+                }
+                PickGeom::Tube {
+                    vertex_buffer,
+                    index_buffer,
+                    index_count,
+                } => {
+                    pick_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pick_pass
+                        .set_index_buffer(index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+                    pick_pass.draw_indexed(0..*index_count, 0, slot..slot + 1);
                 }
             }
+        }
 
-            // Glyph / tensor-glyph sets: each draws its instanced base mesh with a
-            // dedicated pipeline that reuses the render vertex transform and writes
-            // the set's object id.
-            for gd in &glyph_draws {
-                pick_pass.set_pipeline(gd.pipeline);
-                pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
-                pick_pass.set_bind_group(1, &gd.id_bind_group, &[]);
-                pick_pass.set_bind_group(2, gd.instance_bind_group, &[]);
-                pick_pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
-                pick_pass
-                    .set_index_buffer(gd.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
-                pick_pass.draw_indexed(0..gd.index_count, 0, 0..gd.instance_count);
-            }
+        // Glyph / tensor-glyph sets: each draws its instanced base mesh with a
+        // dedicated pipeline that reuses the render vertex transform and writes
+        // the set's object id.
+        for gd in &draw_set.glyph_draws {
+            pick_pass.set_pipeline(gd.pipeline);
+            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+            pick_pass.set_bind_group(1, &gd.id_bind_group, &[]);
+            pick_pass.set_bind_group(2, gd.instance_bind_group, &[]);
+            pick_pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
+            pick_pass.set_index_buffer(gd.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+            pick_pass.draw_indexed(0..gd.index_count, 0, 0..gd.instance_count);
+        }
 
-            // Sprite sets: camera-facing quads expanded in the vertex shader. The
-            // pipeline and full camera bind group (group 0) are shared; each set
-            // varies its sprite bind group, pick-id, and position buffer.
-            if let Some(sprite_pipeline) = self.resources.sprite.pick_pipeline.as_ref() {
-                if !sprite_draws.is_empty() {
-                    pick_pass.set_pipeline(sprite_pipeline);
-                    pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
-                    for sd in &sprite_draws {
-                        pick_pass.set_bind_group(1, sd.sprite_bind_group, &[]);
-                        pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
-                        pick_pass.set_vertex_buffer(0, sd.vertex_buffer.slice(..));
-                        pick_pass.draw(0..6, 0..sd.sprite_count);
-                    }
-                }
-            }
-
-            // Polylines: screen-space thick lines, one draw per polyline of its
-            // segment quads. Group 0 is the shared minimal pick camera.
-            if let Some(polyline_pipeline) = self.resources.pick.polyline_pipeline.as_ref() {
-                if !polyline_draws.is_empty() {
-                    pick_pass.set_pipeline(polyline_pipeline);
-                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
-                    for pd in &polyline_draws {
-                        pick_pass.set_bind_group(1, pd.render_bind_group, &[]);
-                        pick_pass.set_bind_group(2, &pd.id_bind_group, &[]);
-                        pick_pass.set_vertex_buffer(0, pd.vertex_buffer.slice(..));
-                        pick_pass.draw(0..6, 0..pd.segment_count);
-                    }
-                }
-            }
-
-            // Voxel volumes: raymarch each bounding cube. Group 0 is the full
-            // scene camera bind group (the volume pick fragment reads view_proj
-            // and the clip volume); group 1 is the reused volume render bind
-            // group; group 2 is the per-item object id.
-            if let Some(volume_pipeline) = self.resources.pick.volume_pipeline.as_ref() {
-                if !volume_draws.is_empty() {
-                    pick_pass.set_pipeline(volume_pipeline);
-                    pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
-                    for vd in &volume_draws {
-                        pick_pass.set_bind_group(1, vd.render_bind_group, &[]);
-                        pick_pass.set_bind_group(2, &vd.id_bind_group, &[]);
-                        pick_pass.set_vertex_buffer(0, vd.vertex_buffer.slice(..));
-                        pick_pass.set_index_buffer(
-                            vd.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        // The volume cube is 36 indices (12 triangles).
-                        pick_pass.draw_indexed(0..36, 0, 0..1);
-                    }
-                }
-            }
-
-            // GPU implicit SDF surfaces: raymarch the isosurface on a full-screen
-            // quad. Group 0 is the full scene camera bind group (the fragment reads
-            // inv_view_proj to reconstruct the ray); group 1 is the reused implicit
-            // uniform; group 2 is the per-item object id.
-            if let Some(implicit_pipeline) = self.resources.pick.implicit_pipeline.as_ref() {
-                if !implicit_draws.is_empty() {
-                    pick_pass.set_pipeline(implicit_pipeline);
-                    pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
-                    for id in &implicit_draws {
-                        pick_pass.set_bind_group(1, id.render_bind_group, &[]);
-                        pick_pass.set_bind_group(2, &id.id_bind_group, &[]);
-                        pick_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
-
-            // GPU marching-cubes surfaces: rasterise each slab's generated vertex
-            // buffer via its surface indirect args. Group 0 is the shared minimal
-            // pick camera; group 1 is the per-job object id.
-            if let Some(mc_pipeline) = self.resources.pick.mc_pipeline.as_ref() {
-                if !mc_draws.is_empty() {
-                    pick_pass.set_pipeline(mc_pipeline);
-                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
-                    for md in &mc_draws {
-                        pick_pass.set_bind_group(1, &md.id_bind_group, &[]);
-                        for (vertex_buf, indirect_buf) in &md.slabs {
-                            pick_pass.set_vertex_buffer(0, vertex_buf.slice(..));
-                            pick_pass.draw_indirect(indirect_buf, 0);
-                        }
-                    }
-                }
-            }
-
-            // Point clouds: each item draws its screen-space quad expansion.
-            // Group 0 is the full scene camera bind group (the expansion needs
-            // the viewport size); group 1 is the reused render bind group;
-            // group 2 is the per-item object id.
-            if let Some(point_cloud_pipeline) = self.resources.pick.point_cloud_pipeline.as_ref() {
-                if !point_cloud_draws.is_empty() {
-                    pick_pass.set_pipeline(point_cloud_pipeline);
-                    pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
-                    for pcd in &point_cloud_draws {
-                        pick_pass.set_bind_group(1, pcd.render_bind_group, &[]);
-                        pick_pass.set_bind_group(2, &pcd.id_bind_group, &[]);
-                        pick_pass.set_vertex_buffer(0, pcd.vertex_buffer.slice(..));
-                        pick_pass.draw(0..6, 0..pcd.point_count);
-                    }
-                }
-            }
-
-            // Gaussian splats: each item draws its covariance-projected
-            // billboard expansion. Group 0 is the minimal pick camera; group 1
-            // is the reused per-viewport sorted-index render bind group; group
-            // 2 is the per-item object id.
-            if let Some(splat_pipeline) = self.resources.pick.gaussian_splat_pipeline.as_ref() {
-                if !splat_draws.is_empty() {
-                    pick_pass.set_pipeline(splat_pipeline);
-                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
-                    for sd in &splat_draws {
-                        pick_pass.set_bind_group(1, sd.render_bind_group, &[]);
-                        pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
-                        pick_pass.draw(0..6, 0..sd.count);
-                    }
-                }
-            }
-
-            // Image slices: each item draws its quad-from-vertex-index
-            // expansion. Group 0 is the minimal pick camera; group 1 is the
-            // reused render bind group; group 2 is the per-item object id.
-            if let Some(image_slice_pipeline) = self.resources.pick.image_slice_pipeline.as_ref() {
-                if !image_slice_draws.is_empty() {
-                    pick_pass.set_pipeline(image_slice_pipeline);
-                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
-                    for isd in &image_slice_draws {
-                        pick_pass.set_bind_group(1, isd.render_bind_group, &[]);
-                        pick_pass.set_bind_group(2, &isd.id_bind_group, &[]);
-                        pick_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
-
-            // Volume surface slices: each item draws its mesh. Group 0 is the
-            // minimal pick camera; group 1 is the reused render bind group;
-            // group 2 is the per-item object id.
-            if let Some(vss_pipeline) = self.resources.pick.volume_surface_slice_pipeline.as_ref() {
-                if !volume_surface_slice_draws.is_empty() {
-                    pick_pass.set_pipeline(vss_pipeline);
-                    pick_pass.set_bind_group(0, &pick_camera_bg, &[]);
-                    for vsd in &volume_surface_slice_draws {
-                        let Some(mesh) = self.resources.mesh_store.get(vsd.mesh_id) else {
-                            continue;
-                        };
-                        pick_pass.set_bind_group(1, vsd.render_bind_group, &[]);
-                        pick_pass.set_bind_group(2, &vsd.id_bind_group, &[]);
-                        pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        pick_pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        pick_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                    }
-                }
-            }
-
-            // Item-type plugins render their own pick-ids last. They build their
-            // pipelines against the full shared group-0 layout, so bind the full
-            // camera bind group (the same one the sprite draws use) before
-            // handing them the pass.
-            if has_plugin_pick {
+        // Sprite sets: camera-facing quads expanded in the vertex shader. The
+        // pipeline and full camera bind group (group 0) are shared; each set
+        // varies its sprite bind group, pick-id, and position buffer.
+        if let Some(sprite_pipeline) = self.resources.sprite.pick_pipeline.as_ref() {
+            if !draw_set.sprite_draws.is_empty() {
+                pick_pass.set_pipeline(sprite_pipeline);
                 pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
-                self.dispatch_plugin_pick(&mut pick_pass, frame);
+                for sd in &draw_set.sprite_draws {
+                    pick_pass.set_bind_group(1, sd.sprite_bind_group, &[]);
+                    pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
+                    pick_pass.set_vertex_buffer(0, sd.vertex_buffer.slice(..));
+                    pick_pass.draw(0..6, 0..sd.sprite_count);
+                }
             }
         }
 
-        // --- copy 1x1 pixels to staging buffers ---
-        // R32Uint: 4 bytes per pixel, min bytes_per_row = 256 (wgpu alignment)
-        let bytes_per_row_aligned = 256u32; // wgpu requires multiples of 256
-
-        let id_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("pick_id_staging"),
-            size: bytes_per_row_aligned as u64,
-            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let prim_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("pick_prim_staging"),
-            size: bytes_per_row_aligned as u64,
-            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let depth_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("pick_depth_staging"),
-            size: bytes_per_row_aligned as u64,
-            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        // `px` / `py`: physical pixel under the cursor, computed above and shared
-        // with the scissor so the pass and the read-back target the same texel.
-        encoder.copy_texture_to_buffer(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &pick_id_texture,
-                mip_level: 0,
-                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            crate::gpu::TexelCopyBufferInfo {
-                buffer: &id_staging,
-                layout: crate::gpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row_aligned),
-                    rows_per_image: Some(1),
-                },
-            },
-            crate::gpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        encoder.copy_texture_to_buffer(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &pick_prim_texture,
-                mip_level: 0,
-                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            crate::gpu::TexelCopyBufferInfo {
-                buffer: &prim_staging,
-                layout: crate::gpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row_aligned),
-                    rows_per_image: Some(1),
-                },
-            },
-            crate::gpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        encoder.copy_texture_to_buffer(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &pick_depth_texture,
-                mip_level: 0,
-                origin: crate::gpu::Origin3d { x: px, y: py, z: 0 },
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            crate::gpu::TexelCopyBufferInfo {
-                buffer: &depth_staging,
-                layout: crate::gpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row_aligned),
-                    rows_per_image: Some(1),
-                },
-            },
-            crate::gpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let submission = queue.submit(std::iter::once(encoder.finish()));
-
-        // Start the maps now but do not wait. `map_async` callbacks fire once the
-        // device has processed this submission; the caller drives that in a
-        // blocking wait (`pick_scene_gpu_masked`) or a targeted one
-        // (`pick_object_poll`) and reads the pixel through `PendingPick::read_hit`
-        // once all three maps have landed. The callbacks flip `ready` to 3.
-        let ready = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        for staging in [&id_staging, &prim_staging, &depth_staging] {
-            let ready = ready.clone();
-            staging
-                .slice(..)
-                .map_async(crate::gpu::MapMode::Read, move |r| {
-                    if r.is_ok() {
-                        ready.fetch_add(1, std::sync::atomic::Ordering::Release);
-                    }
-                });
+        // Polylines: screen-space thick lines, one draw per polyline of its
+        // segment quads. Group 0 is the shared minimal pick camera.
+        if let Some(polyline_pipeline) = self.resources.pick.polyline_pipeline.as_ref() {
+            if !draw_set.polyline_draws.is_empty() {
+                pick_pass.set_pipeline(polyline_pipeline);
+                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                for pd in &draw_set.polyline_draws {
+                    pick_pass.set_bind_group(1, pd.render_bind_group, &[]);
+                    pick_pass.set_bind_group(2, &pd.id_bind_group, &[]);
+                    pick_pass.set_vertex_buffer(0, pd.vertex_buffer.slice(..));
+                    pick_pass.draw(0..6, 0..pd.segment_count);
+                }
+            }
         }
 
-        // Map each drawn object's pick_id to how its second-channel index is
-        // decoded into a SubObjectRef on read-back. Built from the same draw
-        // sets above; ids-only, so it is cheap and needs no geometry retained.
-        let kinds = self.build_pick_sub_kinds(frame, scene_items);
-        let primitive_index_supported = device
-            .features()
-            .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE);
+        // Voxel volumes: raymarch each bounding cube. Group 0 is the full
+        // scene camera bind group (the volume pick fragment reads view_proj
+        // and the clip volume); group 1 is the reused volume render bind
+        // group; group 2 is the per-item object id.
+        if let Some(volume_pipeline) = self.resources.pick.volume_pipeline.as_ref() {
+            if !draw_set.volume_draws.is_empty() {
+                pick_pass.set_pipeline(volume_pipeline);
+                pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                for vd in &draw_set.volume_draws {
+                    pick_pass.set_bind_group(1, vd.render_bind_group, &[]);
+                    pick_pass.set_bind_group(2, &vd.id_bind_group, &[]);
+                    pick_pass.set_vertex_buffer(0, vd.vertex_buffer.slice(..));
+                    pick_pass.set_index_buffer(
+                        vd.index_buffer.slice(..),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
+                    // The volume cube is 36 indices (12 triangles).
+                    pick_pass.draw_indexed(0..36, 0, 0..1);
+                }
+            }
+        }
 
-        PickBegin::Pending(PendingPick {
-            id_staging,
-            prim_staging,
-            depth_staging,
-            ready,
-            submission,
-            cursor,
-            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
-            view_proj: frame.camera.render_camera.view_proj(),
-            mask,
-            kinds,
-            primitive_index_supported,
-        })
+        // GPU implicit SDF surfaces: raymarch the isosurface on a full-screen
+        // quad. Group 0 is the full scene camera bind group (the fragment reads
+        // inv_view_proj to reconstruct the ray); group 1 is the reused implicit
+        // uniform; group 2 is the per-item object id.
+        if let Some(implicit_pipeline) = self.resources.pick.implicit_pipeline.as_ref() {
+            if !draw_set.implicit_draws.is_empty() {
+                pick_pass.set_pipeline(implicit_pipeline);
+                pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                for id in &draw_set.implicit_draws {
+                    pick_pass.set_bind_group(1, id.render_bind_group, &[]);
+                    pick_pass.set_bind_group(2, &id.id_bind_group, &[]);
+                    pick_pass.draw(0..6, 0..1);
+                }
+            }
+        }
+
+        // GPU marching-cubes surfaces: rasterise each slab's generated vertex
+        // buffer via its surface indirect args. Group 0 is the shared minimal
+        // pick camera; group 1 is the per-job object id.
+        if let Some(mc_pipeline) = self.resources.pick.mc_pipeline.as_ref() {
+            if !draw_set.mc_draws.is_empty() {
+                pick_pass.set_pipeline(mc_pipeline);
+                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                for md in &draw_set.mc_draws {
+                    pick_pass.set_bind_group(1, &md.id_bind_group, &[]);
+                    for (vertex_buf, indirect_buf) in &md.slabs {
+                        pick_pass.set_vertex_buffer(0, vertex_buf.slice(..));
+                        pick_pass.draw_indirect(indirect_buf, 0);
+                    }
+                }
+            }
+        }
+
+        // Point clouds: each item draws its screen-space quad expansion.
+        // Group 0 is the full scene camera bind group (the expansion needs
+        // the viewport size); group 1 is the reused render bind group;
+        // group 2 is the per-item object id.
+        if let Some(point_cloud_pipeline) = self.resources.pick.point_cloud_pipeline.as_ref() {
+            if !draw_set.point_cloud_draws.is_empty() {
+                pick_pass.set_pipeline(point_cloud_pipeline);
+                pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                for pcd in &draw_set.point_cloud_draws {
+                    pick_pass.set_bind_group(1, pcd.render_bind_group, &[]);
+                    pick_pass.set_bind_group(2, &pcd.id_bind_group, &[]);
+                    pick_pass.set_vertex_buffer(0, pcd.vertex_buffer.slice(..));
+                    pick_pass.draw(0..6, 0..pcd.point_count);
+                }
+            }
+        }
+
+        // Gaussian splats: each item draws its covariance-projected
+        // billboard expansion. Group 0 is the minimal pick camera; group 1
+        // is the reused per-viewport sorted-index render bind group; group
+        // 2 is the per-item object id.
+        if let Some(splat_pipeline) = self.resources.pick.gaussian_splat_pipeline.as_ref() {
+            if !draw_set.splat_draws.is_empty() {
+                pick_pass.set_pipeline(splat_pipeline);
+                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                for sd in &draw_set.splat_draws {
+                    pick_pass.set_bind_group(1, sd.render_bind_group, &[]);
+                    pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
+                    pick_pass.draw(0..6, 0..sd.count);
+                }
+            }
+        }
+
+        // Image slices: each item draws its quad-from-vertex-index
+        // expansion. Group 0 is the minimal pick camera; group 1 is the
+        // reused render bind group; group 2 is the per-item object id.
+        if let Some(image_slice_pipeline) = self.resources.pick.image_slice_pipeline.as_ref() {
+            if !draw_set.image_slice_draws.is_empty() {
+                pick_pass.set_pipeline(image_slice_pipeline);
+                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                for isd in &draw_set.image_slice_draws {
+                    pick_pass.set_bind_group(1, isd.render_bind_group, &[]);
+                    pick_pass.set_bind_group(2, &isd.id_bind_group, &[]);
+                    pick_pass.draw(0..6, 0..1);
+                }
+            }
+        }
+
+        // Volume surface slices: each item draws its mesh. Group 0 is the
+        // minimal pick camera; group 1 is the reused render bind group;
+        // group 2 is the per-item object id.
+        if let Some(vss_pipeline) = self.resources.pick.volume_surface_slice_pipeline.as_ref() {
+            if !draw_set.volume_surface_slice_draws.is_empty() {
+                pick_pass.set_pipeline(vss_pipeline);
+                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                for vsd in &draw_set.volume_surface_slice_draws {
+                    let Some(mesh) = self.resources.mesh_store.get(vsd.mesh_id) else {
+                        continue;
+                    };
+                    pick_pass.set_bind_group(1, vsd.render_bind_group, &[]);
+                    pick_pass.set_bind_group(2, &vsd.id_bind_group, &[]);
+                    pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pick_pass.set_index_buffer(
+                        mesh.index_buffer.slice(..),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
+                    pick_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // Item-type plugins render their own pick-ids last. They build their
+        // pipelines against the full shared group-0 layout, so bind the full
+        // camera bind group (the same one the sprite draws use) before
+        // handing them the pass.
+        if draw_set.has_plugin_pick {
+            pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+            self.dispatch_plugin_pick(pick_pass, frame);
+        }
     }
 
     /// Upload once (and return) the shared unit-cube mesh used as the box pick
@@ -1777,6 +1992,161 @@ impl ViewportRenderer {
         let id = self.resources.upload_mesh_data(device, &mesh).ok()?;
         self.scatter_pick_sphere = Some(id);
         Some(id)
+    }
+
+    /// GPU object-id rect pick: renders the mask-selected geometry, scissored
+    /// to `rect_min..rect_max`, and reads back the whole region to collect the
+    /// unique object ids touched by the rect.
+    ///
+    /// Object-level only, and only when `mask` intersects `OBJECT`: unlike the
+    /// point pick path, this does not decode the primitive channel into
+    /// sub-object identity (that would mean resolving face / cell / vertex /
+    /// instance per pixel over the whole rect, not just the one hit pixel).
+    /// A caller that passes a mask with no `OBJECT` bit gets an empty result
+    /// without any GPU work, rather than a silent reinterpretation of what it
+    /// asked for.
+    ///
+    /// This blocks: it submits the id pass then waits on its own submission
+    /// index before reading the region back (the same targeted wait
+    /// `pick_scene_gpu_masked` uses, not a full queue drain).
+    pub(crate) fn pick_rect_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        rect_min: glam::Vec2,
+        rect_max: glam::Vec2,
+        frame: &FrameData,
+        mask: crate::interaction::select::pick_mask::PickMask,
+    ) -> crate::renderer::picking::PickRectResult {
+        use crate::interaction::select::pick_mask::PickMask;
+
+        if !mask.intersects(PickMask::OBJECT) {
+            return crate::renderer::picking::PickRectResult::default();
+        }
+
+        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items.as_ref(),
+        };
+
+        let ppp = frame.camera.pixels_per_point;
+        let vp_w = (frame.camera.viewport_size[0] * ppp).round() as u32;
+        let vp_h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+        if vp_w == 0 || vp_h == 0 {
+            return crate::renderer::picking::PickRectResult::default();
+        }
+
+        // Physical rect bounds, clamped to the viewport. `rect_min`/`rect_max`
+        // are not assumed ordered.
+        let lo = glam::Vec2::new(rect_min.x.min(rect_max.x), rect_min.y.min(rect_max.y)) * ppp;
+        let hi = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y)) * ppp;
+        let rx = (lo.x.floor().max(0.0) as u32).min(vp_w);
+        let ry = (lo.y.floor().max(0.0) as u32).min(vp_h);
+        let rx_end = (hi.x.ceil().max(0.0) as u32).min(vp_w);
+        let ry_end = (hi.y.ceil().max(0.0) as u32).min(vp_h);
+        if rx_end <= rx || ry_end <= ry {
+            return crate::renderer::picking::PickRectResult::default();
+        }
+        let rw = rx_end - rx;
+        let rh = ry_end - ry;
+
+        let flags = self.ensure_pick_pipelines(device, frame, mask);
+        let draw_set = self.build_pick_draws(device, queue, frame, mask, scene_items, &flags);
+        if draw_set.is_empty() {
+            return crate::renderer::picking::PickRectResult::default();
+        }
+
+        let (_, pick_instance_bg) =
+            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
+        let targets = PickTargets::new(device, vp_w, vp_h);
+
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("pick_rect_pass_encoder"),
+        });
+        {
+            let mut pick_pass = targets.begin_render_pass(&mut encoder);
+            // Only the requested rect is read back, so the fragment stage and
+            // depth test collapse to that region regardless of object count or
+            // overdraw, the same fast path the point pick uses at 1x1.
+            pick_pass.set_scissor_rect(rx, ry, rw, rh);
+            self.record_pick_pass_draws(
+                &mut pick_pass,
+                &pick_camera_bg,
+                &pick_instance_bg,
+                &draw_set,
+                frame,
+            );
+        }
+
+        // Only the object-id channel is read back: rect pick is object-level
+        // only, so the primitive and depth channels are written (the pipelines
+        // always emit all three targets) but never copied out.
+        let bytes_per_row = (rw * 4).div_ceil(256) * 256;
+        let id_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("pick_rect_id_staging"),
+            size: (bytes_per_row as u64) * (rh as u64),
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &targets.id_texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d { x: rx, y: ry, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &id_staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(rh),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: rw,
+                height: rh,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let submission = queue.submit(std::iter::once(encoder.finish()));
+        id_staging
+            .slice(..)
+            .map_async(crate::gpu::MapMode::Read, |_| {});
+        device
+            .poll(crate::gpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+
+        let mut seen = std::collections::HashSet::new();
+        let mut objects = Vec::new();
+        {
+            let data = id_staging.slice(..).get_mapped_range();
+            for row in 0..rh as usize {
+                let row_start = row * bytes_per_row as usize;
+                for col in 0..rw as usize {
+                    let px_off = row_start + col * 4;
+                    let id = u32::from_le_bytes([
+                        data[px_off],
+                        data[px_off + 1],
+                        data[px_off + 2],
+                        data[px_off + 3],
+                    ]);
+                    if id != 0 && seen.insert(id) {
+                        objects.push(id as u64);
+                    }
+                }
+            }
+        }
+        id_staging.unmap();
+
+        crate::renderer::picking::PickRectResult {
+            objects,
+            elements: Vec::new(),
+        }
     }
 
     /// Begin a non-blocking GPU object pick under `cursor`: submit the id pass
