@@ -326,10 +326,10 @@ impl App {
                 _t.kind = viewport_lib::LightKind::Directional {
                     direction: [-0.5, -0.3, 0.8],
                 };
-                _t.intensity = 0.6;
+                _t.intensity = 0.8;
                 _t
             }];
-            _t.hemisphere_intensity = 0.3;
+            _t.hemisphere_intensity = 0.4;
             _t.sky_colour = [1.0, 1.0, 1.0];
             _t.ground_colour = [0.4, 0.4, 0.4];
             _t

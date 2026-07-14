@@ -35,7 +35,7 @@ impl Default for LightsState {
             scene: Scene::new(),
             sources: vec![LightSource::default()],
             hemi_on: true,
-            hemi_intensity: 0.4,
+            hemi_intensity: 0.7,
             sky_colour: [1.0, 1.0, 1.0],
             ground_colour: [1.0, 1.0, 1.0],
             edl_enabled: false,

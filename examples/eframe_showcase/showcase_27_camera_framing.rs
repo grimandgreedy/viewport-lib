@@ -319,12 +319,12 @@ impl App {
                     direction: [0.3, -0.5, 0.8],
                 };
                 _t.colour = [1.0, 0.97, 0.92];
-                _t.intensity = 0.8;
+                _t.intensity = 1.0;
                 _t
             }];
             _t.shadows_enabled = true;
             _t.shadow_cascade_count = 4;
-            _t.hemisphere_intensity = 0.3;
+            _t.hemisphere_intensity = 0.45;
             _t
         }
     }

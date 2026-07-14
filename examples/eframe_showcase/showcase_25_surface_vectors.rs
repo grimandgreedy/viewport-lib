@@ -193,7 +193,9 @@ impl App {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.material.backface_policy = BackfacePolicy::Identical;
-        item.settings.unlit = true;
+        // Lit so the hemisphere light shapes the surface instead of showing a
+        // flat gray. The glyphs on top stay unlit for a clean, even colour.
+        item.settings.unlit = false;
         item
     }
 
@@ -245,7 +247,7 @@ impl App {
     pub(crate) fn sv_lighting() -> LightingSettings {
         {
             let mut _t = LightingSettings::default();
-            _t.hemisphere_intensity = 0.5;
+            _t.hemisphere_intensity = 0.95;
             _t.sky_colour = [1.0, 1.0, 1.0];
             _t.ground_colour = [1.0, 1.0, 1.0];
             _t
