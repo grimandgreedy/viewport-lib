@@ -315,18 +315,25 @@ pub(crate) const CSM_SHADOW_BIAS: crate::gpu::DepthBiasState = crate::gpu::Depth
 /// default cull-front caster bias this surface reads as a broad dark patch.
 ///
 /// `constant: 1000` in Depth32Float is ~1e-4 NDC, comfortably above the
-/// perpendicular-receiver bias floor. `slope_scale: 1.0` tracks the
-/// per-shadow-texel depth variation across tilted two-sided surfaces so the
-/// receiver-side bias only needs to clear the per-pipeline constant, keeping
-/// contact shadows tight instead of detaching them.
+/// perpendicular-receiver bias floor. `slope_scale: 8.0` pushes each caster
+/// polygon's recorded depth away from the light in proportion to its slope in
+/// light space. A wavy two-sided surface (a cloth sheet, a scalar-field graph)
+/// has steep polygons that vary a lot in depth within one shadow texel, so
+/// without a strong slope term the surface reads its own quantized depth as an
+/// occluder and self-shadows in blocky, triangle-aligned patches (shadow acne)
+/// that stay visible even zoomed in. Scaling the caster depth by the slope
+/// clears that on the steep folds while leaving flat parts untouched.
 ///
-/// The cost is a small Peter-Panning offset (~1cm at typical cascade scale)
-/// at the foot of two-sided contact shadows. That is the trade for getting a
-/// two-sided surface to cast on both sides without shadowing itself.
+/// This lives on the caster side of the two-sided (cull-none) pipeline only, so
+/// one-sided receivers (ground planes, solids) are not touched at all: their
+/// cast shadows stay pinned to their casters with no peter-panning. The cost is
+/// confined to two-sided surfaces resting on something else, whose contact
+/// shadow can lift by roughly `slope_scale` shadow texels; drop the factor if a
+/// draped two-sided surface ever needs a tighter contact.
 pub(crate) const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState =
     crate::gpu::DepthBiasState {
         constant: 1000,
-        slope_scale: 1.0,
+        slope_scale: 8.0,
         clamp: 0.0,
     };
 
