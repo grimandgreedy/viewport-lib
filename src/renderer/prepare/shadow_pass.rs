@@ -285,7 +285,167 @@ impl ViewportRenderer {
                         && instancing.shadow_cull.shadow_vis_bufs[0].is_some();
 
                     if use_shadow_indirect {
-                        // GPU-culled indirect shadow path.
+                        // GPU-culled indirect shadow path, replayed from cached
+                        // per-cascade render bundles. The draw sequence below is
+                        // identical every frame for a stable batch list (the
+                        // per-frame variation lives in the cascade uniform and
+                        // the GPU-cull-written indirect args, which the bundle
+                        // references rather than bakes in), and encoding it
+                        // costs one set_vertex_buffer/set_index_buffer/draw per
+                        // batch per cascade, which dominates prepare() on
+                        // many-mesh scenes. Record once, replay until the batch
+                        // list or a referenced buffer changes.
+                        let bundle_key = (
+                            instancing.instance_gen,
+                            instancing.batches_gen,
+                            instancing.shadow_cull.outputs_gen,
+                            light.effective_cascade_count,
+                        );
+                        if instancing.shadow_cull.bundle_key != Some(bundle_key) {
+                            instancing.shadow_cull.shadow_bundles = [None, None, None, None];
+                            instancing.shadow_cull.bundle_draws = 0;
+
+                            // Build the per-batch alpha-cutout bind groups up
+                            // front so the encode loop can look them up with
+                            // immutable borrows only.
+                            let cutout_keys: Vec<_> = instancing
+                                .batches
+                                .iter()
+                                .filter(|b| b.is_cutout && !b.is_transparent)
+                                .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id))
+                                .collect();
+                            for cascade in 0..light.effective_cascade_count {
+                                for &(t, n, a) in &cutout_keys {
+                                    resources.get_shadow_cutout_cull_bind_group(
+                                        &mut instancing.shadow_cull,
+                                        device,
+                                        cascade,
+                                        t,
+                                        n,
+                                        a,
+                                    );
+                                }
+                            }
+
+                            for cascade in 0..light.effective_cascade_count {
+                                let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
+                                    continue;
+                                };
+                                let Some(pipeline_two_sided) =
+                                    resources.cull.shadow_two_sided_pipeline.as_ref()
+                                else {
+                                    continue;
+                                };
+                                let cutout_pipeline =
+                                    resources.cull.shadow_cutout_pipeline.as_ref();
+                                let cutout_pipeline_two_sided =
+                                    resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
+                                let Some(cascade_bg) =
+                                    resources.instancing.shadow_cascade_bgs[cascade].as_ref()
+                                else {
+                                    continue;
+                                };
+                                let Some(inst_cull_bg) =
+                                    instancing.shadow_cull.shadow_cull_instance_bgs[cascade]
+                                        .as_ref()
+                                else {
+                                    continue;
+                                };
+                                let Some(shadow_indirect_buf) =
+                                    instancing.shadow_cull.shadow_indirect_bufs[cascade].as_ref()
+                                else {
+                                    continue;
+                                };
+
+                                // Depth-only bundle against the Depth32Float
+                                // shadow atlas. Viewport/scissor are render-pass
+                                // state, so the per-cascade atlas tile set by
+                                // the replay loop below applies to the bundled
+                                // draws.
+                                let mut bundle_enc =
+                                    crate::resources::builders::render_bundle_encoder(
+                                        device,
+                                        "shadow_cascade_bundle",
+                                        &[],
+                                        Some(crate::gpu::RenderBundleDepthStencil {
+                                            format: crate::gpu::TextureFormat::Depth32Float,
+                                            depth_read_only: false,
+                                            stencil_read_only: true,
+                                        }),
+                                        1,
+                                    );
+                                bundle_enc.set_bind_group(0, cascade_bg, &[]);
+
+                                // Track the currently bound (pipeline, group-1) state. Cutout
+                                // batches swap to the cutout pipeline and rebind group 1 to a
+                                // bind group that carries the batch albedo texture; opaque
+                                // batches use the depth-only pipeline and the shared group 1.
+                                let mut cur_pipe: Option<(bool, bool)> = None; // (two_sided, cutout)
+                                let mut cur_group1_opaque = false;
+                                let mut draws = 0u32;
+                                for (bi, batch) in instancing.batches.iter().enumerate() {
+                                    if batch.is_transparent {
+                                        continue;
+                                    }
+                                    let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                                        continue;
+                                    };
+                                    // Resolve the cutout bind group; fall back to the opaque
+                                    // path if the cutout pipeline or bind group is missing.
+                                    let cutout_bg = if batch.is_cutout {
+                                        let key = (
+                                            cascade,
+                                            batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                            batch
+                                                .normal_map_id
+                                                .map(|t| t.raw())
+                                                .unwrap_or(u64::MAX),
+                                            batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        );
+                                        instancing.shadow_cull.shadow_cutout_cull_bgs.get(&key)
+                                    } else {
+                                        None
+                                    };
+                                    let use_cutout = cutout_bg.is_some()
+                                        && cutout_pipeline.is_some()
+                                        && cutout_pipeline_two_sided.is_some();
+
+                                    if cur_pipe != Some((batch.two_sided, use_cutout)) {
+                                        let pipe = match (use_cutout, batch.two_sided) {
+                                            (true, true) => cutout_pipeline_two_sided.unwrap(),
+                                            (true, false) => cutout_pipeline.unwrap(),
+                                            (false, true) => pipeline_two_sided,
+                                            (false, false) => pipeline,
+                                        };
+                                        bundle_enc.set_pipeline(pipe);
+                                        cur_pipe = Some((batch.two_sided, use_cutout));
+                                    }
+                                    if use_cutout {
+                                        bundle_enc.set_bind_group(1, cutout_bg.unwrap(), &[]);
+                                        cur_group1_opaque = false;
+                                    } else if !cur_group1_opaque {
+                                        bundle_enc.set_bind_group(1, inst_cull_bg, &[]);
+                                        cur_group1_opaque = true;
+                                    }
+                                    bundle_enc.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    bundle_enc.set_index_buffer(
+                                        mesh.index_buffer.slice(..),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    bundle_enc
+                                        .draw_indexed_indirect(shadow_indirect_buf, bi as u64 * 20);
+                                    draws += 1;
+                                }
+                                let bundle =
+                                    bundle_enc.finish(&crate::gpu::RenderBundleDescriptor {
+                                        label: Some("shadow_cascade_bundle"),
+                                    });
+                                instancing.shadow_cull.shadow_bundles[cascade] = Some(bundle);
+                                instancing.shadow_cull.bundle_draws += draws;
+                            }
+                            instancing.shadow_cull.bundle_key = Some(bundle_key);
+                        }
+
                         for cascade in 0..light.effective_cascade_count {
                             let tile_col = (cascade % 2) as f32;
                             let tile_row = (cascade / 2) as f32;
@@ -315,112 +475,13 @@ impl ViewportRenderer {
                                 ),
                             );
 
-                            // Build the per-batch alpha-cutout bind groups for this
-                            // cascade up front so the draw loop can look them up with
-                            // immutable borrows only.
-                            let cutout_keys: Vec<_> = instancing
-                                .batches
-                                .iter()
-                                .filter(|b| b.is_cutout && !b.is_transparent)
-                                .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id))
-                                .collect();
-                            for (t, n, a) in cutout_keys {
-                                resources.get_shadow_cutout_cull_bind_group(
-                                    &mut instancing.shadow_cull,
-                                    device,
-                                    cascade,
-                                    t,
-                                    n,
-                                    a,
-                                );
-                            }
-
-                            let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
-                                continue;
-                            };
-                            let Some(pipeline_two_sided) =
-                                resources.cull.shadow_two_sided_pipeline.as_ref()
-                            else {
-                                continue;
-                            };
-                            let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
-                            let cutout_pipeline_two_sided =
-                                resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
-                            let Some(cascade_bg) =
-                                resources.instancing.shadow_cascade_bgs[cascade].as_ref()
-                            else {
-                                continue;
-                            };
-                            let Some(inst_cull_bg) =
-                                instancing.shadow_cull.shadow_cull_instance_bgs[cascade].as_ref()
-                            else {
-                                continue;
-                            };
-                            let Some(shadow_indirect_buf) =
-                                instancing.shadow_cull.shadow_indirect_bufs[cascade].as_ref()
-                            else {
-                                continue;
-                            };
-
-                            shadow_pass.set_bind_group(0, cascade_bg, &[]);
-
-                            // Track the currently bound (pipeline, group-1) state. Cutout
-                            // batches swap to the cutout pipeline and rebind group 1 to a
-                            // bind group that carries the batch albedo texture; opaque
-                            // batches use the depth-only pipeline and the shared group 1.
-                            let mut cur_pipe: Option<(bool, bool)> = None; // (two_sided, cutout)
-                            let mut cur_group1_opaque = false;
-                            for (bi, batch) in instancing.batches.iter().enumerate() {
-                                if batch.is_transparent {
-                                    continue;
-                                }
-                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-                                    continue;
-                                };
-                                // Resolve the cutout bind group; fall back to the opaque
-                                // path if the cutout pipeline or bind group is missing.
-                                let cutout_bg = if batch.is_cutout {
-                                    let key = (
-                                        cascade,
-                                        batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                        batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
-                                    );
-                                    instancing.shadow_cull.shadow_cutout_cull_bgs.get(&key)
-                                } else {
-                                    None
-                                };
-                                let use_cutout = cutout_bg.is_some()
-                                    && cutout_pipeline.is_some()
-                                    && cutout_pipeline_two_sided.is_some();
-
-                                if cur_pipe != Some((batch.two_sided, use_cutout)) {
-                                    let pipe = match (use_cutout, batch.two_sided) {
-                                        (true, true) => cutout_pipeline_two_sided.unwrap(),
-                                        (true, false) => cutout_pipeline.unwrap(),
-                                        (false, true) => pipeline_two_sided,
-                                        (false, false) => pipeline,
-                                    };
-                                    shadow_pass.set_pipeline(pipe);
-                                    cur_pipe = Some((batch.two_sided, use_cutout));
-                                }
-                                if use_cutout {
-                                    shadow_pass.set_bind_group(1, cutout_bg.unwrap(), &[]);
-                                    cur_group1_opaque = false;
-                                } else if !cur_group1_opaque {
-                                    shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
-                                    cur_group1_opaque = true;
-                                }
-                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                shadow_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                shadow_pass
-                                    .draw_indexed_indirect(shadow_indirect_buf, bi as u64 * 20);
-                                shadow_draws += 1;
+                            if let Some(bundle) =
+                                instancing.shadow_cull.shadow_bundles[cascade].as_ref()
+                            {
+                                shadow_pass.execute_bundles(std::iter::once(bundle));
                             }
                         }
+                        shadow_draws += instancing.shadow_cull.bundle_draws;
                     } else if let (Some(ranges), Some(pipeline), Some(pipeline_two_sided)) = (
                         cpu_cull_ranges.as_ref(),
                         resources.cull.shadow_pipeline.as_ref(),

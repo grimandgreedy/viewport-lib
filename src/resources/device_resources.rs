@@ -1101,6 +1101,23 @@ pub(crate) struct ShadowCullState {
     /// `InstancingState::instance_gen` the instance storage buffer was rebuilt, so
     /// the bind groups (which bind it at binding 0) are stale.
     pub(crate) built_gen: u64,
+    /// Per-cascade render bundles replaying the indirect shadow draw sequence.
+    /// The batch loop encodes hundreds of set/draw calls per cascade; for a
+    /// stable batch list that sequence is identical every frame (per-frame
+    /// variation lives in the cascade uniform and the GPU-cull-written indirect
+    /// args, both referenced by the bundle, not baked into it), so it is
+    /// recorded once and replayed. Viewport/scissor are render-pass state and
+    /// still apply around bundle execution, so the per-cascade atlas tiles work
+    /// unchanged.
+    pub(crate) shadow_bundles: [Option<crate::gpu::RenderBundle>; 4],
+    /// (instance_gen, batches_gen, outputs_gen, cascade_count) the bundles were
+    /// recorded against; a mismatch re-records them.
+    pub(crate) bundle_key: Option<(u64, u64, u64, usize)>,
+    /// GPU draws recorded per cascade bundle, for FrameStats.
+    pub(crate) bundle_draws: u32,
+    /// Bumped whenever `ensure_outputs` reallocates a buffer the bundles (or
+    /// bind groups) reference.
+    pub(crate) outputs_gen: u64,
 }
 
 impl ShadowCullState {
@@ -1114,6 +1131,10 @@ impl ShadowCullState {
             vis_capacity: 0,
             batch_output_capacity: 0,
             built_gen: u64::MAX,
+            shadow_bundles: [None, None, None, None],
+            bundle_key: None,
+            bundle_draws: 0,
+            outputs_gen: 0,
         }
     }
 
@@ -1146,6 +1167,7 @@ impl ShadowCullState {
             // The shadow cull bind groups bind these vis buffers at binding 5.
             self.shadow_cull_instance_bgs = [None, None, None, None];
             self.shadow_cutout_cull_bgs.clear();
+            self.outputs_gen = self.outputs_gen.wrapping_add(1);
         }
 
         let max_batches = (device.limits().max_storage_buffer_binding_size as usize)
@@ -1175,6 +1197,7 @@ impl ShadowCullState {
                 }
             }
             self.batch_output_capacity = new_cap;
+            self.outputs_gen = self.outputs_gen.wrapping_add(1);
         }
     }
 }

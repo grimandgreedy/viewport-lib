@@ -289,6 +289,12 @@ impl ViewportRenderer {
 
             instancing.cached_instance_count = all_instances.len();
             instancing.cached_aabbs = all_aabbs;
+            // The cached shadow render bundles replay the batch draw sequence;
+            // any change to the batch list (not just structure: textures and
+            // cutout flags pick pipelines and bind groups too) invalidates them.
+            if instanced_batches != instancing.cached_batches {
+                instancing.batches_gen = instancing.batches_gen.wrapping_add(1);
+            }
             instancing.cached_batches = instanced_batches;
             instancing.batches = instancing.cached_batches.clone();
 

@@ -63,6 +63,11 @@ pub(crate) struct InstancingState {
     /// batch upload). Per-viewport cull bind groups compare against this to
     /// detect when their binding-0 reference is stale.
     pub(crate) instance_gen: u64,
+    /// Bumped whenever a batch rebuild produces a batch list that differs from
+    /// the previous one in any field (mesh, textures, offsets, flags). The
+    /// cached shadow render bundles key on this: a stable batch list means the
+    /// recorded draw sequence is still valid.
+    pub(crate) batches_gen: u64,
     /// GPU cull outputs for the directional shadow cascades. Shadows are fit to
     /// the primary camera and rendered once, so this is scene-scoped rather than
     /// per-viewport.
@@ -92,6 +97,7 @@ impl InstancingState {
             indirect_map_inflight: false,
             indirect_map_status: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             instance_gen: 0,
+            batches_gen: 0,
             shadow_cull: crate::resources::ShadowCullState::new(),
         }
     }
