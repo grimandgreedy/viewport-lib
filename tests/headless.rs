@@ -11,10 +11,10 @@ use viewport_lib::wgpu;
 
 use viewport_lib::{
     Aabb, BackfacePolicy, Camera, DecalItem, GaussianSplatData, GaussianSplatItem, GlyphItem,
-    GlyphType, ImageSliceItem, ItemSettings, Material, MeshId, PickBackend, PickId, PickMask,
-    PickPoll, PointCloudItem, PolylineItem, RibbonItem, ScatterVolume, ScatterVolumeItem, Scene,
-    Selection, ShDegree, SliceAxis, SpriteItem, SpriteSizeMode, VolumeItem, VolumeMeshItem,
-    VolumeSurfaceSliceItem,
+    GlyphType, ImageAnchor, ImageSliceItem, ItemSettings, Material, MeshId, PickBackend, PickId,
+    PickMask, PickPoll, PointCloudItem, PolylineItem, RibbonItem, ScatterVolume, ScatterVolumeItem,
+    Scene, ScreenImageItem, Selection, ShDegree, SliceAxis, SpriteItem, SpriteSizeMode, VolumeItem,
+    VolumeMeshItem, VolumeSurfaceSliceItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
@@ -2116,4 +2116,90 @@ fn gpu_pick_rect_returns_unique_object_ids() {
         PickMask::FACE,
     );
     assert!(empty.is_empty());
+}
+
+#[test]
+fn gpu_pick_hits_screen_image() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let mut image = ScreenImageItem::default();
+    image.pixels = vec![[255, 255, 255, 255]; 16 * 16];
+    image.width = 16;
+    image.height = 16;
+    image.anchor = ImageAnchor::Center;
+    image.settings.pick_id = PickId(444);
+    frame.scene.screen_images.push(image);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // Centre of the 64x64 viewport lands inside the 16x16 centred image.
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(hit.map(|h| h.id), Some(444));
+
+    // Corner of the viewport falls outside the centred image.
+    let miss = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(1.0, 1.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert!(miss.is_none());
+}
+
+#[test]
+fn gpu_pick_rect_hits_screen_image() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let mut image = ScreenImageItem::default();
+    image.pixels = vec![[255, 255, 255, 255]; 16 * 16];
+    image.width = 16;
+    image.height = 16;
+    image.anchor = ImageAnchor::Center;
+    image.settings.pick_id = PickId(555);
+    frame.scene.screen_images.push(image);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // A rect spanning the whole viewport touches the centred image.
+    let result = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(0.0, 0.0),
+        glam::Vec2::new(64.0, 64.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(result.objects, vec![555]);
+
+    // A rect confined to a corner, away from the centred image, misses it.
+    let miss = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(0.0, 0.0),
+        glam::Vec2::new(4.0, 4.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert!(miss.objects.is_empty());
 }
