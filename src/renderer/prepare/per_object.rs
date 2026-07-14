@@ -732,7 +732,15 @@ impl ViewportRenderer {
                 self.per_object_bundle_gate.suppressed = false;
             }
         }
-        if self.per_object_bundle_gate.suppressed {
+        // Diagnostic kill-switch for the churn gate: with it set, sustained
+        // churn re-records the bundle every frame instead of backing off.
+        // Exists for leak retests on wgpu versions that ship the
+        // render-bundle drop fix (gfx-rs/wgpu#8661); leave it unset
+        // otherwise, since per-frame re-record costs more than it saves.
+        static GATE_DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let gate_disabled = *GATE_DISABLED
+            .get_or_init(|| std::env::var_os("VIEWPORT_DISABLE_BUNDLE_CHURN_GATE").is_some());
+        if self.per_object_bundle_gate.suppressed && !gate_disabled {
             self.per_object_bundle = None;
             return;
         }
