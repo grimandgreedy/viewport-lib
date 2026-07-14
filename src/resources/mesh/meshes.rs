@@ -2425,6 +2425,7 @@ impl DeviceResources {
             position_override_gen: 0,
             normal_override_gen: 0,
             content_rev: 0,
+            pick_trimesh_cache: std::sync::Mutex::new(None),
         }
     }
 

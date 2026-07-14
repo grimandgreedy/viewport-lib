@@ -91,6 +91,16 @@ pub struct GpuMesh {
     /// keyed on mesh content (the point-shadow cubemap cache) fold this in
     /// so an in-place vertex update invalidates them.
     pub(crate) content_rev: u64,
+    /// Cached mesh-local-space `parry3d::TriMesh` (with its QBVH) used by the
+    /// CPU picker, plus the `content_rev` it was built from. `Mutex` (not
+    /// `RefCell`) because `ViewportRenderer` (and so `GpuMesh`) must stay
+    /// `Send + Sync` for the egui callback trait; `ViewportRenderer::pick`
+    /// reads through a shared reference. The cache is rebuilt on first use
+    /// after upload or whenever `content_rev` moves past the cached value,
+    /// and is shared across every instance of this mesh since the geometry is
+    /// local-space (see `cached_pick_trimesh`).
+    pub(crate) pick_trimesh_cache:
+        std::sync::Mutex<Option<(u64, std::sync::Arc<parry3d::shape::TriMesh>)>>,
 }
 
 impl GpuMesh {
@@ -100,6 +110,49 @@ impl GpuMesh {
     /// against the mesh it will be bound to.
     pub fn vertex_count(&self) -> usize {
         (self.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize
+    }
+
+    /// Mesh-local-space `parry3d::TriMesh` for CPU picking, built once from
+    /// `cpu_positions` / `cpu_indices` and cached until `content_rev` moves.
+    ///
+    /// Returns `None` when the mesh carries no CPU-side geometry (GPU-only
+    /// meshes) or the triangle list is empty. The returned shape carries no
+    /// per-instance transform: callers cast the ray in mesh-local space (via
+    /// the item's inverse model matrix) so one cached `TriMesh` serves every
+    /// instance of this mesh, and an object moving does not invalidate it.
+    pub(crate) fn cached_pick_trimesh(&self) -> Option<std::sync::Arc<parry3d::shape::TriMesh>> {
+        let mut cache = self.pick_trimesh_cache.lock().unwrap();
+        if let Some((rev, trimesh)) = cache.as_ref() {
+            if *rev == self.content_rev {
+                return Some(trimesh.clone());
+            }
+        }
+
+        let positions = self.cpu_positions.as_ref()?;
+        let indices = self.cpu_indices.as_ref()?;
+
+        let verts: Vec<parry3d::math::Vector> = positions
+            .iter()
+            .map(|p| parry3d::math::Vector::new(p[0], p[1], p[2]))
+            .collect();
+        let tri_indices: Vec<[u32; 3]> = indices
+            .chunks(3)
+            .filter(|c| c.len() == 3)
+            .map(|c| [c[0], c[1], c[2]])
+            .collect();
+        if tri_indices.is_empty() {
+            return None;
+        }
+
+        let trimesh = match parry3d::shape::TriMesh::new(verts, tri_indices) {
+            Ok(trimesh) => std::sync::Arc::new(trimesh),
+            Err(e) => {
+                tracing::warn!(error = %e, "TriMesh build failed for CPU picking");
+                return None;
+            }
+        };
+        *cache = Some((self.content_rev, trimesh.clone()));
+        Some(trimesh)
     }
 
     /// Total GPU buffer bytes held by this mesh.

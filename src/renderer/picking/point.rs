@@ -80,10 +80,6 @@ impl ViewportRenderer {
 
         // 1. Surface mesh picks (FACE, VERTEX, EDGE, CELL, or OBJECT fallback).
         if wants_mesh_sub || wants_cell || wants_object {
-            let ray = Ray::new(
-                Vector::new(ray_origin.x, ray_origin.y, ray_origin.z),
-                Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
-            );
             for item in &self.pick_scene_items {
                 if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                     continue;
@@ -95,103 +91,70 @@ impl ViewportRenderer {
                 else {
                     continue;
                 };
+                let Some(trimesh) = mesh.cached_pick_trimesh() else {
+                    continue;
+                };
 
                 let model = glam::Mat4::from_cols_array_2d(&item.model);
+                // Cast the ray in the mesh's local space instead of baking the
+                // model matrix into a fresh world-space vertex Vec every click:
+                // `trimesh` is cached per mesh_id (see `cached_pick_trimesh`), so
+                // this serves every instance of a shared mesh. `transform_vector3`
+                // (not `transform_point3`) applies only the linear part, so
+                // `local_dir` is not renormalized and `toi` comes out identical to
+                // the world-space parametrization.
+                let inv_model = model.inverse();
+                let local_origin = inv_model.transform_point3(ray_origin);
+                let local_dir = inv_model.transform_vector3(ray_dir);
+                let ray = Ray::new(
+                    Vector::new(local_origin.x, local_origin.y, local_origin.z),
+                    Vector::new(local_dir.x, local_dir.y, local_dir.z),
+                );
 
-                // Bake the full model matrix into vertex positions so that
-                // non-uniform scale is handled correctly.
-                let verts: Vec<Vector> = positions
-                    .iter()
-                    .map(|p| {
-                        let wp = model.transform_point3(glam::Vec3::from(*p));
-                        Vector::new(wp.x, wp.y, wp.z)
-                    })
-                    .collect();
+                {
+                    // Vertices are in mesh-local space: use identity pose.
+                    let identity = Pose::identity();
+                    let Some(intersection) =
+                        trimesh.cast_ray_and_get_normal(&identity, &ray, f32::MAX, true)
+                    else {
+                        continue;
+                    };
+                    let toi = intersection.time_of_impact;
+                    let world_pos = ray_origin + ray_dir * toi;
+                    // Transform the local-space normal back to world space with
+                    // the inverse-transpose of the model's linear part, so
+                    // non-uniform scale does not distort it.
+                    let normal_matrix = glam::Mat3::from_mat4(model).inverse().transpose();
+                    let local_normal = glam::Vec3::new(
+                        intersection.normal.x,
+                        intersection.normal.y,
+                        intersection.normal.z,
+                    );
+                    let normal = normal_matrix.mul_vec3(local_normal).normalize();
 
-                let tri_indices: Vec<[u32; 3]> = indices
-                    .chunks(3)
-                    .filter(|c| c.len() == 3)
-                    .map(|c| [c[0], c[1], c[2]])
-                    .collect();
+                    let feature_sub = SubObjectRef::from_feature_id(intersection.feature);
 
-                if tri_indices.is_empty() {
-                    continue;
-                }
-
-                match parry3d::shape::TriMesh::new(verts, tri_indices) {
-                    Ok(trimesh) => {
-                        // Vertices are already in world space: use identity pose.
-                        let identity = Pose::identity();
-                        let Some(intersection) =
-                            trimesh.cast_ray_and_get_normal(&identity, &ray, f32::MAX, true)
-                        else {
-                            continue;
-                        };
-                        let toi = intersection.time_of_impact;
-                        let world_pos = ray_origin + ray_dir * toi;
-                        let normal = intersection.normal;
-
-                        let feature_sub = SubObjectRef::from_feature_id(intersection.feature);
-
-                        let sub_object = if wants_face {
-                            feature_sub
-                        } else if wants_cell {
-                            // Convert surface Face hit to originating cell index.
-                            if let Some(f2c) = vm_cell_map.get(&item.settings.pick_id.0) {
-                                match feature_sub {
-                                    Some(SubObjectRef::Face(face_raw)) => {
-                                        let n_tri = indices.len() / 3;
-                                        let face = if (face_raw as usize) >= n_tri {
-                                            face_raw as usize - n_tri
-                                        } else {
-                                            face_raw as usize
-                                        };
-                                        f2c.get(face).map(|&ci| SubObjectRef::Cell(ci))
-                                    }
-                                    other => other,
+                    let sub_object = if wants_face {
+                        feature_sub
+                    } else if wants_cell {
+                        // Convert surface Face hit to originating cell index.
+                        if let Some(f2c) = vm_cell_map.get(&item.settings.pick_id.0) {
+                            match feature_sub {
+                                Some(SubObjectRef::Face(face_raw)) => {
+                                    let n_tri = indices.len() / 3;
+                                    let face = if (face_raw as usize) >= n_tri {
+                                        face_raw as usize - n_tri
+                                    } else {
+                                        face_raw as usize
+                                    };
+                                    f2c.get(face).map(|&ci| SubObjectRef::Cell(ci))
                                 }
-                            } else if wants_vertex {
-                                // No cell map for this item; try vertex picking instead.
-                                // Fall through to the vertex branch below by
-                                // re-evaluating with the vertex logic inline.
-                                match feature_sub {
-                                    Some(SubObjectRef::Face(face_raw)) => {
-                                        let n_tri = indices.len() / 3;
-                                        let face = if (face_raw as usize) >= n_tri {
-                                            face_raw as usize - n_tri
-                                        } else {
-                                            face_raw as usize
-                                        };
-                                        if face * 3 + 2 < indices.len() {
-                                            let vis = [
-                                                indices[face * 3] as usize,
-                                                indices[face * 3 + 1] as usize,
-                                                indices[face * 3 + 2] as usize,
-                                            ];
-                                            let (best_vi, _) = vis
-                                                .iter()
-                                                .map(|&i| {
-                                                    let p = model.transform_point3(
-                                                        glam::Vec3::from(positions[i]),
-                                                    );
-                                                    (i, p.distance(world_pos))
-                                                })
-                                                .fold((vis[0], f32::MAX), |acc, (i, d)| {
-                                                    if d < acc.1 { (i, d) } else { acc }
-                                                });
-                                            Some(SubObjectRef::Vertex(best_vi as u32))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    other => other,
-                                }
-                            } else {
-                                // No cell map and vertex not wanted; no sub-element.
-                                None
+                                other => other,
                             }
                         } else if wants_vertex {
-                            // Convert face hit to nearest triangle corner.
+                            // No cell map for this item; try vertex picking instead.
+                            // Fall through to the vertex branch below by
+                            // re-evaluating with the vertex logic inline.
                             match feature_sub {
                                 Some(SubObjectRef::Face(face_raw)) => {
                                     let n_tri = indices.len() / 3;
@@ -225,35 +188,64 @@ impl ViewportRenderer {
                                 other => other,
                             }
                         } else {
-                            // Object-only: no sub-element.
+                            // No cell map and vertex not wanted; no sub-element.
                             None
-                        };
-
-                        // Only emit the hit if we produced a meaningful sub-element
-                        // or the caller explicitly asked for object-level hits.
-                        // Without this guard, an EDGE-only mask runs the ray-trimesh
-                        // intersection (because wants_mesh_sub is true) but falls through
-                        // to sub_object=None, producing a spurious object-level hit.
-                        if sub_object.is_some() || wants_object {
-                            #[allow(deprecated)]
-                            let hit = PickHit {
-                                id: item.settings.pick_id.0,
-                                sub_object,
-                                world_pos,
-                                normal,
-                                triangle_index: u32::MAX,
-                                point_index: None,
-                                scalar_value: None,
-                            };
-                            consider(toi, hit);
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            pick_id = item.settings.pick_id.0,
-                            error = %e,
-                            "TriMesh build failed in renderer.pick()"
-                        );
+                    } else if wants_vertex {
+                        // Convert face hit to nearest triangle corner.
+                        match feature_sub {
+                            Some(SubObjectRef::Face(face_raw)) => {
+                                let n_tri = indices.len() / 3;
+                                let face = if (face_raw as usize) >= n_tri {
+                                    face_raw as usize - n_tri
+                                } else {
+                                    face_raw as usize
+                                };
+                                if face * 3 + 2 < indices.len() {
+                                    let vis = [
+                                        indices[face * 3] as usize,
+                                        indices[face * 3 + 1] as usize,
+                                        indices[face * 3 + 2] as usize,
+                                    ];
+                                    let (best_vi, _) = vis
+                                        .iter()
+                                        .map(|&i| {
+                                            let p = model
+                                                .transform_point3(glam::Vec3::from(positions[i]));
+                                            (i, p.distance(world_pos))
+                                        })
+                                        .fold((vis[0], f32::MAX), |acc, (i, d)| {
+                                            if d < acc.1 { (i, d) } else { acc }
+                                        });
+                                    Some(SubObjectRef::Vertex(best_vi as u32))
+                                } else {
+                                    None
+                                }
+                            }
+                            other => other,
+                        }
+                    } else {
+                        // Object-only: no sub-element.
+                        None
+                    };
+
+                    // Only emit the hit if we produced a meaningful sub-element
+                    // or the caller explicitly asked for object-level hits.
+                    // Without this guard, an EDGE-only mask runs the ray-trimesh
+                    // intersection (because wants_mesh_sub is true) but falls through
+                    // to sub_object=None, producing a spurious object-level hit.
+                    if sub_object.is_some() || wants_object {
+                        #[allow(deprecated)]
+                        let hit = PickHit {
+                            id: item.settings.pick_id.0,
+                            sub_object,
+                            world_pos,
+                            normal,
+                            triangle_index: u32::MAX,
+                            point_index: None,
+                            scalar_value: None,
+                        };
+                        consider(toi, hit);
                     }
                 }
             }

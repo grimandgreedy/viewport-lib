@@ -2203,3 +2203,228 @@ fn gpu_pick_rect_hits_screen_image() {
     );
     assert!(miss.objects.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// CPU pick: cached mesh-local TriMesh
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cpu_pick_hits_mesh_via_cached_trimesh() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_cpu_pick_cache(true);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.settings.pick_id = PickId(111);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Cpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(hit.map(|h| h.id), Some(111));
+}
+
+#[test]
+fn cpu_pick_matches_gpu_pick_under_non_uniform_scale() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_cpu_pick_cache(true);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    // Non-uniform scale: the cached TriMesh is mesh-local, so this exercises
+    // the inverse-model ray transform and the inverse-transpose normal fix-up
+    // in `renderer.pick()` section 1.
+    item.model = glam::Mat4::from_scale(glam::Vec3::new(1.0, 2.0, 3.0)).to_cols_array_2d();
+    item.settings.pick_id = PickId(222);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let gpu_hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::OBJECT,
+        )
+        .expect("scaled box should be hit (gpu)");
+    let cpu_hit = renderer
+        .pick_object(
+            PickBackend::Cpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::OBJECT,
+        )
+        .expect("scaled box should be hit (cpu)");
+
+    assert_eq!(cpu_hit.id, 222);
+    assert_eq!(cpu_hit.id, gpu_hit.id);
+
+    // GPU depth reconstruction reads back a single quantized pixel while the
+    // CPU ray is cast through the exact continuous click position, so on an
+    // oblique default camera the two land a fraction of a pixel apart even
+    // with no bug involved (this reproduces at identity scale too). A loose
+    // bound confirms they hit the same face, not a stale or mistransformed one.
+    assert!(
+        cpu_hit.world_pos.distance(gpu_hit.world_pos) < 0.15,
+        "cpu {:?} vs gpu {:?}",
+        cpu_hit.world_pos,
+        gpu_hit.world_pos
+    );
+
+    // Precise check: map the CPU hit back into mesh-local space through the
+    // known model matrix. Regardless of the non-uniform scale applied, the
+    // true hit point must land exactly on the unit box's surface (one
+    // component at +/-0.5). This is what actually exercises correctness of
+    // the inverse-model ray transform and the inverse-transpose normal
+    // fix-up, without depending on GPU pixel quantization.
+    let model = glam::Mat4::from_scale(glam::Vec3::new(1.0, 2.0, 3.0));
+    let local_hit = model.inverse().transform_point3(cpu_hit.world_pos);
+    let max_component = local_hit
+        .x
+        .abs()
+        .max(local_hit.y.abs())
+        .max(local_hit.z.abs());
+    assert!(
+        (max_component - 0.5).abs() < 1e-4,
+        "expected the hit to land on the unit box surface in local space, got {local_hit:?}"
+    );
+}
+
+#[test]
+fn cpu_pick_reuses_cached_trimesh_across_instances() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_cpu_pick_cache(true);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+
+    // Two instances of the same mesh_id at different positions along the ray
+    // through screen centre; the nearer one (closer to the camera) should win.
+    let mut near_item = SceneRenderItem::default();
+    near_item.mesh_id = mesh_id;
+    near_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    near_item.settings.pick_id = PickId(11);
+
+    let mut far_item = SceneRenderItem::default();
+    far_item.mesh_id = mesh_id;
+    far_item.model =
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.0)).to_cols_array_2d();
+    far_item.settings.pick_id = PickId(22);
+
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![near_item, far_item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Cpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(hit.map(|h| h.id), Some(11));
+}
+
+#[test]
+fn cpu_pick_invalidates_cache_after_replace_mesh_data() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_cpu_pick_cache(true);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.settings.pick_id = PickId(333);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let first = renderer
+        .pick_object(
+            PickBackend::Cpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::OBJECT,
+        )
+        .expect("unit box should be hit");
+
+    // Replace with a much bigger box (unit box scaled 10x baked into vertex
+    // data), same PickId, no scale on the item transform. If the cached
+    // TriMesh were not invalidated by `content_rev`, this would still read
+    // back the old unit-box surface.
+    let mut big_box = box_mesh();
+    for p in &mut big_box.positions {
+        p[0] *= 10.0;
+        p[1] *= 10.0;
+        p[2] *= 10.0;
+    }
+    renderer
+        .resources_mut()
+        .replace_mesh_data(&device, &queue, mesh_id, &big_box)
+        .expect("replace mesh data");
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let second = renderer
+        .pick_object(
+            PickBackend::Cpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::OBJECT,
+        )
+        .expect("bigger box should be hit");
+
+    assert!(
+        second.world_pos.distance(first.world_pos) > 1.0,
+        "expected the bigger box surface to be hit further out: first {:?}, second {:?}",
+        first.world_pos,
+        second.world_pos
+    );
+}
