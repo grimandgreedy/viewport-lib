@@ -109,8 +109,11 @@ pub enum DebugOutputMode {
 /// Debug visualization configuration for the shadow and lighting pipeline.
 ///
 /// Attach to [`LightingSettings::debug_vis`] to activate per-fragment channel output.
-/// When `active` is false all overhead is zero: `debug_vis_mode` is written as 0
-/// and the shader exits the debug path immediately.
+/// When `active` is false the overhead is zero: the lit pipelines compile
+/// without the debug code entirely (its per-fragment storage write would
+/// disable hardware early depth rejection and slow dense scenes by an order
+/// of magnitude). Turning debug vis on or off rebuilds those pipelines, so
+/// expect a one-off hitch on the frame the flag flips.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct DebugVis {

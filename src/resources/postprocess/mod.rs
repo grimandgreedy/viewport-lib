@@ -893,8 +893,11 @@ impl DeviceResources {
                 &self.deform.registrations,
             )
         };
-        let oit_shader =
-            crate::resources::builders::wgsl_module(device, "mesh_oit_shader", oit_mesh_source);
+        let oit_shader = crate::resources::builders::wgsl_module(
+            device,
+            "mesh_oit_shader",
+            crate::resources::builders::strip_debug_vis(oit_mesh_source, self.debug_vis_shaders),
+        );
         let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "oit_pipeline_layout",
@@ -931,8 +934,11 @@ impl DeviceResources {
                 &self.deform.registrations,
             )
         };
-        let hdr_shader =
-            crate::resources::builders::wgsl_module(device, "mesh_shader_hdr", hdr_mesh_source);
+        let hdr_shader = crate::resources::builders::wgsl_module(
+            device,
+            "mesh_shader_hdr",
+            crate::resources::builders::strip_debug_vis(hdr_mesh_source, self.debug_vis_shaders),
+        );
         let hdr_depth_stencil = crate::resources::builders::scene_depth_stencil(
             true,
             crate::gpu::CompareFunction::Less,

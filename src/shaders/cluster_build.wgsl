@@ -80,11 +80,18 @@ fn cluster_aabb(cluster_id: u32) -> array<vec3<f32>, 2> {
     let y_ndc_hi = -1.0 + 2.0 * f32(yi + 1u)   / fny;
 
     // Log-uniform z slices in view space (looking down -Z, so view-space z is
-    // negative). z_view = -near * (far/near)^(zi/nz).
+    // negative). z_view = -near * (far/near)^(zi/nz). The cluster near plane
+    // sits at far/32 (host side), not the camera near plane; fragments nearer
+    // than it clamp to slice 0 (see cluster_index_for), so slice 0's AABB
+    // must extend all the way to the camera to keep assignment conservative
+    // for those fragments.
     let near = grid.depth.x;
     let log_ratio = grid.depth.z;
-    let z_near_slice = -near * exp(log_ratio * f32(zi)        / fnz);
+    var z_near_slice = -near * exp(log_ratio * f32(zi)        / fnz);
     let z_far_slice  = -near * exp(log_ratio * f32(zi + 1u)   / fnz);
+    if zi == 0u {
+        z_near_slice = 0.0;
+    }
     // |z| at the two slice depths : the far slice is deeper, hence larger.
     let z_abs_near = -z_near_slice;
     let z_abs_far  = -z_far_slice;

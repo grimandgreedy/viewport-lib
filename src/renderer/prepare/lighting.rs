@@ -696,6 +696,10 @@ impl ViewportRenderer {
         } else {
             1.0
         };
+        // The lit pipelines normally compile without the debug-vis block (its
+        // storage write disables early depth rejection); swap in the full
+        // shader variant while debug vis is active, and back when it stops.
+        resources.set_debug_vis_shaders(device, debug_vis_mode != 0);
 
         let lights_uniform = LightsUniform {
             count: light_count,
@@ -785,6 +789,20 @@ impl ViewportRenderer {
                 far
             };
 
+            // Spend the z-slice budget where geometry is. Log-uniform slices
+            // from the camera near plane put roughly half the slices inside
+            // the first few metres of a metre-scale scene, leaving the
+            // distant slabs several times thicker than they need to be, so
+            // far clusters collect lights that cannot reach most of their
+            // fragments. Instead the first slice covers everything up to
+            // far/32 (fragments nearer than the cluster near plane clamp to
+            // slice 0, whose AABB in cluster_build.wgsl extends to depth 0)
+            // and the remaining slices run log-uniform from there, which
+            // keeps the slice-to-slice depth ratio constant regardless of
+            // scene scale.
+            let cluster_near = (far / 32.0).max(near);
+            let far = far.max(cluster_near * 1.01);
+
             let active_count = lights_packed.len() as u32;
             // Skip the cluster build entirely for scenes with only a handful
             // of lights : straight per-fragment iteration is cheaper than the
@@ -801,7 +819,12 @@ impl ViewportRenderer {
                     CLUSTER_Z_SLICES,
                     CLUSTER_COUNT,
                 ],
-                depth: [near, far, (far / near).ln(), active_count as f32],
+                depth: [
+                    cluster_near,
+                    far,
+                    (far / cluster_near).ln(),
+                    active_count as f32,
+                ],
                 screen: [
                     frame.camera.render_camera.aspect.max(0.01),
                     1.0,

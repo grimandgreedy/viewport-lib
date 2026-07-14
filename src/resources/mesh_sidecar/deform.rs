@@ -998,6 +998,23 @@ impl DeviceResources {
     /// to reset to the identity shader. The instanced and instanced-OIT
     /// pipelines stay on their build-time shader modules until their
     /// factories migrate to the same rebuild flow.
+    /// Swap the lit pipelines between the stripped and debug-vis shader
+    /// variants (see `builders::strip_debug_vis`). Called when the per-frame
+    /// `DebugVis` state flips. The swap recompiles the mesh-family
+    /// pipelines, a one-off hitch that is acceptable for a debugging tool.
+    ///
+    /// On limited devices (`max_bind_groups < 3`) the mesh family builds
+    /// through the noop path that `rebuild_mesh_pipelines` does not cover;
+    /// there the debug block stays stripped and the pixel inspector is
+    /// unavailable.
+    pub(crate) fn set_debug_vis_shaders(&mut self, device: &crate::gpu::Device, active: bool) {
+        if self.debug_vis_shaders == active {
+            return;
+        }
+        self.debug_vis_shaders = active;
+        self.rebuild_mesh_pipelines(device);
+    }
+
     fn rebuild_mesh_pipelines(&mut self, device: &crate::gpu::Device) {
         if !self.deform.enabled {
             return;
@@ -1007,8 +1024,11 @@ impl DeviceResources {
         // mesh.wgsl: LDR + HDR families.
         if let Some(base) = lookup_source("mesh.wgsl") {
             let composed = compose_shader(base, &registrations);
-            let shader =
-                crate::resources::builders::wgsl_module(device, "mesh_shader_composed", composed);
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "mesh_shader_composed",
+                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+            );
 
             let ldr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
                 device,
@@ -1058,7 +1078,7 @@ impl DeviceResources {
                 let shader = crate::resources::builders::wgsl_module(
                     device,
                     "mesh_oit_shader_composed",
-                    composed,
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
                 );
                 let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
                     device,
@@ -1140,7 +1160,9 @@ impl DeviceResources {
             let shader = crate::resources::builders::wgsl_module(
                 device,
                 "mesh_instanced_shader_composed",
-                composed,
+                crate::resources::builders::strip_mesh_discards(
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                ),
             );
 
             if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
@@ -1212,7 +1234,7 @@ impl DeviceResources {
             let shader = crate::resources::builders::wgsl_module(
                 device,
                 "mesh_instanced_oit_shader_composed",
-                composed,
+                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
             );
             if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
                 if self.oit.instanced_pipeline.is_some() {

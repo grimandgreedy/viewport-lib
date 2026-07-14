@@ -20,10 +20,13 @@ use crate::gpu::util::DeviceExt;
 pub const CLUSTER_X_TILES: u32 = 16;
 /// Y (screen-tile) count of the cluster grid.
 pub const CLUSTER_Y_TILES: u32 = 9;
-/// Z (depth-slice) count. Log-uniform from the camera near plane to a far
-/// bound fitted per frame to the punctual lights' reach (max view depth +
-/// range, clamped to the camera far), so slices concentrate where lights
-/// exist; fragments beyond the fitted far clamp to the last slice.
+/// Z (depth-slice) count. The far bound is fitted per frame to the punctual
+/// lights' reach (max view depth + range, clamped to the camera far) and the
+/// cluster near plane sits at far/32, so the slices run log-uniform across
+/// the depth range that actually holds lit geometry instead of burning most
+/// of the budget on the first few metres. Fragments nearer than the cluster
+/// near plane clamp to slice 0 (whose AABB extends to the camera); fragments
+/// beyond the fitted far clamp to the last slice.
 pub const CLUSTER_Z_SLICES: u32 = 24;
 /// Total cluster cell count (`16 * 9 * 24 = 3456`).
 pub const CLUSTER_COUNT: u32 = CLUSTER_X_TILES * CLUSTER_Y_TILES * CLUSTER_Z_SLICES;
@@ -54,7 +57,9 @@ pub const SMALL_N_THRESHOLD: u32 = 16;
 pub struct ClusterGridUniform {
     /// (x_tiles, y_tiles, z_slices, total_count).
     pub dimensions: [u32; 4],
-    /// (near, far, log(far/near), active_light_count).
+    /// (cluster_near, far, log(far/cluster_near), active_light_count). The
+    /// cluster near plane is far/32 (clamped to at least the camera near),
+    /// not the camera near plane; see `CLUSTER_Z_SLICES`.
     pub depth: [f32; 4],
     /// (screen_w, screen_h, fallback_mode, _pad). `fallback_mode != 0` signals
     /// the small-N fallback path to the shader, which then iterates the full

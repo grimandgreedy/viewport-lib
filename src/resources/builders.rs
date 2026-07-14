@@ -28,6 +28,40 @@ pub(crate) fn wgsl_module<'a>(
     })
 }
 
+/// Remove the pixel-inspector debug block (bracketed by `BEGIN_DEBUG_VIS` /
+/// `END_DEBUG_VIS` in debug_vis.wgsl) from a lit shader source unless `keep`
+/// is set.
+///
+/// The block writes per-fragment values to the `debug_frag_buf` storage
+/// buffer. A fragment shader with a buffer write has an observable side
+/// effect, so the driver cannot reject occluded fragments with the early
+/// depth test: every rasterized fragment of every hidden surface runs the
+/// full lit shader. On the roman_mix reference scene that costs the scene
+/// pass an order of magnitude. The lit pipelines therefore compile without
+/// the block by default and are rebuilt from the full source only while
+/// `DebugVis` is active (see `rebuild_mesh_pipelines`).
+pub(crate) fn strip_debug_vis<'a>(
+    source: impl Into<std::borrow::Cow<'a, str>>,
+    keep: bool,
+) -> std::borrow::Cow<'a, str> {
+    let source = source.into();
+    if keep {
+        return source;
+    }
+    let Some(start) = source.find("// BEGIN_DEBUG_VIS") else {
+        return source;
+    };
+    const END: &str = "// END_DEBUG_VIS";
+    let Some(end) = source[start..].find(END) else {
+        return source;
+    };
+    let end = start + end + END.len();
+    let mut out = String::with_capacity(source.len() - (end - start));
+    out.push_str(&source[..start]);
+    out.push_str(&source[end..]);
+    std::borrow::Cow::Owned(out)
+}
+
 /// Diagnostic knob: with `VIEWPORT_MESH_NO_DISCARD` set in the environment,
 /// strip every `discard;` statement from the given mesh-shader source before
 /// module creation. A fragment shader that contains `discard` forces the GPU
@@ -737,5 +771,44 @@ fn block_on_simple<F: std::future::Future>(mut fut: F) -> F::Output {
             return v;
         }
         std::thread::yield_now();
+    }
+}
+
+#[cfg(test)]
+mod strip_debug_vis_tests {
+    /// The lit shader families must lose the pixel-inspector storage write
+    /// (which disables early depth rejection) when stripped, and keep it when
+    /// the debug variant is requested.
+    #[test]
+    fn strips_debug_block_from_every_lit_shader() {
+        let sources: [(&str, &str); 4] = [
+            ("mesh", super::wgsl_source!("mesh")),
+            ("mesh_instanced", super::wgsl_source!("mesh_instanced")),
+            ("mesh_oit", super::wgsl_source!("mesh_oit")),
+            (
+                "mesh_instanced_oit",
+                super::wgsl_source!("mesh_instanced_oit"),
+            ),
+        ];
+        for (name, src) in sources {
+            assert!(
+                src.contains("debug_frag_buf["),
+                "{name}: baked source lost the debug block; markers moved?"
+            );
+            let stripped = super::strip_debug_vis(src, false);
+            assert!(
+                !stripped.contains("debug_frag_buf["),
+                "{name}: stripped module still writes debug_frag_buf"
+            );
+            assert!(
+                !stripped.contains("BEGIN_DEBUG_VIS"),
+                "{name}: stripped module kept the marker"
+            );
+            let kept = super::strip_debug_vis(src, true);
+            assert!(
+                kept.contains("debug_frag_buf["),
+                "{name}: debug variant lost the write"
+            );
+        }
     }
 }

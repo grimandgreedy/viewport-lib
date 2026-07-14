@@ -2428,3 +2428,52 @@ fn cpu_pick_invalidates_cache_after_replace_mesh_data() {
         second.world_pos
     );
 }
+
+/// Toggling DebugVis swaps the lit pipelines between the stripped shader
+/// variant (no debug storage write, early-Z friendly) and the full debug
+/// variant, and back. Exercises the rebuild path end to end: a validation
+/// error in either module variant fails the prepare calls.
+#[test]
+fn debug_vis_toggle_rebuilds_lit_pipelines() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: cam.aspect,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // Default: stripped variant.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // On: rebuilds with the debug block present.
+    frame.effects.lighting.debug_vis.active = true;
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // Off again: rebuilds stripped.
+    frame.effects.lighting.debug_vis.active = false;
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+}

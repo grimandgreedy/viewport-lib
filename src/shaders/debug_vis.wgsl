@@ -1,7 +1,16 @@
+// BEGIN_DEBUG_VIS
 // Debug visualization pass.
 // Pasted inline in fs_main after lighting and emissive.
 // Reads last_shadow_sample (filled by sample_shadow_csm in the light loop).
 // Modifies final_rgb in place; no early return so OIT shaders work too.
+//
+// The BEGIN_DEBUG_VIS / END_DEBUG_VIS markers bracket this block so
+// builders::strip_debug_vis can remove it from the shader modules the lit
+// pipelines normally compile: the debug_frag_buf storage write below is a
+// fragment-shader side effect, which forces the driver to run the shader for
+// every rasterized fragment (no early depth rejection), and that costs the
+// scene pass an order of magnitude in dense scenes. The pipelines are
+// rebuilt from the full source while debug vis is active.
 
 if lights_uniform.debug_vis_mode != 0u {
     let dbg_mode = (lights_uniform.debug_vis_mode >> 15u) & 0x3u;
@@ -99,3 +108,4 @@ if lights_uniform.debug_vis_mode != 0u {
         debug_frag_buf[dbg_buf_idx] = vec4<f32>(dbg_rgb, 1.0);
     }
 }
+// END_DEBUG_VIS

@@ -79,10 +79,14 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
         };
+        // Lit modules compile without the pixel-inspector debug block
+        // (debug_vis_shaders starts false); DebugVis rebuilds them with it.
         let shader = crate::resources::builders::wgsl_module(
             device,
             "mesh_shader",
-            crate::resources::builders::strip_mesh_discards(mesh_src),
+            crate::resources::builders::strip_mesh_discards(
+                crate::resources::builders::strip_debug_vis(mesh_src, false),
+            ),
         );
 
         // ------------------------------------------------------------------
@@ -2236,6 +2240,7 @@ impl DeviceResources {
         let mut resources = Self {
             target_format,
             sample_count,
+            debug_vis_shaders: false,
             pipeline_cache,
             solid_pipeline,
             deform,

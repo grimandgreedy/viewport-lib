@@ -175,7 +175,9 @@ impl DeviceResources {
             crate::resources::builders::wgsl_module(
                 device,
                 "mesh_instanced_shader",
-                crate::resources::builders::strip_mesh_discards(composed),
+                crate::resources::builders::strip_mesh_discards(
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                ),
             )
         };
 
@@ -381,7 +383,9 @@ impl DeviceResources {
             crate::resources::builders::wgsl_module(
                 device,
                 "mesh_instanced_shader_hdr",
-                crate::resources::builders::strip_mesh_discards(composed),
+                crate::resources::builders::strip_mesh_discards(
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                ),
             )
         };
         let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
@@ -427,7 +431,11 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            crate::resources::builders::wgsl_module(device, "mesh_instanced_oit_shader", composed)
+            crate::resources::builders::wgsl_module(
+                device,
+                "mesh_instanced_oit_shader",
+                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+            )
         };
         let instanced_oit_layout =
             crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
@@ -653,7 +661,13 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            crate::resources::builders::wgsl_module(device, "mesh_instanced_shader_cull", composed)
+            crate::resources::builders::wgsl_module(
+                device,
+                "mesh_instanced_shader_cull",
+                crate::resources::builders::strip_mesh_discards(
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                ),
+            )
         };
         let inst_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
@@ -687,7 +701,7 @@ impl DeviceResources {
             crate::resources::builders::wgsl_module(
                 device,
                 "mesh_instanced_oit_shader_cull",
-                composed,
+                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
             )
         };
         let oit_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(

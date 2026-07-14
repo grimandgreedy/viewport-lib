@@ -530,6 +530,11 @@ pub struct DeviceResources {
     pub(crate) target_format: crate::gpu::TextureFormat,
     /// MSAA sample count used by all render pipelines.
     pub(crate) sample_count: u32,
+    /// True while the lit pipelines are compiled with the pixel-inspector
+    /// debug block. Off by default: the block's storage write disables early
+    /// depth rejection (see `builders::strip_debug_vis`). Toggled per frame
+    /// from the `DebugVis` state, which rebuilds the lit pipelines.
+    pub(crate) debug_vis_shaders: bool,
     /// Optional pipeline cache shared by every pipeline built here. `Some` only
     /// when the device enables `Features::PIPELINE_CACHE`. Persist its contents
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
