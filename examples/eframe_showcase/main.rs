@@ -2979,6 +2979,13 @@ impl App {
                                     let _ = renderer
                                         .resources_mut()
                                         .replace_mesh_data(&rs.device, &rs.queue, mesh_id, &mesh);
+                                    // The mesh changed size under a stable scene
+                                    // generation (the deform mesh is not part of
+                                    // pb_state.scene), which the renderer's instance
+                                    // cache cannot observe. Without this the cached
+                                    // batch keeps drawing the old, smaller index
+                                    // range and only part of the grid shows.
+                                    renderer.force_dirty();
                                     self.pb_state.last_grid_resolution =
                                         self.pb_state.grid_resolution;
                                     self.pb_state.last_grid_layers = self.pb_state.grid_layers;
