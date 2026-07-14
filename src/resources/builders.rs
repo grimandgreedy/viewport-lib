@@ -28,6 +28,33 @@ pub(crate) fn wgsl_module<'a>(
     })
 }
 
+/// Diagnostic knob: with `VIEWPORT_MESH_NO_DISCARD` set in the environment,
+/// strip every `discard;` statement from the given mesh-shader source before
+/// module creation. A fragment shader that contains `discard` forces the GPU
+/// to defer depth writes, which weakens or disables early depth rejection, so
+/// occluded fragments can still run the full lit shader. Compiling the mesh
+/// shaders without `discard` lets a benchmark A/B that cost directly.
+///
+/// With the knob active the mesh shaders' discard paths (clip planes, clip
+/// volumes, alpha mask) become no-ops, so only use it on scenes that render
+/// none of those; it is a measurement tool, not a rendering mode.
+pub(crate) fn strip_mesh_discards<'a>(
+    source: impl Into<std::borrow::Cow<'a, str>>,
+) -> std::borrow::Cow<'a, str> {
+    let source = source.into();
+    if std::env::var_os("VIEWPORT_MESH_NO_DISCARD").is_none() {
+        return source;
+    }
+    static NOTICE: std::sync::Once = std::sync::Once::new();
+    NOTICE.call_once(|| {
+        eprintln!(
+            "viewport-lib: VIEWPORT_MESH_NO_DISCARD active: mesh shaders compiled without \
+             discard (clip planes, clip volumes, and alpha mask are no-ops)"
+        );
+    });
+    std::borrow::Cow::Owned(source.replace("discard;", "/* discard stripped */"))
+}
+
 /// Embed a WGSL file baked into `OUT_DIR` by `build.rs`, by base name (no
 /// extension). Expands to `include_str!(...)`, so the file is compiled into the
 /// binary. Pass the result to [`wgsl_module`].

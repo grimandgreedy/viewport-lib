@@ -79,7 +79,11 @@ impl DeviceResources {
         } else {
             include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
         };
-        let shader = crate::resources::builders::wgsl_module(device, "mesh_shader", mesh_src);
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "mesh_shader",
+            crate::resources::builders::strip_mesh_discards(mesh_src),
+        );
 
         // ------------------------------------------------------------------
         // Bind group layouts

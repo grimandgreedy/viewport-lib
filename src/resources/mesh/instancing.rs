@@ -172,7 +172,11 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            crate::resources::builders::wgsl_module(device, "mesh_instanced_shader", composed)
+            crate::resources::builders::wgsl_module(
+                device,
+                "mesh_instanced_shader",
+                crate::resources::builders::strip_mesh_discards(composed),
+            )
         };
 
         let instanced_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
@@ -374,7 +378,11 @@ impl DeviceResources {
                 base,
                 &self.deform.registrations,
             );
-            crate::resources::builders::wgsl_module(device, "mesh_instanced_shader_hdr", composed)
+            crate::resources::builders::wgsl_module(
+                device,
+                "mesh_instanced_shader_hdr",
+                crate::resources::builders::strip_mesh_discards(composed),
+            )
         };
         let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
