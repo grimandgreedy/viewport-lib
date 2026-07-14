@@ -17,6 +17,8 @@ mod shadow_state;
 use shadow_state::ShadowState;
 mod paths;
 pub use paths::{OwnedPath, PassPath, PassView};
+mod gpu_context;
+pub use gpu_context::GpuContext;
 mod picking;
 pub use picking::sub_object;
 pub use picking::{

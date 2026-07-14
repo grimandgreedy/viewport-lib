@@ -105,6 +105,12 @@ name = "slint-minimal"
 path = "examples/slint_minimal/main.rs"
 required-features = ["wgpu29"]
 
+# Names wgpu only through `viewport_lib::wgpu`, so it builds on either leg with
+# no source edits. Deliberately has no `required-features` pinning a version.
+[[example]]
+name = "wgpu-leg-agnostic"
+path = "examples/wgpu_leg_agnostic/main.rs"
+
 [[example]]
 name = "debug-light"
 path = "examples/debug_light/main.rs"

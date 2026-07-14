@@ -70,6 +70,16 @@
 //! Anything not listed above is internal: a plugin that reaches past the
 //! published surface (private modules, undocumented constants) may break at
 //! any release.
+//!
+//! # wgpu version
+//!
+//! This surface hands out raw wgpu types (`RenderPipeline`, `BindGroupLayout`,
+//! `RenderPass`, ...) because a plugin builds its own pipelines. Those types
+//! are the wgpu version the library was built against, which is selected by the
+//! `wgpu27` / `wgpu29` cargo features. Name wgpu through
+//! [`viewport_lib::wgpu`](crate::wgpu) rather than an external `wgpu` crate so a
+//! plugin follows whichever version the build chose; a plugin that names its own
+//! `wgpu` dependency is coupled to one version and must match the library's.
 
 pub mod cull;
 pub mod item_type;

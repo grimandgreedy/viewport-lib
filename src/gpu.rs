@@ -60,7 +60,6 @@ pub const PRIMITIVE_INDEX_FEATURE: Features = Features::PRIMITIVE_INDEX;
 // wgpu 30) grows a branch. Defined in `resources::builders`; re-exported here to
 // keep them findable next to the alias.
 #[cfg(any(feature = "wgpu27", feature = "wgpu29"))]
-#[doc(hidden)]
 pub use crate::resources::builders::{
     RenderPipelineDesc, dcompare, depth_stencil, dmipmap, dwrite, pipeline_layout, render_pipeline,
     scene_depth_stencil, write_mapped,

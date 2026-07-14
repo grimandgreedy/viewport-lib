@@ -29,6 +29,11 @@ pub struct OwnedPath<'r> {
 /// Use this with eframe (`CallbackTrait`), iced, or any framework that hands
 /// you a render pass. For the eframe `paint` callback where only a `&` reference
 /// to the renderer is available, use [`ViewportRenderer::pass_view`] instead.
+///
+/// The `paint*` methods take a raw `wgpu::RenderPass` because the framework
+/// hands you that pass directly; it stays a raw wgpu type by necessity. It is
+/// the framework's wgpu, which must be the same version the library was built
+/// against (select the matching leg with the `wgpu27` / `wgpu29` feature).
 pub struct PassPath<'r> {
     pub(super) renderer: &'r mut ViewportRenderer,
 }

@@ -490,13 +490,22 @@ pub(crate) fn standard_scene_layout(
 /// through) are filled by [`render_pipeline`], so a version bump only touches
 /// that one function instead of every descriptor literal.
 pub struct RenderPipelineDesc<'a> {
+    /// Debug label for the pipeline.
     pub label: &'a str,
+    /// Pipeline layout (bind group layouts). See [`pipeline_layout`].
     pub layout: &'a crate::gpu::PipelineLayout,
+    /// Vertex stage: shader module, entry point, and vertex buffer layouts.
     pub vertex: crate::gpu::VertexState<'a>,
+    /// Fragment stage and its color targets, or `None` for a depth-only pass.
     pub fragment: Option<crate::gpu::FragmentState<'a>>,
+    /// Primitive topology, cull mode, and front face.
     pub primitive: crate::gpu::PrimitiveState,
+    /// Depth-stencil state, or `None` for a pass without a depth attachment.
+    /// Build with [`depth_stencil`] or [`scene_depth_stencil`].
     pub depth_stencil: Option<crate::gpu::DepthStencilState>,
+    /// Multisample (MSAA) state.
     pub multisample: crate::gpu::MultisampleState,
+    /// Optional pipeline cache to speed up creation.
     pub cache: Option<&'a crate::gpu::PipelineCache>,
 }
 

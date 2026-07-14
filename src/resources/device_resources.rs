@@ -527,44 +527,44 @@ pub struct ContentResources {
 #[allow(dead_code)]
 pub struct DeviceResources {
     /// Swapchain texture format; all pipelines are compiled for this format.
-    pub target_format: crate::gpu::TextureFormat,
+    pub(crate) target_format: crate::gpu::TextureFormat,
     /// MSAA sample count used by all render pipelines.
-    pub sample_count: u32,
+    pub(crate) sample_count: u32,
     /// Optional pipeline cache shared by every pipeline built here. `Some` only
     /// when the device enables `Features::PIPELINE_CACHE`. Persist its contents
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
     /// recompilation on later launches.
-    pub pipeline_cache: Option<crate::gpu::PipelineCache>,
+    pub(crate) pipeline_cache: Option<crate::gpu::PipelineCache>,
     /// Solid-shaded render pipeline (TriangleList topology, no blending).
-    pub solid_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) solid_pipeline: crate::gpu::RenderPipeline,
     /// Solid-shaded render pipeline with back-face culling disabled (two-sided surfaces).
-    pub solid_two_sided_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) solid_two_sided_pipeline: crate::gpu::RenderPipeline,
     /// Transparent render pipeline (TriangleList topology, alpha blending).
-    pub transparent_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) transparent_pipeline: crate::gpu::RenderPipeline,
     /// Wireframe render pipeline (LineList topology, same shader).
-    pub wireframe_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) wireframe_pipeline: crate::gpu::RenderPipeline,
     /// Uniform buffer holding the per-frame `CameraUniform` (view-proj + eye position).
-    pub camera_uniform_buf: crate::gpu::Buffer,
+    pub(crate) camera_uniform_buf: crate::gpu::Buffer,
     /// Uniform buffer holding the per-frame `LightsUniform` header (count +
     /// hemisphere + IBL + debug params). The per-light array lives in
     /// `light_storage_buf` (binding 13).
-    pub light_uniform_buf: crate::gpu::Buffer,
+    pub(crate) light_uniform_buf: crate::gpu::Buffer,
     /// Storage buffer of per-light `SingleLightUniform` entries (binding 13).
     ///
     /// Sized for `MAX_SCENE_LIGHTS`. The renderer truncates the consumer's
     /// light list to this cap each frame, ranking surplus lights by
     /// `LightSource::importance * proximity_weight`.
-    pub light_storage_buf: crate::gpu::Buffer,
+    pub(crate) light_storage_buf: crate::gpu::Buffer,
     /// Clustered-shading state: cluster grid, global light index list, and the
     /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
     /// group expose this state to every lit pipeline.
-    pub clustered: crate::resources::gpu::clustered::ClusteredResources,
+    pub(crate) clustered: crate::resources::gpu::clustered::ClusteredResources,
     /// Bind group (group 0) binding camera, light, clip-plane, and shadow uniforms.
-    pub camera_bind_group: crate::gpu::BindGroup,
+    pub(crate) camera_bind_group: crate::gpu::BindGroup,
     /// Bind group layout for group 0 (shared by all scene pipelines).
-    pub camera_bind_group_layout: crate::gpu::BindGroupLayout,
+    pub(crate) camera_bind_group_layout: crate::gpu::BindGroupLayout,
     /// Bind group layout for group 1 (per-object uniform: model, material, selection).
-    pub object_bind_group_layout: crate::gpu::BindGroupLayout,
+    pub(crate) object_bind_group_layout: crate::gpu::BindGroupLayout,
     /// Scene meshes (slotted storage with free-list removal).
     pub(crate) mesh_store: crate::resources::mesh::mesh_store::MeshStore,
     /// Registered LOD groups. Each groups several meshes that are detail
@@ -577,23 +577,23 @@ pub struct DeviceResources {
     pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
     // --- Shadow map resources ---
     /// Shadow atlas depth texture (Depth32Float, atlas_size x atlas_size, 2x2 tile grid).
-    pub shadow_map_texture: crate::gpu::Texture,
+    pub(crate) shadow_map_texture: crate::gpu::Texture,
     /// Depth texture view for binding as a shader resource (sampling).
-    pub shadow_map_view: crate::gpu::TextureView,
+    pub(crate) shadow_map_view: crate::gpu::TextureView,
     /// Comparison sampler for PCF shadow filtering.
-    pub shadow_sampler: crate::gpu::Sampler,
+    pub(crate) shadow_sampler: crate::gpu::Sampler,
     /// Cubemap-array depth texture for point-light shadows. Layered as
     /// `MAX_POINT_SHADOW_LIGHTS * 6` faces of `POINT_SHADOW_FACE_SIZE` px.
-    pub point_shadow_cube_texture: crate::gpu::Texture,
+    pub(crate) point_shadow_cube_texture: crate::gpu::Texture,
     /// `texture_depth_cube_array` view bound to the lit-pass bind group.
-    pub point_shadow_cube_view: crate::gpu::TextureView,
+    pub(crate) point_shadow_cube_view: crate::gpu::TextureView,
     /// One 2D-array view per face, used as the depth attachment during the
     /// shadow render pass. `len() == MAX_POINT_SHADOW_LIGHTS * 6`, indexed
     /// as `slot * 6 + face`.
-    pub point_shadow_face_views: Vec<crate::gpu::TextureView>,
+    pub(crate) point_shadow_face_views: Vec<crate::gpu::TextureView>,
     /// Render pipeline for the point-shadow depth pass. Same vertex layout
     /// as the cascade shadow pipeline; writes linear distance-to-light.
-    pub shadow_point_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) shadow_point_pipeline: crate::gpu::RenderPipeline,
     /// Bind group layout for the point-shadow per-face uniform (group 0
     /// of the point shadow pass). Kept for pipeline rebuilds.
     pub(crate) shadow_point_face_bind_group_layout: crate::gpu::BindGroupLayout,
@@ -601,10 +601,10 @@ pub struct DeviceResources {
     /// for every (slot, face) of the point shadow array. Sized as
     /// `MAX_POINT_SHADOW_LIGHTS * 6 * 256` bytes (256-byte dynamic-offset
     /// stride).
-    pub shadow_point_face_buf: crate::gpu::Buffer,
+    pub(crate) shadow_point_face_buf: crate::gpu::Buffer,
     /// Bind group for the point-shadow per-face uniform. Stride is 256;
     /// the per-face render pass sets a dynamic offset.
-    pub shadow_point_face_bind_group: crate::gpu::BindGroup,
+    pub(crate) shadow_point_face_bind_group: crate::gpu::BindGroup,
     /// Render pipeline for the shadow depth pass (depth-only, no fragment output).
     ///
     /// Culls front faces, so closed solids cast shadow from their back face
@@ -612,73 +612,73 @@ pub struct DeviceResources {
     /// shadow map. Two-sided materials (`BackfacePolicy::Identical` and
     /// friends) are routed to `shadow_pipeline_two_sided` instead so both
     /// sides of cloth, foliage, and planar surfaces cast shadows.
-    pub shadow_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) shadow_pipeline: crate::gpu::RenderPipeline,
     /// Shadow caster pipeline for two-sided materials. Same layout and shader
     /// as `shadow_pipeline` but with `cull_mode: None` and a larger caster-side
     /// depth bias (`CSM_SHADOW_BIAS_TWO_SIDED`) so both sides of a two-sided
     /// mesh rasterise into the shadow atlas without the surface self-shadowing
     /// where it is its own receiver.
-    pub shadow_pipeline_two_sided: crate::gpu::RenderPipeline,
+    pub(crate) shadow_pipeline_two_sided: crate::gpu::RenderPipeline,
     /// Bind group layout for the shadow camera uniform (group 0 of the
     /// shadow pass). Kept on the renderer so `register_deformer` can rebuild
     /// the shadow pipeline from a freshly composed shader module.
     pub(crate) shadow_camera_bind_group_layout: crate::gpu::BindGroupLayout,
     /// Uniform buffer holding the per-cascade light-space view-projection matrix (64 bytes).
-    pub shadow_uniform_buf: crate::gpu::Buffer,
+    pub(crate) shadow_uniform_buf: crate::gpu::Buffer,
     /// Bind group for the shadow pass (group 0: light uniform).
-    pub shadow_bind_group: crate::gpu::BindGroup,
+    pub(crate) shadow_bind_group: crate::gpu::BindGroup,
     /// Uniform buffer for the ShadowAtlasUniform (binding 5 of camera_bgl, 416 bytes).
-    pub shadow_info_buf: crate::gpu::Buffer,
+    pub(crate) shadow_info_buf: crate::gpu::Buffer,
     /// Current shadow atlas texture size. Used to detect when atlas needs recreation.
     #[allow(dead_code)]
     pub(crate) shadow_atlas_size: u32,
     /// Non-comparison sampler for reading depth values as float (atlas viewer).
-    pub shadow_atlas_depth_sampler: crate::gpu::Sampler,
+    pub(crate) shadow_atlas_depth_sampler: crate::gpu::Sampler,
     /// Pipeline for the shadow atlas corner overlay.
-    pub shadow_atlas_viewer_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) shadow_atlas_viewer_pipeline: crate::gpu::RenderPipeline,
     /// Bind group for the atlas viewer (uniform + depth texture + sampler).
-    pub shadow_atlas_viewer_bg: crate::gpu::BindGroup,
+    pub(crate) shadow_atlas_viewer_bg: crate::gpu::BindGroup,
     /// Uniform buffer: NDC rect of the atlas viewer quad.
-    pub shadow_atlas_viewer_buf: crate::gpu::Buffer,
+    pub(crate) shadow_atlas_viewer_buf: crate::gpu::Buffer,
     /// 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
-    pub debug_frag_sentinel_buf: crate::gpu::Buffer,
+    pub(crate) debug_frag_sentinel_buf: crate::gpu::Buffer,
 
     // --- Gizmo resources ---
     /// Gizmo render pipeline (TriangleList, depth_compare Always : always on top).
-    pub gizmo_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) gizmo_pipeline: crate::gpu::RenderPipeline,
     /// Gizmo vertex buffer (3 axis arrows, regenerated when hovered axis changes).
-    pub gizmo_vertex_buffer: crate::gpu::Buffer,
+    pub(crate) gizmo_vertex_buffer: crate::gpu::Buffer,
     /// Gizmo index buffer.
-    pub gizmo_index_buffer: crate::gpu::Buffer,
+    pub(crate) gizmo_index_buffer: crate::gpu::Buffer,
     /// Number of indices in the gizmo index buffer.
-    pub gizmo_index_count: u32,
+    pub(crate) gizmo_index_count: u32,
     /// Gizmo uniform buffer (model matrix: positions gizmo at selected object, scaled to screen size).
-    pub gizmo_uniform_buf: crate::gpu::Buffer,
+    pub(crate) gizmo_uniform_buf: crate::gpu::Buffer,
     /// Bind group for gizmo uniform (group 1).
-    pub gizmo_bind_group: crate::gpu::BindGroup,
+    pub(crate) gizmo_bind_group: crate::gpu::BindGroup,
     /// Bind group layout for gizmo uniforms : stored so per-viewport gizmo bind groups can be created.
     pub(crate) gizmo_bind_group_layout: crate::gpu::BindGroupLayout,
 
     // --- Overlay resources ---
     /// Overlay render pipeline (TriangleList with alpha blending : for semi-transparent BC quads).
-    pub overlay_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) overlay_pipeline: crate::gpu::RenderPipeline,
     /// Overlay wireframe pipeline (LineList, no alpha blending needed).
-    pub overlay_line_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) overlay_line_pipeline: crate::gpu::RenderPipeline,
     /// Full-screen analytical grid pipeline (no vertex buffer : positions hardcoded in shader).
-    pub grid_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) grid_pipeline: crate::gpu::RenderPipeline,
     /// Uniform buffer for the grid shader (GridUniform : written every frame in prepare()).
-    pub grid_uniform_buf: crate::gpu::Buffer,
+    pub(crate) grid_uniform_buf: crate::gpu::Buffer,
     /// Bind group for the grid uniform (group 0, single binding).
-    pub grid_bind_group: crate::gpu::BindGroup,
+    pub(crate) grid_bind_group: crate::gpu::BindGroup,
     /// Bind group layout for the grid uniform (stored so per-viewport grid bind groups can be created).
     pub(crate) grid_bind_group_layout: crate::gpu::BindGroupLayout,
     /// Bind group layout for overlay uniforms (group 1: model + colour uniform).
-    pub overlay_bind_group_layout: crate::gpu::BindGroupLayout,
+    pub(crate) overlay_bind_group_layout: crate::gpu::BindGroupLayout,
 
     // --- Constraint guide lines ---
     /// Transient constraint guide lines, rebuilt each frame in prepare().
     /// Each entry: (vertex_buffer, index_buffer, index_count, uniform_buffer, bind_group).
-    pub constraint_line_buffers: Vec<(
+    pub(crate) constraint_line_buffers: Vec<(
         crate::gpu::Buffer,
         crate::gpu::Buffer,
         u32,
@@ -688,17 +688,17 @@ pub struct DeviceResources {
 
     // --- Axes indicator ---
     /// Screen-space axes indicator pipeline (TriangleList, no depth, alpha blending).
-    pub axes_pipeline: crate::gpu::RenderPipeline,
+    pub(crate) axes_pipeline: crate::gpu::RenderPipeline,
     /// Vertex buffer for axes indicator geometry (rebuilt each frame).
-    pub axes_vertex_buffer: crate::gpu::Buffer,
+    pub(crate) axes_vertex_buffer: crate::gpu::Buffer,
     /// Number of vertices in the axes indicator buffer.
-    pub axes_vertex_count: u32,
+    pub(crate) axes_vertex_count: u32,
 
     // --- Texture system ---
     /// Bind group layout for texture group (group 2: albedo + sampler + normal_map + ao_map).
-    pub texture_bind_group_layout: crate::gpu::BindGroupLayout,
+    pub(crate) texture_bind_group_layout: crate::gpu::BindGroupLayout,
     /// Fallback 1x1 white texture used when material.texture_id is None.
-    pub fallback_texture: GpuTexture,
+    pub(crate) fallback_texture: GpuTexture,
     /// Fallback 1x1 flat normal map [128,128,255,255] (tangent-space neutral).
     pub(crate) fallback_normal_map: crate::gpu::Texture,
     pub(crate) fallback_normal_map_view: crate::gpu::TextureView,
@@ -832,17 +832,17 @@ pub struct DeviceResources {
 
     // --- IBL / environment map resources ---
     /// IBL irradiance equirect texture view (binding 7). None until environment uploaded.
-    pub ibl_irradiance_view: Option<crate::gpu::TextureView>,
+    pub(crate) ibl_irradiance_view: Option<crate::gpu::TextureView>,
     /// IBL prefiltered specular equirect texture view (binding 8). None until environment uploaded.
-    pub ibl_prefiltered_view: Option<crate::gpu::TextureView>,
+    pub(crate) ibl_prefiltered_view: Option<crate::gpu::TextureView>,
     /// BRDF integration LUT texture view (binding 9). None until the first
     /// `upload_environment_map`; cached across subsequent uploads (the LUT is
     /// scene-independent: function of roughness x N.V only).
-    pub ibl_brdf_lut_view: Option<crate::gpu::TextureView>,
+    pub(crate) ibl_brdf_lut_view: Option<crate::gpu::TextureView>,
     /// IBL linear-clamp sampler (binding 10).
     pub(crate) ibl_sampler: crate::gpu::Sampler,
     /// Skybox / full-res environment equirect texture view (binding 11). None until uploaded.
-    pub ibl_skybox_view: Option<crate::gpu::TextureView>,
+    pub(crate) ibl_skybox_view: Option<crate::gpu::TextureView>,
     /// Fallback 1x1 black Rgba16Float texture for IBL slots when no environment is loaded.
     #[allow(dead_code)]
     pub(crate) ibl_fallback_texture: crate::gpu::Texture,
@@ -922,13 +922,13 @@ pub struct DeviceResources {
     /// Incremented by `upload_mesh`, `upload_mesh_data`, and `replace_mesh_data`.
     /// Read and reset at the start of each `prepare()` call to populate
     /// `FrameStats::upload_bytes`.
-    pub frame_upload_bytes: u64,
+    pub(crate) frame_upload_bytes: u64,
     /// GPU pipelines built lazily since the last `prepare()` reset.
     ///
     /// Incremented by the `ensure_*` pipeline builders when they actually
     /// create pipelines (not on their no-op early returns). Read and reset
     /// each `prepare()` call to populate `FrameStats::pipelines_built_this_frame`.
-    pub frame_pipelines_built: u32,
+    pub(crate) frame_pipelines_built: u32,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
     /// holds bind groups that keep their referenced GPU resources alive; when
     /// this changes, the cache purges its stale entries so a freed resource's
@@ -1175,6 +1175,18 @@ impl ShadowCullState {
 }
 
 impl DeviceResources {
+    /// The color/swapchain texture format every pipeline here was compiled for.
+    /// This is the format passed to `ViewportRenderer::new`; a viewport target
+    /// must match it.
+    pub fn target_format(&self) -> crate::gpu::TextureFormat {
+        self.target_format
+    }
+
+    /// The MSAA sample count every render pipeline here was built with.
+    pub fn sample_count(&self) -> u32 {
+        self.sample_count
+    }
+
     /// Create a camera bind group (group 0) for the given per-viewport buffers.
     ///
     /// Per-viewport buffers (camera, clip planes, shadow info, clip volume) are

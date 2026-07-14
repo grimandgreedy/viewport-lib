@@ -69,12 +69,26 @@
 //! queue.submit([cmd0, cmd1]);
 //! ```
 
-// Internal alias for the selected wgpu version (see the module). Also
-// re-exported as `viewport_lib::wgpu` so consumers, tests, and the testkit can
-// name the exact wgpu the library was built with, whichever leg is active.
+// Internal alias for the selected wgpu version (see the module). Consumers name
+// wgpu through the `wgpu` re-export below, not this module directly.
 #[doc(hidden)]
 pub mod gpu;
-#[doc(hidden)]
+
+/// The wgpu the library was built against.
+///
+/// viewport-lib can build against more than one wgpu version, selected by the
+/// `wgpu27` / `wgpu29` cargo features (exactly one is compiled in). This
+/// re-export points at whichever version the active feature selected. Name wgpu
+/// types through `viewport_lib::wgpu` (for example `viewport_lib::wgpu::Device`)
+/// and the same source compiles on either leg with no edits: your code follows
+/// the version the build chose. Referencing an external `wgpu` crate directly
+/// instead pins you to one version.
+///
+/// The version-portability helpers ([`pipeline_layout`](wgpu::pipeline_layout),
+/// [`render_pipeline`](wgpu::render_pipeline), [`depth_stencil`](wgpu::depth_stencil),
+/// [`write_mapped`](wgpu::write_mapped), and friends) are surfaced here for code
+/// that builds wgpu pipelines directly, so descriptor fields that differ between
+/// versions stay in one place.
 pub use crate::gpu as wgpu;
 
 /// Error types for the viewport library.
@@ -213,9 +227,9 @@ pub use renderer::{
     DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
     EffectsFrame, EmitterConfig, EnvironmentMap, FilterMode, ForceField, FrameData,
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType,
-    GpuParticleSystemItem, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor,
-    ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind,
-    LightSource, LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem,
+    GpuContext, GpuParticleSystemItem, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode,
+    ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay,
+    LightKind, LightSource, LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem,
     MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations,
     OverlayEasing, OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem,
     OverlayRectItem, OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath,
