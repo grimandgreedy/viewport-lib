@@ -1711,7 +1711,7 @@ impl ViewportRenderer {
         // and a plugin has a non-empty collection this frame. Their draws are not
         // in `draws`/`glyph_draws`/etc.; they are issued via `dispatch_plugin_pick`.
         let has_plugin_pick =
-            mask.intersects(PickMask::OBJECT) && self.any_plugin_pick_items(frame);
+            mask.intersects(PickMask::OBJECT) && self.any_plugin_items_submitted(frame);
 
         // Registered plugins are object-level: dispatched directly in
         // `record_pick_pass_draws`, not collected here.

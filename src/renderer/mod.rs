@@ -1323,9 +1323,12 @@ impl ViewportRenderer {
     }
 
     /// `true` when at least one registered plugin has a non-empty collection
-    /// submitted this frame, so the pick pass has plugin geometry to draw. Does
-    /// not inspect per-item `pick_id`; `render_pick` skips non-pickable items.
-    pub(crate) fn any_plugin_pick_items(&self, frame: &FrameData) -> bool {
+    /// submitted this frame under its own type name. A collection submitted
+    /// for a type name with no matching registered plugin does not count,
+    /// since no plugin will ever draw it. Used to gate the pick pass and the
+    /// OIT pass; does not inspect per-item `pick_id`, `render_pick` skips
+    /// non-pickable items.
+    pub(crate) fn any_plugin_items_submitted(&self, frame: &FrameData) -> bool {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.keys().any(|name| {
                 frame

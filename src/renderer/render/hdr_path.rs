@@ -282,7 +282,10 @@ impl ViewportRenderer {
                 .scene
                 .volume_meshes
                 .iter()
-                .any(|i| !i.settings.hidden && i.transparency.is_some());
+                .any(|i| !i.settings.hidden && i.transparency.is_some())
+                // Item-type plugins may draw into the OIT pass through
+                // `paint_transparent` (mirrors `has_transparent` below).
+                || self.any_plugin_items_submitted(frame);
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 let [sw, sh] = hdr.scene_size;
@@ -2111,7 +2114,11 @@ impl ViewportRenderer {
                 .scene
                 .volume_meshes
                 .iter()
-                .any(|i| !i.settings.hidden && i.transparency.is_some());
+                .any(|i| !i.settings.hidden && i.transparency.is_some())
+                // Item-type plugins draw into the OIT pass through
+                // `paint_transparent` for any registered plugin with a
+                // non-empty submitted collection (mirrors `needs_oit` above).
+                || self.any_plugin_items_submitted(frame);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
