@@ -94,12 +94,16 @@ crate::resources::handle::slot_handle! {
     pub struct VolumeId;
 }
 
-crate::resources::handle::registry_handle! {
+crate::resources::handle::slot_handle! {
     /// Identifies a projected-tetrahedra mesh uploaded to the GPU for transparent
     /// volume rendering.
     ///
-    /// Obtained from [`DeviceResources::upload_projected_tet`]. An
-    /// append-only registry handle.
+    /// A slotted, generational handle: the mesh can be refreshed in place
+    /// ([`replace_projected_tet`](crate::resources::DeviceResources::replace_projected_tet),
+    /// [`replace_projected_tet_scalar`](crate::resources::DeviceResources::replace_projected_tet_scalar))
+    /// or freed ([`free_projected_tet`](crate::resources::DeviceResources::free_projected_tet))
+    /// so a transparent time-series reuses one slot instead of leaking a tet
+    /// buffer per fresh upload.
     pub struct ProjectedTetId;
 }
 

@@ -43,12 +43,15 @@ pub struct ResidentBytes {
     /// GPU bytes across every resident direct-volume 3D texture
     /// (`upload_volume`, the `R32Float` fields a `VolumeItem` ray-marches).
     ///
-    /// Summed from the live textures' dimensions rather than a running
-    /// counter: the direct-volume store is append-only today (no
-    /// `replace_volume` / `free_volume`), so this total only grows over a
-    /// session and is the number a time-series playback watches. See the
-    /// scivis performance audit.
+    /// Charged per slot on upload and dropped on `free_volume`, so a time-series
+    /// that reuses one slot via `replace_volume` holds this flat rather than
+    /// growing per timestep.
     pub volume_bytes: u64,
+    /// GPU buffer bytes across every resident projected-tet mesh (every chunk's
+    /// tet geometry and per-tet scalar buffers plus the shared uniform), the
+    /// transparent volume meshes a `VolumeMeshItem` renders through
+    /// `projected_tet_id`. Dropped on `free_projected_tet`.
+    pub projected_tet_bytes: u64,
     /// GPU buffer bytes across every pre-uploaded scivis curve resource
     /// (polylines, tubes, streamtubes, ribbons, point clouds, glyph sets,
     /// tensor glyph sets, and sprite sets).
@@ -64,6 +67,7 @@ impl ResidentBytes {
             + self.mc_volume_bytes
             + self.scivis_bytes
             + self.volume_bytes
+            + self.projected_tet_bytes
     }
 }
 
@@ -115,6 +119,7 @@ impl crate::resources::DeviceResources {
             mc_volume_bytes: self.mc_volume_resident_bytes(),
             scivis_bytes,
             volume_bytes: self.volume_resident_bytes(),
+            projected_tet_bytes: self.content.projected_tet_store.allocated_bytes(),
         }
     }
 

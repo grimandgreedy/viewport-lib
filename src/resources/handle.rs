@@ -150,6 +150,7 @@ impl<T> Registry<T> {
     }
 
     /// Mutably borrow the value at `index`, or `None` if it is out of range.
+    #[allow(dead_code)]
     pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         self.items.get_mut(index)
     }
@@ -274,6 +275,22 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
         self.allocated_bytes = self.allocated_bytes.saturating_sub(slot.bytes) + bytes;
         slot.bytes = bytes;
         old
+    }
+
+    /// Update the byte charge for `id`'s slot without swapping the value, for a
+    /// store that mutates an entry in place through [`get_mut`](Self::get_mut)
+    /// and needs to keep its resident-byte total accurate. Returns `false` for a
+    /// stale handle or an empty slot.
+    pub(crate) fn set_bytes(&mut self, id: H, bytes: u64) -> bool {
+        let Some(slot) = self.slots.get_mut(id.index()) else {
+            return false;
+        };
+        if slot.generation != id.generation() || slot.value.is_none() {
+            return false;
+        }
+        self.allocated_bytes = self.allocated_bytes.saturating_sub(slot.bytes) + bytes;
+        slot.bytes = bytes;
+        true
     }
 
     /// Remove the value for `id`, bump the slot generation, free the slot, and

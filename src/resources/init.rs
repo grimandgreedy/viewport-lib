@@ -2330,7 +2330,7 @@ impl DeviceResources {
                 sprite_instance_set_store: crate::resources::SpriteInstanceSetStore::new(),
                 gaussian_splat_store: crate::resources::types::GaussianSplatStore::new(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
-                projected_tet_store: crate::resources::handle::Registry::default(),
+                projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),
                 overlay_textures: crate::resources::handle::Registry::default(),
                 matcap_textures: Vec::new(),

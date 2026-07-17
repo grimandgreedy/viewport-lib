@@ -2738,11 +2738,13 @@ impl DeviceResources {
                 .collect::<Vec<_>>()
         };
 
-        let id = ProjectedTetId(self.content.projected_tet_store.push(GpuProjectedTetMesh {
+        let mesh = GpuProjectedTetMesh {
             chunks,
             uniform_buffer,
             scalar_range,
-        }));
+        };
+        let bytes = mesh.gpu_bytes();
+        let id = self.content.projected_tet_store.insert(mesh, bytes);
         Ok((id, scalar_range.0, scalar_range.1))
     }
 
@@ -2821,13 +2823,13 @@ impl DeviceResources {
                                 })
                                 .collect::<Vec<_>>()
                         };
-                        let pid = ProjectedTetId(resources.content.projected_tet_store.push(
-                            GpuProjectedTetMesh {
-                                chunks,
-                                uniform_buffer,
-                                scalar_range,
-                            },
-                        ));
+                        let mesh = GpuProjectedTetMesh {
+                            chunks,
+                            uniform_buffer,
+                            scalar_range,
+                        };
+                        let bytes = mesh.gpu_bytes();
+                        let pid = resources.content.projected_tet_store.insert(mesh, bytes);
                         slot_for_apply.set((pid, scalar_range.0, scalar_range.1));
                     }),
                 ))
@@ -2899,7 +2901,7 @@ impl DeviceResources {
             let uniform_buf = &self
                 .content
                 .projected_tet_store
-                .get(id.0)
+                .get(id)
                 .expect("ProjectedTetId must reference an uploaded mesh")
                 .uniform_buffer;
             pending
@@ -2936,10 +2938,14 @@ impl DeviceResources {
         let slot = self
             .content
             .projected_tet_store
-            .get_mut(id.0)
+            .get_mut(id)
             .expect("ProjectedTetId must reference an uploaded mesh");
         slot.chunks = chunks;
         slot.scalar_range = scalar_range;
+        // The rebuilt chunks may differ in size from the previous ones, so keep
+        // the store's byte charge in step with the new geometry.
+        let bytes = slot.gpu_bytes();
+        self.content.projected_tet_store.set_bytes(id, bytes);
 
         Ok(())
     }
@@ -2976,12 +2982,13 @@ impl DeviceResources {
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> crate::error::ViewportResult<()> {
-        let scalars =
-            crate::resources::volume::volume_mesh::tet_scalars(data, scalar_attribute);
+        let scalars = crate::resources::volume::volume_mesh::tet_scalars(data, scalar_attribute);
 
-        let gpu = self.content.projected_tet_store.get_mut(id.0).ok_or(
-            crate::error::ViewportError::SlotEmpty { index: id.0 },
-        )?;
+        let gpu = self
+            .content
+            .projected_tet_store
+            .get_mut(id)
+            .ok_or(crate::error::ViewportError::SlotEmpty { index: id.index() })?;
 
         let total: usize = gpu.chunks.iter().map(|c| c.tet_count as usize).sum();
         if scalars.len() != total {
@@ -3022,6 +3029,21 @@ impl DeviceResources {
         Ok(())
     }
 
+    /// Free the projected-tet mesh behind `id`, reclaiming its slot, its tet and
+    /// scalar buffers, and its byte charge.
+    ///
+    /// A transparent time-series that uploads a fresh mesh per timestep (rather
+    /// than refreshing one in place through
+    /// [`replace_projected_tet`](Self::replace_projected_tet) /
+    /// [`replace_projected_tet_scalar`](Self::replace_projected_tet_scalar))
+    /// should free the previous handle here so the tet buffers do not accumulate.
+    /// A later upload reuses the freed slot, and any handle still holding `id`
+    /// resolves to nothing afterwards. Returns `false` if `id` was already freed
+    /// or is stale.
+    pub fn free_projected_tet(&mut self, id: crate::resources::ProjectedTetId) -> bool {
+        self.content.projected_tet_store.remove(id).is_some()
+    }
+
     /// Decompose `data` into device-limit-bounded tet buffers and a shared uniform buffer.
     ///
     /// Returns `(pending_chunks, scalar_range, uniform_buffer)` where each element of
@@ -3054,33 +3076,34 @@ impl DeviceResources {
         let mut scalar_min = f32::INFINITY;
         let mut scalar_max = f32::NEG_INFINITY;
 
-        let flush = |raw: &mut Vec<f32>,
-                     scal: &mut Vec<f32>,
-                     pending: &mut Vec<(crate::gpu::Buffer, crate::gpu::Buffer, u32)>| {
-            let tet_count = scal.len() as u32;
-            let geom = device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("pt_tet_buffer"),
-                size: (raw.len() * std::mem::size_of::<f32>()) as u64,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            crate::resources::builders::write_mapped(geom.slice(..), bytemuck::cast_slice(raw));
-            geom.unmap();
-            let scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("pt_scalar_buffer"),
-                size: (scal.len() * std::mem::size_of::<f32>()) as u64,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            crate::resources::builders::write_mapped(
-                scalar_buf.slice(..),
-                bytemuck::cast_slice(scal),
-            );
-            scalar_buf.unmap();
-            pending.push((geom, scalar_buf, tet_count));
-            raw.clear();
-            scal.clear();
-        };
+        let flush =
+            |raw: &mut Vec<f32>,
+             scal: &mut Vec<f32>,
+             pending: &mut Vec<(crate::gpu::Buffer, crate::gpu::Buffer, u32)>| {
+                let tet_count = scal.len() as u32;
+                let geom = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("pt_tet_buffer"),
+                    size: (raw.len() * std::mem::size_of::<f32>()) as u64,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: true,
+                });
+                crate::resources::builders::write_mapped(geom.slice(..), bytemuck::cast_slice(raw));
+                geom.unmap();
+                let scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("pt_scalar_buffer"),
+                    size: (scal.len() * std::mem::size_of::<f32>()) as u64,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: true,
+                });
+                crate::resources::builders::write_mapped(
+                    scalar_buf.slice(..),
+                    bytemuck::cast_slice(scal),
+                );
+                scalar_buf.unmap();
+                pending.push((geom, scalar_buf, tet_count));
+                raw.clear();
+                scal.clear();
+            };
 
         crate::resources::volume::volume_mesh::for_each_tet(
             data,
@@ -3646,6 +3669,81 @@ mod c4_volume_mesh_tests {
         let _grid_id = resources
             .upload_sparse_volume_grid_data(&device, &single_cell_sparse())
             .expect("sparse sync ok");
+    }
+
+    #[test]
+    fn upload_projected_tet_charges_resident_bytes() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        assert_eq!(resources.resident_bytes().projected_tet_bytes, 0);
+        let (_id, _, _) = resources
+            .upload_projected_tet(&device, &single_tet_volume(), "density")
+            .expect("upload ok");
+        assert!(resources.resident_bytes().projected_tet_bytes > 0);
+    }
+
+    #[test]
+    fn free_projected_tet_reclaims_bytes_and_slot() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let (id, _, _) = resources
+            .upload_projected_tet(&device, &single_tet_volume(), "density")
+            .expect("upload ok");
+        let charged = resources.resident_bytes().projected_tet_bytes;
+        assert!(charged > 0);
+
+        assert!(resources.free_projected_tet(id));
+        assert_eq!(resources.resident_bytes().projected_tet_bytes, 0);
+        // Second free of the same handle is a no-op.
+        assert!(!resources.free_projected_tet(id));
+
+        // The freed slot is reused by the next upload; the charge matches one
+        // mesh, not two.
+        let (_id2, _, _) = resources
+            .upload_projected_tet(&device, &single_tet_volume(), "density")
+            .expect("upload ok");
+        assert_eq!(resources.resident_bytes().projected_tet_bytes, charged);
+    }
+
+    #[test]
+    fn stale_projected_tet_handle_does_not_alias_reused_slot() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let (old, _, _) = resources
+            .upload_projected_tet(&device, &single_tet_volume(), "density")
+            .expect("upload ok");
+        assert!(resources.free_projected_tet(old));
+        let (new, _, _) = resources
+            .upload_projected_tet(&device, &single_tet_volume(), "density")
+            .expect("upload ok");
+        assert_eq!(old.index(), new.index(), "same slot reused");
+        assert_ne!(old, new, "generation bumped so the stale handle differs");
+        // The stale handle no longer resolves for a scalar refresh.
+        assert!(matches!(
+            resources.replace_projected_tet_scalar(&queue, old, &single_tet_volume(), "density"),
+            Err(crate::error::ViewportError::SlotEmpty { .. })
+        ));
+        // The live handle still works.
+        assert!(
+            resources
+                .replace_projected_tet_scalar(&queue, new, &single_tet_volume(), "density")
+                .is_ok()
+        );
     }
 }
 

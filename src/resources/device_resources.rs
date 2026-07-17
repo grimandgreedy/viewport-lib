@@ -473,8 +473,11 @@ pub struct ContentResources {
         (crate::gpu::Texture, crate::gpu::TextureView),
         crate::resources::VolumeId,
     >,
-    /// Uploaded projected-tet meshes. Index = ProjectedTetId value.
-    pub(crate) projected_tet_store: crate::resources::handle::Registry<GpuProjectedTetMesh>,
+    /// Uploaded projected-tet meshes, keyed by `ProjectedTetId`. Slotted with
+    /// generational ids so a freed slot cannot alias a later upload, and the
+    /// per-entry byte charge feeds `ResidentBytes::projected_tet_bytes`.
+    pub(crate) projected_tet_store:
+        crate::resources::handle::SlotStore<GpuProjectedTetMesh, crate::resources::ProjectedTetId>,
     /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
     pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
     /// Persistent textures uploaded via `upload_overlay_texture`.

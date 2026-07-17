@@ -2088,8 +2088,7 @@ impl ViewportRenderer {
         // OIT pass: render transparent items into accum + reveal textures.
         // Completely skipped when no transparent items exist (zero overhead).
         // -----------------------------------------------------------------------
-        let has_transparent =
-            if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
+        let has_transparent = if self.instancing.use_instancing && !self.instancing.batches.is_empty() {
                 // Transparent instanced batches go through OIT. Transparent excluded items
                 // (two-sided, active-attribute, matcap) are not in any instanced batch, so
                 // they must also be checked here -- otherwise the OIT pass is skipped and
@@ -2384,8 +2383,7 @@ impl ViewportRenderer {
                             let Some(pt_id) = item.projected_tet_id else {
                                 continue;
                             };
-                            let Some(gpu) = resources.content.projected_tet_store.get(pt_id.0)
-                            else {
+                            let Some(gpu) = resources.content.projected_tet_store.get(pt_id) else {
                                 continue;
                             };
                             let (scalar_min, scalar_max) =

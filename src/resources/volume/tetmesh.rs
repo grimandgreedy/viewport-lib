@@ -161,3 +161,17 @@ pub(crate) struct GpuProjectedTetMesh {
     /// Auto-detected scalar range from the uploaded data (min, max).
     pub scalar_range: (f32, f32),
 }
+
+impl GpuProjectedTetMesh {
+    /// Resident GPU bytes: every chunk's tet geometry and per-tet scalar buffers
+    /// plus the shared uniform. Charged into the store on insert/replace so the
+    /// mesh shows up in `ResidentBytes::projected_tet_bytes`.
+    pub(crate) fn gpu_bytes(&self) -> u64 {
+        self.uniform_buffer.size()
+            + self
+                .chunks
+                .iter()
+                .map(|c| c.tet_buffer.size() + c.scalar_buffer.size())
+                .sum::<u64>()
+    }
+}
