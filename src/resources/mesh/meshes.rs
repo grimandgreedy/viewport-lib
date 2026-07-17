@@ -1096,6 +1096,117 @@ impl DeviceResources {
         Ok(face_to_cell)
     }
 
+    /// Update a volume-mesh boundary's per-cell scalar field in place, without
+    /// re-extracting the boundary or re-uploading any geometry.
+    ///
+    /// For a time-series where a scalar field animates on a **fixed** volume
+    /// mesh (a CFD/FE field played back over a static unstructured grid), the
+    /// boundary topology does not change frame to frame -- only the values do.
+    /// Rather than rebuilding the mesh with
+    /// [`upload_volume_mesh`](Self::upload_volume_mesh) /
+    /// [`extract_clipped_volume_faces`](crate::resources::volume::volume_mesh::extract_clipped_volume_faces)
+    /// every frame (which re-runs the O(cells) boundary extraction and
+    /// re-uploads the whole surface), upload the mesh once and call this each
+    /// frame with the new per-cell values.
+    ///
+    /// The new per-cell `cell_scalars` are remapped to the boundary faces
+    /// through `face_to_cell` (the map [`VolumeMeshItem::face_to_cell`](crate::VolumeMeshItem::face_to_cell)
+    /// retains from upload) and written to the named per-face scalar buffer
+    /// only: no boundary re-extraction, no vertex/index touch, no new mesh slot.
+    /// Cost is O(boundary faces) instead of O(total cells).
+    ///
+    /// `face_to_cell` and the boundary must be the ones the mesh was uploaded
+    /// with (unchanged since); only the scalar values may differ. The scalar
+    /// range is recomputed so a colourmap on the owning item stays accurate;
+    /// items that pin an explicit [`scalar_range`](crate::VolumeMeshItem::scalar_range)
+    /// keep using theirs.
+    ///
+    /// # Errors
+    ///
+    /// - [`SlotEmpty`](crate::error::ViewportError::SlotEmpty) : `mesh_id` not in the store.
+    /// - [`AttributeNotFound`](crate::error::ViewportError::AttributeNotFound) : `name` is not a
+    ///   per-face scalar attribute on the mesh (upload the mesh with a
+    ///   `cell_scalars` entry of this name first).
+    /// - [`AttributeLengthMismatch`](crate::error::ViewportError::AttributeLengthMismatch) :
+    ///   `face_to_cell.len()` differs from the mesh's boundary-face count, or a
+    ///   `face_to_cell` entry indexes past `cell_scalars`.
+    pub fn update_volume_mesh_scalar(
+        &mut self,
+        queue: &crate::gpu::Queue,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        name: &str,
+        face_to_cell: &[u32],
+        cell_scalars: &[f32],
+    ) -> crate::error::ViewportResult<()> {
+        let gpu_mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::SlotEmpty {
+                    index: mesh_id.index(),
+                })?;
+
+        let buffer = gpu_mesh.face_attribute_buffers.get(name).ok_or_else(|| {
+            crate::error::ViewportError::AttributeNotFound {
+                mesh_id: mesh_id.index(),
+                name: name.to_string(),
+            }
+        })?;
+
+        // The per-face scalar buffer holds `3 * n_tris` f32 (each face scalar
+        // replicated to the three vertices of its triangle; see
+        // `expand_face_scalars_to_3n`).
+        let n_tris = (buffer.size() / 4) as usize / 3;
+        if face_to_cell.len() != n_tris {
+            return Err(crate::error::ViewportError::AttributeLengthMismatch {
+                expected: n_tris,
+                got: face_to_cell.len(),
+            });
+        }
+
+        // Remap cell -> face and expand to 3N in one pass, tracking the range.
+        let mut expanded = Vec::with_capacity(n_tris * 3);
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for &ci in face_to_cell {
+            let v = cell_scalars.get(ci as usize).copied().ok_or(
+                crate::error::ViewportError::AttributeLengthMismatch {
+                    expected: ci as usize + 1,
+                    got: cell_scalars.len(),
+                },
+            )?;
+            min = min.min(v);
+            max = max.max(v);
+            expanded.push(v);
+            expanded.push(v);
+            expanded.push(v);
+        }
+
+        // Zero-copy in-place write via the wgpu staging belt.
+        queue.write_buffer(buffer, 0, bytemuck::cast_slice(&expanded));
+
+        // Recompute the scalar range so colourmap LUT mapping stays accurate.
+        let range = if min > max { (0.0, 1.0) } else { (min, max) };
+        gpu_mesh.attribute_ranges.insert(name.to_string(), range);
+
+        // Force the attribute bind group to rebuild on next prepare() (the range
+        // may have moved), matching `replace_attribute`.
+        gpu_mesh.last_tex_key = (
+            gpu_mesh.last_tex_key.0,
+            gpu_mesh.last_tex_key.1,
+            gpu_mesh.last_tex_key.2,
+            gpu_mesh.last_tex_key.3,
+            u64::MAX,
+            gpu_mesh.last_tex_key.5,
+            gpu_mesh.last_tex_key.6,
+            gpu_mesh.last_tex_key.7,
+            gpu_mesh.last_tex_key.8,
+            gpu_mesh.last_tex_key.9,
+            gpu_mesh.last_tex_key.10,
+        );
+
+        Ok(())
+    }
+
     /// Replace a previously uploaded sparse voxel grid in place.
     ///
     /// Equivalent to calling [`upload_sparse_volume_grid_data`](Self::upload_sparse_volume_grid_data)
