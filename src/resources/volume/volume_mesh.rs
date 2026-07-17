@@ -237,9 +237,14 @@ type FaceKey = (u32, u32, u32);
 /// Canonical key for a quad face, sorted by vertex index.
 type QuadFaceKey = (u32, u32, u32, u32);
 
-// (sorted_key, cell_idx, winding, interior_ref)
-type TriEntry = (FaceKey, usize, [u32; 3], [f32; 3]);
-type QuadEntry = (QuadFaceKey, usize, [u32; 4], [f32; 3]);
+// (sorted_key, cell_idx, winding). The interior reference point for winding
+// correction is NOT carried here: it is only needed for the ~few-percent of
+// faces that turn out to be boundary faces, so it is computed lazily from the
+// owning cell after boundary detection (see `extract_boundary_faces`). Carrying
+// it per face would compute it for every interior face too and fatten the
+// sorted entry, both pure waste at scale.
+type TriEntry = (FaceKey, usize, [u32; 3]);
+type QuadEntry = (QuadFaceKey, usize, [u32; 4]);
 
 /// Build a sorted key from three vertex indices.
 #[inline]
@@ -258,37 +263,38 @@ fn quad_face_key(a: u32, b: u32, c: u32, d: u32) -> QuadFaceKey {
 }
 
 /// Generate all triangular face entries for a single cell.
-fn generate_tri_entries(cell_idx: usize, cell: &[u32; 8], positions: &[[f32; 3]]) -> Vec<TriEntry> {
-    let ct = cell_type(cell);
-    let nv = ct.vertex_count();
+///
+/// `positions` is unused now that the interior reference is deferred, but the
+/// signature is kept uniform with `generate_quad_entries` for the call sites.
+fn generate_tri_entries(
+    cell_idx: usize,
+    cell: &[u32; 8],
+    _positions: &[[f32; 3]],
+) -> Vec<TriEntry> {
     let mut out = Vec::new();
-    match ct {
+    match cell_type(cell) {
         CellType::Tet => {
-            for (face_idx, face_local) in TET_FACES.iter().enumerate() {
+            for face_local in &TET_FACES {
                 let a = cell[face_local[0]];
                 let b = cell[face_local[1]];
                 let c = cell[face_local[2]];
-                // Opposite vertex is the best interior reference for tets.
-                let interior_ref = positions[cell[face_idx] as usize];
-                out.push((face_key(a, b, c), cell_idx, [a, b, c], interior_ref));
+                out.push((face_key(a, b, c), cell_idx, [a, b, c]));
             }
         }
         CellType::Pyramid => {
-            let centroid = cell_centroid(cell, nv, positions);
             for face_local in &PYRAMID_TRI_FACES {
                 let a = cell[face_local[0]];
                 let b = cell[face_local[1]];
                 let c = cell[face_local[2]];
-                out.push((face_key(a, b, c), cell_idx, [a, b, c], centroid));
+                out.push((face_key(a, b, c), cell_idx, [a, b, c]));
             }
         }
         CellType::Wedge => {
-            let centroid = cell_centroid(cell, nv, positions);
             for face_local in &WEDGE_TRI_FACES {
                 let a = cell[face_local[0]];
                 let b = cell[face_local[1]];
                 let c = cell[face_local[2]];
-                out.push((face_key(a, b, c), cell_idx, [a, b, c], centroid));
+                out.push((face_key(a, b, c), cell_idx, [a, b, c]));
             }
         }
         CellType::Hex => {} // hex has no triangular faces
@@ -297,60 +303,34 @@ fn generate_tri_entries(cell_idx: usize, cell: &[u32; 8], positions: &[[f32; 3]]
 }
 
 /// Generate all quad face entries for a single cell.
+///
+/// `positions` is unused now that the interior reference is deferred (see
+/// [`TriEntry`]); the signature is kept for call-site uniformity.
 fn generate_quad_entries(
     cell_idx: usize,
     cell: &[u32; 8],
-    positions: &[[f32; 3]],
+    _positions: &[[f32; 3]],
 ) -> Vec<QuadEntry> {
-    let ct = cell_type(cell);
-    let nv = ct.vertex_count();
     let mut out = Vec::new();
-    match ct {
+    let mut push_quad = |q: &[usize; 4]| {
+        let v = [cell[q[0]], cell[q[1]], cell[q[2]], cell[q[3]]];
+        out.push((quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v));
+    };
+    match cell_type(cell) {
         CellType::Tet => {} // tet has no quad faces
         CellType::Pyramid => {
-            let centroid = cell_centroid(cell, nv, positions);
             for quad_local in &PYRAMID_QUAD_FACE {
-                let v = [
-                    cell[quad_local[0]],
-                    cell[quad_local[1]],
-                    cell[quad_local[2]],
-                    cell[quad_local[3]],
-                ];
-                out.push((quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v, centroid));
+                push_quad(quad_local);
             }
         }
         CellType::Wedge => {
-            let centroid = cell_centroid(cell, nv, positions);
             for quad_local in &WEDGE_QUAD_FACES {
-                let v = [
-                    cell[quad_local[0]],
-                    cell[quad_local[1]],
-                    cell[quad_local[2]],
-                    cell[quad_local[3]],
-                ];
-                out.push((quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v, centroid));
+                push_quad(quad_local);
             }
         }
         CellType::Hex => {
-            for (face_idx, quad) in HEX_FACES.iter().enumerate() {
-                let v: [u32; 4] = [cell[quad[0]], cell[quad[1]], cell[quad[2]], cell[quad[3]]];
-                let interior_ref = {
-                    let opposite = &HEX_FACES[HEX_FACE_OPPOSITE[face_idx]];
-                    let mut c = [0.0f32; 3];
-                    for &local_vi in opposite {
-                        let p = positions[cell[local_vi] as usize];
-                        c[0] += p[0];
-                        c[1] += p[1];
-                        c[2] += p[2];
-                    }
-                    [c[0] / 4.0, c[1] / 4.0, c[2] / 4.0]
-                };
-                out.push((
-                    quad_face_key(v[0], v[1], v[2], v[3]),
-                    cell_idx,
-                    v,
-                    interior_ref,
-                ));
+            for quad in &HEX_FACES {
+                push_quad(quad);
             }
         }
     }
@@ -358,7 +338,7 @@ fn generate_quad_entries(
 }
 
 /// Collect entries that appear exactly once (boundary faces) from a sorted slice.
-fn collect_boundary_tri(entries: &[TriEntry]) -> Vec<(usize, [u32; 3], [f32; 3])> {
+fn collect_boundary_tri(entries: &[TriEntry]) -> Vec<(usize, [u32; 3])> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < entries.len() {
@@ -368,7 +348,7 @@ fn collect_boundary_tri(entries: &[TriEntry]) -> Vec<(usize, [u32; 3], [f32; 3])
             j += 1;
         }
         if j - i == 1 {
-            out.push((entries[i].1, entries[i].2, entries[i].3));
+            out.push((entries[i].1, entries[i].2));
         }
         i = j;
     }
@@ -376,7 +356,7 @@ fn collect_boundary_tri(entries: &[TriEntry]) -> Vec<(usize, [u32; 3], [f32; 3])
 }
 
 /// Collect quad entries that appear exactly once (boundary faces) from a sorted slice.
-fn collect_boundary_quad(entries: &[QuadEntry]) -> Vec<(usize, [u32; 4], [f32; 3])> {
+fn collect_boundary_quad(entries: &[QuadEntry]) -> Vec<(usize, [u32; 4])> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < entries.len() {
@@ -386,7 +366,7 @@ fn collect_boundary_quad(entries: &[QuadEntry]) -> Vec<(usize, [u32; 4], [f32; 3
             j += 1;
         }
         if j - i == 1 {
-            out.push((entries[i].1, entries[i].2, entries[i].3));
+            out.push((entries[i].1, entries[i].2));
         }
         i = j;
     }
@@ -463,21 +443,25 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
     quad_entries.par_sort_unstable_by_key(|e| e.0);
 
     // Collect boundary faces (count == 1) via linear scan.
-    let mut boundary: Vec<(usize, [u32; 3], [f32; 3])> = collect_boundary_tri(&tri_entries);
-    for (ci, winding, iref) in collect_boundary_quad(&quad_entries) {
-        boundary.push((ci, [winding[0], winding[1], winding[2]], iref));
-        boundary.push((ci, [winding[0], winding[2], winding[3]], iref));
+    let mut boundary: Vec<(usize, [u32; 3])> = collect_boundary_tri(&tri_entries);
+    for (ci, winding) in collect_boundary_quad(&quad_entries) {
+        boundary.push((ci, [winding[0], winding[1], winding[2]]));
+        boundary.push((ci, [winding[0], winding[2], winding[3]]));
     }
 
     // Sort by cell index for deterministic output (useful for testing).
-    boundary.sort_unstable_by_key(|(ci, _, _)| *ci);
+    boundary.sort_unstable_by_key(|(ci, _)| *ci);
 
     // Geometric winding correction (parallel): ensure each boundary face's normal
     // points outward. This is the primary correctness mechanism for tets where
-    // the table winding may be inward.
-    boundary
-        .par_iter_mut()
-        .for_each(|(_, tri, iref)| correct_winding(tri, iref, &data.positions));
+    // the table winding may be inward. The interior reference is the owning
+    // cell's centroid, computed here for the few boundary faces rather than for
+    // every face during generation.
+    boundary.par_iter_mut().for_each(|(ci, tri)| {
+        let cell = &data.cells[*ci];
+        let iref = boundary_interior_ref(cell, tri, &data.positions);
+        correct_winding(tri, &iref, &data.positions);
+    });
 
     let n_boundary_tris = boundary.len();
 
@@ -486,7 +470,7 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
     let mut indices: Vec<u32> = Vec::with_capacity(n_boundary_tris * 3);
     let mut normal_accum: Vec<[f64; 3]> = vec![[0.0; 3]; n_verts];
 
-    for (_, tri, _) in &boundary {
+    for (_, tri) in &boundary {
         indices.push(tri[0]);
         indices.push(tri[1]);
         indices.push(tri[2]);
@@ -540,7 +524,7 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
     for (name, cell_vals) in &data.cell_scalars {
         let face_scalars: Vec<f32> = boundary
             .iter()
-            .map(|(ci, _, _)| cell_vals.get(*ci).copied().unwrap_or(0.0))
+            .map(|(ci, _)| cell_vals.get(*ci).copied().unwrap_or(0.0))
             .collect();
         attributes.insert(name.clone(), AttributeData::Face(face_scalars));
     }
@@ -548,12 +532,12 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
     for (name, cell_vals) in &data.cell_colours {
         let face_colours: Vec<[f32; 4]> = boundary
             .iter()
-            .map(|(ci, _, _)| cell_vals.get(*ci).copied().unwrap_or([1.0; 4]))
+            .map(|(ci, _)| cell_vals.get(*ci).copied().unwrap_or([1.0; 4]))
             .collect();
         attributes.insert(name.clone(), AttributeData::FaceColour(face_colours));
     }
 
-    let face_to_cell: Vec<u32> = boundary.iter().map(|(ci, _, _)| *ci as u32).collect();
+    let face_to_cell: Vec<u32> = boundary.iter().map(|(ci, _)| *ci as u32).collect();
 
     (
         MeshData {
@@ -744,6 +728,25 @@ fn cell_type(cell: &[u32; 8]) -> CellType {
 
 /// Centroid of the first `nv` vertices of `cell`.
 #[inline]
+/// Interior reference point for winding-correcting one boundary face, computed
+/// from the owning cell (deferred from face generation so it is only paid for
+/// boundary faces). For a tet this is the opposite vertex -- the vertex not on
+/// the face -- which is a larger, more numerically robust reference than the
+/// cell centroid for sliver tets; for the other cell types the cell centroid is
+/// used (any strictly-interior point gives the correct outward sign).
+fn boundary_interior_ref(cell: &[u32; 8], tri: &[u32; 3], positions: &[[f32; 3]]) -> [f32; 3] {
+    let ct = cell_type(cell);
+    if matches!(ct, CellType::Tet) {
+        for k in 0..4 {
+            let v = cell[k];
+            if v != tri[0] && v != tri[1] && v != tri[2] {
+                return positions[v as usize];
+            }
+        }
+    }
+    cell_centroid(cell, ct.vertex_count(), positions)
+}
+
 fn cell_centroid(cell: &[u32; 8], nv: usize, positions: &[[f32; 3]]) -> [f32; 3] {
     let mut c = [0.0f32; 3];
     for i in 0..nv {
@@ -1034,16 +1037,18 @@ pub fn extract_clipped_volume_faces(
     tri_entries.par_sort_unstable_by_key(|e| e.0);
     quad_entries.par_sort_unstable_by_key(|e| e.0);
 
-    let mut boundary: Vec<(usize, [u32; 3], [f32; 3])> = collect_boundary_tri(&tri_entries);
-    for (ci, winding, iref) in collect_boundary_quad(&quad_entries) {
-        boundary.push((ci, [winding[0], winding[1], winding[2]], iref));
-        boundary.push((ci, [winding[0], winding[2], winding[3]], iref));
+    let mut boundary: Vec<(usize, [u32; 3])> = collect_boundary_tri(&tri_entries);
+    for (ci, winding) in collect_boundary_quad(&quad_entries) {
+        boundary.push((ci, [winding[0], winding[1], winding[2]]));
+        boundary.push((ci, [winding[0], winding[2], winding[3]]));
     }
-    boundary.sort_unstable_by_key(|(ci, _, _)| *ci);
+    boundary.sort_unstable_by_key(|(ci, _)| *ci);
 
-    boundary
-        .par_iter_mut()
-        .for_each(|(_, tri, iref)| correct_winding(tri, iref, &data.positions));
+    boundary.par_iter_mut().for_each(|(ci, tri)| {
+        let cell = &data.cells[*ci];
+        let iref = boundary_interior_ref(cell, tri, &data.positions);
+        correct_winding(tri, &iref, &data.positions);
+    });
 
     // Precompute per-cell vertex and kept-vertex counts.
     let cell_nv: Vec<usize> = data
@@ -1061,7 +1066,7 @@ pub fn extract_clipped_volume_faces(
     // Boundary faces: emit directly for fully-kept cells, clip for intersected (parallel).
     let mut out_tris: Vec<(usize, [[f32; 3]; 3])> = boundary
         .par_iter()
-        .flat_map_iter(|(cell_idx, tri, _)| {
+        .flat_map_iter(|(cell_idx, tri)| {
             let nv = cell_nv[*cell_idx];
             let kc = cell_kept[*cell_idx];
             let pa = data.positions[tri[0] as usize];
