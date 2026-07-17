@@ -12,6 +12,7 @@ impl ViewportRenderer {
         output_view: &crate::gpu::TextureView,
         vp_idx: usize,
         frame: &FrameData,
+        scene_items: &[SceneRenderItem],
         bg_colour: [f32; 4],
         w: u32,
         h: u32,
@@ -121,8 +122,17 @@ impl ViewportRenderer {
                 Some(slot),
                 &self.mesh_uniforms.wireframe_bind_groups,
                 &self.mesh_uniforms.bind_groups,
-                &self.prepared_surfaces,
-                self.per_object_bundle.as_ref()
+                scene_items,
+                // The cached bundle was recorded from `prepared_surfaces` (the
+                // surface submission, with the opaque volume-mesh boundaries
+                // truncated off). When those boundaries are appended to
+                // `scene_items` the bundle no longer covers the full list, so
+                // fall back to the per-item draw path that walks every item.
+                if scene_items.len() == self.prepared_surfaces.len() {
+                    self.per_object_bundle.as_ref()
+                } else {
+                    None
+                }
             );
             emit_scivis_draw_calls!(
                 &self.resources,
@@ -142,6 +152,31 @@ impl ViewportRenderer {
                 &self.mesh_instance_gpu_data,
                 false
             );
+            // Gaussian splats (alpha-blended, back-to-front sorted, no depth
+            // write). Mirrors the block in `paint_to` and the HDR path so the
+            // offscreen LDR path draws splats too.
+            if !self.gaussian_splat_draw_data.is_empty() {
+                if let Some(ref dual) = self.resources.gaussian_splat.pipeline {
+                    render_pass.set_pipeline(dual.for_format(false));
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    for dd in &self.gaussian_splat_draw_data {
+                        if dd.wireframe {
+                            continue;
+                        }
+                        if let Some(set) = self
+                            .resources
+                            .content
+                            .gaussian_splat_store
+                            .get_by_index(dd.store_index)
+                        {
+                            if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
+                                render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
+                                render_pass.draw(0..6, 0..dd.count);
+                            }
+                        }
+                    }
+                }
+            }
             // TransparentVolumeMesh boundary wireframe overlay.
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {

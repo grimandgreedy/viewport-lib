@@ -730,7 +730,17 @@ impl ViewportRenderer {
         }
 
         let cmd_buf = if !frame.effects.post_process.enabled {
-            self.render_frame_ldr(device, queue, output_view, vp_idx, frame, bg_colour, w, h)
+            self.render_frame_ldr(
+                device,
+                queue,
+                output_view,
+                vp_idx,
+                frame,
+                scene_items,
+                bg_colour,
+                w,
+                h,
+            )
         } else {
             self.render_frame_hdr(
                 device,
