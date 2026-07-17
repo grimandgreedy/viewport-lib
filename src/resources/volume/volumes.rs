@@ -807,6 +807,25 @@ mod tests {
     }
 
     #[test]
+    fn upload_volume_charges_resident_bytes() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        assert_eq!(resources.resident_bytes().volume_bytes, 0);
+        let _id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        // 8*8*8 R32Float = 512 texels * 4 bytes.
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+        // The direct-volume store is append-only, so a second upload only adds
+        // (this is the growth the scivis audit's playback cell watches).
+        let _id2 = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert_eq!(resources.resident_bytes().volume_bytes, 2 * 8 * 8 * 8 * 4);
+    }
+
+    #[test]
     fn begin_upload_volume_validates_dims() {
         let Some((device, queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");

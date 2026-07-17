@@ -19,7 +19,9 @@ pub struct TextureMemoryStats {
 /// These are the classes a streaming or eviction policy frees and re-uploads:
 /// meshes (`upload_mesh_data` and friends), user textures (`upload_texture` and
 /// friends), Gaussian splats, marching-cubes volumes, and the pre-uploaded
-/// scivis curves. The query is cheap enough to poll each frame.
+/// scivis curves. Direct-volume 3D textures (`upload_volume`) are counted too,
+/// though the direct-volume store cannot be freed yet. The query is cheap
+/// enough to poll each frame.
 ///
 /// Built-in resources are not counted: colourmap and matcap LUTs, IBL maps, the
 /// shadow atlas, and post-process render targets. They are created once (or
@@ -38,6 +40,15 @@ pub struct ResidentBytes {
     /// GPU buffer bytes across every resident marching-cubes volume (all slab
     /// buffers of every live volume).
     pub mc_volume_bytes: u64,
+    /// GPU bytes across every resident direct-volume 3D texture
+    /// (`upload_volume`, the `R32Float` fields a `VolumeItem` ray-marches).
+    ///
+    /// Summed from the live textures' dimensions rather than a running
+    /// counter: the direct-volume store is append-only today (no
+    /// `replace_volume` / `free_volume`), so this total only grows over a
+    /// session and is the number a time-series playback watches. See the
+    /// scivis performance audit.
+    pub volume_bytes: u64,
     /// GPU buffer bytes across every pre-uploaded scivis curve resource
     /// (polylines, tubes, streamtubes, ribbons, point clouds, glyph sets,
     /// tensor glyph sets, and sprite sets).
@@ -52,6 +63,7 @@ impl ResidentBytes {
             + self.gaussian_splat_bytes
             + self.mc_volume_bytes
             + self.scivis_bytes
+            + self.volume_bytes
     }
 }
 
@@ -77,12 +89,12 @@ pub struct VramBudget {
 
 impl crate::resources::DeviceResources {
     /// Resident GPU bytes for the user-uploaded working set: meshes, user
-    /// textures, Gaussian splats, marching-cubes volumes, and pre-uploaded
-    /// scivis curves.
+    /// textures, Gaussian splats, marching-cubes volumes, pre-uploaded scivis
+    /// curves, and direct-volume 3D textures.
     ///
     /// Cheap enough to poll per frame: mesh, texture, and splat totals are
-    /// running counters, and the volume / curve totals sum a handful of live
-    /// entries. A streaming or eviction policy compares [`ResidentBytes::total`]
+    /// running counters, and the MC-volume / curve / direct-volume totals sum
+    /// a handful of live entries. A streaming or eviction policy compares [`ResidentBytes::total`]
     /// against its own byte budget and calls the matching `free_*` to stay under
     /// it. Built-in LUTs, IBL maps, and render targets are not counted; see
     /// [`ResidentBytes`].
@@ -102,7 +114,28 @@ impl crate::resources::DeviceResources {
             gaussian_splat_bytes: self.content.gaussian_splat_store.allocated_bytes(),
             mc_volume_bytes: self.mc_volume_resident_bytes(),
             scivis_bytes,
+            volume_bytes: self.volume_resident_bytes(),
         }
+    }
+
+    /// Total resident GPU bytes across every live direct-volume 3D texture
+    /// (`upload_volume`).
+    ///
+    /// Summed from each texture's dimensions (the store holds only `R32Float`
+    /// fields, 4 bytes/texel) rather than a running counter, because the
+    /// direct-volume store is append-only and carries no per-entry byte
+    /// charge. Cheap: a handful of live entries.
+    pub(crate) fn volume_resident_bytes(&self) -> u64 {
+        let mut bytes = 0u64;
+        for i in 0..self.content.volume_textures.len() {
+            if let Some((texture, _)) = self.content.volume_textures.get(i) {
+                bytes += (texture.width() as u64)
+                    * (texture.height() as u64)
+                    * (texture.depth_or_array_layers() as u64)
+                    * 4;
+            }
+        }
+        bytes
     }
 
     /// Query the GPU's device-local VRAM budget for `device`.
