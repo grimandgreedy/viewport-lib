@@ -121,21 +121,12 @@ impl crate::resources::DeviceResources {
     /// Total resident GPU bytes across every live direct-volume 3D texture
     /// (`upload_volume`).
     ///
-    /// Summed from each texture's dimensions (the store holds only `R32Float`
-    /// fields, 4 bytes/texel) rather than a running counter, because the
-    /// direct-volume store is append-only and carries no per-entry byte
-    /// charge. Cheap: a handful of live entries.
+    /// Read straight off the store's maintained byte charge (each `R32Float`
+    /// field is charged `dims-product * 4` on insert and its charge is dropped
+    /// on `free_volume`), so a time-series that reuses one slot via
+    /// `replace_volume` stays flat here instead of growing per timestep.
     pub(crate) fn volume_resident_bytes(&self) -> u64 {
-        let mut bytes = 0u64;
-        for i in 0..self.content.volume_textures.len() {
-            if let Some((texture, _)) = self.content.volume_textures.get(i) {
-                bytes += (texture.width() as u64)
-                    * (texture.height() as u64)
-                    * (texture.depth_or_array_layers() as u64)
-                    * 4;
-            }
-        }
-        bytes
+        self.content.volume_textures.allocated_bytes()
     }
 
     /// Query the GPU's device-local VRAM budget for `device`.

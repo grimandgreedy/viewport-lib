@@ -43,7 +43,7 @@ pub struct ImageSliceItem {
 impl Default for ImageSliceItem {
     fn default() -> Self {
         Self {
-            volume_id: crate::resources::VolumeId(0),
+            volume_id: crate::resources::VolumeId::INVALID,
             axis: SliceAxis::Z,
             offset: 0.5,
             bbox_min: [0.0, 0.0, 0.0],
@@ -113,7 +113,7 @@ pub struct VolumeSurfaceSliceItem {
 impl Default for VolumeSurfaceSliceItem {
     fn default() -> Self {
         Self {
-            volume_id: crate::resources::VolumeId(0),
+            volume_id: crate::resources::VolumeId::INVALID,
             mesh_id: crate::resources::mesh::mesh_store::MeshId::INVALID,
             bbox_min: [0.0, 0.0, 0.0],
             bbox_max: [1.0, 1.0, 1.0],

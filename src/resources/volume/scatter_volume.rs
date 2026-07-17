@@ -53,7 +53,8 @@ pub(crate) struct ScatterResources {
     /// Per-frame uniform buffer (group 3 binding 0).
     pub(crate) frame_uniform_buffer: Option<crate::gpu::Buffer>,
     /// Cache of group 2 bind groups, keyed by `(lut_id, density_id)`.
-    pub(crate) per_volume_tex_cache: Vec<((usize, usize), crate::gpu::BindGroup)>,
+    pub(crate) per_volume_tex_cache:
+        Vec<((usize, crate::resources::VolumeId), crate::gpu::BindGroup)>,
     /// Bind group for group 3, rebuilt when opaque depth view changes.
     pub(crate) frame_bg: Option<crate::gpu::BindGroup>,
     /// Linear sampler used to read opaque depth in the scatter pass.
@@ -693,20 +694,23 @@ impl crate::resources::DeviceResources {
         }
     }
 
-    /// Look up or build a group 2 bind group for the (lut_id, density_id)
-    /// pair. Pass `u32::MAX` for either id to bind the fallback.
+    /// Look up or build a group 2 bind group for the `(lut_id, density)` pair.
+    /// Pass `usize::MAX` for `lut_id` or [`VolumeId::INVALID`] for `density` to
+    /// bind the fallback. The density half of the cache key carries the volume
+    /// handle's generation, so a freed-then-reused slot at the same index does
+    /// not hit a bind group built against the previous occupant.
     pub(crate) fn ensure_scatter_per_volume_tex_bg(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         lut_id: usize,
-        density_id: usize,
+        density: crate::resources::VolumeId,
     ) -> crate::gpu::BindGroup {
         self.ensure_scatter_per_volume_tex_bgl(device);
         self.ensure_scatter_colourmap_sampler(device);
         self.ensure_scatter_density_fallback(device, queue);
 
-        let key = (lut_id, density_id);
+        let key = (lut_id, density);
         if let Some((_, bg)) = self
             .scatter
             .per_volume_tex_cache
@@ -727,12 +731,13 @@ impl crate::resources::DeviceResources {
                 .unwrap_or(&self.content.fallback_lut_view)
         };
         let density_fallback = self.scatter.density_fallback_view.as_ref().unwrap();
-        let density_view: &crate::gpu::TextureView = if density_id == usize::MAX {
+        let density_view: &crate::gpu::TextureView = if density == crate::resources::VolumeId::INVALID
+        {
             density_fallback
         } else {
             self.content
                 .volume_textures
-                .get(density_id)
+                .get(density)
                 .map(|(_, v)| v)
                 .unwrap_or(density_fallback)
         };
@@ -762,21 +767,34 @@ impl crate::resources::DeviceResources {
         bg
     }
 
-    /// Resolve a volume's `(lut_id, density_id)` pair. `usize::MAX` indicates
-    /// the fallback should be bound.
-    pub(crate) fn scatter_volume_tex_ids(volume: &ScatterVolume) -> (usize, usize) {
+    /// Resolve a volume's `(lut_id, density)` pair. `usize::MAX` / [`VolumeId::INVALID`]
+    /// indicate the fallback should be bound.
+    pub(crate) fn scatter_volume_tex_ids(
+        volume: &ScatterVolume,
+    ) -> (usize, crate::resources::VolumeId) {
         let lut_id = match volume.colour {
             ColourSource::Ramp(id) => id.0,
             _ => usize::MAX,
         };
-        let density_id = volume.density_texture.map(|id| id.0).unwrap_or(usize::MAX);
-        (lut_id, density_id)
+        let density = volume
+            .density_texture
+            .unwrap_or(crate::resources::VolumeId::INVALID);
+        (lut_id, density)
     }
 
     /// Clear the per-volume texture bind group cache. Call when the
     /// underlying texture vectors may have been mutated (uploads added).
     pub(crate) fn clear_scatter_per_volume_tex_cache(&mut self) {
         self.scatter.per_volume_tex_cache.clear();
+    }
+
+    /// Drop any cached per-volume bind group whose density texture is the volume
+    /// slot at `index`. Called when that slot is replaced or freed so a bind
+    /// group holding the old texture view stops keeping it resident.
+    pub(crate) fn invalidate_scatter_density(&mut self, index: u32) {
+        self.scatter
+            .per_volume_tex_cache
+            .retain(|((_, density), _)| density.index() != index as usize);
     }
 
     /// Stride between dynamic-offset slots, in bytes.

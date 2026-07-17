@@ -59,7 +59,7 @@ pub struct VolumeItem {
 impl Default for VolumeItem {
     fn default() -> Self {
         Self {
-            volume_id: crate::resources::VolumeId(0),
+            volume_id: crate::resources::VolumeId::INVALID,
             volume_data: None,
             colour_lut: None,
             opacity_lut: None,

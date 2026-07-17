@@ -82,11 +82,15 @@ pub(crate) use crate::resources::volume::volumes::ImageSliceGpuData;
 pub use crate::resources::volume::volumes::VolumeGpuData;
 pub(crate) use crate::resources::volume::volumes::VolumeSurfaceSliceGpuData;
 
-crate::resources::handle::registry_handle! {
+crate::resources::handle::slot_handle! {
     /// Identifies a 3D volume texture uploaded to the GPU.
     ///
-    /// An append-only registry handle: volume textures are kept for the session
-    /// and not individually freed.
+    /// A slotted, generational handle: a volume can be replaced in place
+    /// ([`replace_volume`](crate::resources::DeviceResources::replace_volume)) or
+    /// freed ([`free_volume`](crate::resources::DeviceResources::free_volume)) so
+    /// a time-series playback reuses one slot instead of leaking a 3D texture per
+    /// timestep. A handle held across a free-then-reupload resolves to nothing
+    /// rather than aliasing the new occupant.
     pub struct VolumeId;
 }
 

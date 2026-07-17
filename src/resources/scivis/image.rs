@@ -117,7 +117,7 @@ impl DeviceResources {
         item: &crate::renderer::ImageSliceItem,
     ) -> Option<crate::resources::ImageSliceGpuData> {
         // Check volume exists before allocating anything.
-        if item.volume_id.0 >= self.content.volume_textures.len() {
+        if self.content.volume_textures.get(item.volume_id).is_none() {
             return None;
         }
 
@@ -185,7 +185,7 @@ impl DeviceResources {
         let vol_view = &self
             .content
             .volume_textures
-            .get(item.volume_id.0)
+            .get(item.volume_id)
             .expect("volume existence checked above")
             .1;
         let lut_view = lut_view_idx
@@ -941,7 +941,7 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::VolumeSurfaceSliceItem,
     ) -> Option<crate::resources::VolumeSurfaceSliceGpuData> {
-        if item.volume_id.0 >= self.content.volume_textures.len() {
+        if self.content.volume_textures.get(item.volume_id).is_none() {
             return None;
         }
         // Verify the mesh exists.
@@ -1007,7 +1007,7 @@ impl DeviceResources {
         let vol_view = &self
             .content
             .volume_textures
-            .get(item.volume_id.0)
+            .get(item.volume_id)
             .expect("volume existence checked above")
             .1;
         let lut_view = lut_view_idx

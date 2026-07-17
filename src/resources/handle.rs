@@ -156,6 +156,7 @@ impl<T> Registry<T> {
 
     /// Number of stored values. Also the index the next [`push`](Registry::push)
     /// will return.
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.items.len()
     }

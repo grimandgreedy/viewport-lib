@@ -41,6 +41,74 @@ impl DeviceResources {
         // Build the ray-march pipeline now so a load-time upload also pays the
         // pipeline compile, not the first frame that draws the volume.
         self.ensure_volume_pipeline(device);
+        let (texture, view, volume_bytes) = Self::build_volume_texture(device, queue, data, dims);
+        self.content
+            .volume_textures
+            .insert((texture, view), volume_bytes)
+    }
+
+    /// Overwrite the 3D texture behind `id` in place, keeping the same slot and
+    /// handle.
+    ///
+    /// For a time-series where a field is played back over a fixed grid, calling
+    /// this each timestep reuses one slot instead of leaking a fresh 3D texture
+    /// per step through [`upload_volume`](Self::upload_volume): resident volume
+    /// memory stays flat at one field's size rather than growing without bound.
+    /// The old texture is dropped and the store's byte charge is updated to the
+    /// new field's size. `dims` may differ from the original upload.
+    ///
+    /// Returns `false` (and uploads nothing) if `id` is stale or was freed.
+    pub fn replace_volume(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: VolumeId,
+        data: &[f32],
+        dims: [u32; 3],
+    ) -> bool {
+        if !self.content.volume_textures.contains(id) {
+            return false;
+        }
+        self.ensure_volume_pipeline(device);
+        let (texture, view, volume_bytes) = Self::build_volume_texture(device, queue, data, dims);
+        let replaced = self
+            .content
+            .volume_textures
+            .replace(id, (texture, view), volume_bytes)
+            .is_some();
+        if replaced {
+            // Drop any scatter bind group built against this slot's old texture
+            // so the previous field's GPU memory is actually released.
+            self.invalidate_scatter_density(id.index() as u32);
+        }
+        replaced
+    }
+
+    /// Free the 3D texture behind `id`, reclaiming its slot and byte charge.
+    ///
+    /// A later [`upload_volume`](Self::upload_volume) reuses the freed slot. Any
+    /// handle still holding `id` resolves to nothing afterwards rather than
+    /// aliasing whatever next occupies the slot. Returns `false` if `id` was
+    /// already freed or is stale.
+    pub fn free_volume(&mut self, id: VolumeId) -> bool {
+        let freed = self.content.volume_textures.remove(id).is_some();
+        if freed {
+            self.invalidate_scatter_density(id.index() as u32);
+        }
+        freed
+    }
+
+    /// Create an `R32Float` 3D texture from `data`, upload it, and return the
+    /// texture, its default view, and the GPU bytes it occupies (4 per texel).
+    ///
+    /// Shared by [`upload_volume`](Self::upload_volume) and
+    /// [`replace_volume`](Self::replace_volume).
+    fn build_volume_texture(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        data: &[f32],
+        dims: [u32; 3],
+    ) -> (crate::gpu::Texture, crate::gpu::TextureView, u64) {
         let expected = (dims[0] as usize) * (dims[1] as usize) * (dims[2] as usize);
         assert_eq!(
             data.len(),
@@ -88,7 +156,7 @@ impl DeviceResources {
         );
 
         let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-        VolumeId(self.content.volume_textures.push((texture, view)))
+        (texture, view, (expected as u64) * 4)
     }
 
     /// Start an asynchronous volume upload.
@@ -171,7 +239,11 @@ impl DeviceResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
-                        let id = VolumeId(resources.content.volume_textures.push((texture, view)));
+                        let volume_bytes = (expected as u64) * 4;
+                        let id = resources
+                            .content
+                            .volume_textures
+                            .insert((texture, view), volume_bytes);
                         slot_for_apply.set(id);
                     }),
                 ))
@@ -506,11 +578,11 @@ impl DeviceResources {
         self.ensure_volume_cube(device);
         self.ensure_default_opacity_lut(device, queue);
 
-        let vol_id = item.volume_id.0;
+        let vol_id = item.volume_id;
         let dims = {
             let uploaded = self.content.volume_textures.len();
             let (tex, _) = self.content.volume_textures.get(vol_id).unwrap_or_else(|| {
-                panic!("invalid VolumeId: {vol_id} (only {uploaded} volumes uploaded)")
+                panic!("invalid VolumeId: {vol_id:?} (only {uploaded} volumes live)")
             });
             let size = tex.size();
             [size.width, size.height, size.depth_or_array_layers]
@@ -819,10 +891,81 @@ mod tests {
         let _id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
         // 8*8*8 R32Float = 512 texels * 4 bytes.
         assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
-        // The direct-volume store is append-only, so a second upload only adds
-        // (this is the growth the scivis audit's playback cell watches).
+        // A second distinct upload takes a second slot, so the charge adds. This
+        // is the per-timestep growth a time-series avoids by calling
+        // replace_volume on one handle instead (see replace_volume_reuses_slot).
         let _id2 = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
         assert_eq!(resources.resident_bytes().volume_bytes, 2 * 8 * 8 * 8 * 4);
+    }
+
+    #[test]
+    fn replace_volume_reuses_slot() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+
+        // Replacing the field in place keeps the same handle and one slot, so the
+        // charge stays flat rather than doubling (the whole point of S1).
+        for _ in 0..10 {
+            assert!(resources.replace_volume(&device, &queue, id, &sample_volume_data(), [8, 8, 8]));
+        }
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+
+        // A larger field updates the charge to the new size, still one slot.
+        let big = vec![0.5_f32; 16 * 16 * 16];
+        assert!(resources.replace_volume(&device, &queue, id, &big, [16, 16, 16]));
+        assert_eq!(resources.resident_bytes().volume_bytes, 16 * 16 * 16 * 4);
+    }
+
+    #[test]
+    fn free_volume_reclaims_bytes_and_slot() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+
+        assert!(resources.free_volume(id));
+        assert_eq!(resources.resident_bytes().volume_bytes, 0);
+        // Second free of the same handle is a no-op.
+        assert!(!resources.free_volume(id));
+
+        // The freed slot is reused by the next upload, so the charge is one
+        // field's worth, not two.
+        let _id2 = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+    }
+
+    #[test]
+    fn stale_volume_handle_does_not_alias_reused_slot() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let old = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert!(resources.free_volume(old));
+        // Reusing the freed slot mints a handle with a bumped generation.
+        let new = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert_eq!(old.index(), new.index(), "same slot reused");
+        assert_ne!(old, new, "generation bumped so the stale handle differs");
+        // The stale handle no longer resolves and cannot be replaced or refreed.
+        assert!(!resources.replace_volume(&device, &queue, old, &sample_volume_data(), [8, 8, 8]));
+        assert!(!resources.free_volume(old));
+        // The live handle still works.
+        assert!(resources.replace_volume(&device, &queue, new, &sample_volume_data(), [8, 8, 8]));
     }
 
     #[test]

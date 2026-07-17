@@ -1673,6 +1673,26 @@ impl ViewportRenderer {
         self.resources.upload_result_volume(id)
     }
 
+    /// Overwrite the 3D texture behind `id` in place. See
+    /// [`DeviceResources::replace_volume`]. Use this for time-series playback so
+    /// resident volume memory stays flat instead of leaking a texture per step.
+    pub fn replace_volume(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::VolumeId,
+        data: &[f32],
+        dims: [u32; 3],
+    ) -> bool {
+        self.resources.replace_volume(device, queue, id, data, dims)
+    }
+
+    /// Free the 3D texture behind `id`, reclaiming its slot. See
+    /// [`DeviceResources::free_volume`].
+    pub fn free_volume(&mut self, id: crate::resources::VolumeId) -> bool {
+        self.resources.free_volume(id)
+    }
+
     /// Start an asynchronous marching-cubes-ready volume upload. See
     /// [`DeviceResources::begin_upload_volume_for_mc`].
     pub fn begin_upload_volume_for_mc(
