@@ -1392,6 +1392,35 @@ where
     }
 }
 
+/// Per-output-tet scalar values, in the exact order [`for_each_tet`] emits tets.
+///
+/// The cheap counterpart of [`for_each_tet`] when only the scalars are needed
+/// (a scalar-only projected-tet refresh): it walks the cells and repeats each
+/// cell's scalar once per tet the cell decomposes into (tet -> 1, pyramid -> 2,
+/// wedge -> 3, hex -> 6), skipping all vertex lookups. The result aligns
+/// one-to-one with the tet geometry buffer, so it can be written straight into
+/// the parallel scalar buffer.
+pub(crate) fn tet_scalars(data: &VolumeMeshData, attribute: &str) -> Vec<f32> {
+    let cell_scalars = data.cell_scalars.get(attribute);
+    let mut out = Vec::with_capacity(data.cells.len());
+    for (cell_idx, cell) in data.cells.iter().enumerate() {
+        let scalar = cell_scalars
+            .and_then(|v| v.get(cell_idx))
+            .copied()
+            .unwrap_or(0.0);
+        let n = match cell_type(cell) {
+            CellType::Tet => 1,
+            CellType::Pyramid => 2,
+            CellType::Wedge => 3,
+            CellType::Hex => 6,
+        };
+        for _ in 0..n {
+            out.push(scalar);
+        }
+    }
+    out
+}
+
 /// Decompose all cells in `data` into tetrahedra and collect the results.
 ///
 /// Returns `(positions, scalars)`:

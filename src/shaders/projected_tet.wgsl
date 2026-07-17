@@ -44,8 +44,8 @@ struct PtUniforms {
 };
 
 // One tetrahedron on the GPU: four vec4 slots (64 bytes, 16-byte aligned).
-// v0.xyz = world position of vertex 0,  v0.w = per-tet scalar value.
-// v1..v3: world positions (w unused).
+// v0..v3.xyz = world positions (all w unused; the per-tet scalar lives in the
+// separate `tet_scalars` buffer so a scalar-only refresh never touches geometry).
 struct GpuTet {
     v0: vec4<f32>,
     v1: vec4<f32>,
@@ -65,6 +65,9 @@ struct OitOut {
 // Group 1: projected-tet per-volume state.
 @group(1) @binding(0) var<uniform>        uniforms:         PtUniforms;
 @group(1) @binding(1) var<storage, read>  tets:             array<GpuTet>;
+// Per-tet scalar, parallel to `tets`. Separate buffer so the field can be
+// refreshed without re-uploading the tet geometry.
+@group(1) @binding(2) var<storage, read>  tet_scalars:      array<f32>;
 
 // Group 2: colourmap LUT (rebound per-draw from the renderer's LUT registry).
 @group(2) @binding(0) var                 colourmap_lut:     texture_2d<f32>;
@@ -134,7 +137,9 @@ fn vs_main(
 
     var out: VsOut;
     out.clip_pos = vec4<f32>(ndc_x, ndc_y, clamp(quad_z, 0.0, 1.0), 1.0);
-    out.v0       = tet.v0;
+    // Pack the per-tet scalar into v0.w for the fragment shader (which reads
+    // in.v0.w), sourced from the separate scalar buffer rather than geometry.
+    out.v0       = vec4<f32>(tet.v0.xyz, tet_scalars[ti]);
     out.v1       = tet.v1.xyz;
     out.v2       = tet.v2.xyz;
     out.v3       = tet.v3.xyz;

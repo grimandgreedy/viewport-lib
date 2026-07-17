@@ -132,12 +132,19 @@ pub(crate) struct ProjectedTetUniform {
 
 /// One device-limit-bounded chunk of a projected-tet mesh.
 pub(crate) struct ProjectedTetChunk {
-    /// Storage buffer for this chunk's tetrahedra (kept alive for the bind group).
+    /// Storage buffer for this chunk's tetrahedra geometry (kept alive for the
+    /// bind group). Vertex positions only; the per-tet scalar lives in
+    /// `scalar_buffer` so a scalar-only refresh does not touch geometry.
     #[allow(dead_code)]
     pub tet_buffer: crate::gpu::Buffer,
+    /// Per-tet scalar storage buffer (one `f32` per tet), parallel to
+    /// `tet_buffer`. Rewritten in place by `replace_projected_tet_scalar`
+    /// without rebuilding the geometry.
+    #[allow(dead_code)]
+    pub scalar_buffer: crate::gpu::Buffer,
     /// Number of tetrahedra in this chunk (= instanced draw count).
     pub tet_count: u32,
-    /// Bind group: shared uniform + this chunk's tet buffer + colourmap + sampler.
+    /// Bind group: shared uniform + this chunk's tet + scalar buffers + colourmap.
     pub bind_group: crate::gpu::BindGroup,
 }
 

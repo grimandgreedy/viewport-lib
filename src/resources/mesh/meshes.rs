@@ -2570,9 +2570,21 @@ impl DeviceResources {
                         },
                         count: None,
                     },
-                    // binding 1: tet storage buffer (read-only)
+                    // binding 1: tet geometry storage buffer (read-only)
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 1,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 2: per-tet scalar storage buffer (read-only)
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 2,
                         visibility: crate::gpu::ShaderStages::VERTEX
                             | crate::gpu::ShaderStages::FRAGMENT,
                         ty: crate::gpu::BindingType::Buffer {
@@ -2697,7 +2709,7 @@ impl DeviceResources {
                 .expect("pt_bind_group_layout must exist after ensure_pt_bind_group_layout");
             pending
                 .into_iter()
-                .map(|(tet_buffer, tet_count)| {
+                .map(|(tet_buffer, scalar_buffer, tet_count)| {
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pt_bind_group"),
                         layout: bgl,
@@ -2710,10 +2722,15 @@ impl DeviceResources {
                                 binding: 1,
                                 resource: tet_buffer.as_entire_binding(),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: scalar_buffer.as_entire_binding(),
+                            },
                         ],
                     });
                     crate::resources::types::ProjectedTetChunk {
                         tet_buffer,
+                        scalar_buffer,
                         tet_count,
                         bind_group,
                     }
@@ -2774,7 +2791,7 @@ impl DeviceResources {
                                 .expect("pt_bind_group_layout must exist");
                             pending
                                 .into_iter()
-                                .map(|(tet_buffer, tet_count)| {
+                                .map(|(tet_buffer, scalar_buffer, tet_count)| {
                                     let bind_group = device_for_apply.create_bind_group(
                                         &crate::gpu::BindGroupDescriptor {
                                             label: Some("pt_bind_group"),
@@ -2788,11 +2805,16 @@ impl DeviceResources {
                                                     binding: 1,
                                                     resource: tet_buffer.as_entire_binding(),
                                                 },
+                                                crate::gpu::BindGroupEntry {
+                                                    binding: 2,
+                                                    resource: scalar_buffer.as_entire_binding(),
+                                                },
                                             ],
                                         },
                                     );
                                     crate::resources::types::ProjectedTetChunk {
                                         tet_buffer,
+                                        scalar_buffer,
                                         tet_count,
                                         bind_group,
                                     }
@@ -2882,7 +2904,7 @@ impl DeviceResources {
                 .uniform_buffer;
             pending
                 .into_iter()
-                .map(|(tet_buffer, tet_count)| {
+                .map(|(tet_buffer, scalar_buffer, tet_count)| {
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pt_bind_group"),
                         layout: bgl,
@@ -2895,10 +2917,15 @@ impl DeviceResources {
                                 binding: 1,
                                 resource: tet_buffer.as_entire_binding(),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: scalar_buffer.as_entire_binding(),
+                            },
                         ],
                     });
                     crate::resources::types::ProjectedTetChunk {
                         tet_buffer,
+                        scalar_buffer,
                         tet_count,
                         bind_group,
                     }
@@ -2917,44 +2944,142 @@ impl DeviceResources {
         Ok(())
     }
 
+    /// Refresh a projected-tet mesh's scalar field in place, without
+    /// re-decomposing the cells or re-uploading any tet geometry.
+    ///
+    /// For a time-series where a scalar field animates on a **fixed** tet mesh
+    /// (a CFD/FE field played back over a static unstructured grid), the tet
+    /// geometry does not change frame to frame -- only the per-tet scalar does.
+    /// [`replace_projected_tet`](Self::replace_projected_tet) rebuilds the whole
+    /// tet buffer (all four vertex positions per tet) every call; this rewrites
+    /// only the parallel per-tet scalar buffer (one `f32` per tet, 16x less data
+    /// than the geometry), leaving the geometry buffers, bind groups, and uniform
+    /// untouched. That avoids the redundant geometry re-upload -- the dominant
+    /// cost on discrete GPUs, where it crosses PCIe every frame.
+    ///
+    /// `data` must be the same mesh (same cells, same order) the projected-tet
+    /// was uploaded from; only the `cell_scalars` values may differ. The per-cell
+    /// scalars are expanded to per-tet scalars through the cell -> tet fan-out
+    /// (hex -> 6, wedge -> 3, pyramid -> 2, tet -> 1), matching the tet order the
+    /// geometry buffer uses.
+    ///
+    /// # Errors
+    ///
+    /// - [`SlotEmpty`](crate::error::ViewportError::SlotEmpty) : `id` does not reference an uploaded mesh.
+    /// - [`AttributeLengthMismatch`](crate::error::ViewportError::AttributeLengthMismatch) : `data`
+    ///   decomposes to a different tet count than the uploaded mesh (a different
+    ///   topology; use [`replace_projected_tet`](Self::replace_projected_tet) for that).
+    pub fn replace_projected_tet_scalar(
+        &mut self,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::ProjectedTetId,
+        data: &crate::resources::volume::volume_mesh::VolumeMeshData,
+        scalar_attribute: &str,
+    ) -> crate::error::ViewportResult<()> {
+        let scalars =
+            crate::resources::volume::volume_mesh::tet_scalars(data, scalar_attribute);
+
+        let gpu = self.content.projected_tet_store.get_mut(id.0).ok_or(
+            crate::error::ViewportError::SlotEmpty { index: id.0 },
+        )?;
+
+        let total: usize = gpu.chunks.iter().map(|c| c.tet_count as usize).sum();
+        if scalars.len() != total {
+            return Err(crate::error::ViewportError::AttributeLengthMismatch {
+                expected: total,
+                got: scalars.len(),
+            });
+        }
+
+        // Write each chunk's scalar slice; geometry and bind groups are untouched.
+        let mut off = 0usize;
+        for chunk in &gpu.chunks {
+            let n = chunk.tet_count as usize;
+            queue.write_buffer(
+                &chunk.scalar_buffer,
+                0,
+                bytemuck::cast_slice(&scalars[off..off + n]),
+            );
+            off += n;
+        }
+
+        // Refresh the cached scalar range so the colourmap mapping stays accurate
+        // (matches the range `decompose_into_chunks` derives).
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for &s in &scalars {
+            min = min.min(s);
+            max = max.max(s);
+        }
+        gpu.scalar_range = if min.is_infinite() {
+            (0.0, 1.0)
+        } else if (max - min).abs() < 1e-12 {
+            (min, min + 1.0)
+        } else {
+            (min, max)
+        };
+
+        Ok(())
+    }
+
     /// Decompose `data` into device-limit-bounded tet buffers and a shared uniform buffer.
     ///
     /// Returns `(pending_chunks, scalar_range, uniform_buffer)` where each element of
-    /// `pending_chunks` is a `(wgpu::Buffer, tet_count)` pair ready for bind group creation.
-    /// Bind groups are created separately so callers can supply the correct uniform buffer
-    /// reference (new for upload, existing for replace).
+    /// `pending_chunks` is a `(geometry_buffer, scalar_buffer, tet_count)` triple ready
+    /// for bind group creation. The geometry buffer holds vertex positions only (per-tet
+    /// scalars live in the parallel `scalar_buffer`, so a scalar-only refresh via
+    /// [`replace_projected_tet_scalar`](Self::replace_projected_tet_scalar) rewrites just
+    /// the scalar buffer and leaves geometry untouched). Bind groups are created separately
+    /// so callers can supply the correct uniform buffer reference (new for upload, existing
+    /// for replace).
     fn decompose_into_chunks(
         device: &crate::gpu::Device,
         data: &crate::resources::volume::volume_mesh::VolumeMeshData,
         scalar_attribute: &str,
     ) -> (
-        Vec<(crate::gpu::Buffer, u32)>,
+        Vec<(crate::gpu::Buffer, crate::gpu::Buffer, u32)>,
         (f32, f32),
         crate::gpu::Buffer,
     ) {
         // Determine the maximum tets per chunk from device limits.
-        // Each tet is 64 bytes (4 x vec4<f32>).
+        // Each tet is 64 bytes (4 x vec4<f32>) of geometry; the scalar buffer is
+        // 4 bytes/tet, far under the limit, so the same chunking bounds both.
         let max_binding = device.limits().max_storage_buffer_binding_size as u64;
         let max_buf = device.limits().max_buffer_size;
         let chunk_size_tets = ((max_binding.min(max_buf)) / 64).max(1) as usize;
 
-        let mut pending: Vec<(crate::gpu::Buffer, u32)> = Vec::new();
+        let mut pending: Vec<(crate::gpu::Buffer, crate::gpu::Buffer, u32)> = Vec::new();
         let mut current_raw: Vec<f32> = Vec::with_capacity(chunk_size_tets * 16);
+        let mut current_scalars: Vec<f32> = Vec::with_capacity(chunk_size_tets);
         let mut scalar_min = f32::INFINITY;
         let mut scalar_max = f32::NEG_INFINITY;
 
-        let flush = |raw: &mut Vec<f32>, pending: &mut Vec<(crate::gpu::Buffer, u32)>| {
-            let tet_count = (raw.len() / 16) as u32;
-            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        let flush = |raw: &mut Vec<f32>,
+                     scal: &mut Vec<f32>,
+                     pending: &mut Vec<(crate::gpu::Buffer, crate::gpu::Buffer, u32)>| {
+            let tet_count = scal.len() as u32;
+            let geom = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("pt_tet_buffer"),
                 size: (raw.len() * std::mem::size_of::<f32>()) as u64,
                 usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
-            crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(raw));
-            buf.unmap();
-            pending.push((buf, tet_count));
+            crate::resources::builders::write_mapped(geom.slice(..), bytemuck::cast_slice(raw));
+            geom.unmap();
+            let scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("pt_scalar_buffer"),
+                size: (scal.len() * std::mem::size_of::<f32>()) as u64,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+            crate::resources::builders::write_mapped(
+                scalar_buf.slice(..),
+                bytemuck::cast_slice(scal),
+            );
+            scalar_buf.unmap();
+            pending.push((geom, scalar_buf, tet_count));
             raw.clear();
+            scal.clear();
         };
 
         crate::resources::volume::volume_mesh::for_each_tet(
@@ -2963,18 +3088,20 @@ impl DeviceResources {
             |verts, scalar| {
                 scalar_min = scalar_min.min(scalar);
                 scalar_max = scalar_max.max(scalar);
-                current_raw.extend_from_slice(&[verts[0][0], verts[0][1], verts[0][2], scalar]);
+                // Geometry only; scalar goes to the parallel buffer (v0.w now pad).
+                current_raw.extend_from_slice(&[verts[0][0], verts[0][1], verts[0][2], 0.0]);
                 current_raw.extend_from_slice(&[verts[1][0], verts[1][1], verts[1][2], 0.0]);
                 current_raw.extend_from_slice(&[verts[2][0], verts[2][1], verts[2][2], 0.0]);
                 current_raw.extend_from_slice(&[verts[3][0], verts[3][1], verts[3][2], 0.0]);
-                if current_raw.len() == chunk_size_tets * 16 {
-                    flush(&mut current_raw, &mut pending);
+                current_scalars.push(scalar);
+                if current_scalars.len() == chunk_size_tets {
+                    flush(&mut current_raw, &mut current_scalars, &mut pending);
                 }
             },
         );
 
-        if !current_raw.is_empty() {
-            flush(&mut current_raw, &mut pending);
+        if !current_scalars.is_empty() {
+            flush(&mut current_raw, &mut current_scalars, &mut pending);
         }
 
         let scalar_range = if scalar_min.is_infinite() {
