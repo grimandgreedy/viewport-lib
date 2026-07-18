@@ -437,6 +437,16 @@ pub struct SubSelectionRef {
     /// on these types. Uses the same [`PolylineSelectionInfo`] encoding since all
     /// three share identical `positions` / `strip_lengths` fields.
     pub(crate) curve_family_lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
+    /// Instanced-item positions keyed by node id.
+    ///
+    /// Covers [`SubObjectRef::Instance`] (glyphs, tensor glyphs, sprites) and
+    /// [`SubObjectRef::Splat`] (Gaussian splats). The index carried by
+    /// `Instance(i)` / `Splat(i)` addresses `instance_lookup[node_id][i]`. The
+    /// positions are transformed by the node's entry in `model_matrices` (so
+    /// object-space splat positions highlight in the right place when the splat
+    /// set carries a model transform; world-space glyph/sprite positions can be
+    /// passed with no model entry).
+    pub(crate) instance_lookup: std::collections::HashMap<u64, Vec<[f32; 3]>>,
     /// Version counter copied from the source [`SubSelection::version()`].
     ///
     /// The renderer uses this to skip GPU buffer rebuilds when the selection
@@ -467,6 +477,7 @@ impl SubSelectionRef {
             cell_lookup: std::collections::HashMap::new(),
             polyline_lookup: std::collections::HashMap::new(),
             curve_family_lookup: std::collections::HashMap::new(),
+            instance_lookup: std::collections::HashMap::new(),
             version: sub_selection.version(),
         }
     }
@@ -517,6 +528,21 @@ impl SubSelectionRef {
         lookup: std::collections::HashMap<u64, PolylineSelectionInfo>,
     ) -> Self {
         self.curve_family_lookup = lookup;
+        self
+    }
+
+    /// Attach instanced-item positions for [`SubObjectRef::Instance`] and
+    /// [`SubObjectRef::Splat`] highlight rendering.
+    ///
+    /// `lookup` maps each instanced item's node id (glyphs, tensor glyphs,
+    /// sprites, Gaussian splats) to its per-instance positions. `Instance(i)` /
+    /// `Splat(i)` addresses `lookup[node_id][i]`, transformed by the node's
+    /// entry in `model_matrices` (pass object-space splat positions with the
+    /// splat model matrix, or world-space glyph/sprite positions with no model
+    /// entry). Without this, selected instances and splats are silently skipped
+    /// during highlight geometry build.
+    pub fn with_instances(mut self, lookup: std::collections::HashMap<u64, Vec<[f32; 3]>>) -> Self {
+        self.instance_lookup = lookup;
         self
     }
 

@@ -2028,7 +2028,6 @@ impl ViewportRenderer {
                         device,
                         queue,
                         sel_ref,
-                        &std::collections::HashMap::new(),
                         &[],
                         frame.interaction.sub_highlight_face_fill_colour,
                         frame.interaction.sub_highlight_edge_colour,

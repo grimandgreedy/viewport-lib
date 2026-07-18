@@ -186,7 +186,10 @@ fn vs_main(
 
     let ndc_final = ndc_xy + offset_ndc;
     out.clip_pos = vec4<f32>(ndc_final * clip_center.w, clip_center.z, clip_center.w);
-    out.instance_index = instance_i;
+    // Forward the de-sorted splat index, not the sorted draw position: the
+    // primitive channel must name the actual splat so the pick resolves to a
+    // stable SubObjectRef::Splat regardless of the back-to-front sort order.
+    out.instance_index = splat_idx;
 
     return out;
 }

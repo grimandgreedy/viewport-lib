@@ -356,6 +356,9 @@ pub(crate) struct PlState {
     pub tvm_tet_mesh_id: Option<MeshId>,
     /// CPU-side tet mesh data for unified CELL picking and sub-selection highlighting.
     pub tvm_tet_data: Option<std::sync::Arc<VolumeMeshData>>,
+    /// face_to_cell mapping for the hex cylinder boundary (pick_id=12). Needed so
+    /// the GPU pick pass can resolve a boundary face to its owning cell.
+    pub tvm_tet_face_to_cell: Vec<u32>,
     /// Positions for the multi-strip polyline (pick_id=30).
     pub polyline_positions: Vec<[f32; 3]>,
     /// Strip lengths for the multi-strip polyline.
@@ -435,6 +438,7 @@ impl Default for PlState {
             tvm_tet_id: None,
             tvm_tet_mesh_id: None,
             tvm_tet_data: None,
+            tvm_tet_face_to_cell: Vec::new(),
             polyline_positions: Vec::new(),
             polyline_strip_lengths: Vec::new(),
             arrow_glyph_positions: Vec::new(),
@@ -682,6 +686,10 @@ impl App {
             .ok();
         self.pl_state.tvm_tet_id = tvm_item.as_ref().and_then(|i| i.projected_tet_id);
         self.pl_state.tvm_tet_mesh_id = tvm_item.as_ref().map(|i| i.boundary_mesh_id);
+        self.pl_state.tvm_tet_face_to_cell = tvm_item
+            .as_ref()
+            .map(|i| i.face_to_cell.clone())
+            .unwrap_or_default();
         self.pl_state.tvm_tet_data = Some(std::sync::Arc::new(tet_data));
 
         // --- Polyline: 3 spiral streamlines in front of sprites (pick_id=30) ---
@@ -1829,7 +1837,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         app.pl_state.tvm_tet_mesh_id,
         app.pl_state.tvm_tet_data.as_ref(),
     ) {
-        let mut item = VolumeMeshItem::new(tet_mesh_id, Vec::new());
+        let mut item = VolumeMeshItem::new(tet_mesh_id, app.pl_state.tvm_tet_face_to_cell.clone());
         item.projected_tet_id = app.pl_state.tvm_tet_id;
         item.volume_mesh_data = Some(tet_data.clone());
         item.colourmap_id = Some(viewport_lib::ColourmapId(0));
@@ -1868,6 +1876,26 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         }
         let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
         point_positions.insert(100, app.pl_state.pc_positions.clone());
+        // Instance / splat highlight positions. Glyphs and sprites carry
+        // world-space positions (no model entry); splats carry object-space
+        // positions and get the splat model matrix so they highlight in place.
+        let mut instance_lookup: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
+        if !app.pl_state.splat_positions.is_empty() {
+            instance_lookup.insert(10, app.pl_state.splat_positions.clone());
+            model_matrices.insert(10, pl_splat_model());
+        }
+        if !app.pl_state.arrow_glyph_positions.is_empty() {
+            instance_lookup.insert(31, app.pl_state.arrow_glyph_positions.clone());
+        }
+        if !app.pl_state.tensor_glyph_positions.is_empty() {
+            instance_lookup.insert(32, app.pl_state.tensor_glyph_positions.clone());
+        }
+        if !app.pl_state.sprite_positions.is_empty() {
+            instance_lookup.insert(33, app.pl_state.sprite_positions.clone());
+        }
+        if !app.pl_state.xo_sprite_positions.is_empty() {
+            instance_lookup.insert(34, app.pl_state.xo_sprite_positions.clone());
+        }
         let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
         if app.pl_state.volume_id.is_some() {
             voxel_lookup.insert(
@@ -1948,7 +1976,8 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .with_voxels(voxel_lookup)
             .with_cells(cell_lookup)
             .with_polylines(polyline_lookup)
-            .with_curve_families(curve_family_lookup),
+            .with_curve_families(curve_family_lookup)
+            .with_instances(instance_lookup),
         );
         fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.25];
         fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0];

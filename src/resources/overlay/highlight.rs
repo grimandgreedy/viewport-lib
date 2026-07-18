@@ -248,7 +248,6 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         sel: Option<&SubSelectionRef>,
-        _splat_positions: &std::collections::HashMap<u64, Vec<[f32; 3]>>,
         extra_edge_data: &[f32],
         fill_colour: [f32; 4],
         edge_colour: [f32; 4],
@@ -492,6 +491,16 @@ impl DeviceResources {
                                     edge_data.extend_from_slice(&xform(pa));
                                     edge_data.extend_from_slice(&xform(pb));
                                 }
+                            }
+                        }
+                    }
+                    SubObjectRef::Instance(i) | SubObjectRef::Splat(i) => {
+                        // Instanced items (glyphs, tensor glyphs, sprites) and
+                        // Gaussian splats highlight as a sprite marker at the
+                        // instance position, transformed by the node model.
+                        if let Some(positions) = sel.instance_lookup.get(node_id) {
+                            if let Some(&pos) = positions.get(*i as usize) {
+                                sprite_pos.push(xform(pos));
                             }
                         }
                     }
