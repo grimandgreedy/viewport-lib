@@ -262,79 +262,67 @@ fn quad_face_key(a: u32, b: u32, c: u32, d: u32) -> QuadFaceKey {
     (arr[0], arr[1], arr[2], arr[3])
 }
 
-/// Generate all triangular face entries for a single cell.
+/// Maximum triangular faces a single cell can contribute (tet/pyramid = 4).
+const MAX_TRI_FACES: usize = 4;
+/// Maximum quad faces a single cell can contribute (hex = 6).
+const MAX_QUAD_FACES: usize = 6;
+
+/// Generate all triangular face entries for a single cell as a stack-bounded
+/// iterator.
 ///
-/// `positions` is unused now that the interior reference is deferred, but the
-/// signature is kept uniform with `generate_quad_entries` for the call sites.
-fn generate_tri_entries(
-    cell_idx: usize,
-    cell: &[u32; 8],
-    _positions: &[[f32; 3]],
-) -> Vec<TriEntry> {
-    let mut out = Vec::new();
-    match cell_type(cell) {
-        CellType::Tet => {
-            for face_local in &TET_FACES {
-                let a = cell[face_local[0]];
-                let b = cell[face_local[1]];
-                let c = cell[face_local[2]];
-                out.push((face_key(a, b, c), cell_idx, [a, b, c]));
-            }
-        }
-        CellType::Pyramid => {
-            for face_local in &PYRAMID_TRI_FACES {
-                let a = cell[face_local[0]];
-                let b = cell[face_local[1]];
-                let c = cell[face_local[2]];
-                out.push((face_key(a, b, c), cell_idx, [a, b, c]));
-            }
-        }
-        CellType::Wedge => {
-            for face_local in &WEDGE_TRI_FACES {
-                let a = cell[face_local[0]];
-                let b = cell[face_local[1]];
-                let c = cell[face_local[2]];
-                out.push((face_key(a, b, c), cell_idx, [a, b, c]));
-            }
-        }
-        CellType::Hex => {} // hex has no triangular faces
+/// A cell contributes at most [`MAX_TRI_FACES`] triangular faces, so the entries
+/// live in a fixed-size array on the stack rather than a fresh heap `Vec` per
+/// cell: at 1M cells the per-cell `Vec` was 1M-6M throwaway allocations on the
+/// extraction critical path. The returned iterator is consumed the same way a
+/// `Vec` would be (`flat_map_iter` / `extend` only need `IntoIterator`), so the
+/// output and its order are unchanged.
+#[inline]
+fn generate_tri_entries(cell_idx: usize, cell: &[u32; 8]) -> impl Iterator<Item = TriEntry> {
+    let mut out = [((0, 0, 0), 0usize, [0u32; 3]); MAX_TRI_FACES];
+    let mut len = 0;
+    let mut push_tri = |a: u32, b: u32, c: u32| {
+        out[len] = (face_key(a, b, c), cell_idx, [a, b, c]);
+        len += 1;
+    };
+    let faces: &[[usize; 3]] = match cell_type(cell) {
+        CellType::Tet => &TET_FACES,
+        CellType::Pyramid => &PYRAMID_TRI_FACES,
+        CellType::Wedge => &WEDGE_TRI_FACES,
+        CellType::Hex => &[], // hex has no triangular faces
+    };
+    for face_local in faces {
+        push_tri(
+            cell[face_local[0]],
+            cell[face_local[1]],
+            cell[face_local[2]],
+        );
     }
-    out
+    out.into_iter().take(len)
 }
 
-/// Generate all quad face entries for a single cell.
+/// Generate all quad face entries for a single cell as a stack-bounded iterator.
 ///
-/// `positions` is unused now that the interior reference is deferred (see
-/// [`TriEntry`]); the signature is kept for call-site uniformity.
-fn generate_quad_entries(
-    cell_idx: usize,
-    cell: &[u32; 8],
-    _positions: &[[f32; 3]],
-) -> Vec<QuadEntry> {
-    let mut out = Vec::new();
+/// Same rationale as [`generate_tri_entries`]: at most [`MAX_QUAD_FACES`] quads per cell,
+/// held in a stack array so extraction pays no per-cell heap allocation.
+#[inline]
+fn generate_quad_entries(cell_idx: usize, cell: &[u32; 8]) -> impl Iterator<Item = QuadEntry> {
+    let mut out = [((0, 0, 0, 0), 0usize, [0u32; 4]); MAX_QUAD_FACES];
+    let mut len = 0;
     let mut push_quad = |q: &[usize; 4]| {
         let v = [cell[q[0]], cell[q[1]], cell[q[2]], cell[q[3]]];
-        out.push((quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v));
+        out[len] = (quad_face_key(v[0], v[1], v[2], v[3]), cell_idx, v);
+        len += 1;
     };
-    match cell_type(cell) {
-        CellType::Tet => {} // tet has no quad faces
-        CellType::Pyramid => {
-            for quad_local in &PYRAMID_QUAD_FACE {
-                push_quad(quad_local);
-            }
-        }
-        CellType::Wedge => {
-            for quad_local in &WEDGE_QUAD_FACES {
-                push_quad(quad_local);
-            }
-        }
-        CellType::Hex => {
-            for quad in &HEX_FACES {
-                push_quad(quad);
-            }
-        }
+    let faces: &[[usize; 4]] = match cell_type(cell) {
+        CellType::Tet => &[], // tet has no quad faces
+        CellType::Pyramid => &PYRAMID_QUAD_FACE,
+        CellType::Wedge => &WEDGE_QUAD_FACES,
+        CellType::Hex => &HEX_FACES,
+    };
+    for quad_local in faces {
+        push_quad(quad_local);
     }
-    out
+    out.into_iter().take(len)
 }
 
 /// Collect entries that appear exactly once (boundary faces) from a sorted slice.
@@ -414,27 +402,29 @@ fn correct_winding(tri: &mut [u32; 3], interior_ref: &[f32; 3], positions: &[[f3
 pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u32>) {
     let n_verts = data.positions.len();
 
-    // Generate face entries (parallel above threshold, sequential below).
+    // Generate face entries (parallel above threshold, sequential below). Each
+    // cell yields a stack-bounded iterator (no per-cell heap allocation); the
+    // final order is irrelevant since both lists are sorted by face key next.
     let (mut tri_entries, mut quad_entries) = if data.cells.len() >= PARALLEL_THRESHOLD {
         let tri = data
             .cells
             .par_iter()
             .enumerate()
-            .flat_map_iter(|(ci, cell)| generate_tri_entries(ci, cell, &data.positions))
+            .flat_map_iter(|(ci, cell)| generate_tri_entries(ci, cell))
             .collect();
         let quad = data
             .cells
             .par_iter()
             .enumerate()
-            .flat_map_iter(|(ci, cell)| generate_quad_entries(ci, cell, &data.positions))
+            .flat_map_iter(|(ci, cell)| generate_quad_entries(ci, cell))
             .collect();
         (tri, quad)
     } else {
         let mut tri: Vec<TriEntry> = Vec::new();
         let mut quad: Vec<QuadEntry> = Vec::new();
         for (ci, cell) in data.cells.iter().enumerate() {
-            tri.extend(generate_tri_entries(ci, cell, &data.positions));
-            quad.extend(generate_quad_entries(ci, cell, &data.positions));
+            tri.extend(generate_tri_entries(ci, cell));
+            quad.extend(generate_quad_entries(ci, cell));
         }
         (tri, quad)
     };
@@ -991,19 +981,22 @@ pub fn extract_clipped_volume_faces(
         .map(|&p| clip_planes.iter().all(|&pl| plane_dist(p, pl) >= 0.0))
         .collect();
 
-    // Generate face entries, skipping fully-discarded cells.
+    // Generate face entries, skipping fully-discarded cells. Each cell yields a
+    // stack-bounded iterator (no per-cell heap allocation); a discarded cell
+    // yields nothing via an outer `take(0)` so every closure branch keeps the
+    // same iterator type. Order is irrelevant since entries are sorted next.
+    let cell_kept = |cell: &[u32; 8]| -> bool {
+        let nv = cell_type(cell).vertex_count();
+        (0..nv).any(|i| vert_kept[cell[i] as usize])
+    };
     let (mut tri_entries, mut quad_entries) = if data.cells.len() >= PARALLEL_THRESHOLD {
-        let vk = &vert_kept;
         let tri = data
             .cells
             .par_iter()
             .enumerate()
             .flat_map_iter(|(ci, cell)| {
-                let nv = cell_type(cell).vertex_count();
-                if (0..nv).all(|i| !vk[cell[i] as usize]) {
-                    return Vec::new();
-                }
-                generate_tri_entries(ci, cell, &data.positions)
+                let cap = if cell_kept(cell) { MAX_TRI_FACES } else { 0 };
+                generate_tri_entries(ci, cell).take(cap)
             })
             .collect();
         let quad = data
@@ -1011,11 +1004,8 @@ pub fn extract_clipped_volume_faces(
             .par_iter()
             .enumerate()
             .flat_map_iter(|(ci, cell)| {
-                let nv = cell_type(cell).vertex_count();
-                if (0..nv).all(|i| !vk[cell[i] as usize]) {
-                    return Vec::new();
-                }
-                generate_quad_entries(ci, cell, &data.positions)
+                let cap = if cell_kept(cell) { MAX_QUAD_FACES } else { 0 };
+                generate_quad_entries(ci, cell).take(cap)
             })
             .collect();
         (tri, quad)
@@ -1023,13 +1013,11 @@ pub fn extract_clipped_volume_faces(
         let mut tri: Vec<TriEntry> = Vec::new();
         let mut quad: Vec<QuadEntry> = Vec::new();
         for (ci, cell) in data.cells.iter().enumerate() {
-            let nv = cell_type(cell).vertex_count();
-            let kc = (0..nv).filter(|&i| vert_kept[cell[i] as usize]).count();
-            if kc == 0 {
+            if !cell_kept(cell) {
                 continue;
             }
-            tri.extend(generate_tri_entries(ci, cell, &data.positions));
-            quad.extend(generate_quad_entries(ci, cell, &data.positions));
+            tri.extend(generate_tri_entries(ci, cell));
+            quad.extend(generate_quad_entries(ci, cell));
         }
         (tri, quad)
     };
