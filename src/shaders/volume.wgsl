@@ -352,6 +352,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let scalar_range = volume.scalar_max - volume.scalar_min;
     let inv_scalar_range = select(1.0 / scalar_range, 1.0, abs(scalar_range) < 1e-10);
 
+    // Step-size opacity correction. The transfer-function opacities are authored
+    // for a reference sampling rate of one sample per voxel (reference step
+    // 1/max_dim in the [0,1]^3 cube). When the actual step differs -- a coarser
+    // or finer step_scale, or the quality-reduction multiplier -- correcting each
+    // sample's opacity by 1 - (1 - a)^(step / step_ref) keeps the composited
+    // result invariant to the sampling rate, so opacity is not silently a
+    // function of step_scale or grid resolution. step / step_ref = step * max_dim,
+    // which is 1 at the default step_scale (a no-op there, so default renders are
+    // unchanged).
+    let vol_dims = textureDimensions(volume_tex);
+    let opacity_correction_exp =
+        step * f32(max(vol_dims.x, max(vol_dims.y, vol_dims.z)));
+
     var colour_accum = vec3<f32>(0.0);
     var alpha_accum = 0.0;
     var t = t_near;
@@ -370,9 +383,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let is_nan = raw_scalar != raw_scalar;
         if is_nan {
             if volume.use_nan_colour != 0u {
-                // Composite NaN voxel with the configured NaN colour.
+                // Composite NaN voxel with the configured NaN colour, step-size
+                // corrected like the main samples.
                 let nan_alpha = volume.nan_colour.a * volume.opacity_scale;
-                let w = (1.0 - alpha_accum) * nan_alpha;
+                let nan_corrected =
+                    1.0 - pow(1.0 - clamp(nan_alpha, 0.0, 1.0), opacity_correction_exp);
+                let w = (1.0 - alpha_accum) * nan_corrected;
                 colour_accum = colour_accum + volume.nan_colour.rgb * w;
                 alpha_accum = alpha_accum + w;
                 if alpha_accum > 0.99 {
@@ -400,6 +416,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Sample opacity LUT (256x1 R8Unorm texture).
         let sample_opacity = textureSampleLevel(opacity_lut, lut_sampler, lut_coord, 0.0).r
                              * volume.opacity_scale;
+        // Correct the per-sample opacity for the step size (see above).
+        let corrected_opacity =
+            1.0 - pow(1.0 - clamp(sample_opacity, 0.0, 1.0), opacity_correction_exp);
 
         var final_colour = sample_colour;
 
@@ -431,7 +450,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         // Front-to-back compositing.
-        let w = (1.0 - alpha_accum) * sample_opacity;
+        let w = (1.0 - alpha_accum) * corrected_opacity;
         colour_accum = colour_accum + final_colour * w;
         alpha_accum = alpha_accum + w;
 
