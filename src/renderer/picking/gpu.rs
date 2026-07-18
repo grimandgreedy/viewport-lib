@@ -2114,22 +2114,25 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
     ) -> crate::renderer::picking::PickRectResult {
-        if !mask.intersects(PickMask::OBJECT) {
-            return crate::renderer::picking::PickRectResult::default();
-        }
+        let wants_object = mask.intersects(PickMask::OBJECT);
 
         // Screen-space overlay images have no world-space geometry, so they are
         // tested directly against the logical-space query rect rather than
-        // drawn into the id pass; see `screen_image_hits_in_rect`.
+        // drawn into the id pass; see `screen_image_hits_in_rect`. OBJECT-only,
+        // matching the CPU backend and the point path.
         let viewport_size_logical = glam::Vec2::from(frame.camera.viewport_size);
         let logical_lo = glam::Vec2::new(rect_min.x.min(rect_max.x), rect_min.y.min(rect_max.y));
         let logical_hi = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y));
-        let mut screen_image_objects = screen_image_hits_in_rect(
-            &frame.scene.screen_images,
-            viewport_size_logical,
-            logical_lo,
-            logical_hi,
-        );
+        let mut screen_image_objects = if wants_object {
+            screen_image_hits_in_rect(
+                &frame.scene.screen_images,
+                viewport_size_logical,
+                logical_lo,
+                logical_hi,
+            )
+        } else {
+            Vec::new()
+        };
 
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
@@ -2171,6 +2174,15 @@ impl ViewportRenderer {
             };
         }
 
+        let primitive_index_supported = draw_set.primitive_index_supported;
+        // Decode map for the primitive channel, built from the same collections
+        // the pass draws. Only needed when the caller asked for a sub-object level.
+        let kinds = if mask.intersects(!PickMask::OBJECT) {
+            self.build_pick_sub_kinds(frame, scene_items)
+        } else {
+            std::collections::HashMap::new()
+        };
+
         let (_, pick_instance_bg) =
             self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
@@ -2194,42 +2206,61 @@ impl ViewportRenderer {
             );
         }
 
-        // Only the object-id channel is read back: rect pick is object-level
-        // only, so the primitive and depth channels are written (the pipelines
-        // always emit all three targets) but never copied out.
+        // Read back the object-id channel plus, when a sub-object level was
+        // asked for, the primitive channel: each pixel's `(object_id,
+        // primitive_id)` decodes to a `SubObjectRef` the same way the point path
+        // does, but from the rasterised index alone (no per-pixel ray).
+        let wants_sub = mask.intersects(!PickMask::OBJECT);
         let bytes_per_row = (rw * 4).div_ceil(256) * 256;
-        let id_staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("pick_rect_id_staging"),
-            size: (bytes_per_row as u64) * (rh as u64),
-            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        encoder.copy_texture_to_buffer(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &targets.id_texture,
-                mip_level: 0,
-                origin: crate::gpu::Origin3d { x: rx, y: ry, z: 0 },
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            crate::gpu::TexelCopyBufferInfo {
-                buffer: &id_staging,
-                layout: crate::gpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: Some(rh),
+        let make_staging = |label: &str| {
+            device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some(label),
+                size: (bytes_per_row as u64) * (rh as u64),
+                usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
+        };
+        let copy_region = |encoder: &mut crate::gpu::CommandEncoder,
+                           texture: &crate::gpu::Texture,
+                           staging: &crate::gpu::Buffer| {
+            encoder.copy_texture_to_buffer(
+                crate::gpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: crate::gpu::Origin3d { x: rx, y: ry, z: 0 },
+                    aspect: crate::gpu::TextureAspect::All,
                 },
-            },
-            crate::gpu::Extent3d {
-                width: rw,
-                height: rh,
-                depth_or_array_layers: 1,
-            },
-        );
+                crate::gpu::TexelCopyBufferInfo {
+                    buffer: staging,
+                    layout: crate::gpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(bytes_per_row),
+                        rows_per_image: Some(rh),
+                    },
+                },
+                crate::gpu::Extent3d {
+                    width: rw,
+                    height: rh,
+                    depth_or_array_layers: 1,
+                },
+            );
+        };
+
+        let id_staging = make_staging("pick_rect_id_staging");
+        copy_region(&mut encoder, &targets.id_texture, &id_staging);
+        let prim_staging = wants_sub.then(|| {
+            let s = make_staging("pick_rect_prim_staging");
+            copy_region(&mut encoder, &targets.prim_texture, &s);
+            s
+        });
 
         let submission = queue.submit(std::iter::once(encoder.finish()));
         id_staging
             .slice(..)
             .map_async(crate::gpu::MapMode::Read, |_| {});
+        if let Some(prim) = &prim_staging {
+            prim.slice(..).map_async(crate::gpu::MapMode::Read, |_| {});
+        }
         device
             .poll(crate::gpu::PollType::Wait {
                 submission_index: Some(submission),
@@ -2240,30 +2271,58 @@ impl ViewportRenderer {
         let mut seen: std::collections::HashSet<u32> =
             screen_image_objects.iter().map(|&id| id as u32).collect();
         let mut objects = std::mem::take(&mut screen_image_objects);
+        let mut elements: Vec<(u64, SubObjectRef)> = Vec::new();
+        let mut seen_elem: std::collections::HashSet<(u64, SubObjectRef)> =
+            std::collections::HashSet::new();
         {
-            let data = id_staging.slice(..).get_mapped_range();
+            let id_data = id_staging.slice(..).get_mapped_range();
+            let prim_view = prim_staging
+                .as_ref()
+                .map(|s| s.slice(..).get_mapped_range());
             for row in 0..rh as usize {
                 let row_start = row * bytes_per_row as usize;
                 for col in 0..rw as usize {
                     let px_off = row_start + col * 4;
                     let id = u32::from_le_bytes([
-                        data[px_off],
-                        data[px_off + 1],
-                        data[px_off + 2],
-                        data[px_off + 3],
+                        id_data[px_off],
+                        id_data[px_off + 1],
+                        id_data[px_off + 2],
+                        id_data[px_off + 3],
                     ]);
-                    if id != 0 && seen.insert(id) {
+                    if id == 0 {
+                        continue;
+                    }
+                    if wants_object && seen.insert(id) {
                         objects.push(id as u64);
+                    }
+                    if let Some(prim_data) = &prim_view {
+                        let prim = u32::from_le_bytes([
+                            prim_data[px_off],
+                            prim_data[px_off + 1],
+                            prim_data[px_off + 2],
+                            prim_data[px_off + 3],
+                        ]);
+                        if let Some(sub) = self.resolve_gpu_sub_object_rect(
+                            id as u64,
+                            prim,
+                            mask,
+                            &kinds,
+                            primitive_index_supported,
+                        ) {
+                            if seen_elem.insert((id as u64, sub)) {
+                                elements.push((id as u64, sub));
+                            }
+                        }
                     }
                 }
             }
         }
         id_staging.unmap();
-
-        crate::renderer::picking::PickRectResult {
-            objects,
-            elements: Vec::new(),
+        if let Some(prim) = &prim_staging {
+            prim.unmap();
         }
+
+        crate::renderer::picking::PickRectResult { objects, elements }
     }
 
     /// Begin a non-blocking GPU object pick under `cursor`: submit the id pass
@@ -2489,6 +2548,98 @@ impl ViewportRenderer {
                 ray_origin,
                 ray_dir,
             ),
+        }
+    }
+
+    /// Decode a read-back `(object_id, sub_primitive)` into a [`SubObjectRef`]
+    /// for rect picking, using only the primitive channel (no per-pixel ray).
+    ///
+    /// A rect query has one primitive id per pixel but no single cursor ray, so
+    /// this covers the sub-object levels the primitive channel names directly:
+    /// instance / cloud-point / splat / voxel (the index is the element), polyline
+    /// and curve segment / strip, and surface face / cell. `VERTEX` and curve
+    /// `POLY_NODE` are omitted: both need the hit world position to pick the
+    /// nearest corner / node, which the point path gets from the cursor ray but a
+    /// rect does not have per pixel. Surface and curve sub-objects also need
+    /// `SHADER_PRIMITIVE_INDEX` (there is no per-pixel CPU refine for a rect).
+    fn resolve_gpu_sub_object_rect(
+        &self,
+        object_id: u64,
+        sub_primitive: u32,
+        mask: PickMask,
+        kinds: &std::collections::HashMap<u64, PickSubKind>,
+        primitive_index_supported: bool,
+    ) -> Option<SubObjectRef> {
+        match kinds.get(&object_id).copied()? {
+            PickSubKind::Instance => mask
+                .intersects(PickMask::INSTANCE)
+                .then_some(SubObjectRef::Instance(sub_primitive)),
+            PickSubKind::CloudPoint => mask
+                .intersects(PickMask::CLOUD_POINT)
+                .then_some(SubObjectRef::Point(sub_primitive)),
+            PickSubKind::Splat => mask
+                .intersects(PickMask::SPLAT)
+                .then_some(SubObjectRef::Splat(sub_primitive)),
+            PickSubKind::Voxel => mask
+                .intersects(PickMask::VOXEL)
+                .then_some(SubObjectRef::Voxel(sub_primitive)),
+            PickSubKind::Polyline => {
+                if mask.intersects(PickMask::STRIP) {
+                    let strip = self
+                        .pick_polyline_items
+                        .iter()
+                        .find(|p| p.settings.pick_id.0 == object_id)
+                        .map(|p| strip_for_segment(sub_primitive, &p.strip_lengths))
+                        .unwrap_or(0);
+                    Some(SubObjectRef::Strip(strip))
+                } else if mask.intersects(PickMask::SEGMENT | PickMask::POLY_NODE) {
+                    Some(SubObjectRef::Segment(sub_primitive))
+                } else {
+                    None
+                }
+            }
+            PickSubKind::Curve => {
+                if !primitive_index_supported {
+                    return None;
+                }
+                let gpu = self
+                    .streamtube_gpu_data
+                    .iter()
+                    .chain(self.tube_gpu_data.iter())
+                    .chain(self.ribbon_gpu_data.iter())
+                    .find(|g| g.pick_id.0 == object_id)?;
+                if mask.intersects(PickMask::STRIP) {
+                    gpu.tri_strip
+                        .get(sub_primitive as usize)
+                        .copied()
+                        .map(SubObjectRef::Strip)
+                } else if mask.intersects(PickMask::SEGMENT) {
+                    gpu.tri_segment
+                        .get(sub_primitive as usize)
+                        .copied()
+                        .map(SubObjectRef::Segment)
+                } else {
+                    None
+                }
+            }
+            PickSubKind::Surface => {
+                if !primitive_index_supported {
+                    return None;
+                }
+                if mask.intersects(PickMask::FACE) {
+                    Some(SubObjectRef::Face(sub_primitive))
+                } else if mask.intersects(PickMask::CELL) {
+                    self.pick_volume_mesh_items
+                        .iter()
+                        .find(|vm| {
+                            vm.settings.pick_id.0 == object_id && !vm.face_to_cell.is_empty()
+                        })
+                        .and_then(|vm| vm.face_to_cell.get(sub_primitive as usize).copied())
+                        .map(SubObjectRef::Cell)
+                } else {
+                    None
+                }
+            }
         }
     }
 

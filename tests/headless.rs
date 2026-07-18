@@ -2322,9 +2322,11 @@ fn gpu_pick_rect_returns_unique_object_ids() {
         "GPU rect pick is object-level only"
     );
 
-    // A mask with no OBJECT bit gets an empty result rather than a
-    // reinterpreted one.
-    let empty = renderer.pick_rect_objects(
+    // A mask with no OBJECT bit returns no objects, but does resolve sub-objects
+    // where the primitive channel names them. Face resolution needs
+    // SHADER_PRIMITIVE_INDEX, so elements are either empty (feature absent) or all
+    // faces of the box.
+    let faces = renderer.pick_rect_objects(
         PickBackend::Gpu,
         glam::Vec2::new(0.0, 0.0),
         glam::Vec2::new(64.0, 64.0),
@@ -2333,7 +2335,61 @@ fn gpu_pick_rect_returns_unique_object_ids() {
         &queue,
         PickMask::FACE,
     );
-    assert!(empty.is_empty());
+    assert!(faces.objects.is_empty(), "no OBJECT bit -> no objects");
+    assert!(
+        faces
+            .elements
+            .iter()
+            .all(|(id, sub)| *id == 654 && matches!(sub, viewport_lib::SubObjectRef::Face(_))),
+        "FACE rect elements must all be faces of the box"
+    );
+}
+
+#[test]
+fn gpu_pick_rect_resolves_point_cloud_elements() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    // Three fat points spread across the centre of the view.
+    let mut pc = PointCloudItem::default();
+    pc.positions = vec![[-1.2, 0.0, 0.0], [0.0, 0.0, 0.0], [1.2, 0.0, 0.0]];
+    pc.point_size = 24.0;
+    pc.settings.pick_id = PickId(500);
+    frame.scene.point_clouds.push(pc);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // A CLOUD_POINT rect over the whole frame collects point sub-objects and no
+    // objects (the mask carries no OBJECT bit). Point sub-objects come from the
+    // instance index, so this needs no device feature.
+    let result = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(0.0, 0.0),
+        glam::Vec2::new(64.0, 64.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::CLOUD_POINT,
+    );
+    assert!(
+        result.objects.is_empty(),
+        "CLOUD_POINT mask carries no OBJECT bit"
+    );
+    assert!(
+        !result.elements.is_empty(),
+        "rect should collect point sub-objects"
+    );
+    assert!(
+        result
+            .elements
+            .iter()
+            .all(|(id, sub)| *id == 500 && matches!(sub, viewport_lib::SubObjectRef::Point(_))),
+        "every element must be a point of the cloud"
+    );
 }
 
 #[test]
