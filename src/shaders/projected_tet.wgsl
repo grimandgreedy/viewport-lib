@@ -75,13 +75,26 @@ struct OitOut {
 
 struct VsOut {
     @builtin(position)              clip_pos: vec4<f32>,
-    // Flat (non-interpolated) tet vertex world positions and scalar.
-    @location(0) @interpolate(flat) v0:       vec4<f32>,   // xyz=pos, w=scalar
-    @location(1) @interpolate(flat) v1:       vec3<f32>,
-    @location(2) @interpolate(flat) v2:       vec3<f32>,
-    @location(3) @interpolate(flat) v3:       vec3<f32>,
-    // Interpolated NDC XY for ray reconstruction.
-    @location(4)                    ndc_xy:   vec2<f32>,
+    // Flat (non-interpolated) per-tet quantities: two face points (p0, p1) and
+    // the per-tet scalar. p2/p3 are no longer passed: the fragment shader only
+    // needs a point on each face plane, and precomputing the outward face
+    // normals below (n0..n3) leaves p0 and p1 as the only face points used.
+    @location(0) @interpolate(flat) v0:      vec4<f32>,   // xyz=p0, w=scalar
+    @location(1) @interpolate(flat) v1:      vec3<f32>,   // p1
+    // Outward face normals, per-tet-constant (unnormalized cross products). The
+    // slab intersection is scale-invariant in the normal, so magnitude does not
+    // matter. Precomputed here so the fragment shader skips 4 cross products +
+    // 4 orientation dots per fragment on this fill-bound pass.
+    @location(2) @interpolate(flat) n0:      vec3<f32>,   // face (p1,p2,p3), opp p0
+    @location(3) @interpolate(flat) n1:      vec3<f32>,   // face (p0,p2,p3), opp p1
+    @location(4) @interpolate(flat) n2:      vec3<f32>,   // face (p0,p1,p3), opp p2
+    @location(5) @interpolate(flat) n3:      vec3<f32>,   // face (p0,p1,p2), opp p3
+    // Homogeneous near/far world points for the pixel, interpolated. The quad is
+    // drawn with clip w = 1, so perspective-correct interpolation reduces to
+    // linear and these match `inv_view_proj * ndc` evaluated per fragment
+    // exactly, but the two mat4 products move off the fragment path.
+    @location(6)                    world_near_h: vec4<f32>,
+    @location(7)                    world_far_h:  vec4<f32>,
 };
 
 // Map vertex_index in [0,5] to one of the 4 AABB corners (two-triangle quad).
@@ -94,12 +107,30 @@ fn corner_select(vi: u32) -> vec2<u32> {
     return vec2<u32>(c & 1u, (c >> 1u) & 1u);  // (x_hi, y_hi)
 }
 
+// Outward face normal (unnormalized) for the triangle (a, b, c), flipped to
+// point away from `opposite` (the tet vertex not on this face).
+fn outward_normal(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, opposite: vec3<f32>) -> vec3<f32> {
+    let n = cross(b - a, c - a);
+    return select(n, -n, dot(n, opposite - a) > 0.0);
+}
+
 @vertex
 fn vs_main(
     @builtin(vertex_index)   vi: u32,
     @builtin(instance_index) ti: u32,
 ) -> VsOut {
     let tet = tets[ti];
+    let scalar = tet_scalars[ti];
+
+    // Vertex-side threshold cull: the scalar is per-tet, so a thresholded-out tet
+    // contributes nothing on any fragment. Collapse the whole bounding quad to a
+    // clipped point so no AABB fill is rasterised at all (not just a per-fragment
+    // discard). The fragment shader still guards on the scalar defensively.
+    if scalar < uniforms.threshold_min || scalar > uniforms.threshold_max {
+        var culled: VsOut;
+        culled.clip_pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);  // outside NDC -> clipped
+        return culled;
+    }
 
     // Project all 4 world-space vertices to clip space, then NDC.
     let c0 = camera.view_proj * vec4<f32>(tet.v0.xyz, 1.0);
@@ -139,11 +170,16 @@ fn vs_main(
     out.clip_pos = vec4<f32>(ndc_x, ndc_y, clamp(quad_z, 0.0, 1.0), 1.0);
     // Pack the per-tet scalar into v0.w for the fragment shader (which reads
     // in.v0.w), sourced from the separate scalar buffer rather than geometry.
-    out.v0       = vec4<f32>(tet.v0.xyz, tet_scalars[ti]);
+    out.v0       = vec4<f32>(tet.v0.xyz, scalar);
     out.v1       = tet.v1.xyz;
-    out.v2       = tet.v2.xyz;
-    out.v3       = tet.v3.xyz;
-    out.ndc_xy   = vec2<f32>(ndc_x, ndc_y);
+    // Precompute the 4 outward face normals (per-tet-constant).
+    out.n0       = outward_normal(tet.v1.xyz, tet.v2.xyz, tet.v3.xyz, tet.v0.xyz);
+    out.n1       = outward_normal(tet.v0.xyz, tet.v2.xyz, tet.v3.xyz, tet.v1.xyz);
+    out.n2       = outward_normal(tet.v0.xyz, tet.v1.xyz, tet.v3.xyz, tet.v2.xyz);
+    out.n3       = outward_normal(tet.v0.xyz, tet.v1.xyz, tet.v2.xyz, tet.v3.xyz);
+    // Homogeneous near/far world points for this corner's ray.
+    out.world_near_h = camera.inv_view_proj * vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
+    out.world_far_h  = camera.inv_view_proj * vec4<f32>(ndc_x, ndc_y, 1.0, 1.0);
     return out;
 }
 
@@ -152,24 +188,14 @@ fn vs_main(
 // ---------------------------------------------------------------------------
 
 // Intersect a ray (eye + t*dir) with one half-space of a tetrahedron face.
-// face_a, face_b, face_c: the three face vertices.
-// opposite: the tet vertex NOT on this face (used to determine outward direction).
+// `n` is the precomputed outward face normal, `face_a` any point on the face.
 // Updates t_enter / t_exit so the ray segment stays inside the tet.
 fn update_slab(
-    face_a: vec3<f32>, face_b: vec3<f32>, face_c: vec3<f32>,
-    opposite: vec3<f32>,
+    n: vec3<f32>, face_a: vec3<f32>,
     eye: vec3<f32>, ray_dir: vec3<f32>,
     t_enter: ptr<function, f32>,
     t_exit:  ptr<function, f32>,
 ) {
-    // Compute face normal from edge cross product.
-    var n = cross(face_b - face_a, face_c - face_a);
-    // Ensure the normal points OUTWARD (away from the opposite vertex).
-    // If dot(n, opposite - face_a) > 0, n is pointing toward opposite (inward),
-    // so flip it.
-    if dot(n, opposite - face_a) > 0.0 {
-        n = -n;
-    }
     let denom = dot(n, ray_dir);
     if abs(denom) < 1e-10 {
         return;  // ray parallel to this face
@@ -187,32 +213,36 @@ fn update_slab(
 
 @fragment
 fn fs_main(in: VsOut) -> OitOut {
-    // Reconstruct world-space ray direction from NDC position.
-    let ndc_near = vec4<f32>(in.ndc_xy, 0.0, 1.0);
-    let ndc_far  = vec4<f32>(in.ndc_xy, 1.0, 1.0);
-    let world_near_h = camera.inv_view_proj * ndc_near;
-    let world_far_h  = camera.inv_view_proj * ndc_far;
-    let world_near = world_near_h.xyz / world_near_h.w;
-    let world_far  = world_far_h.xyz  / world_far_h.w;
+    // Threshold guard first: the scalar is available immediately (flat, per-tet),
+    // so a thresholded fragment skips ray reconstruction, the slab tests, the
+    // clip loop, exp, and the LUT sample. The vertex shader already culls these
+    // tets whole; this is the cheap defensive backstop.
+    let scalar = in.v0.w;
+    if scalar < uniforms.threshold_min || scalar > uniforms.threshold_max {
+        discard;
+    }
+
+    // Reconstruct world-space ray direction. The two inv_view_proj products were
+    // done in the vertex shader; here just finish the perspective divide.
+    let world_near = in.world_near_h.xyz / in.world_near_h.w;
+    let world_far  = in.world_far_h.xyz  / in.world_far_h.w;
     let ray_dir = normalize(world_far - world_near);
 
     let eye = camera.eye_pos;
 
     let p0 = in.v0.xyz;
     let p1 = in.v1;
-    let p2 = in.v2;
-    let p3 = in.v3;
 
-    // Slab test: intersect ray with all 4 tet half-spaces.
-    // update_slab uses the opposite vertex to guarantee an outward-pointing normal,
-    // so the result is correct regardless of tet handedness.
+    // Slab test: intersect ray with all 4 tet half-spaces, using the precomputed
+    // outward normals and one point per face (p1 for the face opposite p0, p0 for
+    // the other three).
     var t_enter: f32 = 0.0;
     var t_exit:  f32 = 1e30;
 
-    update_slab(p1, p2, p3, p0, eye, ray_dir, &t_enter, &t_exit);
-    update_slab(p0, p2, p3, p1, eye, ray_dir, &t_enter, &t_exit);
-    update_slab(p0, p1, p3, p2, eye, ray_dir, &t_enter, &t_exit);
-    update_slab(p0, p1, p2, p3, eye, ray_dir, &t_enter, &t_exit);
+    update_slab(in.n0, p1, eye, ray_dir, &t_enter, &t_exit);
+    update_slab(in.n1, p0, eye, ray_dir, &t_enter, &t_exit);
+    update_slab(in.n2, p0, eye, ray_dir, &t_enter, &t_exit);
+    update_slab(in.n3, p0, eye, ray_dir, &t_enter, &t_exit);
 
     // Section-view clip planes: constrain [t_enter, t_exit] to the kept half-spaces.
     for (var i = 0u; i < clip_planes.count; i++) {
@@ -259,13 +289,8 @@ fn fs_main(in: VsOut) -> OitOut {
     );
     let alpha = clamp(alpha_raw * uniforms.opacity, 0.0, 1.0);
 
-    // Map scalar to [0,1] and sample colourmap LUT.
-    let scalar = in.v0.w;
-
-    // Threshold: discard tets outside [threshold_min, threshold_max].
-    if scalar < uniforms.threshold_min || scalar > uniforms.threshold_max {
-        discard;
-    }
+    // Map scalar to [0,1] and sample colourmap LUT (threshold already guarded
+    // at the top of fs_main and in the vertex shader).
     let t_scalar = clamp(
         (scalar - uniforms.scalar_min) / max(uniforms.scalar_max - uniforms.scalar_min, 1e-10),
         0.0, 1.0,
