@@ -639,10 +639,179 @@ pub(super) fn pick_mc_volume(
     None
 }
 
+/// Map a global segment index to the two node indices it connects.
+///
+/// Walks `strip_lengths` (nodes per strip; a strip of `n` nodes has `n - 1`
+/// segments) the same way [`strip_for_segment`] and
+/// [`pick_closest_polyline_segment`] do. Returns `(node_a, node_b)` into a flat
+/// positions slice of length `n_positions`, or `None` if the index is out of
+/// range. An empty `strip_lengths` is treated as one strip covering everything.
+pub(super) fn segment_node_indices(
+    seg_idx: u32,
+    strip_lengths: &[u32],
+    n_positions: usize,
+) -> Option<(usize, usize)> {
+    if strip_lengths.is_empty() {
+        let a = seg_idx as usize;
+        if a + 1 < n_positions {
+            return Some((a, a + 1));
+        }
+        return None;
+    }
+    let mut node_off = 0usize;
+    let mut seg_off = 0u32;
+    for &slen in strip_lengths {
+        let slen = slen as usize;
+        let segs = slen.saturating_sub(1) as u32;
+        if seg_idx < seg_off + segs {
+            let k = (seg_idx - seg_off) as usize;
+            let a = node_off + k;
+            if a + 1 < n_positions {
+                return Some((a, a + 1));
+            }
+            return None;
+        }
+        seg_off += segs;
+        node_off += slen;
+    }
+    None
+}
+
+/// Find the ribbon segment under a ray by testing the actual swept quad of each
+/// segment (parallel-transport lateral frame), returning `(global_seg_idx,
+/// world_hit_pos)` for the nearest hit.
+///
+/// Mirrors the ribbon branch of the CPU segment pass so the GPU curve pick has a
+/// fallback when the device lacks `SHADER_PRIMITIVE_INDEX`. Positions are
+/// world-space (ribbons are submitted without a model transform).
+pub(super) fn ribbon_segment_under_ray(
+    positions: &[[f32; 3]],
+    strip_lengths: &[u32],
+    width: f32,
+    width_attribute: Option<&[f32]>,
+    twist_attribute: Option<&[[f32; 3]]>,
+    ray_origin: glam::Vec3,
+    ray_dir: glam::Vec3,
+) -> Option<(u32, glam::Vec3)> {
+    if positions.is_empty() {
+        return None;
+    }
+    let frames = ribbon_lateral_frames(
+        positions,
+        strip_lengths,
+        width,
+        width_attribute,
+        twist_attribute,
+    );
+
+    let single;
+    let strips: &[u32] = if strip_lengths.is_empty() {
+        single = [positions.len() as u32];
+        &single
+    } else {
+        strip_lengths
+    };
+
+    let mut best_t = f32::MAX;
+    let mut best: Option<(u32, glam::Vec3)> = None;
+    let mut node_off = 0usize;
+    let mut seg_off = 0u32;
+
+    for &slen in strips {
+        let slen = slen as usize;
+        for k in 0..slen.saturating_sub(1) {
+            let ia = node_off + k;
+            let ib = node_off + k + 1;
+            let pa = glam::Vec3::from(positions[ia]);
+            let pb = glam::Vec3::from(positions[ib]);
+            let (ua, wa) = frames[ia];
+            let (ub, wb) = frames[ib];
+            let c0 = pa + ua * wa;
+            let c1 = pa - ua * wa;
+            let c2 = pb + ub * wb;
+            let c3 = pb - ub * wb;
+            // Both triangles, both winding orders.
+            let t = ray_triangle(ray_origin, ray_dir, c0, c1, c2)
+                .or_else(|| ray_triangle(ray_origin, ray_dir, c1, c3, c2))
+                .or_else(|| ray_triangle(ray_origin, ray_dir, c2, c1, c0))
+                .or_else(|| ray_triangle(ray_origin, ray_dir, c2, c3, c1));
+            if let Some(t) = t {
+                if t < best_t {
+                    best_t = t;
+                    best = Some((seg_off + k as u32, ray_origin + ray_dir * t));
+                }
+            }
+        }
+        seg_off += slen.saturating_sub(1) as u32;
+        node_off += slen;
+    }
+
+    best
+}
+
 #[cfg(test)]
 mod tests {
     use super::ray_unit_box_toi;
+    use super::{ribbon_segment_under_ray, segment_node_indices};
     use glam::Vec3;
+
+    #[test]
+    fn segment_node_indices_single_strip() {
+        // Empty strip_lengths: one strip of 4 nodes, segments 0..3.
+        assert_eq!(segment_node_indices(0, &[], 4), Some((0, 1)));
+        assert_eq!(segment_node_indices(2, &[], 4), Some((2, 3)));
+        // seg 3 needs node 4, out of range.
+        assert_eq!(segment_node_indices(3, &[], 4), None);
+    }
+
+    #[test]
+    fn segment_node_indices_multi_strip() {
+        // Two strips of 3 nodes each (6 positions). Strip 0 owns segments 0,1
+        // over nodes 0..2; strip 1 owns segments 2,3 over nodes 3..5.
+        let sl = [3u32, 3];
+        assert_eq!(segment_node_indices(0, &sl, 6), Some((0, 1)));
+        assert_eq!(segment_node_indices(1, &sl, 6), Some((1, 2)));
+        assert_eq!(segment_node_indices(2, &sl, 6), Some((3, 4)));
+        assert_eq!(segment_node_indices(3, &sl, 6), Some((4, 5)));
+        assert_eq!(segment_node_indices(4, &sl, 6), None);
+    }
+
+    #[test]
+    fn ribbon_segment_under_ray_hits_expected_segment() {
+        // Centerline along X; the swept quad lies in the XZ plane (lateral = Z,
+        // half-width 1). A ray straight down -Y at x=0.5 lands in segment 1
+        // (nodes at x=0 and x=2).
+        let positions = [[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let hit = ribbon_segment_under_ray(
+            &positions,
+            &[3],
+            2.0,
+            None,
+            None,
+            Vec3::new(0.5, 5.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+        );
+        let (seg, world) = hit.expect("ray should hit the ribbon");
+        assert_eq!(seg, 1);
+        assert!((world.x - 0.5).abs() < 1e-4, "world {world:?}");
+        assert!(world.y.abs() < 1e-4, "world {world:?}");
+    }
+
+    #[test]
+    fn ribbon_segment_under_ray_misses_off_the_strip() {
+        // A ray well past the ribbon end finds nothing.
+        let positions = [[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let miss = ribbon_segment_under_ray(
+            &positions,
+            &[3],
+            2.0,
+            None,
+            None,
+            Vec3::new(10.0, 5.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+        );
+        assert!(miss.is_none());
+    }
 
     #[test]
     fn ray_box_hit_from_outside_returns_front_face_toi() {

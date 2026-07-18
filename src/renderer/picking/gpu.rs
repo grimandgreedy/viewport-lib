@@ -126,11 +126,11 @@ impl PickItemType {
                     | PickMask::EDGE
                     | PickMask::CELL,
             ),
-            // Tubes and ribbons are object-level only; they answer the whole
-            // object mask plus the segment/strip levels a curve query may ask.
-            PickItemType::Curve => {
-                mask.intersects(PickMask::OBJECT | PickMask::SEGMENT | PickMask::STRIP)
-            }
+            // Streamtubes, tubes, and ribbons answer the whole object mask plus
+            // the node/segment/strip levels a curve query may ask.
+            PickItemType::Curve => mask.intersects(
+                PickMask::OBJECT | PickMask::POLY_NODE | PickMask::SEGMENT | PickMask::STRIP,
+            ),
             // Glyph and sprite sets answer the object mask plus the per-instance
             // level.
             PickItemType::Glyph | PickItemType::Sprite => {
@@ -168,6 +168,9 @@ enum PickSubKind {
     CloudPoint,
     /// Gaussian splat set: `instance_index` is the splat.
     Splat,
+    /// Ray-marched volume: the primitive channel carries the flat index of the
+    /// first in-threshold voxel the fragment marched to.
+    Voxel,
 }
 
 /// One glyph or tensor-glyph set to draw into the pick pass. The group-1 bind
@@ -917,9 +920,9 @@ impl ViewportRenderer {
         }
 
         // Voxel volumes raymarch their bounding cube to the first in-threshold
-        // voxel. Object-level; wireframe volumes render an OBB polyline instead,
-        // so they are picked as polylines, not here.
-        let has_pickable_volumes = mask.intersects(PickMask::OBJECT)
+        // voxel. Answers OBJECT and the VOXEL sub-object level; wireframe volumes
+        // render an OBB polyline instead, so they are picked as polylines, not here.
+        let has_pickable_volumes = mask.intersects(PickMask::OBJECT | PickMask::VOXEL)
             && self
                 .volume_gpu_data
                 .iter()
@@ -2353,6 +2356,9 @@ impl ViewportRenderer {
             pending.mask,
             &pending.kinds,
             pending.primitive_index_supported,
+            pending.cursor,
+            pending.view_proj,
+            pending.viewport_size,
             ray_origin,
             ray_dir,
         );
@@ -2374,6 +2380,9 @@ impl ViewportRenderer {
         mask: PickMask,
         kinds: &std::collections::HashMap<u64, PickSubKind>,
         primitive_index_supported: bool,
+        cursor: glam::Vec2,
+        view_proj: glam::Mat4,
+        viewport_size: glam::Vec2,
         ray_origin: glam::Vec3,
         ray_dir: glam::Vec3,
     ) -> Option<SubObjectRef> {
@@ -2401,25 +2410,51 @@ impl ViewportRenderer {
                 }
             }
             PickSubKind::Curve => {
-                if !primitive_index_supported {
-                    return None;
-                }
                 let gpu = self
                     .streamtube_gpu_data
                     .iter()
                     .chain(self.tube_gpu_data.iter())
                     .chain(self.ribbon_gpu_data.iter())
-                    .find(|g| g.pick_id.0 == object_id)?;
+                    .find(|g| g.pick_id.0 == object_id);
+
+                // Segment under the cursor, with the world hit position. Fast
+                // path: the hit triangle from the primitive channel indexes the
+                // item's tri_segment table. Fallback (feature absent): a CPU test
+                // on the retained curve item, mirroring the surface path's
+                // cpu_face_under_ray refine. The fallback needs the CPU pick
+                // cache; the fast path does not.
+                let (seg_idx, hit_pos) = if primitive_index_supported {
+                    let seg =
+                        gpu.and_then(|g| g.tri_segment.get(sub_primitive as usize).copied())?;
+                    (seg, world_pos)
+                } else {
+                    self.cpu_curve_segment_under_cursor(
+                        object_id,
+                        cursor,
+                        view_proj,
+                        viewport_size,
+                        ray_origin,
+                        ray_dir,
+                    )?
+                };
+
                 if mask.intersects(PickMask::STRIP) {
-                    gpu.tri_strip
-                        .get(sub_primitive as usize)
-                        .copied()
-                        .map(SubObjectRef::Strip)
+                    // With the feature the item's tri_strip names the strip
+                    // directly; otherwise derive it from the retained item's
+                    // strip_lengths.
+                    if primitive_index_supported {
+                        gpu.and_then(|g| g.tri_strip.get(sub_primitive as usize).copied())
+                            .map(SubObjectRef::Strip)
+                    } else {
+                        self.retained_curve_strip_lengths(object_id)
+                            .map(|sl| SubObjectRef::Strip(strip_for_segment(seg_idx, sl)))
+                    }
                 } else if mask.intersects(PickMask::SEGMENT) {
-                    gpu.tri_segment
-                        .get(sub_primitive as usize)
-                        .copied()
-                        .map(SubObjectRef::Segment)
+                    Some(SubObjectRef::Segment(seg_idx))
+                } else if mask.intersects(PickMask::POLY_NODE) {
+                    // Nearest of the segment's two control points to the hit.
+                    self.curve_nearest_node(object_id, seg_idx, hit_pos)
+                        .map(SubObjectRef::Point)
                 } else {
                     None
                 }
@@ -2438,6 +2473,13 @@ impl ViewportRenderer {
                     None
                 }
             }
+            PickSubKind::Voxel => {
+                if mask.intersects(PickMask::VOXEL) {
+                    Some(SubObjectRef::Voxel(sub_primitive))
+                } else {
+                    None
+                }
+            }
             PickSubKind::Surface => self.resolve_surface_sub_object(
                 object_id,
                 sub_primitive,
@@ -2448,6 +2490,159 @@ impl ViewportRenderer {
                 ray_dir,
             ),
         }
+    }
+
+    /// Segment index and world hit position under the cursor for a curve object,
+    /// found by a CPU test on the retained pick item. Streamtubes and tubes use
+    /// the screen-space closest-segment test; ribbons test the swept quad against
+    /// the ray. This is the fallback the curve sub-object path takes when the
+    /// device lacks `SHADER_PRIMITIVE_INDEX`, mirroring the surface path's
+    /// single-object CPU refine. Returns `None` when the CPU pick cache is off or
+    /// the id is not a retained curve.
+    fn cpu_curve_segment_under_cursor(
+        &self,
+        object_id: u64,
+        cursor: glam::Vec2,
+        view_proj: glam::Mat4,
+        viewport_size: glam::Vec2,
+        ray_origin: glam::Vec3,
+        ray_dir: glam::Vec3,
+    ) -> Option<(u32, glam::Vec3)> {
+        // World-space radius at a reference point converted to a screen-pixel
+        // threshold, matching the CPU curve pass.
+        let world_r_to_px = |ref_world: glam::Vec3, world_r: f32| -> f32 {
+            let p0 = view_proj * ref_world.extend(1.0);
+            let p1 = view_proj * (ref_world + glam::Vec3::X * world_r).extend(1.0);
+            if p0.w.abs() > 1e-6 && p1.w.abs() > 1e-6 {
+                let n0 = glam::Vec2::new(p0.x, p0.y) / p0.w;
+                let n1 = glam::Vec2::new(p1.x, p1.y) / p1.w;
+                ((n1 - n0).length() * 0.5 * viewport_size.x.max(viewport_size.y)).max(4.0)
+            } else {
+                (world_r * 100.0_f32).max(4.0)
+            }
+        };
+
+        if let Some(item) = self
+            .pick_streamtube_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            if item.positions.is_empty() {
+                return None;
+            }
+            let ref_pos = glam::Vec3::from(item.positions[0]);
+            let threshold_px = world_r_to_px(ref_pos, item.radius.max(0.01));
+            return pick_closest_polyline_segment(
+                cursor,
+                viewport_size,
+                view_proj,
+                &item.positions,
+                &item.strip_lengths,
+                threshold_px,
+            );
+        }
+        if let Some(item) = self
+            .pick_tube_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            if item.positions.is_empty() {
+                return None;
+            }
+            let ref_pos = glam::Vec3::from(item.positions[0]);
+            let max_r = item
+                .radius_attribute
+                .as_ref()
+                .and_then(|ra| ra.iter().copied().reduce(f32::max))
+                .unwrap_or(0.0)
+                .max(item.radius)
+                .max(0.01);
+            let threshold_px = world_r_to_px(ref_pos, max_r);
+            return pick_closest_polyline_segment(
+                cursor,
+                viewport_size,
+                view_proj,
+                &item.positions,
+                &item.strip_lengths,
+                threshold_px,
+            );
+        }
+        if let Some(item) = self
+            .pick_ribbon_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            return ribbon_segment_under_ray(
+                &item.positions,
+                &item.strip_lengths,
+                item.width,
+                item.width_attribute.as_deref(),
+                item.twist_attribute.as_deref(),
+                ray_origin,
+                ray_dir,
+            );
+        }
+        None
+    }
+
+    /// `strip_lengths` for a retained curve object, for mapping a global segment
+    /// index to its strip in the no-feature fallback.
+    fn retained_curve_strip_lengths(&self, object_id: u64) -> Option<&[u32]> {
+        if let Some(it) = self
+            .pick_streamtube_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            return Some(it.strip_lengths.as_slice());
+        }
+        if let Some(it) = self
+            .pick_tube_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            return Some(it.strip_lengths.as_slice());
+        }
+        if let Some(it) = self
+            .pick_ribbon_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            return Some(it.strip_lengths.as_slice());
+        }
+        None
+    }
+
+    /// The control-point index nearer to `hit_pos` among the two endpoints of the
+    /// curve object's segment `seg_idx`. Reads the retained curve item's
+    /// positions, so it needs the CPU pick cache. Used for POLY_NODE curve picks.
+    fn curve_nearest_node(&self, object_id: u64, seg_idx: u32, hit_pos: glam::Vec3) -> Option<u32> {
+        let (positions, strip_lengths): (&[[f32; 3]], &[u32]) = if let Some(it) = self
+            .pick_streamtube_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            (it.positions.as_slice(), it.strip_lengths.as_slice())
+        } else if let Some(it) = self
+            .pick_tube_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            (it.positions.as_slice(), it.strip_lengths.as_slice())
+        } else if let Some(it) = self
+            .pick_ribbon_items
+            .iter()
+            .find(|it| it.settings.pick_id.0 == object_id)
+        {
+            (it.positions.as_slice(), it.strip_lengths.as_slice())
+        } else {
+            return None;
+        };
+        let (a, b) = segment_node_indices(seg_idx, strip_lengths, positions.len())?;
+        let pa = glam::Vec3::from(positions[a]);
+        let pb = glam::Vec3::from(positions[b]);
+        let da = (pa - hit_pos).length_squared();
+        let db = (pb - hit_pos).length_squared();
+        Some(if da <= db { a as u32 } else { b as u32 })
     }
 
     /// Resolve a surface / volume-mesh-boundary hit to a face, cell, or vertex.
@@ -2615,6 +2810,16 @@ impl ViewportRenderer {
             .filter(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0)
         {
             kinds.insert(dd.pick_id.0, PickSubKind::Splat);
+        }
+
+        // Ray-marched volumes: the pick shader writes the hit voxel's flat index
+        // into the primitive channel, decoded to SubObjectRef::Voxel.
+        for gpu in self
+            .volume_gpu_data
+            .iter()
+            .filter(|v| !v.wireframe && v.pick_id != PickId::NONE)
+        {
+            kinds.insert(gpu.pick_id.0, PickSubKind::Voxel);
         }
 
         kinds

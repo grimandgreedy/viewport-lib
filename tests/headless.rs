@@ -1015,6 +1015,89 @@ fn gpu_pick_hits_voxel_volume() {
     assert_eq!(hit.map(|h| h.id), Some(63));
 }
 
+#[test]
+fn gpu_pick_voxel_volume_resolves_voxel() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // A fully dense 8^3 volume centred on the origin: the raymarch pick hits a
+    // voxel wherever the bounding cube covers, and the primitive channel carries
+    // that voxel's flat index.
+    let dims = [8u32, 8, 8];
+    let data = vec![1.0f32; (dims[0] * dims[1] * dims[2]) as usize];
+    let volume_id = renderer
+        .resources_mut()
+        .upload_volume(&device, &queue, &data, dims);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+
+    let mut vol = VolumeItem::default();
+    vol.volume_id = volume_id;
+    vol.scalar_range = (0.0, 1.0);
+    vol.threshold_min = 0.0;
+    vol.threshold_max = 1.0;
+    vol.bbox_min = [-0.5, -0.5, -0.5];
+    vol.bbox_max = [0.5, 0.5, 0.5];
+    vol.settings.pick_id = PickId(63);
+    frame.scene.volumes = vec![vol];
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // A VOXEL-masked query (a subset of POINT_LIKE) resolves the hit voxel's
+    // flat index, in range for the 8^3 = 512-voxel grid.
+    let hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::VOXEL,
+        )
+        .expect("centre ray should hit the dense volume");
+    assert_eq!(hit.id, 63);
+    match hit.sub_object {
+        Some(viewport_lib::SubObjectRef::Voxel(v)) => {
+            assert!(v < 512, "voxel index {v} out of range for 8^3 grid");
+        }
+        other => panic!("expected a Voxel sub-object, got {other:?}"),
+    }
+
+    // An OBJECT-only query still resolves the volume at object level, no voxel.
+    let obj = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::OBJECT,
+        )
+        .expect("centre ray should hit the dense volume");
+    assert_eq!(obj.id, 63);
+    assert_eq!(obj.sub_object, None);
+}
+
 fn scatter_pick_frame() -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
@@ -1267,6 +1350,141 @@ fn gpu_pick_hits_ribbon() {
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(4242)));
+}
+
+#[test]
+fn gpu_pick_ribbon_resolves_segment_and_node() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // POLY_NODE resolution reads the retained curve item's control points.
+    renderer.set_cpu_pick_cache(true);
+    let mut frame = sub_object_pick_frame();
+
+    // A wide ribbon centred on the origin: 3 control points along X, so two
+    // segments with the middle node under the centre pixel.
+    let mut ribbon = RibbonItem::default();
+    ribbon.positions = vec![[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+    ribbon.strip_lengths = vec![3];
+    ribbon.width = 2.0;
+    ribbon.settings.pick_id = PickId(4242);
+    frame.scene.ribbon_items.push(ribbon);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // SEGMENT: the hit resolves to one of the two segments.
+    let seg = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::SEGMENT,
+        )
+        .expect("ribbon should be hit");
+    assert_eq!(seg.id, 4242);
+    match seg.sub_object {
+        Some(viewport_lib::SubObjectRef::Segment(s)) => assert!(s < 2, "segment {s} out of range"),
+        other => panic!("expected a Segment sub-object, got {other:?}"),
+    }
+
+    // POLY_NODE: a centre click resolves to the middle control point (index 1),
+    // the nearer endpoint of whichever segment the ray landed on.
+    let node = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::POLY_NODE,
+        )
+        .expect("ribbon should be hit");
+    assert_eq!(node.id, 4242);
+    assert_eq!(node.sub_object, Some(viewport_lib::SubObjectRef::Point(1)));
+}
+
+#[test]
+fn gpu_pick_hits_showcase_style_voxel_volume() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Replicate showcase 33's volume: a 16^3 sphere-shaped scalar field, a bbox
+    // offset from the origin, an off-origin model, and a 0.15 threshold. This is
+    // the configuration reported as not selecting on the GPU backend, so the
+    // test pins the object-level behaviour with those exact values.
+    let dims = [16u32, 16, 16];
+    let n = (dims[0] * dims[1] * dims[2]) as usize;
+    let mut data = vec![0.0f32; n];
+    let (cx, cy, cz, radius) = (7.5f32, 7.5, 7.5, 7.5);
+    for iz in 0..dims[2] {
+        for iy in 0..dims[1] {
+            for ix in 0..dims[0] {
+                let flat = (ix + iy * dims[0] + iz * dims[0] * dims[1]) as usize;
+                let dx = ix as f32 + 0.5 - cx;
+                let dy = iy as f32 + 0.5 - cy;
+                let dz = iz as f32 + 0.5 - cz;
+                let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+                data[flat] = (1.0 - dist / radius).max(0.0);
+            }
+        }
+    }
+    let volume_id = renderer
+        .resources_mut()
+        .upload_volume(&device, &queue, &data, dims);
+
+    // Aim a camera at the volume centre in world space: bbox [0,4]^3 translated
+    // by (-2,-1,-6) spans (-2,-1,-6)..(2,3,-2), centred at (0,1,-4). View it from
+    // an offset that is not along the Z-up axis so the up vector stays valid.
+    let target = glam::vec3(0.0, 1.0, -4.0);
+    let eye = target + glam::vec3(2.0, -8.0, 3.0);
+    let view = glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z);
+    let proj = glam::Mat4::perspective_rh(60_f32.to_radians(), 1.0, 0.1, 100.0);
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view,
+        projection: proj,
+        eye_position: eye.to_array(),
+        forward: (target - eye).normalize().to_array(),
+        orientation: glam::Quat::IDENTITY,
+        near: 0.1,
+        far: 100.0,
+        distance: (eye - target).length(),
+        fov: 60_f32.to_radians(),
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+
+    let mut vol = VolumeItem::default();
+    vol.volume_id = volume_id;
+    vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
+    vol.bbox_min = [0.0, 0.0, 0.0];
+    vol.bbox_max = [4.0, 4.0, 4.0];
+    vol.scalar_range = (0.0, 1.0);
+    vol.threshold_min = 0.15;
+    vol.threshold_max = 1.0;
+    vol.settings.pick_id = PickId(20);
+    frame.scene.volumes = vec![vol];
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(hit.map(|h| h.id), Some(20));
 }
 
 #[test]

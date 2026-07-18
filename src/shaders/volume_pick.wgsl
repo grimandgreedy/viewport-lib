@@ -295,9 +295,15 @@ fn fs_pick(in: VertexOutput) -> PickOut {
         let world_hit = (volume.model * vec4<f32>(sample_pos, 1.0)).xyz;
         let clip = camera.view_proj * vec4<f32>(world_hit, 1.0);
         let ndc_z = clip.z / clip.w;
+        // Flat index of the hit voxel, matching the CPU voxel pick and the
+        // highlight decode: flat = ix + iy*nx + iz*nx*ny. sample_pos is in the
+        // unit cube [0,1]^3, so scale by the texture grid dimensions.
+        let dims = vec3<f32>(textureDimensions(volume_tex, 0));
+        let vox = clamp(floor(sample_pos * dims), vec3<f32>(0.0), dims - 1.0);
+        let flat = u32(vox.x) + u32(vox.y) * u32(dims.x) + u32(vox.z) * u32(dims.x) * u32(dims.y);
         var out: PickOut;
         out.object_id = pick_id.x;
-        out.primitive_id = 0u;
+        out.primitive_id = flat;
         out.depth = ndc_z;
         out.frag_depth = ndc_z;
         return out;
