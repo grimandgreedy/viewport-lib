@@ -1,5 +1,58 @@
 use crate::resources::*;
 
+/// Choose the direct-volume 3D texture format from the device's capabilities.
+///
+/// The scalar field must be linearly filterable so the ray-march reconstructs it
+/// with trilinear interpolation rather than blocky nearest-neighbor. `R32Float`
+/// is only filterable when the device enabled `FLOAT32_FILTERABLE`, so:
+///
+/// - feature enabled  -> `R32Float`: full precision, native trilinear.
+/// - feature absent   -> `R16Float`: filterable on baseline WebGPU (no feature),
+///   so trilinear still works, at half the texture bandwidth and reduced (f16)
+///   precision.
+///
+/// The renderer adds `FLOAT32_FILTERABLE` to
+/// [`recommended_device_features`](crate::ViewportRenderer::recommended_device_features),
+/// so a consumer that requests those features gets the full-precision path
+/// automatically wherever the adapter supports it (all common discrete GPUs);
+/// everyone else gets the graceful f16 fallback. The scatter density path binds
+/// this same texture non-filtered, so either format works there unchanged.
+pub(crate) fn volume_texture_format(device: &crate::gpu::Device) -> crate::gpu::TextureFormat {
+    if device
+        .features()
+        .contains(crate::gpu::Features::FLOAT32_FILTERABLE)
+    {
+        crate::gpu::TextureFormat::R32Float
+    } else {
+        crate::gpu::TextureFormat::R16Float
+    }
+}
+
+/// Bytes per texel for the two direct-volume formats.
+fn volume_bytes_per_texel(format: crate::gpu::TextureFormat) -> u32 {
+    match format {
+        crate::gpu::TextureFormat::R32Float => 4,
+        crate::gpu::TextureFormat::R16Float => 2,
+        other => panic!("unexpected direct-volume texture format {other:?}"),
+    }
+}
+
+/// Encode a scalar field into the texel bytes for `format`: raw `f32` for
+/// `R32Float`, converted to `f16` for `R16Float`.
+fn encode_volume_texels(format: crate::gpu::TextureFormat, data: &[f32]) -> Vec<u8> {
+    match format {
+        crate::gpu::TextureFormat::R32Float => bytemuck::cast_slice(data).to_vec(),
+        crate::gpu::TextureFormat::R16Float => {
+            let halves: Vec<u16> = data
+                .iter()
+                .map(|&v| half::f16::from_f32(v).to_bits())
+                .collect();
+            bytemuck::cast_slice(&halves).to_vec()
+        }
+        other => panic!("unexpected direct-volume texture format {other:?}"),
+    }
+}
+
 /// Direct volume rendering pipelines, layouts, the cached unit cube geometry,
 /// and the default opacity LUT. All lazily built; the uploaded 3D volume
 /// textures live in a separate flat store.
@@ -25,7 +78,9 @@ pub(crate) struct VolumeResources {
 }
 
 impl DeviceResources {
-    /// Upload a 3D scalar field to the GPU as an `R32Float` 3D texture.
+    /// Upload a 3D scalar field to the GPU as a filterable 3D texture
+    /// ([`volume_texture_format`]: `R32Float` at full precision, or the
+    /// `R16Float` fallback), sampled with trilinear interpolation at draw time.
     ///
     /// `data` must be a flat array of `dims[0] * dims[1] * dims[2]` scalars in
     /// x-fastest order (index = x + y*nx + z*nx*ny).
@@ -98,9 +153,11 @@ impl DeviceResources {
         freed
     }
 
-    /// Create an `R32Float` 3D texture from `data`, upload it, and return the
-    /// texture, its default view, and the GPU bytes it occupies (4 per texel).
+    /// Create a filterable 3D texture from `data`, upload it, and return the
+    /// texture, its default view, and the GPU bytes it occupies.
     ///
+    /// The format is [`volume_texture_format`] (`R32Float` or the `R16Float`
+    /// fallback), so `data` is written raw or converted to `f16` accordingly.
     /// Shared by [`upload_volume`](Self::upload_volume) and
     /// [`replace_volume`](Self::replace_volume).
     fn build_volume_texture(
@@ -119,6 +176,9 @@ impl DeviceResources {
             expected
         );
 
+        let format = volume_texture_format(device);
+        let bpt = volume_bytes_per_texel(format);
+
         let texture = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("volume_3d_texture"),
             size: crate::gpu::Extent3d {
@@ -129,12 +189,12 @@ impl DeviceResources {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D3,
-            format: crate::gpu::TextureFormat::R32Float,
+            format,
             usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
-        let bytes: &[u8] = bytemuck::cast_slice(data);
+        let texels = encode_volume_texels(format, data);
         queue.write_texture(
             crate::gpu::TexelCopyTextureInfo {
                 texture: &texture,
@@ -142,10 +202,10 @@ impl DeviceResources {
                 origin: crate::gpu::Origin3d::ZERO,
                 aspect: crate::gpu::TextureAspect::All,
             },
-            bytes,
+            &texels,
             crate::gpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(dims[0] * 4),
+                bytes_per_row: Some(dims[0] * bpt),
                 rows_per_image: Some(dims[1]),
             },
             crate::gpu::Extent3d {
@@ -156,7 +216,7 @@ impl DeviceResources {
         );
 
         let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-        (texture, view, (expected as u64) * 4)
+        (texture, view, (expected as u64) * (bpt as u64))
     }
 
     /// Start an asynchronous volume upload.
@@ -200,6 +260,8 @@ impl DeviceResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
+                let format = volume_texture_format(&device_for_worker);
+                let bpt = volume_bytes_per_texel(format);
                 let texture = device_for_worker.create_texture(&crate::gpu::TextureDescriptor {
                     label: Some("volume_3d_texture"),
                     size: crate::gpu::Extent3d {
@@ -210,12 +272,12 @@ impl DeviceResources {
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: crate::gpu::TextureDimension::D3,
-                    format: crate::gpu::TextureFormat::R32Float,
+                    format,
                     usage: crate::gpu::TextureUsages::TEXTURE_BINDING
                         | crate::gpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 });
-                let bytes: &[u8] = bytemuck::cast_slice(&data);
+                let texels = encode_volume_texels(format, &data);
                 queue_for_worker.write_texture(
                     crate::gpu::TexelCopyTextureInfo {
                         texture: &texture,
@@ -223,10 +285,10 @@ impl DeviceResources {
                         origin: crate::gpu::Origin3d::ZERO,
                         aspect: crate::gpu::TextureAspect::All,
                     },
-                    bytes,
+                    &texels,
                     crate::gpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(dims[0] * 4),
+                        bytes_per_row: Some(dims[0] * bpt),
                         rows_per_image: Some(dims[1]),
                     },
                     crate::gpu::Extent3d {
@@ -239,7 +301,7 @@ impl DeviceResources {
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
-                        let volume_bytes = (expected as u64) * 4;
+                        let volume_bytes = (expected as u64) * (bpt as u64);
                         let id = resources
                             .content
                             .volume_textures
@@ -314,8 +376,12 @@ impl DeviceResources {
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    // Filterable so the ray-march reconstructs the field with
+                    // trilinear interpolation. The bound texture is R16Float
+                    // (baseline filterable) or R32Float (with FLOAT32_FILTERABLE),
+                    // chosen by `volume_texture_format` to keep this valid.
                     ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
                         view_dimension: crate::gpu::TextureViewDimension::D3,
                         multisampled: false,
                     },
@@ -324,9 +390,7 @@ impl DeviceResources {
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::NonFiltering,
-                    ),
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 crate::gpu::BindGroupLayoutEntry {
@@ -712,8 +776,11 @@ impl DeviceResources {
             self.volume.default_opacity_lut_view.as_ref().unwrap()
         };
 
-        let nearest_sampler =
-            crate::resources::builders::clamp_nearest_sampler(device, "volume_nearest_sampler");
+        // Trilinear sampling of the scalar field (A1): the volume texture is
+        // filterable (R16Float, or R32Float with FLOAT32_FILTERABLE), so a linear
+        // clamp sampler reconstructs it smoothly instead of nearest-neighbor.
+        let volume_sampler =
+            crate::resources::builders::clamp_linear_sampler(device, "volume_sampler");
 
         let linear_sampler =
             crate::resources::builders::clamp_linear_mip_sampler(device, "volume_lut_sampler");
@@ -738,7 +805,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&nearest_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&volume_sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
@@ -887,15 +954,19 @@ mod tests {
         let mut resources =
             DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
+        // Bytes per texel depend on the chosen format: 4 for R32Float (with
+        // FLOAT32_FILTERABLE), 2 for the R16Float fallback (the default test
+        // device requests no features, so this is usually the 2-byte path).
+        let bpt = super::volume_bytes_per_texel(super::volume_texture_format(&device)) as u64;
         assert_eq!(resources.resident_bytes().volume_bytes, 0);
         let _id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
-        // 8*8*8 R32Float = 512 texels * 4 bytes.
-        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+        // 8*8*8 = 512 texels * bytes-per-texel.
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * bpt);
         // A second distinct upload takes a second slot, so the charge adds. This
         // is the per-timestep growth a time-series avoids by calling
         // replace_volume on one handle instead (see replace_volume_reuses_slot).
         let _id2 = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
-        assert_eq!(resources.resident_bytes().volume_bytes, 2 * 8 * 8 * 8 * 4);
+        assert_eq!(resources.resident_bytes().volume_bytes, 2 * 8 * 8 * 8 * bpt);
     }
 
     #[test]
@@ -907,20 +978,27 @@ mod tests {
         let mut resources =
             DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
+        let bpt = super::volume_bytes_per_texel(super::volume_texture_format(&device)) as u64;
         let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
-        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * bpt);
 
         // Replacing the field in place keeps the same handle and one slot, so the
         // charge stays flat rather than doubling (the whole point of S1).
         for _ in 0..10 {
-            assert!(resources.replace_volume(&device, &queue, id, &sample_volume_data(), [8, 8, 8]));
+            assert!(resources.replace_volume(
+                &device,
+                &queue,
+                id,
+                &sample_volume_data(),
+                [8, 8, 8]
+            ));
         }
-        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * bpt);
 
         // A larger field updates the charge to the new size, still one slot.
         let big = vec![0.5_f32; 16 * 16 * 16];
         assert!(resources.replace_volume(&device, &queue, id, &big, [16, 16, 16]));
-        assert_eq!(resources.resident_bytes().volume_bytes, 16 * 16 * 16 * 4);
+        assert_eq!(resources.resident_bytes().volume_bytes, 16 * 16 * 16 * bpt);
     }
 
     #[test]
@@ -932,8 +1010,9 @@ mod tests {
         let mut resources =
             DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
+        let bpt = super::volume_bytes_per_texel(super::volume_texture_format(&device)) as u64;
         let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
-        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * bpt);
 
         assert!(resources.free_volume(id));
         assert_eq!(resources.resident_bytes().volume_bytes, 0);
@@ -943,7 +1022,7 @@ mod tests {
         // The freed slot is reused by the next upload, so the charge is one
         // field's worth, not two.
         let _id2 = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
-        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * 4);
+        assert_eq!(resources.resident_bytes().volume_bytes, 8 * 8 * 8 * bpt);
     }
 
     #[test]

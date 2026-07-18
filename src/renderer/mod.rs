@@ -620,10 +620,15 @@ impl ViewportRenderer {
     ///   (not just the object). Without it the GPU pick stays object-level for
     ///   triangle-meshed types; instance- and segment-level picks (glyphs,
     ///   sprites, polylines) do not need it.
+    /// - `FLOAT32_FILTERABLE` lets direct-volume (`VolumeItem`) rendering keep the
+    ///   scalar field in a full-precision `R32Float` 3D texture and still sample
+    ///   it with trilinear interpolation. Without it the field falls back to an
+    ///   `R16Float` texture (trilinear at reduced precision, half the bandwidth);
+    ///   either way the reconstruction is smooth, never blocky nearest-neighbor.
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
-    /// and `pipeline_cache_data` returns `None`.
+    /// `pipeline_cache_data` returns `None`, and volumes use the `R16Float` path.
     pub fn recommended_device_features(adapter: &crate::gpu::Adapter) -> crate::gpu::Features {
         let mut features = crate::gpu::Features::empty();
         for feature in [
@@ -631,6 +636,7 @@ impl ViewportRenderer {
             crate::gpu::Features::TIMESTAMP_QUERY,
             crate::gpu::Features::PIPELINE_CACHE,
             crate::gpu::PRIMITIVE_INDEX_FEATURE,
+            crate::gpu::Features::FLOAT32_FILTERABLE,
         ] {
             if adapter.features().contains(feature) {
                 features |= feature;

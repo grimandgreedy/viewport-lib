@@ -4,8 +4,8 @@
 //          + bindings 1-5 matching camera_bgl (unused here except clip planes).
 // Group 1: Volume-specific bindings:
 //          binding 0: VolumeUniform (per-volume parameters)
-//          binding 1: 3D scalar texture (R32Float, non-filterable)
-//          binding 2: nearest sampler for 3D texture (non-filtering)
+//          binding 1: 3D scalar field texture (filterable: R16Float, or R32Float with FLOAT32_FILTERABLE)
+//          binding 2: linear sampler for the 3D scalar field (trilinear)
 //          binding 3: colour LUT texture (256x1, Rgba8Unorm)
 //          binding 4: opacity LUT texture (256x1, R8Unorm)
 //          binding 5: linear sampler for LUT textures (filtering)
@@ -79,7 +79,7 @@ struct ClipVolumeUB {
 
 @group(1) @binding(0) var<uniform> volume: VolumeUniform;
 @group(1) @binding(1) var volume_tex: texture_3d<f32>;
-@group(1) @binding(2) var volume_nearest_sampler: sampler;
+@group(1) @binding(2) var volume_sampler: sampler;
 @group(1) @binding(3) var colour_lut: texture_2d<f32>;
 @group(1) @binding(4) var opacity_lut: texture_2d<f32>;
 @group(1) @binding(5) var lut_sampler: sampler;
@@ -376,8 +376,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         let sample_pos = eye_model + ray_dir * t;
 
-        // Sample 3D texture (R32Float). UVW = sample_pos (already in [0,1]^3).
-        let raw_scalar = textureSampleLevel(volume_tex, volume_nearest_sampler, sample_pos, 0.0).r;
+        // Sample the 3D scalar field (trilinear). UVW = sample_pos (already in [0,1]^3).
+        let raw_scalar = textureSampleLevel(volume_tex, volume_sampler, sample_pos, 0.0).r;
 
         // Detect NaN using the IEEE 754 property: NaN != NaN.
         let is_nan = raw_scalar != raw_scalar;
@@ -426,12 +426,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if volume.enable_shading != 0u {
             // Central-difference gradient (in texture space).
             let texel = 1.0 / vec3<f32>(textureDimensions(volume_tex));
-            let gx = textureSampleLevel(volume_tex, volume_nearest_sampler, sample_pos + vec3<f32>(texel.x, 0.0, 0.0), 0.0).r
-                   - textureSampleLevel(volume_tex, volume_nearest_sampler, sample_pos - vec3<f32>(texel.x, 0.0, 0.0), 0.0).r;
-            let gy = textureSampleLevel(volume_tex, volume_nearest_sampler, sample_pos + vec3<f32>(0.0, texel.y, 0.0), 0.0).r
-                   - textureSampleLevel(volume_tex, volume_nearest_sampler, sample_pos - vec3<f32>(0.0, texel.y, 0.0), 0.0).r;
-            let gz = textureSampleLevel(volume_tex, volume_nearest_sampler, sample_pos + vec3<f32>(0.0, 0.0, texel.z), 0.0).r
-                   - textureSampleLevel(volume_tex, volume_nearest_sampler, sample_pos - vec3<f32>(0.0, 0.0, texel.z), 0.0).r;
+            let gx = textureSampleLevel(volume_tex, volume_sampler, sample_pos + vec3<f32>(texel.x, 0.0, 0.0), 0.0).r
+                   - textureSampleLevel(volume_tex, volume_sampler, sample_pos - vec3<f32>(texel.x, 0.0, 0.0), 0.0).r;
+            let gy = textureSampleLevel(volume_tex, volume_sampler, sample_pos + vec3<f32>(0.0, texel.y, 0.0), 0.0).r
+                   - textureSampleLevel(volume_tex, volume_sampler, sample_pos - vec3<f32>(0.0, texel.y, 0.0), 0.0).r;
+            let gz = textureSampleLevel(volume_tex, volume_sampler, sample_pos + vec3<f32>(0.0, 0.0, texel.z), 0.0).r
+                   - textureSampleLevel(volume_tex, volume_sampler, sample_pos - vec3<f32>(0.0, 0.0, texel.z), 0.0).r;
             let grad = vec3<f32>(gx, gy, gz);
             let grad_len = length(grad);
             if grad_len > 1e-6 {
