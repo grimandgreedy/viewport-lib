@@ -91,6 +91,30 @@ impl PickHit {
 }
 
 // ---------------------------------------------------------------------------
+// SnapHit : screen-tolerance snap result
+// ---------------------------------------------------------------------------
+
+/// Best snap candidate within a screen-pixel tolerance of the cursor, from
+/// [`ViewportRenderer::snap_query`](crate::renderer::ViewportRenderer::snap_query).
+///
+/// Unlike [`PickHit`], the cursor need not be exactly on the feature: the query
+/// searches a window around the cursor and returns the nearest high-priority
+/// feature (a vertex or node beats an edge beats a surface), for snapping a
+/// gizmo to a feature the cursor is close to.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct SnapHit {
+    /// World-space position to snap to: the exact feature coordinate (vertex
+    /// corner, edge closest-point, curve / cloud node) when it is known,
+    /// otherwise the reconstructed world position of the covered pixel.
+    pub world_pos: glam::Vec3,
+    /// The `pick_id` of the object the snap feature belongs to.
+    pub object_id: u64,
+    /// The resolved sub-object, or `None` for an object-level snap.
+    pub sub_object: Option<SubObjectRef>,
+}
+
+// ---------------------------------------------------------------------------
 // GpuPickHit : GPU object-ID pick result
 // ---------------------------------------------------------------------------
 

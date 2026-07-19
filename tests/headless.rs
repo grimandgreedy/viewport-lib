@@ -2017,6 +2017,137 @@ fn gpu_pick_vertex_fills_snap_world_pos() {
 }
 
 #[test]
+fn gpu_pick_face_fills_geometric_normal() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(321);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::FACE,
+        )
+        .expect("box should be hit");
+    assert!(matches!(
+        hit.sub_object,
+        Some(viewport_lib::SubObjectRef::Face(_))
+    ));
+    // The normal is a real unit axis of the box (an axis-aligned face), oriented
+    // to point back toward the camera rather than the camera-facing stand-in.
+    assert!(
+        (hit.normal.length() - 1.0).abs() < 1e-4,
+        "normal should be unit length, got {:?}",
+        hit.normal
+    );
+    let max_component = hit
+        .normal
+        .to_array()
+        .iter()
+        .map(|c| c.abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        (max_component - 1.0).abs() < 1e-4,
+        "expected an axis-aligned box face normal, got {:?}",
+        hit.normal
+    );
+    let eye = frame.camera.render_camera.eye_position;
+    let to_eye = glam::Vec3::from(eye) - hit.world_pos;
+    assert!(
+        hit.normal.dot(to_eye) > 0.0,
+        "face normal should point toward the camera, got {:?}",
+        hit.normal
+    );
+}
+
+#[test]
+fn gpu_snap_query_snaps_to_surface_vertex() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(321);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // Cursor a couple of pixels off centre, with a tolerance wide enough to reach
+    // the box. The window snaps to the nearest box corner even though the cursor
+    // is not exactly on it.
+    let snap = renderer
+        .snap_query(
+            glam::Vec2::new(30.0, 30.0),
+            16.0,
+            &frame,
+            &device,
+            &queue,
+            PickMask::VERTEX,
+        )
+        .expect("box within the tolerance window should snap");
+    assert_eq!(snap.object_id, 321);
+    match snap.sub_object {
+        Some(viewport_lib::SubObjectRef::Vertex(v)) => assert!(v < 8, "vertex {v} out of range"),
+        other => panic!("expected a Vertex sub-object, got {other:?}"),
+    }
+    // The snap position is a corner of the [-0.5, 0.5]^3 box.
+    for c in [snap.world_pos.x, snap.world_pos.y, snap.world_pos.z] {
+        assert!(
+            (c.abs() - 0.5).abs() < 1e-4,
+            "corner coord {c} is not +/-0.5 (snap {:?})",
+            snap.world_pos
+        );
+    }
+}
+
+#[test]
+fn gpu_snap_query_empty_scene_returns_none() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // No pickable geometry: nothing draws into the window, so the snap misses.
+    let frame = sub_object_pick_frame();
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let snap = renderer.snap_query(
+        glam::Vec2::new(32.0, 32.0),
+        16.0,
+        &frame,
+        &device,
+        &queue,
+        PickMask::VERTEX,
+    );
+    assert!(snap.is_none(), "empty scene should not snap to anything");
+}
+
+#[test]
 fn gpu_pick_curve_node_fills_snap_world_pos() {
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");

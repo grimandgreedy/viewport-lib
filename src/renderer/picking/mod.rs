@@ -17,7 +17,7 @@ pub use sub_object::{
     CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
     VolumeSelectionInfo,
 };
-pub use types::{GpuPickHit, PickHit, PickRectResult};
+pub use types::{GpuPickHit, PickHit, PickRectResult, SnapHit};
 
 impl ViewportRenderer {
     /// Copy this frame's pickable items into the CPU pick caches so `pick()` and
@@ -187,11 +187,55 @@ impl ViewportRenderer {
         };
         // Fill the snap position from the frame's geometry, so both backends
         // return the same feature coordinate. Point-only: the async poll path
-        // leaves it `None`.
+        // leaves it `None`. When the hit resolved to a surface face, also
+        // replace the camera-facing normal stand-in with the real geometric
+        // face normal, for align-to-surface placement.
         hit.map(|mut h| {
             h.sub_object_world_pos = self.snap_world_pos(h.id, h.sub_object, h.world_pos, frame);
+            if let Some(n) = self.pick_face_normal(&h, frame) {
+                h.normal = n;
+            }
             h
         })
+    }
+
+    /// Geometric world-space normal of a picked surface face, for
+    /// align-to-surface placement.
+    ///
+    /// `Some` only when the hit resolved to a [`SubObjectRef::Face`] on a
+    /// pickable surface whose CPU geometry is retained: the normal comes from the
+    /// hit triangle's corners times the model's normal matrix, oriented toward
+    /// the camera to match the front face the pick struck. `None` for every other
+    /// sub-object level (the primitive channel names a vertex / edge / cell
+    /// there, not a face) and when the mesh positions are not retained, leaving
+    /// the camera-facing stand-in in place. O(1) `mesh_store` index, no ray-cast.
+    fn pick_face_normal(&self, hit: &PickHit, frame: &FrameData) -> Option<glam::Vec3> {
+        let SubObjectRef::Face(f) = hit.sub_object? else {
+            return None;
+        };
+        let (mesh_id, model) = self.pick_surface_mesh(hit.id, frame)?;
+        let mesh = self.resources.mesh_store.get(mesh_id)?;
+        let indices = mesh.cpu_indices.as_ref()?;
+        let positions = mesh.cpu_positions.as_ref()?;
+        let base = f as usize * 3;
+        let ia = *indices.get(base)? as usize;
+        let ib = *indices.get(base + 1)? as usize;
+        let ic = *indices.get(base + 2)? as usize;
+        let a = glam::Vec3::from(*positions.get(ia)?);
+        let b = glam::Vec3::from(*positions.get(ib)?);
+        let c = glam::Vec3::from(*positions.get(ic)?);
+        let m = glam::Mat4::from_cols_array_2d(&model);
+        let normal_mat = glam::Mat3::from_mat4(m).inverse().transpose();
+        let n = (normal_mat * (b - a).cross(c - a)).normalize_or_zero();
+        if n == glam::Vec3::ZERO {
+            return None;
+        }
+        // The pick struck the front face, so the outward normal points back
+        // toward the eye. Orient it that way to resolve the winding sign, which
+        // also matches the previous camera-facing stand-in.
+        let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+        let to_eye = eye - hit.world_pos;
+        Some(if n.dot(to_eye) < 0.0 { -n } else { n })
     }
 
     /// World-space position of the resolved sub-object feature, for snapping a
@@ -373,5 +417,35 @@ impl ViewportRenderer {
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_rect_gpu(device, queue, rect_min, rect_max, frame, mask),
         }
+    }
+
+    /// Find the best snap feature within `radius_px` screen pixels of `cursor`.
+    ///
+    /// Where [`pick_object`](Self::pick_object) resolves the feature exactly under
+    /// the cursor, this searches a square window of `radius_px` around it and
+    /// returns the nearest high-priority feature, so a gizmo can snap to a vertex
+    /// or edge the cursor is merely close to. `mask` selects which item types and
+    /// sub-object levels are candidates; among the covered pixels the winner is
+    /// chosen by feature priority (point-like vertex / node > edge / segment >
+    /// surface / object), tie-broken by screen distance to the cursor.
+    ///
+    /// GPU-only and blocking, like the rect path: it renders the mask-selected
+    /// geometry into the pick pass scissored to the window and waits on the
+    /// read-back. Resolving triangle-mesh sub-object levels (vertex, edge) needs
+    /// `SHADER_PRIMITIVE_INDEX`; without it the window still snaps at object
+    /// level. A consumer's gizmo overlay carries no `pick_id`, so it never draws
+    /// into the pass and is never its own snap target.
+    ///
+    /// `None` when nothing pickable lies within the window.
+    pub fn snap_query(
+        &mut self,
+        cursor: glam::Vec2,
+        radius_px: f32,
+        frame: &FrameData,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mask: PickMask,
+    ) -> Option<SnapHit> {
+        self.snap_query_gpu(device, queue, cursor, radius_px, frame, mask)
     }
 }

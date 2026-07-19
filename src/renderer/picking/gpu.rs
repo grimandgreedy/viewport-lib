@@ -114,6 +114,24 @@ fn screen_image_hits_in_rect(
     hits
 }
 
+/// Snap priority for a resolved sub-object, higher wins. A point-like feature
+/// (surface vertex, curve / cloud node, glyph instance, splat) snaps ahead of a
+/// one-dimensional edge / segment, which snaps ahead of a surface face or plain
+/// object hit. Used by [`ViewportRenderer::snap_query_gpu`] to reduce the window
+/// to the most specific feature the cursor is near.
+fn snap_priority(sub: Option<SubObjectRef>) -> i32 {
+    match sub {
+        Some(
+            SubObjectRef::Vertex(_)
+            | SubObjectRef::Point(_)
+            | SubObjectRef::Instance(_)
+            | SubObjectRef::Splat(_),
+        ) => 3,
+        Some(SubObjectRef::Edge(_) | SubObjectRef::Segment(_)) => 2,
+        _ => 1,
+    }
+}
+
 impl PickItemType {
     /// Whether this type answers any level requested in `mask`. A type is drawn
     /// only when the caller asked for something it can resolve.
@@ -2538,6 +2556,237 @@ impl ViewportRenderer {
         }
 
         crate::renderer::picking::PickRectResult { objects, elements }
+    }
+
+    /// Best snap candidate within `radius_px` screen pixels of `cursor`.
+    ///
+    /// Renders the mask-selected geometry into the pick pass scissored to a
+    /// square window around the cursor, reads the object / primitive / depth
+    /// channels over the window, and reduces the covered pixels to one candidate
+    /// by feature priority (point-like vertex / node > edge / segment > surface /
+    /// object), tie-broken by screen-space distance to the cursor. The returned
+    /// `world_pos` is the exact feature coordinate from
+    /// [`snap_world_pos`](Self::snap_world_pos), falling back to the pixel's
+    /// reconstructed world position. Blocking, like
+    /// [`pick_rect_gpu`](Self::pick_rect_gpu): it waits on the pass before
+    /// reading back.
+    pub(crate) fn snap_query_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        cursor: glam::Vec2,
+        radius_px: f32,
+        frame: &FrameData,
+        mask: PickMask,
+    ) -> Option<crate::renderer::picking::SnapHit> {
+        let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items.as_ref(),
+        };
+
+        let ppp = frame.camera.pixels_per_point;
+        let vp_w = (frame.camera.viewport_size[0] * ppp).round() as u32;
+        let vp_h = (frame.camera.viewport_size[1] * ppp).round() as u32;
+        if vp_w == 0 || vp_h == 0 {
+            return None;
+        }
+
+        // Physical window around the cursor, clamped to the viewport. The radius
+        // is a logical (screen-point) tolerance, so it scales by `ppp` into the
+        // physical pick target the same way the cursor does.
+        let radius = radius_px.max(0.0);
+        let lo = (cursor - glam::Vec2::splat(radius)) * ppp;
+        let hi = (cursor + glam::Vec2::splat(radius)) * ppp;
+        let rx = (lo.x.floor().max(0.0) as u32).min(vp_w);
+        let ry = (lo.y.floor().max(0.0) as u32).min(vp_h);
+        let rx_end = ((hi.x.ceil().max(0.0) as u32) + 1).min(vp_w);
+        let ry_end = ((hi.y.ceil().max(0.0) as u32) + 1).min(vp_h);
+        if rx_end <= rx || ry_end <= ry {
+            return None;
+        }
+        let rw = rx_end - rx;
+        let rh = ry_end - ry;
+
+        let flags = self.ensure_pick_pipelines(device, frame, mask);
+        let draw_set = self.build_pick_draws(device, queue, frame, mask, scene_items, &flags);
+        if draw_set.is_empty() {
+            return None;
+        }
+
+        let primitive_index_supported = draw_set.primitive_index_supported;
+        // Decode map for the primitive channel; only built when the caller asked
+        // for a sub-object level to snap to.
+        let kinds = if mask.intersects(!PickMask::OBJECT) {
+            self.build_pick_sub_kinds(frame, scene_items)
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        let (_, pick_instance_bg) =
+            self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
+        let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
+        let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
+        let targets = PickTargets::new(device, vp_w, vp_h);
+
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("snap_query_pass_encoder"),
+        });
+        {
+            let mut pick_pass = targets.begin_render_pass(&mut encoder);
+            pick_pass.set_scissor_rect(rx, ry, rw, rh);
+            self.record_pick_pass_draws(
+                &mut pick_pass,
+                &pick_camera_bg,
+                &pick_instance_bg,
+                &draw_set,
+                &sublevel,
+                frame,
+            );
+        }
+
+        // Read the object, primitive, and depth channels over the window: the
+        // object and primitive decode to a `SubObjectRef` exactly as the rect
+        // path does, and the depth reconstructs each pixel's world position.
+        let bytes_per_row = (rw * 4).div_ceil(256) * 256;
+        let make_staging = |label: &str| {
+            device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some(label),
+                size: (bytes_per_row as u64) * (rh as u64),
+                usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
+        };
+        let copy_region = |encoder: &mut crate::gpu::CommandEncoder,
+                           texture: &crate::gpu::Texture,
+                           staging: &crate::gpu::Buffer| {
+            encoder.copy_texture_to_buffer(
+                crate::gpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: crate::gpu::Origin3d { x: rx, y: ry, z: 0 },
+                    aspect: crate::gpu::TextureAspect::All,
+                },
+                crate::gpu::TexelCopyBufferInfo {
+                    buffer: staging,
+                    layout: crate::gpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(bytes_per_row),
+                        rows_per_image: Some(rh),
+                    },
+                },
+                crate::gpu::Extent3d {
+                    width: rw,
+                    height: rh,
+                    depth_or_array_layers: 1,
+                },
+            );
+        };
+
+        let id_staging = make_staging("snap_query_id_staging");
+        let prim_staging = make_staging("snap_query_prim_staging");
+        let depth_staging = make_staging("snap_query_depth_staging");
+        copy_region(&mut encoder, &targets.id_texture, &id_staging);
+        copy_region(&mut encoder, &targets.prim_texture, &prim_staging);
+        copy_region(&mut encoder, &targets.depth_colour_texture, &depth_staging);
+
+        let submission = queue.submit(std::iter::once(encoder.finish()));
+        for staging in [&id_staging, &prim_staging, &depth_staging] {
+            staging
+                .slice(..)
+                .map_async(crate::gpu::MapMode::Read, |_| {});
+        }
+        device
+            .poll(crate::gpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+
+        let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
+        // Best candidate: higher feature priority wins, ties broken by the
+        // pixel's screen-space distance to the cursor. Held as plain data so the
+        // exact feature coordinate is resolved after the staging maps are freed.
+        let mut best: Option<(i32, f32, u64, Option<SubObjectRef>, glam::Vec3)> = None;
+        {
+            let id_data = id_staging.slice(..).get_mapped_range();
+            let prim_data = prim_staging.slice(..).get_mapped_range();
+            let depth_data = depth_staging.slice(..).get_mapped_range();
+            for row in 0..rh as usize {
+                let row_start = row * bytes_per_row as usize;
+                for col in 0..rw as usize {
+                    let px_off = row_start + col * 4;
+                    let id = u32::from_le_bytes([
+                        id_data[px_off],
+                        id_data[px_off + 1],
+                        id_data[px_off + 2],
+                        id_data[px_off + 3],
+                    ]);
+                    if id == 0 {
+                        continue;
+                    }
+
+                    // Screen-space distance from this pixel's centre to the
+                    // cursor, in logical points; skip pixels outside the circular
+                    // tolerance so the window reads as a radius, not a square.
+                    let phys_x = (rx + col as u32) as f32 + 0.5;
+                    let phys_y = (ry + row as u32) as f32 + 0.5;
+                    let screen = glam::Vec2::new(phys_x / ppp, phys_y / ppp);
+                    let dist = (screen - cursor).length();
+                    if dist > radius {
+                        continue;
+                    }
+
+                    let prim = u32::from_le_bytes([
+                        prim_data[px_off],
+                        prim_data[px_off + 1],
+                        prim_data[px_off + 2],
+                        prim_data[px_off + 3],
+                    ]);
+                    let sub = self.resolve_gpu_sub_object_rect(
+                        id as u64,
+                        prim,
+                        mask,
+                        &kinds,
+                        &draw_set.surface_meta,
+                        primitive_index_supported,
+                    );
+                    let priority = snap_priority(sub);
+
+                    let better = match best {
+                        None => true,
+                        Some((bp, bd, ..)) => priority > bp || (priority == bp && dist < bd),
+                    };
+                    if !better {
+                        continue;
+                    }
+
+                    let depth = f32::from_le_bytes([
+                        depth_data[px_off],
+                        depth_data[px_off + 1],
+                        depth_data[px_off + 2],
+                        depth_data[px_off + 3],
+                    ]);
+                    let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
+                    let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
+                    let world = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth));
+                    best = Some((priority, dist, id as u64, sub, world));
+                }
+            }
+        }
+        id_staging.unmap();
+        prim_staging.unmap();
+        depth_staging.unmap();
+
+        let (_, _, object_id, sub_object, pixel_world) = best?;
+        // Snap to the exact feature coordinate when it is known; otherwise the
+        // reconstructed pixel world position is the snap target.
+        let world_pos = self
+            .snap_world_pos(object_id, sub_object, pixel_world, frame)
+            .unwrap_or(pixel_world);
+        Some(crate::renderer::picking::SnapHit {
+            world_pos,
+            object_id,
+            sub_object,
+        })
     }
 
     /// Begin a non-blocking GPU object pick under `cursor`: submit the id pass
