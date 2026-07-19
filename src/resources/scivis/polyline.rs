@@ -474,6 +474,7 @@ impl DeviceResources {
 
         PolylineGpuData {
             pick_id: item.settings.pick_id,
+            strip_lengths: item.strip_lengths.clone(),
             vertex_buffer,
             segment_count: seg_count,
             bind_group,
@@ -1003,6 +1004,12 @@ pub struct PolylineGpuData {
     /// Object-level pick id for this polyline (from the item's `settings.pick_id`);
     /// `PickId::NONE` when not pickable.
     pub(crate) pick_id: crate::PickId,
+    /// Per-strip vertex counts, copied from the source item at build time. A GPU
+    /// pick reads the hit segment from the primitive channel; `strip_for_segment`
+    /// maps that segment to its strip using these counts, so `SubObjectRef::Strip`
+    /// resolves without touching the per-frame `pick_polyline_items` cache. Empty
+    /// for a single-strip polyline (all segments belong to strip 0).
+    pub(crate) strip_lengths: Vec<u32>,
     /// Instance buffer: `[xa, ya, za, xb, yb, zb, scalar_a, scalar_b]` per segment (32 bytes).
     pub(crate) vertex_buffer: crate::gpu::Buffer,
     /// Number of line segments (instances).  Draw call: `draw(0..6, 0..segment_count)`.

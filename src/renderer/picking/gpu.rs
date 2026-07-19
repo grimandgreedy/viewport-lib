@@ -2456,10 +2456,10 @@ impl ViewportRenderer {
             PickSubKind::Polyline => {
                 if mask.intersects(PickMask::STRIP) {
                     let strip = self
-                        .pick_polyline_items
+                        .polyline_gpu_data
                         .iter()
-                        .find(|p| p.settings.pick_id.0 == object_id)
-                        .map(|p| strip_for_segment(sub_primitive, &p.strip_lengths))
+                        .find(|g| g.pick_id.0 == object_id)
+                        .map(|g| strip_for_segment(sub_primitive, &g.strip_lengths))
                         .unwrap_or(0);
                     Some(SubObjectRef::Strip(strip))
                 } else if mask.intersects(PickMask::SEGMENT | PickMask::POLY_NODE) {
@@ -2586,10 +2586,10 @@ impl ViewportRenderer {
             PickSubKind::Polyline => {
                 if mask.intersects(PickMask::STRIP) {
                     let strip = self
-                        .pick_polyline_items
+                        .polyline_gpu_data
                         .iter()
-                        .find(|p| p.settings.pick_id.0 == object_id)
-                        .map(|p| strip_for_segment(sub_primitive, &p.strip_lengths))
+                        .find(|g| g.pick_id.0 == object_id)
+                        .map(|g| strip_for_segment(sub_primitive, &g.strip_lengths))
                         .unwrap_or(0);
                     Some(SubObjectRef::Strip(strip))
                 } else if mask.intersects(PickMask::SEGMENT | PickMask::POLY_NODE) {

@@ -1711,6 +1711,48 @@ fn gpu_pick_polyline_resolves_segment() {
 }
 
 #[test]
+fn gpu_pick_polyline_resolves_strip_without_cpu_cache() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // Deliberately leave the CPU pick cache OFF: strip resolution must come from
+    // the persistent PolylineGpuData::strip_lengths, not pick_polyline_items.
+    let mut frame = sub_object_pick_frame();
+
+    // Two strips. Strip 0 is a single off-centre segment (global segment 0).
+    // Strip 1 is three nodes whose middle segment (global segment 2) crosses the
+    // world origin, which the camera centre projects onto.
+    let mut polyline = PolylineItem::default();
+    polyline.positions = vec![
+        [-5.0, 3.0, 0.0],
+        [-4.0, 3.0, 0.0],
+        [-2.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+    ];
+    polyline.strip_lengths = vec![2, 3];
+    polyline.line_width = 20.0;
+    polyline.settings.pick_id = PickId(889);
+    frame.scene.polylines.push(polyline);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::STRIP,
+        )
+        .expect("polyline should be hit at the centre");
+    assert_eq!(hit.id, 889);
+    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Strip(1)));
+}
+
+#[test]
 fn gpu_pick_surface_resolves_face_and_vertex() {
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
