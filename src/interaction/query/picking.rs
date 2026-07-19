@@ -140,6 +140,7 @@ pub fn pick_scene_cpu(
                                 normal,
                                 point_index: None,
                                 scalar_value: None,
+                                sub_object_world_pos: None,
                             };
                             best_hit = Some((obj.id(), toi, hit));
                         }
@@ -703,6 +704,7 @@ pub fn pick_volume_cpu(
                 triangle_index: u32::MAX,
                 point_index: None,
                 scalar_value: Some(scalar),
+                sub_object_world_pos: None,
             });
         }
 
@@ -959,6 +961,7 @@ pub fn pick_gaussian_splat_cpu(
         triangle_index: u32::MAX,
         point_index: Some(idx),
         scalar_value: None,
+        sub_object_world_pos: None,
     })
 }
 
@@ -1107,6 +1110,7 @@ pub fn pick_transparent_volume_mesh_cpu(
         triangle_index: u32::MAX,
         point_index: None,
         scalar_value: None,
+        sub_object_world_pos: None,
     })
 }
 

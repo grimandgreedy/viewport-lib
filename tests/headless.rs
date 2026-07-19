@@ -1914,6 +1914,96 @@ fn gpu_pick_volume_mesh_resolves_cell_without_cpu_cache() {
     assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Cell(0)));
 }
 
+#[test]
+fn gpu_pick_vertex_fills_snap_world_pos() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(321);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::VERTEX,
+        )
+        .expect("box should be hit");
+    assert!(matches!(
+        hit.sub_object,
+        Some(viewport_lib::SubObjectRef::Vertex(_))
+    ));
+    // The snap position is the chosen corner of the [-0.5, 0.5]^3 box.
+    let snap = hit
+        .sub_object_world_pos
+        .expect("vertex pick should fill the snap position");
+    for c in [snap.x, snap.y, snap.z] {
+        assert!(
+            (c.abs() - 0.5).abs() < 1e-4,
+            "corner coord {c} is not +/-0.5 (snap {snap:?})"
+        );
+    }
+    // The snap position is the corner, distinct from the raw hit point on the face.
+    assert!(
+        (snap - hit.world_pos).length() > 1e-3,
+        "snap should be the corner, not the face hit point"
+    );
+}
+
+#[test]
+fn gpu_pick_curve_node_fills_snap_world_pos() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let mut ribbon = RibbonItem::default();
+    ribbon.positions = vec![[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+    ribbon.strip_lengths = vec![3];
+    ribbon.width = 2.0;
+    ribbon.settings.pick_id = PickId(4242);
+    frame.scene.ribbon_items.push(ribbon);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::POLY_NODE,
+        )
+        .expect("ribbon should be hit");
+    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Point(1)));
+    // Node 1 sits at the world origin; the snap position must be that node.
+    let snap = hit
+        .sub_object_world_pos
+        .expect("node pick should fill the snap position");
+    assert!(
+        snap.length() < 1e-4,
+        "node 1 should be at the origin, got {snap:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // GPU pick: non-rasterized surface types (G7c/G7d)
 // ---------------------------------------------------------------------------

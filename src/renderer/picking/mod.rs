@@ -89,10 +89,6 @@ impl ViewportRenderer {
 // Backend selection
 // ---------------------------------------------------------------------------
 
-/// Which backend the object-level pick entry points run.
-///
-/// Both backends return the same [`PickHit`]
-/// so a caller can switch between them without changing how it reads the result.
 /// Whether a mask asks for a GPU sub-object level that only the rasterizer's
 /// `primitive_index` can name (surface face / cell / vertex / edge, tube-family
 /// segment / strip / node), so the GPU backend needs `SHADER_PRIMITIVE_INDEX` to
@@ -115,6 +111,10 @@ fn gpu_sub_object_needs_feature(mask: PickMask) -> bool {
     )
 }
 
+/// Which backend the object-level pick entry points run.
+///
+/// Both backends return the same [`PickHit`]
+/// so a caller can switch between them without changing how it reads the result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickBackend {
     /// CPU ray-cast. Fills in sub-object identity (face, vertex, edge, cell, ...)
@@ -180,11 +180,112 @@ impl ViewportRenderer {
     ) -> Option<PickHit> {
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
-        match self.resolve_pick_backend(backend, device, mask) {
+        let hit = match self.resolve_pick_backend(backend, device, mask) {
             PickBackend::Cpu => self.pick(cursor, viewport_size, view_proj, mask),
             // `resolve_pick_backend` never returns `Auto`.
             _ => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
+        };
+        // Fill the snap position from the frame's geometry, so both backends
+        // return the same feature coordinate. Point-only: the async poll path
+        // leaves it `None`.
+        hit.map(|mut h| {
+            h.sub_object_world_pos = self.snap_world_pos(h.id, h.sub_object, h.world_pos, frame);
+            h
+        })
+    }
+
+    /// World-space position of the resolved sub-object feature, for snapping a
+    /// gizmo to it. Reads the feature's coordinate from the frame item plus
+    /// `mesh_store` by O(1) index (no ray-cast, no BVH, no per-frame cache clone).
+    /// `None` when the feature has no single snap point (cell, voxel, segment,
+    /// strip, edge, object-level) or its position is not retained.
+    fn snap_world_pos(
+        &self,
+        id: u64,
+        sub_object: Option<SubObjectRef>,
+        world_pos: glam::Vec3,
+        frame: &FrameData,
+    ) -> Option<glam::Vec3> {
+        match sub_object? {
+            // The chosen corner, from the retained mesh positions times the model.
+            // Needs `cpu_positions` retention on the mesh; `None` otherwise.
+            SubObjectRef::Vertex(i) => {
+                let (mesh_id, model) = self.pick_surface_mesh(id, frame)?;
+                let mesh = self.resources.mesh_store.get(mesh_id)?;
+                let p = mesh.cpu_positions.as_ref()?.get(i as usize)?;
+                Some(glam::Mat4::from_cols_array_2d(&model).transform_point3(glam::Vec3::from(*p)))
+            }
+            // A curve control node or a point-cloud point: the index is into the
+            // item's inline positions. Falls back to the hit point for ref items
+            // (positions not inline on the frame).
+            SubObjectRef::Point(i) => self.pick_element_position(id, i, frame).or(Some(world_pos)),
+            // The hit point already lies on these features.
+            SubObjectRef::Face(_) | SubObjectRef::Splat(_) | SubObjectRef::Instance(_) => {
+                Some(world_pos)
+            }
+            // No single snap point.
+            SubObjectRef::Cell(_)
+            | SubObjectRef::Voxel(_)
+            | SubObjectRef::Edge(_)
+            | SubObjectRef::Segment(_)
+            | SubObjectRef::Strip(_) => None,
         }
+    }
+
+    /// `(mesh_id, model)` of a pickable surface or volume-mesh boundary named by
+    /// `pick_id`, found on the frame.
+    fn pick_surface_mesh(
+        &self,
+        id: u64,
+        frame: &FrameData,
+    ) -> Option<(crate::resources::mesh::mesh_store::MeshId, [[f32; 4]; 4])> {
+        let SurfaceSubmission::Flat(items) = &frame.scene.surfaces;
+        if let Some(it) = items
+            .iter()
+            .find(|i| i.settings.pick_id.0 == id && !i.settings.hidden)
+        {
+            return Some((it.mesh_id, it.model));
+        }
+        for vm in &frame.scene.volume_meshes {
+            let ri = vm.to_render_item();
+            if ri.settings.pick_id.0 == id && !ri.settings.hidden {
+                return Some((ri.mesh_id, ri.model));
+            }
+        }
+        None
+    }
+
+    /// World position of node / point `i` of a curve control polyline or a point
+    /// cloud named by `pick_id`, from its inline positions times the item model.
+    /// `None` for ref items (positions live in the store, not on the frame).
+    fn pick_element_position(&self, id: u64, i: u32, frame: &FrameData) -> Option<glam::Vec3> {
+        let idx = i as usize;
+        let at = |positions: &[[f32; 3]], model: &[[f32; 4]; 4]| -> Option<glam::Vec3> {
+            positions.get(idx).map(|p| {
+                glam::Mat4::from_cols_array_2d(model).transform_point3(glam::Vec3::from(*p))
+            })
+        };
+        for it in &frame.scene.streamtube_items {
+            if it.settings.pick_id.0 == id {
+                return at(&it.positions, &it.model);
+            }
+        }
+        for it in &frame.scene.tube_items {
+            if it.settings.pick_id.0 == id {
+                return at(&it.positions, &it.model);
+            }
+        }
+        for it in &frame.scene.ribbon_items {
+            if it.settings.pick_id.0 == id {
+                return at(&it.positions, &it.model);
+            }
+        }
+        for it in &frame.scene.point_clouds {
+            if it.settings.pick_id.0 == id {
+                return at(&it.positions, &it.model);
+            }
+        }
+        None
     }
 
     /// Whether this device can resolve GPU sub-object picking for triangle-meshed

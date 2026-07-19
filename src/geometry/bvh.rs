@@ -297,6 +297,7 @@ impl PickAccelerator {
                     normal: world_normal,
                     point_index: None,
                     scalar_value: None,
+                    sub_object_world_pos: None,
                 };
                 (toi, hit)
             })

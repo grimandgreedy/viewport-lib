@@ -244,6 +244,7 @@ impl ViewportRenderer {
                             triangle_index: u32::MAX,
                             point_index: None,
                             scalar_value: None,
+                            sub_object_world_pos: None,
                         };
                         consider(toi, hit);
                     }
@@ -681,6 +682,7 @@ impl ViewportRenderer {
                     triangle_index: u32::MAX,
                     point_index: None,
                     scalar_value: None,
+                    sub_object_world_pos: None,
                 };
                 consider(toi, hit);
             }
@@ -852,6 +854,7 @@ impl ViewportRenderer {
                             triangle_index: u32::MAX,
                             point_index: None,
                             scalar_value: None,
+                            sub_object_world_pos: None,
                         },
                     );
                 }
@@ -903,6 +906,7 @@ impl ViewportRenderer {
                             triangle_index: u32::MAX,
                             point_index: None,
                             scalar_value: None,
+                            sub_object_world_pos: None,
                         },
                     );
                 }
@@ -986,6 +990,7 @@ impl ViewportRenderer {
                                 triangle_index: u32::MAX,
                                 point_index: None,
                                 scalar_value: None,
+                                sub_object_world_pos: None,
                             },
                         );
                     }
@@ -1038,6 +1043,7 @@ impl ViewportRenderer {
                             triangle_index: u32::MAX,
                             point_index: None,
                             scalar_value: None,
+                            sub_object_world_pos: None,
                         },
                     );
                 }
@@ -1096,6 +1102,7 @@ impl ViewportRenderer {
                                 triangle_index: u32::MAX,
                                 point_index: None,
                                 scalar_value: None,
+                                sub_object_world_pos: None,
                             },
                         );
                     }
@@ -1137,6 +1144,7 @@ impl ViewportRenderer {
                             triangle_index: u32::MAX,
                             point_index: None,
                             scalar_value: None,
+                            sub_object_world_pos: None,
                         },
                     );
                 }
@@ -1158,6 +1166,7 @@ impl ViewportRenderer {
                             triangle_index: u32::MAX,
                             point_index: None,
                             scalar_value: None,
+                            sub_object_world_pos: None,
                         },
                     );
                 }
@@ -1179,6 +1188,7 @@ impl ViewportRenderer {
                             triangle_index: u32::MAX,
                             point_index: None,
                             scalar_value: None,
+                            sub_object_world_pos: None,
                         },
                     );
                 }
@@ -1216,6 +1226,7 @@ impl ViewportRenderer {
                             triangle_index: u32::MAX,
                             point_index: None,
                             scalar_value: None,
+                            sub_object_world_pos: None,
                         },
                     );
                 }

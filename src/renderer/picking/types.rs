@@ -44,6 +44,18 @@ pub struct PickHit {
     /// from the three triangle corner values. For cell attributes, the value is
     /// read directly from the hit triangle index.
     pub scalar_value: Option<f32>,
+    /// World-space position of the resolved sub-object feature, for snapping a
+    /// gizmo handle to it.
+    ///
+    /// `Some` for point-like features whose exact coordinate is known: a surface
+    /// vertex (the chosen corner), a curve node (`SubObjectRef::Point` on a
+    /// tube / ribbon / streamtube), and a point-cloud point. For a face or plain
+    /// object hit it is the hit point on the surface ([`world_pos`](Self::world_pos)).
+    /// `None` for features with no single snap point (cell, voxel) and for the
+    /// async poll path. Distinct from `world_pos`, which is always the raw hit
+    /// point under the cursor: for a vertex pick, `world_pos` is where the ray met
+    /// the triangle, while `sub_object_world_pos` is the corner itself.
+    pub sub_object_world_pos: Option<glam::Vec3>,
 }
 
 impl PickHit {
@@ -73,6 +85,7 @@ impl PickHit {
             triangle_index: u32::MAX,
             point_index: None,
             scalar_value: None,
+            sub_object_world_pos: None,
         }
     }
 }
