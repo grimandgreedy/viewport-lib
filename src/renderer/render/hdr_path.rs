@@ -3009,6 +3009,7 @@ impl ViewportRenderer {
             || !slot.screen_rect_outline_buffers.is_empty()
             || !slot.implicit_outline_indices.is_empty()
             || !slot.mc_outline_data.is_empty()
+            || slot.plugin_outline_present
         {
             // Prefer the HDR-format pipeline; fall back to LDR single-sample.
             let hdr_pipeline = self

@@ -29,25 +29,24 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // binding 1: texture_3d<f32>: R32Float is not filterable on most hardware,
-                // so declare as non-filterable and use a NonFiltering sampler.
+                // binding 1: the scalar field texture_3d<f32> (filterable:
+                // R16Float, or R32Float with FLOAT32_FILTERABLE), so the slice
+                // samples it trilinearly instead of nearest-neighbor.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
                         multisampled: false,
                         view_dimension: crate::gpu::TextureViewDimension::D3,
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
                     },
                     count: None,
                 },
-                // binding 2: vol_sampler (non-filtering nearest, matches R32Float)
+                // binding 2: vol_sampler (linear)
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::NonFiltering,
-                    ),
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // binding 3: lut_tex (colourmap texture_2d)
@@ -159,9 +158,9 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        // Nearest-neighbor sampler for crisp slice sampling.
+        // Linear sampler so the slice reconstructs the field trilinearly.
         let vol_sampler =
-            crate::resources::builders::clamp_nearest_sampler(device, "image_slice_vol_sampler");
+            crate::resources::builders::clamp_linear_sampler(device, "image_slice_vol_sampler");
 
         // Resolve LUT view index before creating any bind group references.
         let lut_view_idx: Option<usize> = self.content.builtin_colourmap_ids.and_then(|ids| {
@@ -855,24 +854,24 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // binding 1: texture_3d<f32> (R32Float, non-filterable)
+                // binding 1: the scalar field texture_3d<f32> (filterable:
+                // R16Float, or R32Float with FLOAT32_FILTERABLE), so the slice
+                // samples it trilinearly instead of nearest-neighbor.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
                         multisampled: false,
                         view_dimension: crate::gpu::TextureViewDimension::D3,
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
                     },
                     count: None,
                 },
-                // binding 2: vol_sampler (non-filtering nearest)
+                // binding 2: vol_sampler (linear)
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::NonFiltering,
-                    ),
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 // binding 3: lut_tex (colourmap texture_2d)
@@ -982,7 +981,7 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        let vol_sampler = crate::resources::builders::clamp_nearest_sampler(
+        let vol_sampler = crate::resources::builders::clamp_linear_sampler(
             device,
             "volume_surface_slice_vol_sampler",
         );

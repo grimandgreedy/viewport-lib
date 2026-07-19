@@ -150,6 +150,10 @@ pub(crate) struct ViewportSlot {
     pub ribbon_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
     /// Indices into polyline_gpu_data for selected user polylines.
     pub polyline_outline_indices: Vec<usize>,
+    /// True when an item-type plugin drew selection coverage into the outline
+    /// mask this frame. Plugin outline coverage is not tracked in the per-kind
+    /// buffers above, so the mask/edge pass and the composite also gate on this.
+    pub plugin_outline_present: bool,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
         crate::resources::mesh::mesh_store::MeshId,
@@ -1462,6 +1466,24 @@ impl ViewportRenderer {
     /// each one whose collection is on `frame.scene`.
     ///
     /// Called from inside the lib's outline-mask render pass.
+    /// True when any registered item-type plugin has a selected, non-hidden
+    /// item on this frame. The outline offscreen pass gates on this (alongside
+    /// the built-in outline buffers) so plugin items can drive the selection
+    /// outline the same way built-in items do.
+    pub(crate) fn any_plugin_item_selected(&self, frame: &FrameData) -> bool {
+        if self.item_type_plugins.is_empty() {
+            return false;
+        }
+        self.item_type_plugins.keys().any(|name| {
+            frame.scene.plugin_items.get(*name).is_some_and(|items| {
+                (0..items.len()).any(|i| {
+                    let s = items.item_settings(i);
+                    s.selected && !s.hidden
+                })
+            })
+        })
+    }
+
     pub(crate) fn dispatch_plugin_outline_mask<'rp>(
         &'rp self,
         pass: &mut crate::gpu::RenderPass<'rp>,
@@ -2139,6 +2161,7 @@ impl ViewportRenderer {
                 tube_outline_items: Vec::new(),
                 ribbon_outline_items: Vec::new(),
                 polyline_outline_indices: Vec::new(),
+                plugin_outline_present: false,
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),

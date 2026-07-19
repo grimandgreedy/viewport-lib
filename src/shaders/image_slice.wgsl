@@ -142,11 +142,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
     }
 
-    // Load from the 3D volume texture. R32Float is non-filterable so we use
-    // textureLoad with integer texel coordinates instead of textureSampleLevel.
-    let dims   = vec3<f32>(textureDimensions(vol_tex));
-    let texel  = vec3<i32>(clamp(in.uvw * dims, vec3<f32>(0.0), dims - vec3<f32>(1.0)));
-    let scalar = textureLoad(vol_tex, texel, 0).r;
+    // Sample the scalar field trilinearly (the texture is filterable: R16Float,
+    // or R32Float with FLOAT32_FILTERABLE), so the slice is smooth rather than
+    // showing the voxel grid.
+    let scalar = textureSampleLevel(vol_tex, vol_sampler, in.uvw, 0.0).r;
 
     // Normalize and map through the LUT.
     let range = slice_ub.scalar_max - slice_ub.scalar_min;

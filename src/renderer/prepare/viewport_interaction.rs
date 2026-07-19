@@ -1454,6 +1454,13 @@ impl ViewportRenderer {
     ) {
         let vp_idx = frame.camera.viewport_index;
 
+        // Item-type plugins draw their own selection coverage into the mask (they
+        // are not tracked in the per-kind outline buffers). Record whether any
+        // plugin has a selection this frame, so both the mask/edge pass below and
+        // the composite (see `emit_outline_composite!`) run for plugin outlines.
+        let plugin_outline = self.any_plugin_item_selected(frame);
+        self.viewport_slots[vp_idx].plugin_outline_present = plugin_outline;
+
         // ------------------------------------------------------------------
         // Outline offscreen pass : screen-space edge detection.
         //
@@ -1496,7 +1503,8 @@ impl ViewportRenderer {
                 || !self.viewport_slots[vp_idx]
                     .implicit_outline_indices
                     .is_empty()
-                || !self.viewport_slots[vp_idx].mc_outline_data.is_empty())
+                || !self.viewport_slots[vp_idx].mc_outline_data.is_empty()
+                || plugin_outline)
         {
             let ppp = frame.camera.pixels_per_point;
             let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
