@@ -257,6 +257,21 @@ pub(crate) struct PickResources {
     pub(crate) bind_group_layout_1: Option<crate::gpu::BindGroupLayout>,
     /// Minimal camera-only bind group layout (group 0).
     pub(crate) camera_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Surface VERTEX pick pipeline: like `pipeline`, but the fragment writes the
+    /// hit triangle's nearest corner (global vertex index) into the primitive
+    /// channel. Only built when the device has SHADER_PRIMITIVE_INDEX.
+    pub(crate) vertex_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Group 2 layout for `vertex_pipeline`: the mesh vertex buffer as raw f32s
+    /// (binding 0) and its triangle index buffer (binding 1), both read-only
+    /// storage.
+    pub(crate) vertex_mesh_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Curve POLY_NODE pick pipeline: draws the tube/ribbon/streamtube mesh and
+    /// writes the nearer of the hit triangle's two segment endpoints (global node
+    /// index) into the primitive channel. Only built with SHADER_PRIMITIVE_INDEX.
+    pub(crate) node_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Group 2 layout for `node_pipeline`: the per-triangle node payload buffer
+    /// (read-only storage).
+    pub(crate) node_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pick pipeline for glyph sets. Reuses the render glyph transform and writes
     /// the set's object id.
     pub(crate) glyph_pipeline: Option<crate::gpu::RenderPipeline>,
@@ -1393,12 +1408,16 @@ impl DeviceResources {
             });
 
         // --- group 1: PickInstance storage buffer ---
+        // Visible to both stages: the object-id pipeline reads it in the vertex
+        // stage, and the per-pixel VERTEX / NODE variants also read the model
+        // matrix in the fragment stage to place the hit primitive's corners.
         let pick_instance_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("pick_instance_bgl"),
                 entries: &[crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -1504,6 +1523,237 @@ impl DeviceResources {
         self.pick.camera_bgl = Some(pick_camera_bgl);
         self.pick.bind_group_layout_1 = Some(pick_instance_bgl);
         self.pick.pipeline = Some(pipeline);
+    }
+
+    /// Build the surface VERTEX pick pipeline (writes the nearest corner's global
+    /// vertex index into the primitive channel). No-op without
+    /// SHADER_PRIMITIVE_INDEX or if already built. Reuses the group 0 / group 1
+    /// layouts from [`ensure_pick_pipeline`], and adds group 2 for the hit mesh's
+    /// vertex + index storage buffers.
+    pub(crate) fn ensure_pick_vertex_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.pick.vertex_pipeline.is_some() {
+            return;
+        }
+        if !device
+            .features()
+            .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE)
+        {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+
+        let storage_entry = |binding: u32| crate::gpu::BindGroupLayoutEntry {
+            binding,
+            visibility: crate::gpu::ShaderStages::FRAGMENT,
+            ty: crate::gpu::BindingType::Buffer {
+                ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let mesh_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("pick_vertex_mesh_bgl"),
+            entries: &[storage_entry(0), storage_entry(1)],
+        });
+
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "pick_vertex_pipeline_layout",
+            &[
+                self.pick.camera_bgl.as_ref().expect("pick camera bgl"),
+                self.pick
+                    .bind_group_layout_1
+                    .as_ref()
+                    .expect("pick instance bgl"),
+                &mesh_bgl,
+            ],
+        );
+
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "pick_vertex_shader",
+            crate::resources::builders::wgsl_source!("pick_vertex"),
+        );
+
+        let pick_vertex_layout = crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
+            attributes: &[crate::gpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }],
+        };
+
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "pick_vertex_pipeline",
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[pick_vertex_layout],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    front_face: crate::gpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Less,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        );
+
+        self.pick.vertex_mesh_bgl = Some(mesh_bgl);
+        self.pick.vertex_pipeline = Some(pipeline);
+    }
+
+    /// Build the curve POLY_NODE pick pipeline (writes the nearer segment endpoint
+    /// node index into the primitive channel). No-op without SHADER_PRIMITIVE_INDEX
+    /// or if already built. Group 2 is the per-triangle node payload storage buffer.
+    pub(crate) fn ensure_pick_node_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.pick.node_pipeline.is_some() {
+            return;
+        }
+        if !device
+            .features()
+            .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE)
+        {
+            return;
+        }
+        self.ensure_pick_pipeline(device);
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+
+        let node_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("pick_node_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "pick_node_pipeline_layout",
+            &[
+                self.pick.camera_bgl.as_ref().expect("pick camera bgl"),
+                self.pick
+                    .bind_group_layout_1
+                    .as_ref()
+                    .expect("pick instance bgl"),
+                &node_bgl,
+            ],
+        );
+
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "pick_node_shader",
+            crate::resources::builders::wgsl_source!("pick_node"),
+        );
+
+        let pick_vertex_layout = crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
+            attributes: &[crate::gpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }],
+        };
+
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "pick_node_pipeline",
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[pick_vertex_layout],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    front_face: crate::gpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Less,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        );
+
+        self.pick.node_bgl = Some(node_bgl);
+        self.pick.node_pipeline = Some(pipeline);
     }
 
     /// Group 1 layout for the glyph and tensor glyph pick pipelines: the set's

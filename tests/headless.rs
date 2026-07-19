@@ -2485,6 +2485,108 @@ fn gpu_pick_rect_resolves_point_cloud_elements() {
 }
 
 #[test]
+fn gpu_pick_rect_resolves_surface_vertex() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // No CPU pick cache: the VERTEX variant writes the nearest corner index per
+    // pixel, so a rect reads it straight from the primitive channel.
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(321);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let result = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(0.0, 0.0),
+        glam::Vec2::new(64.0, 64.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::VERTEX,
+    );
+    assert!(
+        result.objects.is_empty(),
+        "VERTEX mask carries no OBJECT bit"
+    );
+    assert!(
+        !result.elements.is_empty(),
+        "rect should collect vertex sub-objects"
+    );
+    assert!(
+        result.elements.iter().all(|(id, sub)| *id == 321
+            && matches!(sub, viewport_lib::SubObjectRef::Vertex(v) if *v < 8)),
+        "every element must be a box vertex, got {:?}",
+        result.elements
+    );
+}
+
+#[test]
+fn gpu_pick_rect_resolves_curve_node() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // No CPU pick cache: the POLY_NODE variant writes the nearest node index per
+    // pixel, so a rect reads it straight from the primitive channel.
+    let mut frame = sub_object_pick_frame();
+
+    let mut ribbon = RibbonItem::default();
+    ribbon.positions = vec![[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+    ribbon.strip_lengths = vec![3];
+    ribbon.width = 2.0;
+    ribbon.settings.pick_id = PickId(4242);
+    frame.scene.ribbon_items.push(ribbon);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let result = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(0.0, 0.0),
+        glam::Vec2::new(64.0, 64.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::POLY_NODE,
+    );
+    assert!(
+        result.objects.is_empty(),
+        "POLY_NODE mask carries no OBJECT bit"
+    );
+    assert!(
+        !result.elements.is_empty(),
+        "rect should collect node sub-objects"
+    );
+    assert!(
+        result.elements.iter().all(|(id, sub)| *id == 4242
+            && matches!(sub, viewport_lib::SubObjectRef::Point(n) if *n < 3)),
+        "every element must be a ribbon node, got {:?}",
+        result.elements
+    );
+    // The middle node (index 1) sits under the centre of the rect, so it must be
+    // among the collected nodes.
+    assert!(
+        result
+            .elements
+            .iter()
+            .any(|(_, sub)| *sub == viewport_lib::SubObjectRef::Point(1)),
+        "the middle node should be collected, got {:?}",
+        result.elements
+    );
+}
+
+#[test]
 fn gpu_pick_hits_screen_image() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");

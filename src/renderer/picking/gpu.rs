@@ -285,6 +285,9 @@ enum PickGeom<'a> {
         vertex_buffer: &'a crate::gpu::Buffer,
         index_buffer: &'a crate::gpu::Buffer,
         index_count: u32,
+        /// Per-triangle segment-endpoint payload for the POLY_NODE pick variant;
+        /// `None` when the item built no node data.
+        node_buffer: Option<&'a crate::gpu::Buffer>,
     },
 }
 
@@ -312,6 +315,37 @@ struct PickPipelineFlags {
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
+}
+
+/// A pre-built group-2 bind group for a per-pixel sub-object pick variant, one
+/// slot per entry in `PickDrawSet::draws`. Owned before the pass begins so the
+/// bind group outlives it. `None` slots draw with the default surface pipeline.
+enum PickSublevelBind {
+    /// Mesh vertex + index storage for the surface VERTEX variant.
+    Vertex(crate::gpu::BindGroup),
+    /// Per-triangle node payload for the curve POLY_NODE variant.
+    Node(crate::gpu::BindGroup),
+}
+
+/// Whether a surface / volume-mesh draw should write its nearest corner (global
+/// vertex index) instead of the hit face. True only when the query asks for
+/// `VERTEX` as its finest surface level: no `FACE`, and no `CELL` that this
+/// object could actually answer (a volume mesh with a `face_to_cell` map).
+/// Mirrors the resolve-side priority FACE > CELL > VERTEX.
+fn surface_writes_vertex(mask: PickMask, has_face_to_cell: bool, feature: bool) -> bool {
+    feature
+        && mask.intersects(PickMask::VERTEX)
+        && !mask.intersects(PickMask::FACE)
+        && !(has_face_to_cell && mask.intersects(PickMask::CELL))
+}
+
+/// Whether a curve draw should write its nearest segment endpoint (global node
+/// index) instead of the hit triangle. True only when `POLY_NODE` is the finest
+/// curve level requested, matching the resolve priority STRIP > SEGMENT > NODE.
+fn curve_writes_node(mask: PickMask, feature: bool) -> bool {
+    feature
+        && mask.intersects(PickMask::POLY_NODE)
+        && !mask.intersects(PickMask::STRIP | PickMask::SEGMENT)
 }
 
 /// What a surface or volume-mesh-boundary hit needs to refine a face into a cell
@@ -395,6 +429,9 @@ struct PickDrawSet<'a> {
     /// Cell / vertex refinement data for surface and volume-mesh hits, keyed by
     /// `pick_id`.
     surface_meta: std::collections::HashMap<u64, SurfacePickMeta>,
+    /// The query mask. Decides which per-pixel sub-level pipeline variant each
+    /// surface / curve draw uses (face vs nearest vertex, segment vs nearest node).
+    mask: PickMask,
     /// Whether the device had `SHADER_PRIMITIVE_INDEX` when the draws were
     /// built. Only consulted by the point pick path.
     primitive_index_supported: bool,
@@ -781,6 +818,7 @@ impl ViewportRenderer {
         let (_, pick_instance_bg) =
             self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
+        let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
 
         let targets = PickTargets::new(device, vp_w, vp_h);
 
@@ -804,6 +842,7 @@ impl ViewportRenderer {
                 &pick_camera_bg,
                 &pick_instance_bg,
                 &draw_set,
+                &sublevel,
                 frame,
             );
         }
@@ -944,6 +983,15 @@ impl ViewportRenderer {
     ) -> PickPipelineFlags {
         // --- lazy pipeline init ---
         self.resources.ensure_pick_pipeline(device);
+        // Surface VERTEX and curve POLY_NODE write their final sub-id per pixel
+        // from a dedicated pipeline variant. Build them when the mask asks for
+        // that level; each is a no-op without SHADER_PRIMITIVE_INDEX.
+        if mask.intersects(PickMask::VERTEX) {
+            self.resources.ensure_pick_vertex_pipeline(device);
+        }
+        if mask.intersects(PickMask::POLY_NODE) {
+            self.resources.ensure_pick_node_pipeline(device);
+        }
         let glyph_wanted = PickItemType::Glyph.satisfies(mask);
         let has_pickable_glyphs = glyph_wanted
             && self
@@ -1222,6 +1270,7 @@ impl ViewportRenderer {
                             vertex_buffer: &gpu.vertex_buffer,
                             index_buffer: &gpu.index_buffer,
                             index_count: gpu.index_count,
+                            node_buffer: gpu.node_pick_buffer.as_ref(),
                         },
                         instance_from(gpu.model, gpu.pick_id),
                     ));
@@ -1798,6 +1847,7 @@ impl ViewportRenderer {
             has_plugin_pick,
             kinds,
             surface_meta,
+            mask,
             primitive_index_supported,
         }
     }
@@ -1876,6 +1926,68 @@ impl ViewportRenderer {
         (pick_camera_buf, pick_camera_bg)
     }
 
+    /// Build the per-draw group-2 bind groups for the per-pixel sub-object
+    /// variants (surface VERTEX, curve POLY_NODE), aligned with `draw_set.draws`.
+    /// A slot is `Some` only when that draw's type and the query mask select a
+    /// per-pixel variant and its pipeline exists. Built before the pass so each
+    /// bind group outlives it.
+    fn build_pick_sublevel_binds(
+        &self,
+        device: &crate::gpu::Device,
+        draw_set: &PickDrawSet,
+    ) -> Vec<Option<PickSublevelBind>> {
+        let feature = draw_set.primitive_index_supported;
+        draw_set
+            .draws
+            .iter()
+            .map(|(geom, inst)| match geom {
+                PickGeom::Mesh(mesh_id) => {
+                    let bgl = self.resources.pick.vertex_mesh_bgl.as_ref()?;
+                    let obj = inst.object_id as u64;
+                    let has_f2c = draw_set
+                        .surface_meta
+                        .get(&obj)
+                        .is_some_and(|m| !m.face_to_cell.is_empty());
+                    if !surface_writes_vertex(draw_set.mask, has_f2c, feature) {
+                        return None;
+                    }
+                    let mesh = self.resources.mesh_store.get(*mesh_id)?;
+                    let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("pick_vertex_mesh_bg"),
+                        layout: bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: mesh.vertex_buffer.as_entire_binding(),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: mesh.index_buffer.as_entire_binding(),
+                            },
+                        ],
+                    });
+                    Some(PickSublevelBind::Vertex(bg))
+                }
+                PickGeom::Tube { node_buffer, .. } => {
+                    let bgl = self.resources.pick.node_bgl.as_ref()?;
+                    if !curve_writes_node(draw_set.mask, feature) {
+                        return None;
+                    }
+                    let node_buf = (*node_buffer)?;
+                    let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("pick_node_bg"),
+                        layout: bgl,
+                        entries: &[crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: node_buf.as_entire_binding(),
+                        }],
+                    });
+                    Some(PickSublevelBind::Node(bg))
+                }
+            })
+            .collect()
+    }
+
     /// Record every pick pipeline's draw calls into `pick_pass`. Shared by the
     /// point and rect pick passes: both draw the same mask-selected geometry,
     /// differing only in the scissor rect the caller set before calling this.
@@ -1885,6 +1997,7 @@ impl ViewportRenderer {
         pick_camera_bg: &'rp crate::gpu::BindGroup,
         pick_instance_bg: &'rp crate::gpu::BindGroup,
         draw_set: &PickDrawSet<'rp>,
+        sublevel: &'rp [Option<PickSublevelBind>],
         frame: &'rp FrameData,
     ) {
         // Surface-pipeline draws: scene surfaces, volume-mesh boundaries, and
@@ -1892,24 +2005,39 @@ impl ViewportRenderer {
         // Type-level mask filtering already happened while building `draws`,
         // so an unbuilt or unrequested type contributes nothing and reads
         // back as no hit. Instance index in the storage buffer = position in
-        // `draws`.
-        pick_pass.set_pipeline(
-            self.resources
-                .pick
-                .pipeline
-                .as_ref()
-                .expect("ensure_pick_pipeline must be called first"),
-        );
-        pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-        pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+        // `draws`. A draw with a `sublevel` bind group switches to the per-pixel
+        // VERTEX / NODE pipeline variant (writing the final sub-id into the
+        // primitive channel) instead of the default face / segment pipeline.
+        let default_pipeline = self
+            .resources
+            .pick
+            .pipeline
+            .as_ref()
+            .expect("ensure_pick_pipeline must be called first");
 
         for (instance_slot, (geom, _)) in draw_set.draws.iter().enumerate() {
             let slot = instance_slot as u32;
+            let variant = sublevel.get(instance_slot).and_then(|s| s.as_ref());
             match geom {
                 PickGeom::Mesh(mesh_id) => {
                     let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                         continue;
                     };
+                    match variant {
+                        Some(PickSublevelBind::Vertex(bg)) => {
+                            pick_pass.set_pipeline(
+                                self.resources.pick.vertex_pipeline.as_ref().unwrap(),
+                            );
+                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+                            pick_pass.set_bind_group(2, bg, &[]);
+                        }
+                        _ => {
+                            pick_pass.set_pipeline(default_pipeline);
+                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+                        }
+                    }
                     pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     pick_pass.set_index_buffer(
                         mesh.index_buffer.slice(..),
@@ -1921,7 +2049,22 @@ impl ViewportRenderer {
                     vertex_buffer,
                     index_buffer,
                     index_count,
+                    ..
                 } => {
+                    match variant {
+                        Some(PickSublevelBind::Node(bg)) => {
+                            pick_pass
+                                .set_pipeline(self.resources.pick.node_pipeline.as_ref().unwrap());
+                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+                            pick_pass.set_bind_group(2, bg, &[]);
+                        }
+                        _ => {
+                            pick_pass.set_pipeline(default_pipeline);
+                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+                        }
+                    }
                     pick_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     pick_pass
                         .set_index_buffer(index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
@@ -2247,6 +2390,7 @@ impl ViewportRenderer {
         let (_, pick_instance_bg) =
             self.build_pick_instance_bind_group(device, queue, &draw_set.draws);
         let (_, pick_camera_bg) = self.build_pick_camera_bind_group(device, queue, frame);
+        let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
         let targets = PickTargets::new(device, vp_w, vp_h);
 
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
@@ -2263,6 +2407,7 @@ impl ViewportRenderer {
                 &pick_camera_bg,
                 &pick_instance_bg,
                 &draw_set,
+                &sublevel,
                 frame,
             );
         }
@@ -2533,6 +2678,13 @@ impl ViewportRenderer {
                 }
             }
             PickSubKind::Curve => {
+                // When the POLY_NODE variant drew, the primitive channel already
+                // holds the final global node index. No tri_segment lookup, no
+                // per-object CPU test.
+                if curve_writes_node(mask, primitive_index_supported) {
+                    return Some(SubObjectRef::Point(sub_primitive));
+                }
+
                 let gpu = self
                     .streamtube_gpu_data
                     .iter()
@@ -2619,13 +2771,12 @@ impl ViewportRenderer {
     /// Decode a read-back `(object_id, sub_primitive)` into a [`SubObjectRef`]
     /// for rect picking, using only the primitive channel (no per-pixel ray).
     ///
-    /// A rect query has one primitive id per pixel but no single cursor ray, so
-    /// this covers the sub-object levels the primitive channel names directly:
-    /// instance / cloud-point / splat / voxel (the index is the element), polyline
-    /// and curve segment / strip, and surface face / cell. `VERTEX` and curve
-    /// `POLY_NODE` are omitted: both need the hit world position to pick the
-    /// nearest corner / node, which the point path gets from the cursor ray but a
-    /// rect does not have per pixel. Surface and curve sub-objects also need
+    /// A rect query has one primitive id per pixel but no single cursor ray. Every
+    /// level reads the primitive channel directly: instance / cloud-point / splat /
+    /// voxel (the index is the element), polyline and curve segment / strip, surface
+    /// face / cell, and surface `VERTEX` / curve `POLY_NODE`. The last two need no
+    /// cursor ray because their pipeline variants already wrote the nearest corner /
+    /// node index into the channel per pixel. Surface and curve sub-objects need
     /// `SHADER_PRIMITIVE_INDEX` (there is no per-pixel CPU refine for a rect).
     fn resolve_gpu_sub_object_rect(
         &self,
@@ -2668,6 +2819,10 @@ impl ViewportRenderer {
                 if !primitive_index_supported {
                     return None;
                 }
+                // POLY_NODE variant: the channel is the final node index.
+                if curve_writes_node(mask, primitive_index_supported) {
+                    return Some(SubObjectRef::Point(sub_primitive));
+                }
                 let gpu = self
                     .streamtube_gpu_data
                     .iter()
@@ -2691,6 +2846,13 @@ impl ViewportRenderer {
             PickSubKind::Surface => {
                 if !primitive_index_supported {
                     return None;
+                }
+                let has_f2c = surface_meta
+                    .get(&object_id)
+                    .is_some_and(|m| !m.face_to_cell.is_empty());
+                // VERTEX variant: the channel is the final global vertex index.
+                if surface_writes_vertex(mask, has_f2c, primitive_index_supported) {
+                    return Some(SubObjectRef::Vertex(sub_primitive));
                 }
                 if mask.intersects(PickMask::FACE) {
                     Some(SubObjectRef::Face(sub_primitive))
@@ -2878,6 +3040,14 @@ impl ViewportRenderer {
         }
 
         let meta = surface_meta.get(&object_id);
+
+        // When the VERTEX variant drew for this object (feature present, VERTEX is
+        // the finest level it can answer), the primitive channel already holds the
+        // final global vertex index. No CPU refinement.
+        let has_f2c = meta.is_some_and(|m| !m.face_to_cell.is_empty());
+        if surface_writes_vertex(mask, has_f2c, primitive_index_supported) {
+            return Some(SubObjectRef::Vertex(sub_primitive));
+        }
 
         // Recover the hit triangle. With the feature it is the read-back index;
         // otherwise ray-cast this one object's mesh to find it.

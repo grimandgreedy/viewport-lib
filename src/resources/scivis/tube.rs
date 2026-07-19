@@ -506,6 +506,13 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            node_pick_buffer: build_node_pick_buffer(
+                device,
+                queue,
+                &tri_segment,
+                &item.positions,
+                &item.strip_lengths,
+            ),
             tri_segment,
             tri_strip,
             node_positions: item.positions.clone(),
@@ -876,6 +883,13 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            node_pick_buffer: build_node_pick_buffer(
+                device,
+                queue,
+                &tri_segment,
+                &item.positions,
+                &item.strip_lengths,
+            ),
             tri_segment,
             tri_strip,
             node_positions: item.positions.clone(),
@@ -1260,6 +1274,13 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            node_pick_buffer: build_node_pick_buffer(
+                device,
+                queue,
+                &tri_segment,
+                &item.positions,
+                &item.strip_lengths,
+            ),
             tri_segment,
             tri_strip,
             node_positions: item.positions.clone(),
@@ -1749,6 +1770,91 @@ pub struct StreamtubeGpuData {
     /// Used with [`node_positions`](Self::node_positions) to map a segment to its
     /// endpoint control points. Empty when not pickable.
     pub(crate) node_strip_lengths: Vec<u32>,
+    /// Per-triangle node payload for the POLY_NODE pick pipeline: for each
+    /// triangle (parallel to `tri_segment`), the local positions and global node
+    /// indices of its segment's two endpoints. The pick fragment reads it by
+    /// `primitive_index` and writes the endpoint nearer the hit. `None` when
+    /// there is no geometry to pick.
+    pub(crate) node_pick_buffer: Option<crate::gpu::Buffer>,
     // Keep uniform buffer alive.
     pub(crate) _uniform_buf: crate::gpu::Buffer,
+}
+
+/// One triangle's segment-endpoint payload for the curve POLY_NODE pick shader.
+/// Layout matches the WGSL `NodePair` struct (32 bytes): a `vec3` position keeps
+/// 16-byte alignment, so each index sits in the padding slot after its position.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct NodePairRaw {
+    pub(crate) p0: [f32; 3],
+    pub(crate) i0: u32,
+    pub(crate) p1: [f32; 3],
+    pub(crate) i1: u32,
+}
+
+/// Global node indices of a segment's two endpoints, accounting for multi-strip
+/// layout (each strip of `slen` nodes owns `slen - 1` segments). Mirrors the
+/// picking helper `segment_node_indices`, replicated here to keep the upload path
+/// independent of the picking module.
+fn node_endpoints(seg: u32, strip_lengths: &[u32], n_positions: usize) -> (usize, usize) {
+    if strip_lengths.is_empty() {
+        let a = seg as usize;
+        if a + 1 < n_positions {
+            return (a, a + 1);
+        }
+        return (0, 0);
+    }
+    let mut node_off = 0usize;
+    let mut seg_off = 0u32;
+    for &slen in strip_lengths {
+        let slen = slen as usize;
+        let segs = slen.saturating_sub(1) as u32;
+        if seg < seg_off + segs {
+            let k = (seg - seg_off) as usize;
+            let a = node_off + k;
+            if a + 1 < n_positions {
+                return (a, a + 1);
+            }
+            return (0, 0);
+        }
+        seg_off += segs;
+        node_off += slen;
+    }
+    (0, 0)
+}
+
+/// Build the per-triangle node payload buffer for the POLY_NODE pick pipeline.
+/// One entry per triangle, ordered to match `tri_segment`. `None` when the item
+/// has no triangles or control points.
+fn build_node_pick_buffer(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    tri_segment: &[u32],
+    positions: &[[f32; 3]],
+    strip_lengths: &[u32],
+) -> Option<crate::gpu::Buffer> {
+    if tri_segment.is_empty() || positions.is_empty() {
+        return None;
+    }
+    let payload: Vec<NodePairRaw> = tri_segment
+        .iter()
+        .map(|&seg| {
+            let (a, b) = node_endpoints(seg, strip_lengths, positions.len());
+            NodePairRaw {
+                p0: positions[a],
+                i0: a as u32,
+                p1: positions[b],
+                i1: b as u32,
+            }
+        })
+        .collect();
+    let bytes: &[u8] = bytemuck::cast_slice(&payload);
+    let buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
+        label: Some("streamtube_node_pick_buffer"),
+        size: bytes.len() as u64,
+        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buffer, 0, bytes);
+    Some(buffer)
 }

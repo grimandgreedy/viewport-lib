@@ -33,6 +33,7 @@ impl GpuByteSize for StreamtubeGpuData {
             + self.index_buffer.size()
             + self.edge_index_buffer.size()
             + self._uniform_buf.size()
+            + self.node_pick_buffer.as_ref().map_or(0, |b| b.size())
     }
 }
 
