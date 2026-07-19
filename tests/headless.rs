@@ -1808,6 +1808,65 @@ fn gpu_pick_surface_resolves_face_and_vertex() {
 }
 
 #[test]
+fn pick_auto_backend_routes_to_gpu_when_feature_present() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // Auto must not need the CPU pick cache on a device that can resolve sub-object
+    // picking on the GPU.
+    let mut frame = sub_object_pick_frame();
+
+    assert!(
+        renderer.gpu_sub_object_supported(&device),
+        "adapter with SHADER_PRIMITIVE_INDEX should support GPU sub-object picking"
+    );
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(777);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // Object-level Auto: routes to the GPU and returns the object.
+    let obj = renderer
+        .pick_object(
+            PickBackend::Auto,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::OBJECT,
+        )
+        .expect("box should be hit");
+    assert_eq!(obj.id, 777);
+
+    // Sub-object Auto: the feature is present, so it stays on the GPU and resolves
+    // the vertex without any CPU pick cache being enabled.
+    let vertex = renderer
+        .pick_object(
+            PickBackend::Auto,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::VERTEX,
+        )
+        .expect("box should be hit");
+    assert_eq!(vertex.id, 777);
+    match vertex.sub_object {
+        Some(viewport_lib::SubObjectRef::Vertex(v)) => assert!(v < 8, "vertex {v} out of range"),
+        other => panic!("expected a Vertex sub-object from Auto, got {other:?}"),
+    }
+}
+
+#[test]
 fn gpu_pick_volume_mesh_resolves_cell_without_cpu_cache() {
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
@@ -2580,6 +2639,98 @@ fn gpu_pick_rect_resolves_curve_node() {
             .any(|(_, sub)| *sub == viewport_lib::SubObjectRef::Point(1)),
         "the middle node should be collected, got {:?}",
         result.elements
+    );
+}
+
+#[test]
+fn gpu_pick_hits_top_right_scaled_screen_image() {
+    // Mirrors showcase 33's overlay: a TopRight-anchored image with scale > 1,
+    // driven through the real pick entry points (point and rect), not the free
+    // functions.
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    // 8x8 at scale 2 = 16x16 effective, pinned to the top-right of the 64x64
+    // viewport: screen rect x in [48, 64], y in [0, 16].
+    let mut image = ScreenImageItem::default();
+    image.pixels = vec![[255, 255, 255, 255]; 8 * 8];
+    image.width = 8;
+    image.height = 8;
+    image.scale = 2.0;
+    image.anchor = ImageAnchor::TopRight;
+    image.settings.pick_id = PickId(52);
+    frame.scene.screen_images.push(image);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // Point: a click inside the top-right rect selects it.
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(56.0, 8.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert_eq!(
+        hit.map(|h| h.id),
+        Some(52),
+        "top-right overlay should be hit"
+    );
+
+    // Point: a click in the opposite corner misses it.
+    let miss = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(4.0, 60.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert!(
+        miss.is_none(),
+        "bottom-left click should not hit the overlay"
+    );
+
+    // Screen overlays are OBJECT-only on both backends: a sub-object-only mask
+    // (no OBJECT bit) returns nothing, and the GPU backend agrees with the CPU
+    // backend. A consumer that wants the overlay under a sub-object query includes
+    // OBJECT in the mask.
+    renderer.set_cpu_pick_cache(true);
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    for backend in [PickBackend::Gpu, PickBackend::Cpu] {
+        let sub = renderer.pick_object(
+            backend,
+            glam::Vec2::new(56.0, 8.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::POINT_LIKE,
+        );
+        assert!(
+            sub.is_none(),
+            "{backend:?}: overlay is OBJECT-only, POINT_LIKE should not select it"
+        );
+    }
+
+    // Rect: a rubber band over the top-right corner collects the overlay.
+    let result = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(50.0, 0.0),
+        glam::Vec2::new(64.0, 14.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT,
+    );
+    assert!(
+        result.objects.contains(&52),
+        "rect over the corner should collect the overlay, got {:?}",
+        result.objects
     );
 }
 

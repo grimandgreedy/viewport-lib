@@ -93,6 +93,28 @@ impl ViewportRenderer {
 ///
 /// Both backends return the same [`PickHit`]
 /// so a caller can switch between them without changing how it reads the result.
+/// Whether a mask asks for a GPU sub-object level that only the rasterizer's
+/// `primitive_index` can name (surface face / cell / vertex / edge, tube-family
+/// segment / strip / node), so the GPU backend needs `SHADER_PRIMITIVE_INDEX` to
+/// resolve it. The instance / cloud-point / splat / voxel levels come from
+/// `instance_index` / `vertex_index` and need no feature, so they are excluded.
+///
+/// `SEGMENT` / `STRIP` / `POLY_NODE` are treated as needing the feature: polylines
+/// answer them without it, but tubes / ribbons / streamtubes need it, and the mask
+/// bit alone does not say which is in the scene, so `Auto` errs toward the backend
+/// that can always answer.
+fn gpu_sub_object_needs_feature(mask: PickMask) -> bool {
+    mask.intersects(
+        PickMask::FACE
+            | PickMask::CELL
+            | PickMask::VERTEX
+            | PickMask::EDGE
+            | PickMask::SEGMENT
+            | PickMask::STRIP
+            | PickMask::POLY_NODE,
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickBackend {
     /// CPU ray-cast. Fills in sub-object identity (face, vertex, edge, cell, ...)
@@ -109,6 +131,15 @@ pub enum PickBackend {
     /// per-click CPU ray-cast. Cost tracks the render rather than the object count,
     /// so it is the backend for large scenes.
     Gpu,
+    /// Let the library choose per query. Uses [`Gpu`](Self::Gpu) for object-level
+    /// picks and the sub-object levels the GPU resolves on this device. Only when
+    /// the query needs a triangle-mesh sub-object level (surface face / cell /
+    /// vertex, tube-family segment / strip / node) on a device without
+    /// `SHADER_PRIMITIVE_INDEX` does it fall back to [`Cpu`](Self::Cpu), and then
+    /// only if the CPU pick cache is enabled; otherwise it stays on the GPU and
+    /// returns the object-level hit. Never trades a fast GPU pick for a hidden
+    /// per-click CPU ray-cast the caller did not opt into.
+    Auto,
 }
 
 /// Outcome of polling a non-blocking GPU pick with
@@ -149,24 +180,62 @@ impl ViewportRenderer {
     ) -> Option<PickHit> {
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         let view_proj = frame.camera.render_camera.view_proj();
-        let _ = (viewport_size, view_proj);
-        match backend {
+        match self.resolve_pick_backend(backend, device, mask) {
             PickBackend::Cpu => self.pick(cursor, viewport_size, view_proj, mask),
-            PickBackend::Gpu => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
+            // `resolve_pick_backend` never returns `Auto`.
+            _ => self.pick_object_gpu_blocking(device, queue, cursor, frame, mask),
+        }
+    }
+
+    /// Whether this device can resolve GPU sub-object picking for triangle-meshed
+    /// types (surface face / cell / vertex, tube-family segment / strip / node).
+    ///
+    /// Needs `SHADER_PRIMITIVE_INDEX`. Object-level GPU picking and the instance /
+    /// cloud-point / splat / voxel sub-levels work regardless. Use this to decide
+    /// whether to enable the CPU pick cache as a sub-object fallback, or just pass
+    /// [`PickBackend::Auto`] and let the library route each query.
+    pub fn gpu_sub_object_supported(&self, device: &crate::gpu::Device) -> bool {
+        device
+            .features()
+            .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE)
+    }
+
+    /// Resolve [`PickBackend::Auto`] to a concrete backend for this query; `Cpu`
+    /// and `Gpu` pass through unchanged. Auto stays on the GPU unless the mask
+    /// asks for a triangle-mesh sub-object level the device cannot resolve without
+    /// `SHADER_PRIMITIVE_INDEX`, in which case it uses the CPU backend when its
+    /// cache is on (else the GPU object-level answer).
+    fn resolve_pick_backend(
+        &self,
+        backend: PickBackend,
+        device: &crate::gpu::Device,
+        mask: PickMask,
+    ) -> PickBackend {
+        match backend {
+            PickBackend::Auto => {
+                if gpu_sub_object_needs_feature(mask)
+                    && !self.gpu_sub_object_supported(device)
+                    && self.cpu_pick_cache_enabled
+                {
+                    PickBackend::Cpu
+                } else {
+                    PickBackend::Gpu
+                }
+            }
+            concrete => concrete,
         }
     }
 
     /// Pick every object touching the rect, running `backend` and returning a
     /// [`PickRectResult`].
     ///
-    /// The GPU backend is object-level only: it reads back the id region within
-    /// the rect and collects the unique object ids, but does not decode the
-    /// primitive channel into sub-object identity (that would mean resolving
-    /// face / cell / vertex / instance per pixel over the whole rect). A mask
-    /// with no `OBJECT` bit gets an empty result from the GPU backend rather
-    /// than a silent reinterpretation of what it asked for; use `Cpu` for
-    /// sub-object rect selection. `Cpu` is the same as calling
-    /// [`pick_rect`](Self::pick_rect).
+    /// Both backends fill `objects` (when the mask has `OBJECT`) and `elements`
+    /// (the sub-object levels the mask asks for). The GPU backend reads the id and
+    /// primitive channels over the rect region and decodes each unique
+    /// `(object, sub-element)` per pixel; the triangle-mesh sub-levels need
+    /// `SHADER_PRIMITIVE_INDEX`, the same as the point path (see
+    /// [`PickBackend::Gpu`]). `Cpu` is the same as calling
+    /// [`pick_rect`](Self::pick_rect); `Auto` routes per query.
     pub fn pick_rect_objects(
         &mut self,
         backend: PickBackend,
@@ -177,13 +246,14 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         mask: PickMask,
     ) -> PickRectResult {
-        match backend {
+        match self.resolve_pick_backend(backend, device, mask) {
             PickBackend::Cpu => {
                 let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
                 let view_proj = frame.camera.render_camera.view_proj();
                 self.pick_rect(rect_min, rect_max, viewport_size, view_proj, mask)
             }
-            PickBackend::Gpu => self.pick_rect_gpu(device, queue, rect_min, rect_max, frame, mask),
+            // `resolve_pick_backend` never returns `Auto`.
+            _ => self.pick_rect_gpu(device, queue, rect_min, rect_max, frame, mask),
         }
     }
 }

@@ -696,7 +696,7 @@ impl ViewportRenderer {
         // the id pass, and they always render on top of the 3D scene, so a hit
         // here takes priority over anything the render-based pass would find
         // (matching the CPU backend, where these carry toi = 0.0 : see
-        // `point.rs` section 10).
+        // `point.rs` section 10). OBJECT-only, the same as the CPU backend.
         let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
         if mask.intersects(PickMask::OBJECT) {
             if let Some(id) = screen_image_hit_at(&frame.scene.screen_images, viewport_size, cursor)

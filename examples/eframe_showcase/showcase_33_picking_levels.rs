@@ -1432,9 +1432,9 @@ impl App {
     }
 
     /// Handle a rubber-band box selection using renderer.pick_rect_objects()
-    /// with the active PickMask and backend. The GPU backend is object-level
-    /// only (it never returns `elements`), so sub-object rect selection still
-    /// needs the CPU backend.
+    /// with the active PickMask and backend. Both backends fill `objects` and
+    /// `elements`, so this collects object and sub-object rect selections from
+    /// either one.
     pub(crate) fn handle_pl_unified_box_select(
         &mut self,
         rect_min: glam::Vec2,
