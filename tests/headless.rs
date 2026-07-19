@@ -1359,7 +1359,9 @@ fn gpu_pick_ribbon_resolves_segment_and_node() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    // POLY_NODE resolution reads the retained curve item's control points.
+    // Node positions now come from the curve gpu-data. The cache is only needed
+    // for the feature-absent segment fallback, which runs on adapters without
+    // SHADER_PRIMITIVE_INDEX.
     renderer.set_cpu_pick_cache(true);
     let mut frame = sub_object_pick_frame();
 
@@ -1759,8 +1761,8 @@ fn gpu_pick_surface_resolves_face_and_vertex() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    // Vertex refinement reads the retained CPU pick cache.
-    renderer.set_cpu_pick_cache(true);
+    // No CPU pick cache: face and vertex resolve from the per-object surface
+    // metadata copied off the frame plus the mesh geometry in mesh_store.
     let mut frame = sub_object_pick_frame();
 
     let mesh_id = renderer
@@ -1806,6 +1808,54 @@ fn gpu_pick_surface_resolves_face_and_vertex() {
         Some(viewport_lib::SubObjectRef::Vertex(v)) => assert!(v < 8, "vertex {v} out of range"),
         other => panic!("expected a Vertex sub-object, got {other:?}"),
     }
+}
+
+#[test]
+fn gpu_pick_volume_mesh_resolves_cell_without_cpu_cache() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // No CPU pick cache: the boundary-face-to-cell map is copied off the frame
+    // into the pick's surface metadata, so cell picking needs no retained clone.
+    let mut frame = sub_object_pick_frame();
+
+    // One hexahedron spanning [-0.5, 0.5]^3 in VTK vertex order. Every boundary
+    // face belongs to cell 0.
+    let mut data = viewport_lib::VolumeMeshData::default();
+    data.positions = vec![
+        [-0.5, -0.5, -0.5],
+        [0.5, -0.5, -0.5],
+        [0.5, -0.5, 0.5],
+        [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5],
+        [0.5, 0.5, -0.5],
+        [0.5, 0.5, 0.5],
+        [-0.5, 0.5, 0.5],
+    ];
+    data.cells = vec![[0, 1, 2, 3, 4, 5, 6, 7]];
+
+    let mut item = renderer
+        .resources_mut()
+        .upload_volume_mesh(&device, &data)
+        .expect("upload volume mesh");
+    item.settings.pick_id = PickId(654);
+    frame.scene.volume_meshes.push(item);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::CELL,
+        )
+        .expect("volume mesh should be hit at the centre");
+    assert_eq!(hit.id, 654);
+    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Cell(0)));
 }
 
 // ---------------------------------------------------------------------------
