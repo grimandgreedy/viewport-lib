@@ -265,6 +265,11 @@ pub(crate) struct PickResources {
     /// (binding 0) and its triangle index buffer (binding 1), both read-only
     /// storage.
     pub(crate) vertex_mesh_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Surface EDGE pick pipeline: like `vertex_pipeline`, but the fragment writes
+    /// the hit triangle's nearest edge id (`primitive_index * 3 + local_edge`) into
+    /// the primitive channel. Reuses `vertex_mesh_bgl` for group 2. Only built with
+    /// SHADER_PRIMITIVE_INDEX.
+    pub(crate) edge_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Curve POLY_NODE pick pipeline: draws the tube/ribbon/streamtube mesh and
     /// writes the nearer of the hit triangle's two segment endpoints (global node
     /// index) into the primitive channel. Only built with SHADER_PRIMITIVE_INDEX.
@@ -1640,6 +1645,107 @@ impl DeviceResources {
 
         self.pick.vertex_mesh_bgl = Some(mesh_bgl);
         self.pick.vertex_pipeline = Some(pipeline);
+    }
+
+    /// Build the surface EDGE pick pipeline (writes the nearest edge id
+    /// `primitive_index * 3 + local_edge` into the primitive channel). No-op without
+    /// SHADER_PRIMITIVE_INDEX or if already built. Reuses `vertex_mesh_bgl` (mesh
+    /// vertex + index storage) for group 2, built by `ensure_pick_vertex_pipeline`.
+    pub(crate) fn ensure_pick_edge_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.pick.edge_pipeline.is_some() {
+            return;
+        }
+        if !device
+            .features()
+            .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE)
+        {
+            return;
+        }
+        // Reuse the vertex variant's group-0/1 layouts and the mesh storage layout.
+        self.ensure_pick_vertex_pipeline(device);
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
+
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "pick_edge_pipeline_layout",
+            &[
+                self.pick.camera_bgl.as_ref().expect("pick camera bgl"),
+                self.pick
+                    .bind_group_layout_1
+                    .as_ref()
+                    .expect("pick instance bgl"),
+                self.pick.vertex_mesh_bgl.as_ref().expect("pick vertex bgl"),
+            ],
+        );
+
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "pick_edge_shader",
+            crate::resources::builders::wgsl_source!("pick_edge"),
+        );
+
+        let pick_vertex_layout = crate::gpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as crate::gpu::BufferAddress,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
+            attributes: &[crate::gpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: crate::gpu::VertexFormat::Float32x3,
+            }],
+        };
+
+        let pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "pick_edge_pipeline",
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[pick_vertex_layout],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Uint,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                        Some(crate::gpu::ColorTargetState {
+                            format: crate::gpu::TextureFormat::R32Float,
+                            blend: None,
+                            write_mask: crate::gpu::ColorWrites::ALL,
+                        }),
+                    ],
+                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    front_face: crate::gpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                    true,
+                    crate::gpu::CompareFunction::Less,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        );
+
+        self.pick.edge_pipeline = Some(pipeline);
     }
 
     /// Build the curve POLY_NODE pick pipeline (writes the nearer segment endpoint

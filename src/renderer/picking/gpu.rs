@@ -323,6 +323,9 @@ struct PickPipelineFlags {
 enum PickSublevelBind {
     /// Mesh vertex + index storage for the surface VERTEX variant.
     Vertex(crate::gpu::BindGroup),
+    /// Mesh vertex + index storage for the surface EDGE variant (same layout as
+    /// `Vertex`, different pipeline).
+    Edge(crate::gpu::BindGroup),
     /// Per-triangle node payload for the curve POLY_NODE variant.
     Node(crate::gpu::BindGroup),
 }
@@ -336,6 +339,18 @@ fn surface_writes_vertex(mask: PickMask, has_face_to_cell: bool, feature: bool) 
     feature
         && mask.intersects(PickMask::VERTEX)
         && !mask.intersects(PickMask::FACE)
+        && !(has_face_to_cell && mask.intersects(PickMask::CELL))
+}
+
+/// Whether a surface / volume-mesh draw should write its nearest edge id
+/// (`face * 3 + local_edge`) instead of the hit face. True only when `EDGE` is the
+/// finest surface level requested, matching the resolve priority
+/// FACE > CELL > VERTEX > EDGE: no `FACE`, no `VERTEX`, and no `CELL` this object
+/// could answer.
+fn surface_writes_edge(mask: PickMask, has_face_to_cell: bool, feature: bool) -> bool {
+    feature
+        && mask.intersects(PickMask::EDGE)
+        && !mask.intersects(PickMask::FACE | PickMask::VERTEX)
         && !(has_face_to_cell && mask.intersects(PickMask::CELL))
 }
 
@@ -960,6 +975,9 @@ impl ViewportRenderer {
         // that level; each is a no-op without SHADER_PRIMITIVE_INDEX.
         if mask.intersects(PickMask::VERTEX) {
             self.resources.ensure_pick_vertex_pipeline(device);
+        }
+        if mask.intersects(PickMask::EDGE) {
+            self.resources.ensure_pick_edge_pipeline(device);
         }
         if mask.intersects(PickMask::POLY_NODE) {
             self.resources.ensure_pick_node_pipeline(device);
@@ -1920,7 +1938,14 @@ impl ViewportRenderer {
                         .surface_meta
                         .get(&obj)
                         .is_some_and(|m| !m.is_empty());
-                    if !surface_writes_vertex(draw_set.mask, has_f2c, feature) {
+                    // VERTEX and EDGE share the mesh vertex + index storage bind
+                    // group; only the pipeline differs. At most one fires (their
+                    // priority guards are exclusive).
+                    let want_vertex = surface_writes_vertex(draw_set.mask, has_f2c, feature)
+                        && self.resources.pick.vertex_pipeline.is_some();
+                    let want_edge = surface_writes_edge(draw_set.mask, has_f2c, feature)
+                        && self.resources.pick.edge_pipeline.is_some();
+                    if !want_vertex && !want_edge {
                         return None;
                     }
                     let mesh = self.resources.mesh_store.get(*mesh_id)?;
@@ -1938,7 +1963,11 @@ impl ViewportRenderer {
                             },
                         ],
                     });
-                    Some(PickSublevelBind::Vertex(bg))
+                    if want_vertex {
+                        Some(PickSublevelBind::Vertex(bg))
+                    } else {
+                        Some(PickSublevelBind::Edge(bg))
+                    }
                 }
                 PickGeom::Tube { node_buffer, .. } => {
                     let bgl = self.resources.pick.node_bgl.as_ref()?;
@@ -2000,6 +2029,13 @@ impl ViewportRenderer {
                             pick_pass.set_pipeline(
                                 self.resources.pick.vertex_pipeline.as_ref().unwrap(),
                             );
+                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+                            pick_pass.set_bind_group(2, bg, &[]);
+                        }
+                        Some(PickSublevelBind::Edge(bg)) => {
+                            pick_pass
+                                .set_pipeline(self.resources.pick.edge_pipeline.as_ref().unwrap());
                             pick_pass.set_bind_group(0, pick_camera_bg, &[]);
                             pick_pass.set_bind_group(1, pick_instance_bg, &[]);
                             pick_pass.set_bind_group(2, bg, &[]);
@@ -2778,6 +2814,10 @@ impl ViewportRenderer {
                 if surface_writes_vertex(mask, has_f2c, primitive_index_supported) {
                     return Some(SubObjectRef::Vertex(sub_primitive));
                 }
+                // EDGE variant: the channel is the nearest edge id.
+                if surface_writes_edge(mask, has_f2c, primitive_index_supported) {
+                    return Some(SubObjectRef::Edge(sub_primitive));
+                }
                 if mask.intersects(PickMask::FACE) {
                     Some(SubObjectRef::Face(sub_primitive))
                 } else if mask.intersects(PickMask::CELL) {
@@ -2812,7 +2852,8 @@ impl ViewportRenderer {
         let wants_face = mask.intersects(PickMask::FACE);
         let wants_cell = mask.intersects(PickMask::CELL);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
-        if !(wants_face || wants_cell || wants_vertex) {
+        let wants_edge = mask.intersects(PickMask::EDGE);
+        if !(wants_face || wants_cell || wants_vertex || wants_edge) {
             return None;
         }
         if !primitive_index_supported {
@@ -2825,6 +2866,10 @@ impl ViewportRenderer {
         // The VERTEX variant already wrote the final nearest-corner vertex index.
         if surface_writes_vertex(mask, has_f2c, primitive_index_supported) {
             return Some(SubObjectRef::Vertex(sub_primitive));
+        }
+        // The EDGE variant wrote the nearest edge id (`face * 3 + local_edge`).
+        if surface_writes_edge(mask, has_f2c, primitive_index_supported) {
+            return Some(SubObjectRef::Edge(sub_primitive));
         }
 
         // Otherwise the channel is the hit face. FACE takes priority, then CELL

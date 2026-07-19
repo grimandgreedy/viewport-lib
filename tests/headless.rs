@@ -1915,6 +1915,57 @@ fn gpu_pick_volume_mesh_resolves_cell_without_cpu_cache() {
 }
 
 #[test]
+fn gpu_pick_surface_resolves_edge() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut frame = sub_object_pick_frame();
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .expect("upload box mesh");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.settings.pick_id = PickId(321);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let hit = renderer
+        .pick_object(
+            PickBackend::Gpu,
+            glam::Vec2::new(32.0, 32.0),
+            &frame,
+            &device,
+            &queue,
+            PickMask::EDGE,
+        )
+        .expect("box should be hit");
+    // Edge id is `face * 3 + local_edge`; the box has 12 triangles, 36 local edges.
+    match hit.sub_object {
+        Some(viewport_lib::SubObjectRef::Edge(e)) => assert!(e < 36, "edge {e} out of range"),
+        other => panic!("expected an Edge sub-object, got {other:?}"),
+    }
+    // The snap position is the closest point on that edge, inside the box bounds.
+    let snap = hit
+        .sub_object_world_pos
+        .expect("edge pick should fill the snap position");
+    for c in [snap.x, snap.y, snap.z] {
+        assert!(c.abs() <= 0.5 + 1e-4, "edge snap {snap:?} outside the box");
+    }
+    // The nearest point must lie on the box surface (at least one face coord).
+    assert!(
+        [snap.x, snap.y, snap.z]
+            .iter()
+            .any(|c| (c.abs() - 0.5).abs() < 1e-3),
+        "edge snap {snap:?} should be on a box face"
+    );
+}
+
+#[test]
 fn gpu_pick_vertex_fills_snap_world_pos() {
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");

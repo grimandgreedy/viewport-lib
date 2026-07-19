@@ -219,6 +219,24 @@ impl ViewportRenderer {
             // item's inline positions. Falls back to the hit point for ref items
             // (positions not inline on the frame).
             SubObjectRef::Point(i) => self.pick_element_position(id, i, frame).or(Some(world_pos)),
+            // The closest point on the hit edge to the cursor hit point. The edge
+            // id is `face * 3 + local_edge` (see `pick_edge.wgsl`).
+            SubObjectRef::Edge(e) => {
+                let (mesh_id, model) = self.pick_surface_mesh(id, frame)?;
+                let mesh = self.resources.mesh_store.get(mesh_id)?;
+                let indices = mesh.cpu_indices.as_ref()?;
+                let positions = mesh.cpu_positions.as_ref()?;
+                let base = (e / 3) as usize * 3;
+                let local = (e % 3) as usize;
+                let ia = *indices.get(base + local)? as usize;
+                let ib = *indices.get(base + (local + 1) % 3)? as usize;
+                let m = glam::Mat4::from_cols_array_2d(&model);
+                let a = m.transform_point3(glam::Vec3::from(*positions.get(ia)?));
+                let b = m.transform_point3(glam::Vec3::from(*positions.get(ib)?));
+                let ab = b - a;
+                let t = (world_pos - a).dot(ab) / ab.length_squared().max(1e-12);
+                Some(a + ab * t.clamp(0.0, 1.0))
+            }
             // The hit point already lies on these features.
             SubObjectRef::Face(_) | SubObjectRef::Splat(_) | SubObjectRef::Instance(_) => {
                 Some(world_pos)
@@ -226,7 +244,6 @@ impl ViewportRenderer {
             // No single snap point.
             SubObjectRef::Cell(_)
             | SubObjectRef::Voxel(_)
-            | SubObjectRef::Edge(_)
             | SubObjectRef::Segment(_)
             | SubObjectRef::Strip(_) => None,
         }
