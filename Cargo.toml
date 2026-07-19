@@ -70,6 +70,19 @@ eframe035 = { package = "eframe", version = "0.35", default-features = false, fe
 # major). Only the `slint-minimal` example, gated on
 # `required-features = ["wgpu29"]`, uses it.
 slint = { version = "~1.17", features = ["unstable-wgpu-29", "renderer-femtovg-wgpu"] }
+# Bevy 0.19 pins wgpu 29, so it shares viewport-lib's wgpu29 leg: viewport-lib
+# renders straight into a Bevy GPU texture on Bevy's own device with no CPU copy.
+# Only the `bevy-swarm` example (required-features = ["wgpu29"]) uses it, so a
+# 27-leg build never pulls Bevy. Default features keep the build simple at the
+# cost of a heavier first compile.
+bevy = "0.19"
+# naga 27 (pulled by the iced / eframe 0.33 dev-deps) picks its diagnostic writer
+# type from its own `termcolor` feature, while `codespan_reporting::term::emit`
+# picks the trait it demands from codespan-reporting's `termcolor` feature. Bevy's
+# `naga_oil` turns codespan-reporting/termcolor on for the shared 0.12 instance,
+# so without this naga 27 hands a `String` to an API that now wants `WriteColor`
+# and fails to compile. Enabling naga's own `termcolor` keeps the two in sync.
+naga = { version = "27", features = ["termcolor"] }
 winit = "0.30"
 pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -103,6 +116,11 @@ required-features = ["wgpu29"]
 [[example]]
 name = "slint-minimal"
 path = "examples/slint_minimal/main.rs"
+required-features = ["wgpu29"]
+
+[[example]]
+name = "bevy-swarm"
+path = "examples/bevy_swarm/main.rs"
 required-features = ["wgpu29"]
 
 # Names wgpu only through `viewport_lib::wgpu`, so it builds on either leg with
