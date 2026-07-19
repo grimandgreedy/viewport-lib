@@ -515,8 +515,6 @@ impl DeviceResources {
             ),
             tri_segment,
             tri_strip,
-            node_positions: item.positions.clone(),
-            node_strip_lengths: item.strip_lengths.clone(),
             _uniform_buf: uniform_buf,
         }
     }
@@ -892,8 +890,6 @@ impl DeviceResources {
             ),
             tri_segment,
             tri_strip,
-            node_positions: item.positions.clone(),
-            node_strip_lengths: item.strip_lengths.clone(),
             _uniform_buf: uniform_buf,
         }
     }
@@ -1283,8 +1279,6 @@ impl DeviceResources {
             ),
             tri_segment,
             tri_strip,
-            node_positions: item.positions.clone(),
-            node_strip_lengths: item.strip_lengths.clone(),
             _uniform_buf: uniform_buf,
         }
     }
@@ -1761,15 +1755,6 @@ pub struct StreamtubeGpuData {
     /// Per-triangle strip index, parallel to [`tri_segment`](Self::tri_segment),
     /// used to resolve `SubObjectRef::Strip`. Empty when not pickable.
     pub(crate) tri_strip: Vec<u32>,
-    /// Source control points, copied from the item at build time. A POLY_NODE
-    /// pick reads the hit segment, then compares its two endpoints here to the
-    /// hit position to pick the nearer control point, so node resolution needs no
-    /// per-frame pick cache. Empty when not pickable.
-    pub(crate) node_positions: Vec<[f32; 3]>,
-    /// Per-strip vertex counts, parallel to the source item's `strip_lengths`.
-    /// Used with [`node_positions`](Self::node_positions) to map a segment to its
-    /// endpoint control points. Empty when not pickable.
-    pub(crate) node_strip_lengths: Vec<u32>,
     /// Per-triangle node payload for the POLY_NODE pick pipeline: for each
     /// triangle (parallel to `tri_segment`), the local positions and global node
     /// indices of its segment's two endpoints. The pick fragment reads it by

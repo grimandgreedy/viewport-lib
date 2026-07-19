@@ -348,44 +348,19 @@ fn curve_writes_node(mask: PickMask, feature: bool) -> bool {
         && !mask.intersects(PickMask::STRIP | PickMask::SEGMENT)
 }
 
-/// What a surface or volume-mesh-boundary hit needs to refine a face into a cell
-/// or vertex, keyed by `pick_id`. Built from the frame when the pass is submitted
-/// and parked on the pending pick, so the resolve step (which runs later, with no
-/// frame in hand) never reads the per-frame `pick_*_items` cache. The mesh
-/// geometry itself stays in `mesh_store`; only these small per-object handles are
-/// copied here.
-#[derive(Clone)]
-struct SurfacePickMeta {
-    mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    model: [[f32; 4]; 4],
-    /// Boundary-face-to-cell map for volume meshes; empty for plain surfaces.
-    face_to_cell: std::sync::Arc<[u32]>,
-}
+/// Boundary-face-to-cell maps for volume meshes, keyed by `pick_id`. Built from
+/// the frame when the pass is submitted and parked on the pending pick, so the
+/// resolve step (which runs later, with no frame in hand) can turn a hit boundary
+/// face into a cell without reading the per-frame `pick_*_items` cache. Plain
+/// surfaces have no cells, so they are absent (a `None` lookup resolves as no
+/// cell).
+type SurfacePickMeta = std::collections::HashMap<u64, std::sync::Arc<[u32]>>;
 
-/// Collect the cell/vertex refinement handles for every pickable surface and
-/// volume-mesh boundary in the frame. Called when the pass is submitted, so it
-/// reads the live frame rather than a retained clone. Plain surfaces get an empty
-/// `face_to_cell`; volume meshes copy theirs (a small `u32` list, not geometry).
-fn build_surface_pick_meta(
-    frame: &FrameData,
-    scene_items: &[SceneRenderItem],
-) -> std::collections::HashMap<u64, SurfacePickMeta> {
-    let mut meta: std::collections::HashMap<u64, SurfacePickMeta> =
-        std::collections::HashMap::new();
-    let empty: std::sync::Arc<[u32]> = std::sync::Arc::from(Vec::<u32>::new());
-    for item in scene_items
-        .iter()
-        .filter(|i| !i.settings.hidden && i.settings.pick_id != PickId::NONE)
-    {
-        meta.insert(
-            item.settings.pick_id.0,
-            SurfacePickMeta {
-                mesh_id: item.mesh_id,
-                model: item.model,
-                face_to_cell: empty.clone(),
-            },
-        );
-    }
+/// Collect the boundary-face-to-cell map for every pickable volume mesh in the
+/// frame. Called when the pass is submitted, so it reads the live frame rather
+/// than a retained clone. The map is a small `u32` list, not geometry.
+fn build_surface_pick_meta(frame: &FrameData) -> SurfacePickMeta {
+    let mut meta: SurfacePickMeta = std::collections::HashMap::new();
     for vm in frame.scene.volume_meshes.iter() {
         let ri = vm.to_render_item();
         if ri.settings.hidden || ri.settings.pick_id == PickId::NONE {
@@ -393,11 +368,7 @@ fn build_surface_pick_meta(
         }
         meta.insert(
             ri.settings.pick_id.0,
-            SurfacePickMeta {
-                mesh_id: ri.mesh_id,
-                model: ri.model,
-                face_to_cell: std::sync::Arc::from(vm.face_to_cell.as_slice()),
-            },
+            std::sync::Arc::from(vm.face_to_cell.as_slice()),
         );
     }
     meta
@@ -428,7 +399,7 @@ struct PickDrawSet<'a> {
     kinds: std::collections::HashMap<u64, PickSubKind>,
     /// Cell / vertex refinement data for surface and volume-mesh hits, keyed by
     /// `pick_id`.
-    surface_meta: std::collections::HashMap<u64, SurfacePickMeta>,
+    surface_meta: SurfacePickMeta,
     /// The query mask. Decides which per-pixel sub-level pipeline variant each
     /// surface / curve draw uses (face vs nearest vertex, segment vs nearest node).
     mask: PickMask,
@@ -1827,7 +1798,7 @@ impl ViewportRenderer {
         // Registered plugins are object-level: dispatched directly in
         // `record_pick_pass_draws`, not collected here.
         let kinds = self.build_pick_sub_kinds(frame, scene_items);
-        let surface_meta = build_surface_pick_meta(frame, scene_items);
+        let surface_meta = build_surface_pick_meta(frame);
         let primitive_index_supported = device
             .features()
             .contains(crate::gpu::PRIMITIVE_INDEX_FEATURE);
@@ -1947,7 +1918,7 @@ impl ViewportRenderer {
                     let has_f2c = draw_set
                         .surface_meta
                         .get(&obj)
-                        .is_some_and(|m| !m.face_to_cell.is_empty());
+                        .is_some_and(|m| !m.is_empty());
                     if !surface_writes_vertex(draw_set.mask, has_f2c, feature) {
                         return None;
                     }
@@ -2608,26 +2579,13 @@ impl ViewportRenderer {
     /// per-object decode map. Shared by the blocking and async paths.
     fn resolve_pending_hit(&self, pending: &PendingPick, gpu_hit: GpuPickHit) -> PickHit {
         let mut hit = gpu_hit.to_pick_hit(pending.cursor, pending.viewport_size, pending.view_proj);
-        // World-space ray under the cursor, used only by the feature-absent
-        // surface refinement fallback.
-        let (ray_origin, ray_dir) = crate::interaction::query::picking::screen_to_ray(
-            pending.cursor,
-            pending.viewport_size,
-            pending.view_proj.inverse(),
-        );
         hit.sub_object = self.resolve_gpu_sub_object(
             gpu_hit.object_id.0,
             gpu_hit.sub_primitive,
-            hit.world_pos,
             pending.mask,
             &pending.kinds,
             &pending.surface_meta,
             pending.primitive_index_supported,
-            pending.cursor,
-            pending.view_proj,
-            pending.viewport_size,
-            ray_origin,
-            ray_dir,
         );
         hit
     }
@@ -2643,16 +2601,10 @@ impl ViewportRenderer {
         &self,
         object_id: u64,
         sub_primitive: u32,
-        world_pos: glam::Vec3,
         mask: PickMask,
         kinds: &std::collections::HashMap<u64, PickSubKind>,
-        surface_meta: &std::collections::HashMap<u64, SurfacePickMeta>,
+        surface_meta: &SurfacePickMeta,
         primitive_index_supported: bool,
-        cursor: glam::Vec2,
-        view_proj: glam::Mat4,
-        viewport_size: glam::Vec2,
-        ray_origin: glam::Vec3,
-        ray_dir: glam::Vec3,
     ) -> Option<SubObjectRef> {
         match kinds.get(&object_id).copied()? {
             PickSubKind::Instance => {
@@ -2678,58 +2630,34 @@ impl ViewportRenderer {
                 }
             }
             PickSubKind::Curve => {
-                // When the POLY_NODE variant drew, the primitive channel already
-                // holds the final global node index. No tri_segment lookup, no
-                // per-object CPU test.
+                // Curve sub-object picking needs the primitive index. Without the
+                // feature the GPU path stays object-level: no silent per-click CPU
+                // test.
+                if !primitive_index_supported {
+                    return None;
+                }
+                // The POLY_NODE variant wrote the final node index into the channel.
                 if curve_writes_node(mask, primitive_index_supported) {
                     return Some(SubObjectRef::Point(sub_primitive));
                 }
-
+                // Otherwise the channel is the hit triangle; map it to the item's
+                // segment / strip through the persistent per-triangle tables.
                 let gpu = self
                     .streamtube_gpu_data
                     .iter()
                     .chain(self.tube_gpu_data.iter())
                     .chain(self.ribbon_gpu_data.iter())
-                    .find(|g| g.pick_id.0 == object_id);
-
-                // Segment under the cursor, with the world hit position. Fast
-                // path: the hit triangle from the primitive channel indexes the
-                // item's tri_segment table. Fallback (feature absent): a CPU test
-                // on the retained curve item, mirroring the surface path's
-                // cpu_face_under_ray refine. The fallback needs the CPU pick
-                // cache; the fast path does not.
-                let (seg_idx, hit_pos) = if primitive_index_supported {
-                    let seg =
-                        gpu.and_then(|g| g.tri_segment.get(sub_primitive as usize).copied())?;
-                    (seg, world_pos)
-                } else {
-                    self.cpu_curve_segment_under_cursor(
-                        object_id,
-                        cursor,
-                        view_proj,
-                        viewport_size,
-                        ray_origin,
-                        ray_dir,
-                    )?
-                };
-
+                    .find(|g| g.pick_id.0 == object_id)?;
                 if mask.intersects(PickMask::STRIP) {
-                    // With the feature the item's tri_strip names the strip
-                    // directly; otherwise derive it from the retained item's
-                    // strip_lengths.
-                    if primitive_index_supported {
-                        gpu.and_then(|g| g.tri_strip.get(sub_primitive as usize).copied())
-                            .map(SubObjectRef::Strip)
-                    } else {
-                        self.retained_curve_strip_lengths(object_id)
-                            .map(|sl| SubObjectRef::Strip(strip_for_segment(seg_idx, sl)))
-                    }
+                    gpu.tri_strip
+                        .get(sub_primitive as usize)
+                        .copied()
+                        .map(SubObjectRef::Strip)
                 } else if mask.intersects(PickMask::SEGMENT) {
-                    Some(SubObjectRef::Segment(seg_idx))
-                } else if mask.intersects(PickMask::POLY_NODE) {
-                    // Nearest of the segment's two control points to the hit.
-                    self.curve_nearest_node(object_id, seg_idx, hit_pos)
-                        .map(SubObjectRef::Point)
+                    gpu.tri_segment
+                        .get(sub_primitive as usize)
+                        .copied()
+                        .map(SubObjectRef::Segment)
                 } else {
                     None
                 }
@@ -2758,12 +2686,9 @@ impl ViewportRenderer {
             PickSubKind::Surface => self.resolve_surface_sub_object(
                 object_id,
                 sub_primitive,
-                world_pos,
                 mask,
                 surface_meta,
                 primitive_index_supported,
-                ray_origin,
-                ray_dir,
             ),
         }
     }
@@ -2784,7 +2709,7 @@ impl ViewportRenderer {
         sub_primitive: u32,
         mask: PickMask,
         kinds: &std::collections::HashMap<u64, PickSubKind>,
-        surface_meta: &std::collections::HashMap<u64, SurfacePickMeta>,
+        surface_meta: &SurfacePickMeta,
         primitive_index_supported: bool,
     ) -> Option<SubObjectRef> {
         match kinds.get(&object_id).copied()? {
@@ -2847,9 +2772,7 @@ impl ViewportRenderer {
                 if !primitive_index_supported {
                     return None;
                 }
-                let has_f2c = surface_meta
-                    .get(&object_id)
-                    .is_some_and(|m| !m.face_to_cell.is_empty());
+                let has_f2c = surface_meta.get(&object_id).is_some_and(|m| !m.is_empty());
                 // VERTEX variant: the channel is the final global vertex index.
                 if surface_writes_vertex(mask, has_f2c, primitive_index_supported) {
                     return Some(SubObjectRef::Vertex(sub_primitive));
@@ -2859,8 +2782,8 @@ impl ViewportRenderer {
                 } else if mask.intersects(PickMask::CELL) {
                     surface_meta
                         .get(&object_id)
-                        .filter(|m| !m.face_to_cell.is_empty())
-                        .and_then(|m| m.face_to_cell.get(sub_primitive as usize).copied())
+                        .filter(|m| !m.is_empty())
+                        .and_then(|m| m.get(sub_primitive as usize).copied())
                         .map(SubObjectRef::Cell)
                 } else {
                     None
@@ -2869,168 +2792,21 @@ impl ViewportRenderer {
         }
     }
 
-    /// Segment index and world hit position under the cursor for a curve object,
-    /// found by a CPU test on the retained pick item. Streamtubes and tubes use
-    /// the screen-space closest-segment test; ribbons test the swept quad against
-    /// the ray. This is the fallback the curve sub-object path takes when the
-    /// device lacks `SHADER_PRIMITIVE_INDEX`, mirroring the surface path's
-    /// single-object CPU refine. Returns `None` when the CPU pick cache is off or
-    /// the id is not a retained curve.
-    fn cpu_curve_segment_under_cursor(
-        &self,
-        object_id: u64,
-        cursor: glam::Vec2,
-        view_proj: glam::Mat4,
-        viewport_size: glam::Vec2,
-        ray_origin: glam::Vec3,
-        ray_dir: glam::Vec3,
-    ) -> Option<(u32, glam::Vec3)> {
-        // World-space radius at a reference point converted to a screen-pixel
-        // threshold, matching the CPU curve pass.
-        let world_r_to_px = |ref_world: glam::Vec3, world_r: f32| -> f32 {
-            let p0 = view_proj * ref_world.extend(1.0);
-            let p1 = view_proj * (ref_world + glam::Vec3::X * world_r).extend(1.0);
-            if p0.w.abs() > 1e-6 && p1.w.abs() > 1e-6 {
-                let n0 = glam::Vec2::new(p0.x, p0.y) / p0.w;
-                let n1 = glam::Vec2::new(p1.x, p1.y) / p1.w;
-                ((n1 - n0).length() * 0.5 * viewport_size.x.max(viewport_size.y)).max(4.0)
-            } else {
-                (world_r * 100.0_f32).max(4.0)
-            }
-        };
-
-        if let Some(item) = self
-            .pick_streamtube_items
-            .iter()
-            .find(|it| it.settings.pick_id.0 == object_id)
-        {
-            if item.positions.is_empty() {
-                return None;
-            }
-            let ref_pos = glam::Vec3::from(item.positions[0]);
-            let threshold_px = world_r_to_px(ref_pos, item.radius.max(0.01));
-            return pick_closest_polyline_segment(
-                cursor,
-                viewport_size,
-                view_proj,
-                &item.positions,
-                &item.strip_lengths,
-                threshold_px,
-            );
-        }
-        if let Some(item) = self
-            .pick_tube_items
-            .iter()
-            .find(|it| it.settings.pick_id.0 == object_id)
-        {
-            if item.positions.is_empty() {
-                return None;
-            }
-            let ref_pos = glam::Vec3::from(item.positions[0]);
-            let max_r = item
-                .radius_attribute
-                .as_ref()
-                .and_then(|ra| ra.iter().copied().reduce(f32::max))
-                .unwrap_or(0.0)
-                .max(item.radius)
-                .max(0.01);
-            let threshold_px = world_r_to_px(ref_pos, max_r);
-            return pick_closest_polyline_segment(
-                cursor,
-                viewport_size,
-                view_proj,
-                &item.positions,
-                &item.strip_lengths,
-                threshold_px,
-            );
-        }
-        if let Some(item) = self
-            .pick_ribbon_items
-            .iter()
-            .find(|it| it.settings.pick_id.0 == object_id)
-        {
-            return ribbon_segment_under_ray(
-                &item.positions,
-                &item.strip_lengths,
-                item.width,
-                item.width_attribute.as_deref(),
-                item.twist_attribute.as_deref(),
-                ray_origin,
-                ray_dir,
-            );
-        }
-        None
-    }
-
-    /// `strip_lengths` for a retained curve object, for mapping a global segment
-    /// index to its strip in the no-feature fallback.
-    fn retained_curve_strip_lengths(&self, object_id: u64) -> Option<&[u32]> {
-        if let Some(it) = self
-            .pick_streamtube_items
-            .iter()
-            .find(|it| it.settings.pick_id.0 == object_id)
-        {
-            return Some(it.strip_lengths.as_slice());
-        }
-        if let Some(it) = self
-            .pick_tube_items
-            .iter()
-            .find(|it| it.settings.pick_id.0 == object_id)
-        {
-            return Some(it.strip_lengths.as_slice());
-        }
-        if let Some(it) = self
-            .pick_ribbon_items
-            .iter()
-            .find(|it| it.settings.pick_id.0 == object_id)
-        {
-            return Some(it.strip_lengths.as_slice());
-        }
-        None
-    }
-
-    /// The control-point index nearer to `hit_pos` among the two endpoints of the
-    /// curve object's segment `seg_idx`. Reads the control points off the retained
-    /// curve gpu-data, so it needs no per-frame pick cache. Used for POLY_NODE
-    /// curve picks.
-    fn curve_nearest_node(&self, object_id: u64, seg_idx: u32, hit_pos: glam::Vec3) -> Option<u32> {
-        let gpu = self
-            .streamtube_gpu_data
-            .iter()
-            .chain(self.tube_gpu_data.iter())
-            .chain(self.ribbon_gpu_data.iter())
-            .find(|g| g.pick_id.0 == object_id)?;
-        let positions = gpu.node_positions.as_slice();
-        let strip_lengths = gpu.node_strip_lengths.as_slice();
-        let (a, b) = segment_node_indices(seg_idx, strip_lengths, positions.len())?;
-        let pa = glam::Vec3::from(positions[a]);
-        let pb = glam::Vec3::from(positions[b]);
-        let da = (pa - hit_pos).length_squared();
-        let db = (pb - hit_pos).length_squared();
-        Some(if da <= db { a as u32 } else { b as u32 })
-    }
-
     /// Resolve a surface / volume-mesh-boundary hit to a face, cell, or vertex.
     ///
-    /// With `SHADER_PRIMITIVE_INDEX` the hit triangle comes straight from the
-    /// read-back primitive channel; without it the triangle is recovered by a
-    /// single-object CPU ray-cast (the "refine on the CPU for that one object"
-    /// fallback). The object's mesh handle, model, and `face_to_cell` map come
-    /// from `surface_meta` (copied off the frame at submit time); the mesh
-    /// geometry itself comes from `mesh_store`. Cell and vertex refinement need
-    /// the mesh's retained CPU positions / indices, so they return `None` when the
-    /// mesh was uploaded without them (a `FACE` mask still resolves from the face
-    /// index alone).
+    /// Needs `SHADER_PRIMITIVE_INDEX`: the primitive channel names the hit face
+    /// (or, when the VERTEX variant drew, the final nearest-corner vertex index).
+    /// Without the feature the GPU path stays object-level. `FACE` is the channel
+    /// value; `CELL` maps it through the boundary face-to-cell map in
+    /// `surface_meta`; `VERTEX` is the
+    /// channel value written by the vertex pipeline variant. No CPU geometry.
     fn resolve_surface_sub_object(
         &self,
         object_id: u64,
         sub_primitive: u32,
-        world_pos: glam::Vec3,
         mask: PickMask,
-        surface_meta: &std::collections::HashMap<u64, SurfacePickMeta>,
+        surface_meta: &SurfacePickMeta,
         primitive_index_supported: bool,
-        ray_origin: glam::Vec3,
-        ray_dir: glam::Vec3,
     ) -> Option<SubObjectRef> {
         let wants_face = mask.intersects(PickMask::FACE);
         let wants_cell = mask.intersects(PickMask::CELL);
@@ -3038,59 +2814,30 @@ impl ViewportRenderer {
         if !(wants_face || wants_cell || wants_vertex) {
             return None;
         }
+        if !primitive_index_supported {
+            return None;
+        }
 
         let meta = surface_meta.get(&object_id);
+        let has_f2c = meta.is_some_and(|m| !m.is_empty());
 
-        // When the VERTEX variant drew for this object (feature present, VERTEX is
-        // the finest level it can answer), the primitive channel already holds the
-        // final global vertex index. No CPU refinement.
-        let has_f2c = meta.is_some_and(|m| !m.face_to_cell.is_empty());
+        // The VERTEX variant already wrote the final nearest-corner vertex index.
         if surface_writes_vertex(mask, has_f2c, primitive_index_supported) {
             return Some(SubObjectRef::Vertex(sub_primitive));
         }
 
-        // Recover the hit triangle. With the feature it is the read-back index;
-        // otherwise ray-cast this one object's mesh to find it.
-        let face: Option<usize> = if primitive_index_supported {
-            Some(sub_primitive as usize)
-        } else {
-            let meta = meta?;
-            let mesh = self.resources.mesh_store.get(meta.mesh_id)?;
-            let positions = mesh.cpu_positions.as_ref()?;
-            let indices = mesh.cpu_indices.as_ref()?;
-            let model = glam::Mat4::from_cols_array_2d(&meta.model);
-            cpu_face_under_ray(positions, indices, model, ray_origin, ray_dir).map(|(f, _)| f)
-        };
-        let face = face?;
-
-        // FACE takes priority, matching the CPU picker's ordering.
+        // Otherwise the channel is the hit face. FACE takes priority, then CELL
+        // through the persistent boundary map.
         if wants_face {
-            return Some(SubObjectRef::Face(face as u32));
+            return Some(SubObjectRef::Face(sub_primitive));
         }
-
-        let meta = meta?;
-        let mesh = self.resources.mesh_store.get(meta.mesh_id)?;
-        let indices = mesh.cpu_indices.as_ref()?;
-        let model = glam::Mat4::from_cols_array_2d(&meta.model);
-
         if wants_cell {
-            if !meta.face_to_cell.is_empty() {
-                return meta
-                    .face_to_cell
-                    .get(face)
-                    .map(|&ci| SubObjectRef::Cell(ci));
-            }
-            // No cell map: fall through to a vertex answer if the caller also
-            // asked for it, else nothing.
-            if !wants_vertex {
-                return None;
-            }
+            return meta
+                .filter(|m| !m.is_empty())
+                .and_then(|m| m.get(sub_primitive as usize).copied())
+                .map(SubObjectRef::Cell);
         }
-
-        // Vertex: nearest triangle corner to the hit position.
-        let positions = mesh.cpu_positions.as_ref()?;
-        nearest_triangle_vertex(positions, indices, model, face, world_pos)
-            .map(SubObjectRef::Vertex)
+        None
     }
 
     /// Build the `pick_id -> PickSubKind` decode map from the same collections
@@ -3228,7 +2975,7 @@ pub(crate) struct PendingPick {
     /// Cell / vertex refinement data for surface and volume-mesh hits, keyed by
     /// `pick_id`. Copied from the frame at submit time so the resolve step needs
     /// no per-frame pick cache.
-    surface_meta: std::collections::HashMap<u64, SurfacePickMeta>,
+    surface_meta: SurfacePickMeta,
     /// Whether the device had `SHADER_PRIMITIVE_INDEX` when the pass ran. When
     /// false the surface / curve pipelines wrote a constant 0 into the primitive
     /// channel, so those types stay object-level (the instance / segment channels

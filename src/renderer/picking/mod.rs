@@ -101,11 +101,13 @@ pub enum PickBackend {
     Cpu,
     /// GPU object-id readback. Resolves sub-object identity from the pass's
     /// second channel: the hit instance (glyphs, sprites), segment (polylines),
-    /// or, with `SHADER_PRIMITIVE_INDEX`, the hit face / cell / tube segment for
-    /// triangle-meshed types. Without that feature triangle-meshed types stay
-    /// object-level unless the CPU pick cache is enabled, in which case the hit
-    /// object is refined by a single-object CPU ray-cast. Cost tracks the render
-    /// rather than the object count, so it is the backend for large scenes.
+    /// point (point clouds), splat, and voxel need no device feature. The
+    /// triangle-meshed levels (surface face / cell / vertex, tube-family segment /
+    /// strip / node) need `SHADER_PRIMITIVE_INDEX`; without it the GPU backend
+    /// returns the object-level hit and a caller that needs the sub-object uses the
+    /// [`Cpu`](Self::Cpu) backend explicitly. The GPU backend never runs a
+    /// per-click CPU ray-cast. Cost tracks the render rather than the object count,
+    /// so it is the backend for large scenes.
     Gpu,
 }
 

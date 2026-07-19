@@ -1354,15 +1354,12 @@ fn gpu_pick_hits_ribbon() {
 
 #[test]
 fn gpu_pick_ribbon_resolves_segment_and_node() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    // Node positions now come from the curve gpu-data. The cache is only needed
-    // for the feature-absent segment fallback, which runs on adapters without
-    // SHADER_PRIMITIVE_INDEX.
-    renderer.set_cpu_pick_cache(true);
+    // Segment and node resolve from the pick shader variants; no CPU pick cache.
     let mut frame = sub_object_pick_frame();
 
     // A wide ribbon centred on the origin: 3 control points along X, so two
