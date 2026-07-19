@@ -1075,16 +1075,19 @@ impl ViewportRenderer {
                 }
             }
 
-            // Item-type plugin paint: after built-in opaques, before
-            // skybox. Standard group-0 bindings are already bound.
-            self.dispatch_plugin_paint(&mut render_pass, frame);
-
-            // Draw skybox last among opaques : only uncovered sky pixels pass depth == 1.0.
+            // Draw skybox after built-in opaques : only uncovered sky pixels
+            // pass depth == 1.0. Drawn before plugin paint so blended plugin
+            // content (additive/alpha particles that do not write depth)
+            // composites over the sky instead of being painted over by it.
             if show_skybox {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 render_pass.set_pipeline(&resources.skybox_pipeline);
                 render_pass.draw(0..3, 0..1);
             }
+
+            // Item-type plugin paint: after built-in opaques and the skybox.
+            // Standard group-0 bindings are already bound.
+            self.dispatch_plugin_paint(&mut render_pass, frame);
         }
     }
 
