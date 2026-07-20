@@ -265,6 +265,13 @@ impl DeviceResources {
         if self.decal.replace_pipeline.is_some() {
             return;
         }
+        // Decals need a third bind group (group 2: per-item uniforms + textures).
+        // On limited devices (max_bind_groups < 3, e.g. iced's WebGL2-portable
+        // device) the pipeline cannot be created. Leave it None; every decal draw
+        // path already guards on the Option, so decals simply do not render.
+        if device.limits().max_bind_groups < 3 {
+            return;
+        }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(

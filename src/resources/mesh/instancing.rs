@@ -116,7 +116,11 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         label: &str,
     ) -> (crate::gpu::ShaderModule, crate::gpu::ShaderModule) {
-        let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"));
+        let base = if self.deform.enabled {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"))
+        } else {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_noop.wgsl"))
+        };
         let composed = crate::resources::mesh_sidecar::registry::compose_shader(
             base,
             &self.deform.registrations,
@@ -469,7 +473,11 @@ impl DeviceResources {
         };
 
         let instanced_oit_shader = {
-            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl"));
+            let base = if self.deform.enabled {
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl"))
+            } else {
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit_noop.wgsl"))
+            };
             let composed = crate::resources::mesh_sidecar::registry::compose_shader(
                 base,
                 &self.deform.registrations,
@@ -740,7 +748,11 @@ impl DeviceResources {
 
         // OIT cull pipeline: Rgba16Float + R8Unorm targets, vs_main_cull, no depth write.
         let oit_shader = {
-            let base = include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl"));
+            let base = if self.deform.enabled {
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit.wgsl"))
+            } else {
+                include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit_noop.wgsl"))
+            };
             let composed = crate::resources::mesh_sidecar::registry::compose_shader(
                 base,
                 &self.deform.registrations,
