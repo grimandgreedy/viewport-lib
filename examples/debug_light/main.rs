@@ -2,7 +2,16 @@
 //! hamilton_engine_v2/examples/cloth/cloth_fast_drape.rs.
 //!
 //! Scene: a flat gray floor plane with a small flat platform (slab)
-//! floating above it. Lighting is `LightingSettings::default()`.
+//! floating above it, plus a handful of translucent tetrahedralized volume
+//! meshes (a cube, a wide slab, and a tall box). Lighting is
+//! `LightingSettings::default()`.
+//!
+//! The volume meshes are here to reproduce a shading complaint: viewed from
+//! above they read as an even translucent blue, but viewed from below the
+//! outer faces collapse toward black. They render through the lit
+//! boundary-surface path (`upload_volume_mesh` + `settings.opacity < 1`), so
+//! any face whose outward normal points away from the overhead light gets no
+//! direct diffuse and only the dark end of the hemisphere ambient.
 //!
 //! Navigation:
 //!   Left drag / Middle drag   : orbit
@@ -14,7 +23,7 @@ mod viewport_callback;
 use eframe::egui;
 use viewport_lib::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
-    MeshId, Modifiers, MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem,
+    MeshData, MeshId, Modifiers, MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem,
     ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
@@ -23,6 +32,95 @@ const SLAB_HEIGHT: f32 = 0.6;
 
 const FLOOR_COLOUR: [f32; 3] = [0.35, 0.35, 0.38];
 const SLAB_COLOUR: [f32; 3] = [0.85, 0.55, 0.35];
+
+// Blue with alpha 0.18, matching `GeometryOptions::tet_albedo` in
+// viewport-lib-mesh-assembly (the material_lab tet volume).
+const TVM_COLOUR: [f32; 3] = [0.45, 0.75, 0.95];
+const TVM_OPACITY: f32 = 0.18;
+
+/// A lattice of tetrahedra filling a cube centered at the origin.
+///
+/// `n` cells per axis, each split into five tets with orientation alternating
+/// by cell parity so shared diagonals match across neighbours. This mirrors
+/// `tet_lattice` in viewport-lib-mesh-assembly/examples/material_lab.
+fn tet_lattice(n: usize, size: f32) -> (Vec<[f32; 3]>, Vec<[u32; 4]>) {
+    let step = size / n as f32;
+    let g = n + 1;
+    let idx = |i: usize, j: usize, k: usize| ((k * g + j) * g + i) as u32;
+    let mut positions = Vec::with_capacity(g * g * g);
+    for k in 0..g {
+        for j in 0..g {
+            for i in 0..g {
+                positions.push([
+                    i as f32 * step - size * 0.5,
+                    j as f32 * step - size * 0.5,
+                    k as f32 * step - size * 0.5,
+                ]);
+            }
+        }
+    }
+    let mut tets = Vec::new();
+    for k in 0..n {
+        for j in 0..n {
+            for i in 0..n {
+                let c = [
+                    idx(i, j, k),
+                    idx(i + 1, j, k),
+                    idx(i + 1, j + 1, k),
+                    idx(i, j + 1, k),
+                    idx(i, j, k + 1),
+                    idx(i + 1, j, k + 1),
+                    idx(i + 1, j + 1, k + 1),
+                    idx(i, j + 1, k + 1),
+                ];
+                if (i + j + k) % 2 == 0 {
+                    tets.push([c[0], c[1], c[3], c[4]]);
+                    tets.push([c[1], c[2], c[3], c[6]]);
+                    tets.push([c[1], c[3], c[4], c[6]]);
+                    tets.push([c[1], c[4], c[5], c[6]]);
+                    tets.push([c[3], c[4], c[6], c[7]]);
+                } else {
+                    tets.push([c[0], c[1], c[2], c[5]]);
+                    tets.push([c[0], c[2], c[3], c[7]]);
+                    tets.push([c[0], c[2], c[5], c[7]]);
+                    tets.push([c[0], c[4], c[5], c[7]]);
+                    tets.push([c[2], c[5], c[6], c[7]]);
+                }
+            }
+        }
+    }
+    (positions, tets)
+}
+
+/// Face-soup mesh: every one of the four faces of every tet, emitted as an
+/// independent triangle with a flat per-face normal. No boundary extraction,
+/// so the interior tets stay visible when the mesh is drawn translucent
+/// through the OIT pass. This is how the mesh-assembly `TetVolume` renders.
+fn tet_soup_mesh(positions: &[[f32; 3]], tets: &[[u32; 4]]) -> MeshData {
+    // Same face winding the mesh-assembly renderer uses.
+    const FACES: [[usize; 3]; 4] = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]];
+    let mut out_pos = Vec::with_capacity(tets.len() * 4 * 3);
+    let mut out_nrm = Vec::with_capacity(tets.len() * 4 * 3);
+    let mut indices = Vec::with_capacity(tets.len() * 4 * 3);
+    for tet in tets {
+        for face in FACES {
+            let p: [glam::Vec3; 3] =
+                std::array::from_fn(|k| glam::Vec3::from(positions[tet[face[k]] as usize]));
+            let n = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or_zero();
+            let base = out_pos.len() as u32;
+            for v in p {
+                out_pos.push(v.to_array());
+                out_nrm.push(n.to_array());
+            }
+            indices.extend([base, base + 1, base + 2]);
+        }
+    }
+    let mut mesh = MeshData::default();
+    mesh.positions = out_pos;
+    mesh.normals = out_nrm;
+    mesh.indices = indices;
+    mesh
+}
 
 fn main() -> eframe::Result {
     eframe::run_native(
@@ -58,8 +156,46 @@ fn main() -> eframe::Result {
                 )
                 .expect("slab mesh upload");
 
+            // A handful of translucent tet volumes floating above the floor,
+            // rendered as face soup (all tet faces, flat normals) through the
+            // OIT pass exactly as viewport-lib-mesh-assembly's `TetVolume` does.
+            // Each lattice is built centered at the origin and placed via the
+            // render item's model matrix.
+            let tvm_specs: [(usize, f32, glam::Vec3); 3] = [
+                // The cube: the shape in the original report (matches material_lab).
+                (3, 1.6, glam::Vec3::new(0.0, 0.0, 1.4)),
+                // A finer cube.
+                (4, 1.4, glam::Vec3::new(-3.2, 0.0, 1.2)),
+                // A tall box (non-cubic via a scaled model matrix).
+                (3, 1.2, glam::Vec3::new(3.2, 0.0, 1.6)),
+            ];
+            let mut tvm_items = Vec::new();
+            for (idx, (n, size, translation)) in tvm_specs.into_iter().enumerate() {
+                let (positions, tets) = tet_lattice(n, size);
+                let mesh = tet_soup_mesh(&positions, &tets);
+                let mesh_id = res.upload_mesh_data(device, &mesh).expect("tvm upload");
+                let scale = if idx == 2 {
+                    glam::Vec3::new(1.0, 1.0, 1.6)
+                } else {
+                    glam::Vec3::ONE
+                };
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = mesh_id;
+                item.model = (glam::Mat4::from_translation(translation)
+                    * glam::Mat4::from_scale(scale))
+                .to_cols_array_2d();
+                item.material = {
+                    let mut m = Material::from_colour(TVM_COLOUR);
+                    // Show both sides of every tet face, like the face soup.
+                    m.backface_policy = BackfacePolicy::Identical;
+                    m
+                };
+                item.settings.opacity = TVM_OPACITY;
+                tvm_items.push(item);
+            }
+
             rs.renderer.write().callback_resources.insert(renderer);
-            Ok(Box::new(App::new(floor_mesh, slab_mesh)))
+            Ok(Box::new(App::new(floor_mesh, slab_mesh, tvm_items)))
         }),
     )
 }
@@ -69,19 +205,21 @@ struct App {
     controller: OrbitCameraController,
     floor_mesh: MeshId,
     slab_mesh: MeshId,
+    tvm_items: Vec<SceneRenderItem>,
 }
 
 impl App {
-    fn new(floor_mesh: MeshId, slab_mesh: MeshId) -> Self {
+    fn new(floor_mesh: MeshId, slab_mesh: MeshId, tvm_items: Vec<SceneRenderItem>) -> Self {
         Self {
             camera: Camera {
                 center: glam::Vec3::new(0.0, 0.0, 1.0),
-                distance: 5.0,
+                distance: 8.0,
                 ..Camera::default()
             },
             controller: OrbitCameraController::viewport_primitives(),
             floor_mesh,
             slab_mesh,
+            tvm_items,
         }
     }
 
@@ -101,7 +239,9 @@ impl App {
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, SLAB_HEIGHT)).to_cols_array_2d();
         slab.material = Material::from_colour(SLAB_COLOUR);
 
-        vec![slab, floor]
+        let mut items = vec![slab, floor];
+        items.extend(self.tvm_items.iter().cloned());
+        items
     }
 }
 

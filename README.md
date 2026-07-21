@@ -41,12 +41,15 @@ The `examples/` directory contains working integrations for several GUI framewor
 - **eframe-viewport**: a mid-complexity example with scene graph, picking, and gizmos.
 - **eframe-input-controllers**: shows custom input bindings and controller configuration.
 
-Other examples: `winit-viewport`, `winit-showcase`, `winit-primitives`, `winit-multi-viewport`, `iced-viewport`, `slint-viewport`, `gtk4-viewport`
+```
+cargo run --release --example eframe-minimal --features example-egui
+cargo run --release --example eframe-showcase --features example-egui,example-io
+cargo run --release --example winit-viewport
+cargo run --release --example iced-viewport --features example-iced
+cargo run --release --example bevy-swarm --no-default-features --features wgpu29,example-bevy
+```
 
-Run examples with:
-```
-cargo run --release --example eframe-showcase
-```
+Note: the feature flags are there so that when you run them you don't have to pull in all the various dev-dependencies.
 
 ## Quick start
 

@@ -34,6 +34,28 @@ thiserror = "2.0"
 tracing = { version = "0.1", features = ["log"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 
+# --- Example-only dependencies (all optional, enabled by `example-*` features) ---
+# Cargo compiles every non-optional dev-dependency for ANY example/test build,
+# so the UI frameworks live here as optional deps instead: building one example
+# only compiles the framework it declares via `required-features`. Consumers
+# should never enable these features; they exist purely for `cargo run
+# --example`.
+iced = { version = "0.14", features = ["wgpu"], optional = true }
+eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
+# egui 0.35 pairs with wgpu 29. Kept as a renamed dep alongside eframe 0.33 so
+# the wgpu29 example can pair egui 0.35 with viewport-lib's 29 leg without
+# moving the other eframe examples (still on 0.33 / the 27 leg).
+eframe035 = { package = "eframe", version = "0.35", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
+# Slint pairs with wgpu 29 through its unstable-wgpu-29 feature (tilde
+# requirement per Slint's own guidance: the feature is re-issued per wgpu
+# major).
+slint = { version = "~1.17", features = ["unstable-wgpu-29", "renderer-femtovg-wgpu"], optional = true }
+# Bevy 0.19 pins wgpu 29, so it shares viewport-lib's wgpu29 leg: viewport-lib
+# renders straight into a Bevy GPU texture on Bevy's own device with no CPU copy.
+bevy = { version = "0.19", optional = true }
+# Model/scene import (glTF, STL, VTK, HDF5, ...). Heavy; only showcase 45 uses it.
+viewport-lib-io = { version = "0.2.0", path = "../viewport-lib-io", optional = true }
+
 # Native handles for the hardware VRAM budget query (`resources::vram_budget`).
 # Versions must match the ones wgpu-hal 27 resolves so the raw types are identical.
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
@@ -55,73 +77,51 @@ wgpu29 = ["dep:wgpu29"]
 # free of `std::future` plumbing for consumers that do not run an async
 # runtime.
 future = []
+# Example-only dependency gates (see the optional deps above). Each example's
+# `required-features` names the gate(s) it needs, so `cargo run --example X
+# --features example-*` compiles only that example's framework. Not for
+# consumers.
+example-egui = ["dep:eframe"]
+example-egui-wgpu29 = ["dep:eframe035"]
+example-iced = ["dep:iced"]
+example-slint = ["dep:slint"]
+example-bevy = ["dep:bevy"]
+example-io = ["dep:viewport-lib-io"]
 
 [dev-dependencies]
-iced = { version = "0.14", features = ["wgpu"] }
-eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
-# egui 0.35 pairs with wgpu 29. Kept as a renamed dep alongside eframe 0.33 so
-# the wgpu29 example can pair egui 0.35 with viewport-lib's 29 leg without
-# moving the other eframe examples (still on 0.33 / the 27 leg). Only the
-# `eframe-minimal-wgpu29` example, gated on `required-features = ["wgpu29"]`,
-# pulls it; a 27-leg build never resolves wgpu 29 through it.
-eframe035 = { package = "eframe", version = "0.35", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
-# Slint pairs with wgpu 29 through its unstable-wgpu-29 feature (tilde
-# requirement per Slint's own guidance: the feature is re-issued per wgpu
-# major). Only the `slint-minimal` example, gated on
-# `required-features = ["wgpu29"]`, uses it.
-slint = { version = "~1.17", features = ["unstable-wgpu-29", "renderer-femtovg-wgpu"] }
-# Bevy 0.19 pins wgpu 29, so it shares viewport-lib's wgpu29 leg: viewport-lib
-# renders straight into a Bevy GPU texture on Bevy's own device with no CPU copy.
-# Only the `bevy-swarm` example (required-features = ["wgpu29"]) uses it, so a
-# 27-leg build never pulls Bevy. Default features keep the build simple at the
-# cost of a heavier first compile.
-bevy = "0.19"
-# naga 27 (pulled by the iced / eframe 0.33 dev-deps) picks its diagnostic writer
-# type from its own `termcolor` feature, while `codespan_reporting::term::emit`
-# picks the trait it demands from codespan-reporting's `termcolor` feature. Bevy's
-# `naga_oil` turns codespan-reporting/termcolor on for the shared 0.12 instance,
-# so without this naga 27 hands a `String` to an API that now wants `WriteColor`
-# and fails to compile. Enabling naga's own `termcolor` keeps the two in sync.
+# naga 27 (pulled by the iced / eframe 0.33 example deps) picks its diagnostic
+# writer type from its own `termcolor` feature, while
+# `codespan_reporting::term::emit` picks the trait it demands from
+# codespan-reporting's `termcolor` feature. Bevy's `naga_oil` turns
+# codespan-reporting/termcolor on for the shared 0.12 instance, so without this
+# naga 27 hands a `String` to an API that now wants `WriteColor` and fails to
+# compile. Enabling naga's own `termcolor` keeps the two in sync.
 naga = { version = "27", features = ["termcolor"] }
 winit = "0.30"
 pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-viewport-lib-io = { version = "0.2.0", path = "../viewport-lib-io" }
-# `default-features = false` so the testkit does not force the wgpu27 leg onto a
-# wgpu29 test build; it inherits whichever leg this build selects.
-viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false }
 
 
-
-[[example]]
-name = "perf-bench"
-path = "examples/perf_bench/main.rs"
-required-features = ["wgpu27"]
-
-[[example]]
-name = "catalogue-viewer"
-path = "examples/catalogue_viewer/main.rs"
-required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui"]
 
 [[example]]
 name = "eframe-minimal-wgpu29"
 path = "examples/eframe_minimal_wgpu29/main.rs"
-required-features = ["wgpu29"]
+required-features = ["wgpu29", "example-egui-wgpu29"]
 
 [[example]]
 name = "slint-minimal"
 path = "examples/slint_minimal/main.rs"
-required-features = ["wgpu29"]
+required-features = ["wgpu29", "example-slint"]
 
 [[example]]
 name = "bevy-swarm"
 path = "examples/bevy_swarm/main.rs"
-required-features = ["wgpu29"]
+required-features = ["wgpu29", "example-bevy"]
 
 # Names wgpu only through `viewport_lib::wgpu`, so it builds on either leg with
 # no source edits. Deliberately has no `required-features` pinning a version.
@@ -132,17 +132,17 @@ path = "examples/wgpu_leg_agnostic/main.rs"
 [[example]]
 name = "debug-light"
 path = "examples/debug_light/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui"]
 
 [[example]]
 name = "eframe-lighting-shadows"
 path = "examples/eframe_lighting_shadows/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui"]
 
 [[example]]
 name = "eframe-render-paths"
 path = "examples/eframe_render_paths/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui"]
 
 [[example]]
 name = "headless-shadow-debug"
@@ -152,27 +152,27 @@ required-features = ["wgpu27"]
 [[example]]
 name = "eframe-testing"
 path = "examples/eframe_testing/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui"]
 
 [[example]]
 name = "eframe-primitives"
 path = "examples/eframe_primitives/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui"]
 
 [[example]]
 name = "eframe-input-controllers"
 path = "examples/eframe_input_controllers/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui"]
 
 [[example]]
 name = "eframe-showcase"
 path = "examples/eframe_showcase/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui", "example-io"]
 
 [[example]]
 name = "eframe-multi-viewport"
 path = "examples/eframe_multi_viewport/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-egui"]
 
 
 [[example]]
@@ -199,7 +199,7 @@ required-features = ["wgpu27"]
 [[example]]
 name = "iced-viewport"
 path = "examples/iced_viewport/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "example-iced"]
 
 [[example]]
 name = "runtime-jobs"
