@@ -13,6 +13,52 @@ pub enum LineJoin {
     Bevel,
 }
 
+/// End-cap style for open [`OverlayPolylineItem`] strokes.
+///
+/// Also applies to the ends of each dash when the stroke pattern is
+/// [`StrokePattern::Dashed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PolylineCap {
+    /// Flat cut flush with the endpoint. Default.
+    #[default]
+    Butt,
+    /// Flat cut extended `thickness / 2` beyond the endpoint.
+    Square,
+    /// Semicircular cap centred on the endpoint.
+    Round,
+}
+
+/// Stroke pattern for [`OverlayPolylineItem`].
+///
+/// Dash and dot placement is measured in accumulated arc length along the
+/// path, in logical pixels. On closed polylines the pattern continues across
+/// the final-to-first segment.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum StrokePattern {
+    /// Continuous stroke (default).
+    #[default]
+    Solid,
+    /// Dashes of `dash_length` pixels separated by `gap_length` pixels.
+    Dashed {
+        /// Length of each visible dash, in pixels of arc length.
+        dash_length: f32,
+        /// Length of each gap between dashes, in pixels of arc length.
+        gap_length: f32,
+        /// Shifts the pattern backwards along the path; animating this
+        /// upwards produces a marching-ants effect.
+        offset: f32,
+    },
+    /// Discs of the stroke thickness placed along the path.
+    Dotted {
+        /// Distance between dot centres, in pixels of arc length.
+        spacing: f32,
+        /// Shifts the first dot along the path.
+        offset: f32,
+    },
+}
+
 /// A stroked polyline rendered as a screen-space overlay.
 ///
 /// Constructed from a list of waypoints in logical pixels. Tessellated on
@@ -34,6 +80,11 @@ pub struct OverlayPolylineItem {
     /// Mitre limit: when the mitre extension exceeds this multiple of
     /// `thickness`, the joint auto-falls back to a bevel.
     pub mitre_limit: f32,
+    /// End-cap style for open polylines and dash ends. Closed solid
+    /// polylines have no free ends, so caps are ignored there.
+    pub cap: PolylineCap,
+    /// Solid, dashed, or dotted stroke.
+    pub stroke_pattern: StrokePattern,
     /// When `true`, the last point connects back to the first.
     pub closed: bool,
     /// Optional interior fill. Only used when `closed` is `true`.
@@ -69,6 +120,8 @@ impl Default for OverlayPolylineItem {
             colour: [1.0, 1.0, 1.0, 1.0],
             join: LineJoin::Mitre,
             mitre_limit: 4.0,
+            cap: PolylineCap::Butt,
+            stroke_pattern: StrokePattern::Solid,
             closed: false,
             fill: None,
             texture: None,

@@ -202,8 +202,8 @@ pub(super) fn emit_filled_polyline(
 /// that scale exceeds `mitre_limit`, or when `join` is `Bevel`, the joint
 /// emits two separate ribs and a connecting triangle.
 ///
-/// Open polylines use butt caps (perpendicular to the end segment). Closed
-/// polylines wrap the last point back to the first.
+/// Open polylines end with the requested cap style (butt, square, or round).
+/// Closed polylines wrap the last point back to the first and ignore `cap`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn tessellate_polyline(
     points: &[[f32; 2]],
@@ -211,6 +211,7 @@ pub(super) fn tessellate_polyline(
     closed: bool,
     join: crate::renderer::types::LineJoin,
     mitre_limit: f32,
+    cap: crate::renderer::types::PolylineCap,
     colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
@@ -305,6 +306,23 @@ pub(super) fn tessellate_polyline(
         return Vec::new();
     }
 
+    // End tangents for cap placement (zero when the end segment is degenerate).
+    let t_start = normalize(sub(points[1], points[0]));
+    let t_end = normalize(sub(points[n - 1], points[n - 2]));
+
+    // Square caps: push the endpoint ribs out along the tangent so the
+    // stroke rectangle extends `thickness / 2` beyond each endpoint.
+    if !closed && cap == crate::renderer::types::PolylineCap::Square {
+        if let Some(first) = ribs.first_mut() {
+            first.0 = sub(first.0, scale(t_start, half_t));
+            first.1 = sub(first.1, scale(t_start, half_t));
+        }
+        if let Some(last) = ribs.last_mut() {
+            last.0 = add(last.0, scale(t_end, half_t));
+            last.1 = add(last.1, scale(t_end, half_t));
+        }
+    }
+
     // Convert rib pairs to triangle list. Each pair of consecutive ribs
     // forms a quad split into two triangles.
     let mut verts: Vec<crate::resources::OverlayTextVertex> =
@@ -328,7 +346,240 @@ pub(super) fn tessellate_polyline(
         emit(r1);
         emit(l1);
     }
+
+    // Round caps: a semicircle fan on the outside half of each endpoint.
+    if !closed && cap == crate::renderer::types::PolylineCap::Round {
+        let segs = 8;
+        for (centre, outward) in [(points[0], scale(t_start, -1.0)), (points[n - 1], t_end)] {
+            if outward == [0.0, 0.0] {
+                continue;
+            }
+            let normal = perp_left(outward);
+            for i in 0..segs {
+                let a0 = std::f32::consts::PI * i as f32 / segs as f32;
+                let a1 = std::f32::consts::PI * (i + 1) as f32 / segs as f32;
+                let d0 = add(scale(normal, a0.cos()), scale(outward, a0.sin()));
+                let d1 = add(scale(normal, a1.cos()), scale(outward, a1.sin()));
+                emit(centre);
+                emit(add(centre, scale(d0, half_t)));
+                emit(add(centre, scale(d1, half_t)));
+            }
+        }
+    }
     verts
+}
+
+/// Working point list and cumulative arc-length table for a polyline. For
+/// closed paths the first point is appended again so the table covers the
+/// closing segment.
+pub(super) fn polyline_arc_table(points: &[[f32; 2]], closed: bool) -> (Vec<[f32; 2]>, Vec<f32>) {
+    let mut pts: Vec<[f32; 2]> = points.to_vec();
+    if closed && points.len() >= 2 {
+        pts.push(points[0]);
+    }
+    let mut cum = Vec::with_capacity(pts.len());
+    cum.push(0.0);
+    let mut s = 0.0f32;
+    for w in pts.windows(2) {
+        let dx = w[1][0] - w[0][0];
+        let dy = w[1][1] - w[0][1];
+        s += (dx * dx + dy * dy).sqrt();
+        cum.push(s);
+    }
+    (pts, cum)
+}
+
+/// Interpolate the point at arc length `s` along the path (clamped to the
+/// path range).
+pub(super) fn point_at_arc(pts: &[[f32; 2]], cum: &[f32], s: f32) -> [f32; 2] {
+    let total = *cum.last().unwrap_or(&0.0);
+    let s = s.clamp(0.0, total);
+    let i = cum
+        .partition_point(|&c| c < s)
+        .saturating_sub(1)
+        .min(pts.len().saturating_sub(2));
+    let seg = (cum[i + 1] - cum[i]).max(1e-6);
+    let t = ((s - cum[i]) / seg).clamp(0.0, 1.0);
+    [
+        pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t,
+        pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t,
+    ]
+}
+
+/// Split a path into the visible sub-paths of a dash pattern. Each sub-path
+/// is an open point list covering one dash, including the interpolated dash
+/// endpoints and any original waypoints in between. For closed paths, a dash
+/// spanning the final-to-first seam is merged into a single sub-path.
+pub(super) fn dash_subpaths(
+    pts: &[[f32; 2]],
+    cum: &[f32],
+    dash: f32,
+    gap: f32,
+    offset: f32,
+    closed: bool,
+) -> Vec<Vec<[f32; 2]>> {
+    let total = *cum.last().unwrap_or(&0.0);
+    if total <= 1e-4 {
+        return Vec::new();
+    }
+    let period = dash + gap;
+
+    // Visible intervals are [k * period - offset, k * period - offset + dash).
+    let k_min = ((offset - dash) / period).floor() as i64;
+    let k_max = ((total + offset) / period).ceil() as i64;
+    let mut intervals: Vec<(f32, f32)> = Vec::new();
+    for k in k_min..=k_max {
+        let a = (k as f32 * period - offset).max(0.0);
+        let b = (k as f32 * period - offset + dash).min(total);
+        if b - a > 1e-4 {
+            intervals.push((a, b));
+        }
+    }
+    if intervals.is_empty() {
+        return Vec::new();
+    }
+
+    // A dash crossing the closed-path seam shows up as one interval ending at
+    // `total` and another starting at 0; stitch them into one sub-path so the
+    // seam gets a joint instead of two caps.
+    let merge_seam = closed
+        && intervals.len() >= 2
+        && intervals.first().unwrap().0 <= 1e-4
+        && total - intervals.last().unwrap().1 <= 1e-4;
+
+    let extract = |a: f32, b: f32| -> Vec<[f32; 2]> {
+        let mut sub = Vec::new();
+        sub.push(point_at_arc(pts, cum, a));
+        for (i, &c) in cum.iter().enumerate() {
+            if c > a + 1e-4 && c < b - 1e-4 {
+                sub.push(pts[i]);
+            }
+        }
+        sub.push(point_at_arc(pts, cum, b));
+        sub
+    };
+
+    let mut subs: Vec<Vec<[f32; 2]>> = intervals.iter().map(|&(a, b)| extract(a, b)).collect();
+    if merge_seam {
+        let first = subs.remove(0);
+        let last = subs.last_mut().unwrap();
+        last.pop(); // ends at `total`, same point as the first sub-path's start
+        last.extend(first);
+    }
+    subs
+}
+
+/// Emit a filled disc (triangle fan) in screen pixel coordinates.
+pub(super) fn emit_disc(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    centre: [f32; 2],
+    radius: f32,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let segs = 10;
+    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: px_to_ndc(pos[0], pos[1], vp_w, vp_h),
+        uv: [0.0, 0.0],
+        colour,
+        use_texture: 0.0,
+        _pad: 0.0,
+    };
+    for i in 0..segs {
+        let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
+        let a1 = std::f32::consts::TAU * (i + 1) as f32 / segs as f32;
+        verts.push(v(centre));
+        verts.push(v([
+            centre[0] + a0.cos() * radius,
+            centre[1] + a0.sin() * radius,
+        ]));
+        verts.push(v([
+            centre[0] + a1.cos() * radius,
+            centre[1] + a1.sin() * radius,
+        ]));
+    }
+}
+
+/// Emit the stroke geometry for a polyline item, honouring its cap style and
+/// stroke pattern. `colour` must already have opacity applied.
+pub(super) fn emit_polyline_stroke(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    use crate::renderer::types::StrokePattern;
+    match poly.stroke_pattern {
+        StrokePattern::Solid => {
+            verts.extend(tessellate_polyline(
+                &poly.points,
+                poly.thickness,
+                poly.closed,
+                poly.join,
+                poly.mitre_limit,
+                poly.cap,
+                colour,
+                vp_w,
+                vp_h,
+            ));
+        }
+        StrokePattern::Dashed {
+            dash_length,
+            gap_length,
+            offset,
+        } => {
+            // Degenerate patterns collapse to a solid stroke rather than
+            // disappearing or looping forever. The 0.25 px floor bounds the
+            // sub-path count on long paths.
+            if dash_length <= 0.0 || gap_length <= 0.0 {
+                let solid = crate::renderer::types::OverlayPolylineItem {
+                    stroke_pattern: StrokePattern::Solid,
+                    ..poly.clone()
+                };
+                emit_polyline_stroke(verts, &solid, colour, vp_w, vp_h);
+                return;
+            }
+            let dash = dash_length.max(0.25);
+            let gap = gap_length.max(0.25);
+            let (pts, cum) = polyline_arc_table(&poly.points, poly.closed);
+            for sub in dash_subpaths(&pts, &cum, dash, gap, offset, poly.closed) {
+                verts.extend(tessellate_polyline(
+                    &sub,
+                    poly.thickness,
+                    false,
+                    poly.join,
+                    poly.mitre_limit,
+                    poly.cap,
+                    colour,
+                    vp_w,
+                    vp_h,
+                ));
+            }
+        }
+        StrokePattern::Dotted { spacing, offset } => {
+            let (pts, cum) = polyline_arc_table(&poly.points, poly.closed);
+            if pts.len() < 2 {
+                return;
+            }
+            let total = *cum.last().unwrap();
+            let spacing = spacing.max(0.5);
+            let mut s = offset.rem_euclid(spacing);
+            // On closed paths the point at `total` is the point at 0; skip it
+            // so the seam doesn't get a doubled dot.
+            let limit = if poly.closed {
+                total - 1e-3
+            } else {
+                total + 1e-3
+            };
+            while s < limit {
+                let c = point_at_arc(&pts, &cum, s);
+                emit_disc(verts, c, poly.thickness * 0.5, colour, vp_w, vp_h);
+                s += spacing;
+            }
+        }
+    }
 }
 
 /// Encode `TileMode` as the float flag the texture shader consumes.
@@ -482,6 +733,131 @@ pub(super) fn emit_line_quad(
 #[inline]
 pub(super) fn apply_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
     [colour[0], colour[1], colour[2], colour[3] * opacity]
+}
+
+#[cfg(test)]
+mod stroke_tests {
+    use super::*;
+    use crate::renderer::types::{LineJoin, OverlayPolylineItem, PolylineCap, StrokePattern};
+
+    const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+
+    fn line_item(pattern: StrokePattern, cap: PolylineCap) -> OverlayPolylineItem {
+        OverlayPolylineItem {
+            points: vec![[0.0, 0.0], [100.0, 0.0]],
+            thickness: 4.0,
+            stroke_pattern: pattern,
+            cap,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn point_at_arc_interpolates_across_segments() {
+        let (pts, cum) = polyline_arc_table(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], false);
+        assert_eq!(*cum.last().unwrap(), 20.0);
+        assert_eq!(point_at_arc(&pts, &cum, 5.0), [5.0, 0.0]);
+        assert_eq!(point_at_arc(&pts, &cum, 15.0), [10.0, 5.0]);
+        // Clamped past the end.
+        assert_eq!(point_at_arc(&pts, &cum, 99.0), [10.0, 10.0]);
+    }
+
+    #[test]
+    fn dash_subpaths_open_line() {
+        let (pts, cum) = polyline_arc_table(&[[0.0, 0.0], [100.0, 0.0]], false);
+        let subs = dash_subpaths(&pts, &cum, 10.0, 10.0, 0.0, false);
+        assert_eq!(subs.len(), 5);
+        assert_eq!(subs[0], vec![[0.0, 0.0], [10.0, 0.0]]);
+        assert_eq!(subs[4], vec![[80.0, 0.0], [90.0, 0.0]]);
+    }
+
+    #[test]
+    fn dash_subpaths_merges_closed_seam() {
+        // 10x10 square, perimeter 40. dash 15 / gap 5 / offset 5 gives
+        // visible intervals [0, 10], [15, 30], [35, 40]: the last wraps into
+        // the first across the seam.
+        let square = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let (pts, cum) = polyline_arc_table(&square, true);
+        let subs = dash_subpaths(&pts, &cum, 15.0, 5.0, 5.0, true);
+        assert_eq!(subs.len(), 2);
+        let seam = subs.last().unwrap();
+        assert_eq!(seam.first().unwrap(), &[0.0, 5.0]);
+        assert!(seam.contains(&[0.0, 0.0]));
+        assert_eq!(seam.last().unwrap(), &[10.0, 0.0]);
+    }
+
+    #[test]
+    fn caps_extend_the_stroke() {
+        let tess = |cap| {
+            tessellate_polyline(
+                &[[10.0, 50.0], [90.0, 50.0]],
+                4.0,
+                false,
+                LineJoin::Mitre,
+                4.0,
+                cap,
+                WHITE,
+                100.0,
+                100.0,
+            )
+        };
+        let butt = tess(PolylineCap::Butt);
+        let square = tess(PolylineCap::Square);
+        let round = tess(PolylineCap::Round);
+        assert_eq!(butt.len(), 6);
+        assert_eq!(square.len(), 6);
+        // Round caps add two 8-segment fans.
+        assert_eq!(round.len(), 6 + 2 * 8 * 3);
+        let min_x = |v: &[crate::resources::OverlayTextVertex]| {
+            v.iter().map(|v| v.position[0]).fold(f32::MAX, f32::min)
+        };
+        assert!(square.iter().all(|v| v.position[0].is_finite()));
+        assert!(min_x(&square) < min_x(&butt));
+        assert!(min_x(&round) < min_x(&butt));
+    }
+
+    #[test]
+    fn dotted_stroke_emits_discs() {
+        let mut verts = Vec::new();
+        let item = line_item(
+            StrokePattern::Dotted {
+                spacing: 10.0,
+                offset: 0.0,
+            },
+            PolylineCap::Butt,
+        );
+        emit_polyline_stroke(&mut verts, &item, WHITE, 100.0, 100.0);
+        // Dots at 0, 10, .., 100 = 11 discs of 10 fan triangles each.
+        assert_eq!(verts.len(), 11 * 10 * 3);
+    }
+
+    #[test]
+    fn degenerate_dash_pattern_falls_back_to_solid() {
+        let mut dashed = Vec::new();
+        emit_polyline_stroke(
+            &mut dashed,
+            &line_item(
+                StrokePattern::Dashed {
+                    dash_length: 10.0,
+                    gap_length: 0.0,
+                    offset: 0.0,
+                },
+                PolylineCap::Butt,
+            ),
+            WHITE,
+            100.0,
+            100.0,
+        );
+        let mut solid = Vec::new();
+        emit_polyline_stroke(
+            &mut solid,
+            &line_item(StrokePattern::Solid, PolylineCap::Butt),
+            WHITE,
+            100.0,
+            100.0,
+        );
+        assert_eq!(dashed.len(), solid.len());
+    }
 }
 
 /// Emit a rounded rectangle as solid quads: one center rect + four edge rects +

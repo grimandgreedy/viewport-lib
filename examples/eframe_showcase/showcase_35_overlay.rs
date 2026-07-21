@@ -1564,6 +1564,74 @@ pub(crate) fn build_overlay_frame(
                     ..Default::default()
                 });
             }
+
+            // Stroke controls: a marching-ants dashed marquee, a round-capped
+            // dashed sine wave, and a dotted circle.
+            {
+                let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+                let x_stroke = x_poly + 128.0 + 64.0;
+
+                polylines.push(viewport_lib::OverlayPolylineItem {
+                    points: vec![
+                        [x_stroke, y_poly - 28.0],
+                        [x_stroke + 64.0, y_poly - 28.0],
+                        [x_stroke + 64.0, y_poly + 28.0],
+                        [x_stroke, y_poly + 28.0],
+                    ],
+                    thickness: 2.0,
+                    colour: [1.0, 1.0, 1.0, 0.85],
+                    closed: true,
+                    stroke_pattern: viewport_lib::StrokePattern::Dashed {
+                        dash_length: 8.0,
+                        gap_length: 6.0,
+                        offset: t * 20.0,
+                    },
+                    z_order: 1,
+                    ..Default::default()
+                });
+
+                let x_wave = x_stroke + 64.0 + 28.0;
+                polylines.push(viewport_lib::OverlayPolylineItem {
+                    points: (0..=40)
+                        .map(|i| {
+                            let f = i as f32 / 40.0;
+                            [
+                                x_wave + f * 90.0,
+                                y_poly + (f * std::f32::consts::TAU).sin() * 22.0,
+                            ]
+                        })
+                        .collect(),
+                    thickness: 5.0,
+                    colour: [0.3, 0.9, 0.6, 0.9],
+                    cap: viewport_lib::PolylineCap::Round,
+                    stroke_pattern: viewport_lib::StrokePattern::Dashed {
+                        dash_length: 18.0,
+                        gap_length: 9.0,
+                        offset: 0.0,
+                    },
+                    z_order: 1,
+                    ..Default::default()
+                });
+
+                let x_dot = x_wave + 90.0 + 44.0;
+                polylines.push(viewport_lib::OverlayPolylineItem {
+                    points: (0..48)
+                        .map(|i| {
+                            let a = i as f32 / 48.0 * std::f32::consts::TAU;
+                            [x_dot + a.cos() * 26.0, y_poly + a.sin() * 26.0]
+                        })
+                        .collect(),
+                    thickness: 4.0,
+                    colour: [1.0, 0.75, 0.3, 0.9],
+                    closed: true,
+                    stroke_pattern: viewport_lib::StrokePattern::Dotted {
+                        spacing: 10.0,
+                        offset: 0.0,
+                    },
+                    z_order: 1,
+                    ..Default::default()
+                });
+            }
         }
 
         // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).

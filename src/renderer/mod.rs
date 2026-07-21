@@ -54,16 +54,17 @@ pub use self::types::{
     OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
     OverlayImageItem, OverlayPolylineItem, OverlayRectItem, OverlayShape, OverlayShapeItem,
     OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack, PickId, PointCloudItem,
-    PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineItem, PolylineRefItem,
-    PostProcessSettings, RenderCamera, RepeatMode, RibbonItem, RibbonRefItem, RulerItem,
-    ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality, ScatterSettings,
-    ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree,
-    ShadowFilter, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem,
-    SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
-    StreamtubeItem, StreamtubeRefItem, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem,
-    TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem,
-    TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem,
-    VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem, RibbonRefItem,
+    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
+    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
+    ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
+    SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem,
+    SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern, SurfaceLICConfig,
+    SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode,
+    ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
+    ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
+    aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -2372,7 +2373,11 @@ impl ViewportRenderer {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(&self.resources.wireframe_pipeline);
                         if self.resources.deform.enabled {
-                            render_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
+                            render_pass.set_bind_group(
+                                2,
+                                &self.resources.deform.dummy_bind_group,
+                                &[],
+                            );
                         }
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));

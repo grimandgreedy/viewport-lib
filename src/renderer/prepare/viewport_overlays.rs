@@ -125,16 +125,7 @@ impl ViewportRenderer {
                     if poly.thickness > 0.0 {
                         let mut colour = poly.colour;
                         colour[3] *= poly.opacity;
-                        batch.extend(tessellate_polyline(
-                            &poly.points,
-                            poly.thickness,
-                            poly.closed,
-                            poly.join,
-                            poly.mitre_limit,
-                            colour,
-                            vp_w,
-                            vp_h,
-                        ));
+                        emit_polyline_stroke(&mut batch, poly, colour, vp_w, vp_h);
                     }
                     if !batch.is_empty() {
                         batches.push((poly.z_order, batch));
