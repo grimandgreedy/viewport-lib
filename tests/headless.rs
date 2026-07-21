@@ -3474,3 +3474,166 @@ fn two_bind_group_device_renders_without_validation_errors() {
     let wireframe_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(wireframe_pixels.len(), 64 * 64 * 4);
 }
+
+/// A camera-facing unit quad in the XY plane (normal +Z), for the tone-map
+/// background-composite tests below.
+fn quad_mesh() -> MeshData {
+    let mut mesh = MeshData::default();
+    mesh.positions = vec![
+        [-0.5, -0.5, 0.0],
+        [0.5, -0.5, 0.0],
+        [0.5, 0.5, 0.0],
+        [-0.5, 0.5, 0.0],
+    ];
+    mesh.normals = vec![[0.0, 0.0, 1.0]; 4];
+    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    mesh
+}
+
+/// A frame looking down -Z at the origin with a flat background colour and the
+/// viewport overlays off, sized `size` x `size`.
+fn tonemap_frame(size: u32, background: [f32; 4]) -> FrameData {
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: 1.0,
+    };
+    frame.camera.viewport_size = [size as f32, size as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some(background);
+    frame
+}
+
+/// Tone-map composite: transparent content over the *empty* background must be
+/// composited over the flat background colour, not replace it with its own dim
+/// premultiplied value. Regression test for the fade-to-black artifact where a
+/// faint transparent draw over empty scene read darker than the background.
+///
+/// A dim, semi-transparent, unlit quad (no depth write → stays at the far plane,
+/// so the tone-mapper treats it as background) is drawn over a mid-grey
+/// background. Its centre must be at least as bright as a background corner.
+#[test]
+fn transparent_over_empty_background_not_darker() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &quad_mesh())
+        .unwrap();
+
+    let size = 64u32;
+    let bg = [0.3, 0.3, 0.3, 1.0];
+    let mut frame = tonemap_frame(size, bg);
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh;
+    // Cover the centre but leave the corners as background.
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+    item.material = Material::from_colour([0.6, 0.6, 0.6]);
+    item.settings.unlit = true;
+    item.settings.opacity = 0.3;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    let luma = |x: u32, y: u32| {
+        let i = ((y * size + x) * 4) as usize;
+        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+    };
+    let center = luma(size / 2, size / 2);
+    let corner = luma(1, 1);
+
+    // Corner must be the pure grey background (guards against the quad covering
+    // it, which would invalidate the comparison).
+    assert!(
+        corner > 420 && corner < 470,
+        "corner {corner} is not the expected grey background"
+    );
+    // Centre (transparent quad over background) must not be darker than it.
+    assert!(
+        center >= corner,
+        "transparent quad centre {center} darker than background {corner}"
+    );
+}
+
+/// Tone-map composite: bloom must glow into the *empty* background. The
+/// tone-mapper's background fast path used to return the flat background wherever
+/// nothing drew directly (HDR alpha ~ 0), before bloom was added, clipping a
+/// bloom halo hard at the silhouette of whatever cast it.
+///
+/// A small, bright (emissive) opaque quad is rendered with bloom off, then on. At
+/// least one pixel that reads as pure background with bloom off must get brighter
+/// with bloom on — the halo glowing past the quad's edge into the background.
+#[test]
+fn bloom_glows_into_empty_background() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &quad_mesh())
+        .unwrap();
+
+    let size = 128u32;
+    let bg = [0.25, 0.25, 0.25, 1.0];
+
+    let mut render = |bloom: bool| -> Vec<u8> {
+        let mut frame = tonemap_frame(size, bg);
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        // Small, so there is surrounding background for the halo to fall on.
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).to_cols_array_2d();
+        // Emissive well above the bloom threshold; opaque (sharp alpha edge).
+        item.material = Material::from_colour([0.02, 0.02, 0.02]);
+        item.material.emissive = [6.0, 6.0, 6.0];
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        frame.effects.post_process.enabled = true;
+        frame.effects.post_process.bloom = bloom;
+        frame.effects.post_process.bloom_threshold = 0.7;
+        frame.effects.post_process.bloom_intensity = 2.0;
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let off = render(false);
+    let on = render(true);
+
+    let luma = |px: &[u8], i: usize| px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32;
+    let corner = luma(&off, ((2 * size + 2) * 4) as usize); // pure background
+
+    // Sanity: the emissive quad actually drew something bright with bloom off.
+    let max_off = (0..(size * size) as usize)
+        .map(|p| luma(&off, p * 4))
+        .max()
+        .unwrap();
+    assert!(
+        max_off > corner + 200,
+        "emissive quad did not draw (max {max_off}, background {corner})"
+    );
+
+    // Biggest brightening, among pixels that are pure background with bloom off,
+    // when bloom is turned on. That is the halo glowing into the background —
+    // impossible before the fix (those pixels were clamped to the background).
+    let max_halo = (0..(size * size) as usize)
+        .filter(|&p| (luma(&off, p * 4) - corner).abs() <= 6)
+        .map(|p| luma(&on, p * 4) - luma(&off, p * 4))
+        .max()
+        .unwrap();
+    assert!(
+        max_halo > 25,
+        "bloom did not glow into the empty background (max background brightening {max_halo})"
+    );
+}

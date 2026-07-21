@@ -92,28 +92,40 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // nothing was drawn here and this is a pure background pixel.
     let is_background = depth >= 0.999999;
     let hdr = textureSample(hdr_texture, hdr_sampler, in.uv);
-    if is_background && hdr.a < 0.001 {
+
+    // Bloom spreads (via blur) beyond the pixels that produced it, so it must
+    // survive over empty background too. Sample it up front and only take the
+    // pure-background fast path when nothing — neither a transparent draw nor
+    // bloom — contributes here. Otherwise a glow would be clipped hard at the
+    // silhouette of whatever cast it.
+    var bloom = vec3<f32>(0.0);
+    if params.bloom_enabled != 0u {
+        bloom = textureSample(bloom_texture, hdr_sampler, in.uv).rgb;
+    }
+    if is_background && hdr.a < 0.001 && dot(bloom, vec3<f32>(1.0)) < 0.0003 {
         return params.background_colour;
     }
 
-    var colour = hdr.rgb;
-
     // Add bloom additively before tone mapping.
-    if params.bloom_enabled != 0u {
-        let bloom = textureSample(bloom_texture, hdr_sampler, in.uv).rgb;
-        colour = colour + bloom;
-    }
+    var colour = hdr.rgb + bloom;
 
-    // Multiply by AO before tone mapping.
-    if params.ssao_enabled != 0u {
-        let ao = textureSample(ao_texture, hdr_sampler, in.uv).r;
-        colour = colour * ao;
-    }
+    // Screen-space geometry terms (AO, contact shadows) apply only where geometry
+    // was shaded. Over empty background there is no geometry, so skipping them
+    // both avoids modulating transparent particles / bloom by stale values in
+    // non-geometry regions and keeps the bloom-over-background path independent of
+    // those textures' clear values.
+    if !is_background {
+        // Multiply by AO before tone mapping.
+        if params.ssao_enabled != 0u {
+            let ao = textureSample(ao_texture, hdr_sampler, in.uv).r;
+            colour = colour * ao;
+        }
 
-    // Multiply by contact shadow factor before tone mapping.
-    if params.contact_shadows_enabled != 0u {
-        let cs = textureSample(cs_texture, hdr_sampler, in.uv).r;
-        colour = colour * cs;
+        // Multiply by contact shadow factor before tone mapping.
+        if params.contact_shadows_enabled != 0u {
+            let cs = textureSample(cs_texture, hdr_sampler, in.uv).r;
+            colour = colour * cs;
+        }
     }
 
     // Eye-Dome Lighting: darken pixels at depth discontinuities.
@@ -153,7 +165,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no change).
-    if params.lic_enabled != 0u {
+    // A surface effect, so it only applies where geometry was shaded.
+    if !is_background && params.lic_enabled != 0u {
         let lic_val = textureSample(lic_texture, hdr_sampler, in.uv).r;
         let lic_factor = 1.0 + params.lic_strength * (lic_val * 2.0 - 1.0);
         colour = colour * max(0.0, lic_factor);
