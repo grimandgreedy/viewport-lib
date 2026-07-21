@@ -95,8 +95,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Bloom spreads (via blur) beyond the pixels that produced it, so it must
     // survive over empty background too. Sample it up front and only take the
-    // pure-background fast path when nothing — neither a transparent draw nor
-    // bloom — contributes here. Otherwise a glow would be clipped hard at the
+    // pure-background fast path when nothing contributes here, neither a
+    // transparent draw nor bloom. Otherwise a glow would be clipped hard at the
     // silhouette of whatever cast it.
     var bloom = vec3<f32>(0.0);
     if params.bloom_enabled != 0u {

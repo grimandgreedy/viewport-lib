@@ -3575,7 +3575,7 @@ fn transparent_over_empty_background_not_darker() {
 ///
 /// A small, bright (emissive) opaque quad is rendered with bloom off, then on. At
 /// least one pixel that reads as pure background with bloom off must get brighter
-/// with bloom on — the halo glowing past the quad's edge into the background.
+/// with bloom on: the halo glowing past the quad's edge into the background.
 #[test]
 fn bloom_glows_into_empty_background() {
     let Some((device, queue)) = headless_device() else {
@@ -3625,7 +3625,7 @@ fn bloom_glows_into_empty_background() {
     );
 
     // Biggest brightening, among pixels that are pure background with bloom off,
-    // when bloom is turned on. That is the halo glowing into the background —
+    // when bloom is turned on. That is the halo glowing into the background,
     // impossible before the fix (those pixels were clamped to the background).
     let max_halo = (0..(size * size) as usize)
         .filter(|&p| (luma(&off, p * 4) - corner).abs() <= 6)
