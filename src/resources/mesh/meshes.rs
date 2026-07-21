@@ -157,10 +157,16 @@ impl DeviceResources {
                     .and_then(|ts| ts.get(i))
                     .copied()
                     .unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                let colour = data
+                    .vertex_colours
+                    .as_ref()
+                    .and_then(|c| c.get(i))
+                    .copied()
+                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
                 Vertex {
                     position: *p,
                     normal: *n,
-                    colour: [1.0, 1.0, 1.0, 1.0],
+                    colour,
                     uv,
                     tangent,
                 }
@@ -838,10 +844,16 @@ impl DeviceResources {
                     .and_then(|ts| ts.get(i))
                     .copied()
                     .unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                let colour = data
+                    .vertex_colours
+                    .as_ref()
+                    .and_then(|c| c.get(i))
+                    .copied()
+                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
                 Vertex {
                     position: *p,
                     normal: *n,
-                    colour: [1.0, 1.0, 1.0, 1.0],
+                    colour,
                     uv,
                     tangent,
                 }
@@ -3381,6 +3393,55 @@ mod override_tests {
 }
 
 #[cfg(test)]
+mod vertex_colour_tests {
+    use crate::DeviceResources;
+    use crate::resources::MeshData;
+
+    fn tri() -> MeshData {
+        MeshData {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            ..MeshData::default()
+        }
+    }
+
+    #[test]
+    fn none_leaves_vertices_white() {
+        let prep = DeviceResources::prep_mesh_data(&tri());
+        assert!(
+            prep.vertices
+                .iter()
+                .all(|v| v.colour == [1.0, 1.0, 1.0, 1.0])
+        );
+    }
+
+    #[test]
+    fn per_vertex_colours_are_threaded_through() {
+        let mut data = tri();
+        data.vertex_colours = Some(vec![
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 0.5],
+        ]);
+        let prep = DeviceResources::prep_mesh_data(&data);
+        assert_eq!(prep.vertices[0].colour, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(prep.vertices[1].colour, [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(prep.vertices[2].colour, [0.0, 0.0, 1.0, 0.5]);
+    }
+
+    #[test]
+    fn short_colour_slice_defaults_missing_entries_white() {
+        let mut data = tri();
+        data.vertex_colours = Some(vec![[0.2, 0.4, 0.6, 1.0]]);
+        let prep = DeviceResources::prep_mesh_data(&data);
+        assert_eq!(prep.vertices[0].colour, [0.2, 0.4, 0.6, 1.0]);
+        assert_eq!(prep.vertices[1].colour, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(prep.vertices[2].colour, [1.0, 1.0, 1.0, 1.0]);
+    }
+}
+
+#[cfg(test)]
 mod async_upload_tests {
     use crate::DeviceResources;
     use crate::geometry::primitives;
@@ -3764,6 +3825,11 @@ pub struct MeshData {
     /// `None` = auto-compute from UVs if available, or zero-fill otherwise.
     /// Tangents are required for correct normal map rendering.
     pub tangents: Option<Vec<[f32; 4]>>,
+    /// Optional per-vertex RGBA colour in linear 0..1, multiplied into the base
+    /// colour before lighting (same convention as glTF `COLOR_0`). `None` leaves
+    /// vertices white [1, 1, 1, 1], a neutral multiply. Entries beyond the slice
+    /// length also default to white, matching the forgiving `uvs`/`tangents` lookup.
+    pub vertex_colours: Option<Vec<[f32; 4]>>,
     /// Named scalar attributes for per-vertex or per-cell scalar field visualisation.
     ///
     /// Keys are user-defined attribute names (e.g. `"pressure"`, `"velocity_mag"`).
@@ -3779,6 +3845,7 @@ impl Default for MeshData {
             indices: Vec::new(),
             uvs: None,
             tangents: None,
+            vertex_colours: None,
             attributes: std::collections::HashMap::new(),
         }
     }

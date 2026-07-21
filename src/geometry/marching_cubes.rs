@@ -142,6 +142,7 @@ pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
             indices: Vec::new(),
             uvs: None,
             tangents: None,
+            vertex_colours: None,
             attributes: HashMap::new(),
         };
     }
@@ -187,6 +188,7 @@ pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
         indices,
         uvs: None,
         tangents: None,
+        vertex_colours: None,
         attributes: HashMap::new(),
     }
 }
