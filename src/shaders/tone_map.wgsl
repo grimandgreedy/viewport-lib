@@ -84,18 +84,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth_uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(0.99999994));
     let depth_coord = vec2<i32>(vec2<u32>(depth_uv * vec2<f32>(depth_dims)));
     let depth = textureLoad(depth_texture, depth_coord, 0);
-    if depth >= 0.999999 {
-        // Check whether OIT has contributed to this pixel. The HDR buffer is
-        // cleared with alpha=0; OIT composite writes alpha=(1-reveal) > 0 via
-        // premul blend. If alpha is still ~0, this is a pure background pixel.
-        let hdr_a = textureSample(hdr_texture, hdr_sampler, in.uv).a;
-        if hdr_a < 0.001 {
-            return params.background_colour;
-        }
-        // OIT contributed here; fall through to tone-map the composite result.
+    // With no opaque geometry at this pixel (depth at the far plane), the HDR
+    // buffer holds only premultiplied *transparent* contributions (additive /
+    // OIT particles) blended over a transparent-black clear; the flat background
+    // colour is composited under them after tone mapping, below. The buffer is
+    // cleared with alpha=0 and transparent draws raise alpha, so alpha ~ 0 means
+    // nothing was drawn here and this is a pure background pixel.
+    let is_background = depth >= 0.999999;
+    let hdr = textureSample(hdr_texture, hdr_sampler, in.uv);
+    if is_background && hdr.a < 0.001 {
+        return params.background_colour;
     }
 
-    var colour = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;
+    var colour = hdr.rgb;
 
     // Add bloom additively before tone mapping.
     if params.bloom_enabled != 0u {
@@ -168,6 +169,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = aces(colour);
     } else {
         colour = khronos_neutral(colour);
+    }
+
+    // Composite transparent HDR content over the flat background colour. Without
+    // this, a faint particle over empty scene replaces the background with its
+    // own dim premultiplied value (reading as near-black) instead of adding to
+    // it. Skipped when opaque geometry is present (it already supplied the base
+    // colour tone-mapped above). Done in display space, after tone mapping, so
+    // pure-background pixels match the early-out above exactly. Alpha is the
+    // transparent coverage (>1 possible from stacked additive draws), clamped so
+    // saturated regions fully replace the background.
+    if is_background {
+        colour = colour + params.background_colour.rgb * (1.0 - clamp(hdr.a, 0.0, 1.0));
     }
 
     return vec4<f32>(colour, 1.0);
