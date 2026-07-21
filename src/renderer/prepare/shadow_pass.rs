@@ -814,9 +814,10 @@ impl ViewportRenderer {
                             if resources.deform.enabled {
                                 shadow_pass.set_bind_group(
                                     2,
-                                    resources
-                                        .deform
-                                        .instance_bind_group_for(item.mesh_id, item.deform_instance),
+                                    resources.deform.instance_bind_group_for(
+                                        item.mesh_id,
+                                        item.deform_instance,
+                                    ),
                                     &[],
                                 );
                             }
@@ -890,9 +891,10 @@ impl ViewportRenderer {
                             if resources.deform.enabled {
                                 shadow_pass.set_bind_group(
                                     2,
-                                    resources
-                                        .deform
-                                        .instance_bind_group_for(item.mesh_id, item.deform_instance),
+                                    resources.deform.instance_bind_group_for(
+                                        item.mesh_id,
+                                        item.deform_instance,
+                                    ),
                                     &[],
                                 );
                             }
@@ -1149,9 +1151,10 @@ impl ViewportRenderer {
                         if resources.deform.enabled {
                             pass.set_bind_group(
                                 2,
-                                resources
-                                    .deform
-                                    .instance_bind_group_for(c.item.mesh_id, c.item.deform_instance),
+                                resources.deform.instance_bind_group_for(
+                                    c.item.mesh_id,
+                                    c.item.deform_instance,
+                                ),
                                 &[],
                             );
                         }

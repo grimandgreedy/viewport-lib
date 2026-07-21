@@ -731,16 +731,16 @@ impl crate::resources::DeviceResources {
                 .unwrap_or(&self.content.fallback_lut_view)
         };
         let density_fallback = self.scatter.density_fallback_view.as_ref().unwrap();
-        let density_view: &crate::gpu::TextureView = if density == crate::resources::VolumeId::INVALID
-        {
-            density_fallback
-        } else {
-            self.content
-                .volume_textures
-                .get(density)
-                .map(|(_, v)| v)
-                .unwrap_or(density_fallback)
-        };
+        let density_view: &crate::gpu::TextureView =
+            if density == crate::resources::VolumeId::INVALID {
+                density_fallback
+            } else {
+                self.content
+                    .volume_textures
+                    .get(density)
+                    .map(|(_, v)| v)
+                    .unwrap_or(density_fallback)
+            };
         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("scatter_per_volume_tex_bg"),
             layout: bgl,

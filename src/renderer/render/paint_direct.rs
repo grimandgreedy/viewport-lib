@@ -78,7 +78,11 @@ impl ViewportRenderer {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
                         render_pass.set_pipeline(&self.resources.wireframe_pipeline);
                         if self.resources.deform.enabled {
-                            render_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
+                            render_pass.set_bind_group(
+                                2,
+                                &self.resources.deform.dummy_bind_group,
+                                &[],
+                            );
                         }
                         render_pass.set_bind_group(1, tvm_bg, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));

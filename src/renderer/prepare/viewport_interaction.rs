@@ -1706,9 +1706,10 @@ impl ViewportRenderer {
                     if self.resources.deform.enabled {
                         pass.set_bind_group(
                             2,
-                            self.resources
-                                .deform
-                                .instance_bind_group_for(outlined.mesh_id, outlined.deform_instance),
+                            self.resources.deform.instance_bind_group_for(
+                                outlined.mesh_id,
+                                outlined.deform_instance,
+                            ),
                             &[],
                         );
                     }

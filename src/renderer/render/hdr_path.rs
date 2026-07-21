@@ -607,7 +607,11 @@ impl ViewportRenderer {
                                     .as_ref(),
                             );
                             if resources.deform.enabled {
-                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
+                                render_pass.set_bind_group(
+                                    2,
+                                    &resources.deform.dummy_bind_group,
+                                    &[],
+                                );
                             }
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             for (_, batch) in &opaque_batches {
@@ -721,9 +725,10 @@ impl ViewportRenderer {
                             if resources.deform.enabled {
                                 render_pass.set_bind_group(
                                     2,
-                                    resources
-                                        .deform
-                                        .instance_bind_group_for(item.mesh_id, item.deform_instance),
+                                    resources.deform.instance_bind_group_for(
+                                        item.mesh_id,
+                                        item.deform_instance,
+                                    ),
                                     &[],
                                 );
                             }
@@ -1079,7 +1084,11 @@ impl ViewportRenderer {
                         if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
                             render_pass.set_pipeline(hdr_wf);
                             if resources.deform.enabled {
-                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
+                                render_pass.set_bind_group(
+                                    2,
+                                    &resources.deform.dummy_bind_group,
+                                    &[],
+                                );
                             }
                             render_pass.set_bind_group(1, tvm_bg, &[]);
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -2263,7 +2272,11 @@ impl ViewportRenderer {
                     } else if let Some(ref pipeline) = self.resources.oit.instanced_pipeline {
                         oit_pass.set_pipeline(pipeline);
                         if self.resources.deform.enabled {
-                            oit_pass.set_bind_group(2, &self.resources.deform.dummy_bind_group, &[]);
+                            oit_pass.set_bind_group(
+                                2,
+                                &self.resources.deform.dummy_bind_group,
+                                &[],
+                            );
                         }
                         for batch in &self.instancing.batches {
                             if !batch.is_transparent {
