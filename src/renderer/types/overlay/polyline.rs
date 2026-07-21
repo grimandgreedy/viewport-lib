@@ -148,15 +148,67 @@ impl OverlayPolylineItem {
         thickness: f32,
         colour: [f32; 4],
     ) -> Self {
-        let n = samples.max(1);
-        let points: Vec<[f32; 2]> = (0..=n).map(|i| path(i as f32 / n as f32)).collect();
         Self {
-            points,
+            points: sample_open_path(path, samples),
             thickness,
             colour,
             ..Default::default()
         }
     }
+
+    /// Construct a closed, filled polygon by sampling `path` at `samples + 1`
+    /// evenly-spaced values across `[0, 1)`. The last sample stops short of
+    /// `t = 1` so the closing segment (last point back to the first) does not
+    /// double up the start point.
+    ///
+    /// Sets `closed = true` and applies the given fill and stroke. Pass
+    /// `None` for `fill` to draw the outline only.
+    pub fn closed_from_path(
+        path: impl Fn(f32) -> [f32; 2],
+        samples: u32,
+        fill: Option<OverlayFill>,
+        stroke_colour: [f32; 4],
+        thickness: f32,
+    ) -> Self {
+        Self {
+            points: sample_closed_path(path, samples),
+            thickness,
+            colour: stroke_colour,
+            closed: true,
+            fill,
+            ..Default::default()
+        }
+    }
+
+    /// Replace `points` by resampling `path`. Honours the item's `closed`
+    /// flag: closed items sample `[0, 1)` so the closing segment is not
+    /// duplicated, open items sample `[0, 1]` inclusive.
+    ///
+    /// Call this during frame building to animate a function-generated path.
+    /// Nothing else on the item changes, and no renderer state is cached, so
+    /// the resampled points take effect on the next prepared frame.
+    pub fn set_points_from_path(&mut self, path: impl Fn(f32) -> [f32; 2], samples: u32) {
+        self.points = if self.closed {
+            sample_closed_path(path, samples)
+        } else {
+            sample_open_path(path, samples)
+        };
+    }
+}
+
+/// Sample `path` at `samples + 1` values across `[0, 1]` inclusive.
+fn sample_open_path(path: impl Fn(f32) -> [f32; 2], samples: u32) -> Vec<[f32; 2]> {
+    let n = samples.max(1);
+    (0..=n).map(|i| path(i as f32 / n as f32)).collect()
+}
+
+/// Sample `path` at `samples + 1` values across `[0, 1)`. The final sample
+/// lands at `samples / (samples + 1)`, so a closed polyline's wrap-around
+/// segment does not repeat the start point.
+fn sample_closed_path(path: impl Fn(f32) -> [f32; 2], samples: u32) -> Vec<[f32; 2]> {
+    let n = samples.max(1);
+    let divisor = (n + 1) as f32;
+    (0..=n).map(|i| path(i as f32 / divisor)).collect()
 }
 
 /// End-cap style for `OverlayShape::Line`.
@@ -169,4 +221,56 @@ pub enum LineCap {
     /// Square end caps. The stroke ends in a flat perpendicular cut flush
     /// with the segment endpoint (no extension beyond the endpoint).
     Square,
+}
+
+#[cfg(test)]
+mod path_sample_tests {
+    use super::*;
+
+    // A unit circle: path(0) == path(1), so an inclusive sample would repeat
+    // the start point at the end.
+    fn circle(t: f32) -> [f32; 2] {
+        let a = t * std::f32::consts::TAU;
+        [a.cos(), a.sin()]
+    }
+
+    #[test]
+    fn from_path_samples_endpoint_inclusive() {
+        let item = OverlayPolylineItem::from_path(circle, 4, 2.0, [1.0; 4]);
+        // 5 points, first and last both at the t=0 position.
+        assert_eq!(item.points.len(), 5);
+        assert!((item.points[0][0] - item.points[4][0]).abs() < 1e-5);
+        assert!((item.points[0][1] - item.points[4][1]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn closed_from_path_skips_duplicate_endpoint() {
+        let fill = Some(OverlayFill::Solid([0.2, 0.4, 0.6, 1.0]));
+        let item = OverlayPolylineItem::closed_from_path(circle, 4, fill.clone(), [1.0; 4], 3.0);
+        assert!(item.closed);
+        assert_eq!(item.fill, fill);
+        assert_eq!(item.thickness, 3.0);
+        // 5 points spanning [0, 1); the last is at 4/5, not back at the start.
+        assert_eq!(item.points.len(), 5);
+        assert!((item.points[0][0] - item.points[4][0]).abs() > 1e-3);
+        let expected_last = circle(4.0 / 5.0);
+        assert!((item.points[4][0] - expected_last[0]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn set_points_from_path_follows_closed_flag() {
+        let mut open = OverlayPolylineItem {
+            closed: false,
+            ..Default::default()
+        };
+        open.set_points_from_path(circle, 4);
+        assert!((open.points[0][0] - open.points[4][0]).abs() < 1e-5);
+
+        let mut closed = OverlayPolylineItem {
+            closed: true,
+            ..Default::default()
+        };
+        closed.set_points_from_path(circle, 4);
+        assert!((closed.points[0][0] - closed.points[4][0]).abs() > 1e-3);
+    }
 }

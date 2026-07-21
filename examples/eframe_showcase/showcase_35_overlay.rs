@@ -1632,6 +1632,60 @@ pub(crate) fn build_overlay_frame(
                     ..Default::default()
                 });
             }
+
+            // Closure-generated closed fills: an animated blob resampled every
+            // frame with set_points_from_path, and a textured closed path built
+            // with closed_from_path using bounds UVs.
+            {
+                let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+                // Clear of the dotted circle's right edge (centre x_poly + 418,
+                // radius 26) plus a gap and the blob's own max radius (34).
+                let x_blob = x_poly + 512.0;
+
+                // A wobbling closed blob: radius modulated by time so the shape
+                // is resampled from the closure each frame.
+                let blob_path = move |u: f32| {
+                    let a = u * std::f32::consts::TAU;
+                    let r = 28.0 + 6.0 * (a * 3.0 + t * 2.0).sin();
+                    [x_blob + a.cos() * r, y_poly + a.sin() * r]
+                };
+                let mut blob = viewport_lib::OverlayPolylineItem::closed_from_path(
+                    blob_path,
+                    64,
+                    Some(OverlayFill::RadialGradient {
+                        centre_colour: [0.9, 0.7, 0.2, 0.85],
+                        edge_colour: [0.7, 0.2, 0.5, 0.85],
+                    }),
+                    [1.0, 1.0, 1.0, 0.85],
+                    2.0,
+                );
+                blob.z_order = 1;
+                // Redundant here since closed_from_path already sampled the
+                // closure, but shows the per-frame refresh entry point.
+                blob.set_points_from_path(blob_path, 64);
+                polylines.push(blob);
+
+                if let Some(tid) = app.ovl_state.carlgauss_tex_id {
+                    let x_tex = x_blob + 90.0;
+                    let mut textured = viewport_lib::OverlayPolylineItem::closed_from_path(
+                        |u| {
+                            let a = u * std::f32::consts::TAU;
+                            // Rounded pentagon.
+                            let r = 30.0;
+                            let a5 = (a * 5.0).cos() * 3.0;
+                            [x_tex + a.cos() * (r + a5), y_poly + a.sin() * (r + a5)]
+                        },
+                        60,
+                        Some(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95])),
+                        [1.0, 0.9, 0.7, 0.9],
+                        2.0,
+                    );
+                    // Leaving uvs None maps the path bounds to [0, 1] UVs.
+                    textured.texture = Some(tid);
+                    textured.z_order = 1;
+                    polylines.push(textured);
+                }
+            }
         }
 
         // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).

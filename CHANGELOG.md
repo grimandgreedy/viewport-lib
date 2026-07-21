@@ -40,6 +40,12 @@ Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin:
 
 `pick_object` now fills `PickHit::normal` with the real geometric normal for a surface face hit, computed from the hit triangle and oriented toward the camera, so align-to-surface placement (a decal flush on a wall, a light on a face) has a usable normal instead of the camera-facing stand-in. Vertex, edge, and object-level hits keep the stand-in.
 
+#### Polyline overlay stroke controls and path helpers
+
+`OverlayPolylineItem` gains a `cap` (`Butt`, `Square`, `Round`) and a `stroke_pattern` (`Solid`, `Dashed { dash_length, gap_length, offset }`, `Dotted { spacing, offset }`). Caps apply to open ends and to the ends of every dash. Dashes and dots are measured in arc length along the path and continue across the closing segment of a closed polyline; animating a dash `offset` gives a marching-ants effect. Defaults stay `Butt` + `Solid`, so existing polylines are unchanged. It all tessellates on the CPU into the existing overlay pipeline, so there are no new draw calls or shader changes.
+
+`OverlayPolylineItem::closed_from_path` builds a closed, filled polygon from a closure, sampling `[0, 1)` so the closing segment does not double the start point. `set_points_from_path` resamples the points in place following the item's `closed` flag, for animating a function-generated path each frame.
+
 ### Improvements
 
 - **Scenes with many lights are much faster on the instanced path.** Instanced draws previously lit every pixel with every light in the scene; they now use the same per-cluster light lists the per-object path uses, so each pixel only pays for the lights that can actually reach it. Scenes with 16 or fewer lights are unchanged.
