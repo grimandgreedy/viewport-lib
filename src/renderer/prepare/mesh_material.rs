@@ -11,7 +11,8 @@ use super::*;
 /// instanced shader does not read falls back to the per-object path. This is the
 /// single source of truth for that decision, used both when building the batches
 /// and when deciding the instanced-batch cache key. An item is excluded when it
-/// is hidden, carries a scalar attribute, uses a styled back-face policy
+/// is hidden, carries a scalar attribute, carries a GPU vertex warp (the
+/// instanced shader has no warp support), uses a styled back-face policy
 /// (`DifferentColour`/`Tint`/`Pattern`, which need per-item back-face state), a
 /// matcap, or param-vis, has a pending compute-filter result (which needs a
 /// per-item index buffer), has per-instance deform data, or its mesh has a
@@ -25,6 +26,11 @@ pub(crate) fn is_instanceable(
 ) -> bool {
     !item.settings.hidden
         && item.active_attribute.is_none()
+        // A GPU vertex warp is a per-object-only feature: the instanced pipeline
+        // has no warp support and would draw the mesh undeformed, ignoring
+        // `warp_scale`. Keep warp items on the per-object path (matching the
+        // per-object writer's own warp exception and the comment there).
+        && item.warp_attribute.is_none()
         && !backface_needs_per_object(item)
         && item.material.matcap_id().is_none()
         && item.material.param_vis.is_none()
@@ -132,6 +138,48 @@ mod tests {
         item.material.alpha_mode = AlphaMode::Mask(0.45);
         assert!(item.material.is_two_sided());
         assert!(!backface_needs_per_object(&item));
+    }
+
+    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::default_instance();
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
+    }
+
+    /// A GPU vertex warp is per-object only: the instanced shader ignores
+    /// `warp_scale`, so a warp item routed to the instanced path renders
+    /// undeformed and its warp control does nothing. `is_instanceable` must
+    /// exclude it.
+    #[test]
+    fn warp_item_is_not_instanceable() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mesh = crate::geometry::primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &mesh).unwrap();
+
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "a plain mesh item should instance",
+        );
+
+        item.warp_attribute = Some("warp".to_string());
+        assert!(
+            !is_instanceable(&item, &resources, &[]),
+            "a warp item must fall back to the per-object path",
+        );
     }
 
     /// The shared material mapping carries the cutoff and enable flag that the

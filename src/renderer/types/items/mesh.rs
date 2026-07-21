@@ -71,6 +71,15 @@ pub struct SceneRenderItem {
     /// Allows multiple `SceneRenderItem`s that share a bind-pose mesh to
     /// each pose independently (crowd / instanced characters with GPU
     /// skinning).
+    ///
+    /// # Trap: silently undeformed
+    ///
+    /// A deformer whose data lives in the **per-instance** slot (GPU skinning's
+    /// joint palette, a morph-target weight palette) does nothing unless this
+    /// field selects the instance the data was attached to. Attaching a palette
+    /// at instance `0` and leaving `deform_instance` at `None` renders the mesh
+    /// undeformed with no error. The single-instance convention is
+    /// `deform_instance = Some(0)` alongside `attach_deform_slot_instance(.., 0, ..)`.
     pub deform_instance: Option<u32>,
     /// Whether this surface receives projected decals. Default: `true`.
     pub receives_decals: bool,

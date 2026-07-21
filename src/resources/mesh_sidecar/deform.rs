@@ -830,6 +830,11 @@ impl DeviceResources {
     /// given mesh. Used for data that varies per instance (e.g. joint
     /// palettes). `stride_bytes` is the per-element byte stride; the data
     /// length must be a multiple of `stride_bytes` and 4.
+    ///
+    /// The drawn item must select this instance to read it: set the
+    /// `SceneRenderItem`'s (or scene node's) `deform_instance` to the same
+    /// `instance_id`. Attaching data here but leaving `deform_instance` at its
+    /// `None` default renders the mesh undeformed with no error.
     pub fn attach_deform_slot_instance(
         &mut self,
         device: &crate::gpu::Device,
