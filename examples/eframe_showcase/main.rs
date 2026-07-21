@@ -70,6 +70,7 @@ mod showcase_49_scene_lights;
 mod showcase_50_gpu_wave;
 mod showcase_51_async_uploads;
 mod showcase_52_lod;
+mod showcase_53_vertex_colours;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -229,6 +230,7 @@ fn main() -> eframe::Result {
                 wave_state: showcase_50_gpu_wave::WaveState::default(),
                 async_uploads_state: showcase_51_async_uploads::AsyncUploadsState::default(),
                 lod_state: showcase_52_lod::LodState::default(),
+                vcol_state: showcase_53_vertex_colours::VertexColourState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -295,6 +297,7 @@ enum ShowcaseMode {
     GpuWave,
     AsyncUploads,
     Lod,
+    VertexColours,
 }
 
 impl ShowcaseMode {
@@ -352,6 +355,7 @@ impl ShowcaseMode {
             Self::GpuWave => "50: GPU Wave (compute plugin)",
             Self::AsyncUploads => "51: Async Asset Streaming",
             Self::Lod => "52: Level of Detail",
+            Self::VertexColours => "53: Vertex Colours & Painting",
         }
     }
 }
@@ -532,6 +536,9 @@ pub(crate) struct App {
 
     // --- Showcase 52 ---
     pub(crate) lod_state: showcase_52_lod::LodState,
+
+    // --- Showcase 53 ---
+    pub(crate) vcol_state: showcase_53_vertex_colours::VertexColourState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -733,6 +740,7 @@ impl eframe::App for App {
                     ShowcaseMode::GpuWave,
                     ShowcaseMode::AsyncUploads,
                     ShowcaseMode::Lod,
+                    ShowcaseMode::VertexColours,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1163,7 +1171,10 @@ impl eframe::App for App {
                         || (self.mode == ShowcaseMode::PickLevels
                             && self.pl_state.drag_start.is_some())
                         || (self.mode == ShowcaseMode::ProbeWidgets
-                            && self.pw_state.suppress_orbit);
+                            && self.pw_state.suppress_orbit)
+                        || (self.mode == ShowcaseMode::VertexColours
+                            && self.vcol_state.paint_mode
+                            && (response.dragged() || response.drag_started()));
                     if suppress_orbit {
                         self.controller.resolve();
                     } else {
@@ -1512,6 +1523,58 @@ impl eframe::App for App {
                     ctx.request_repaint();
                 }
 
+                // ----- Vertex colours (53): drive the animated grid and apply
+                // paint strokes. Both go through `update_vertex_colours`, an
+                // in-place GPU write, so nothing here re-uploads a mesh.
+                if self.mode == ShowcaseMode::VertexColours && self.vcol_state.built {
+                    let dt = ctx.input(|i| i.stable_dt).min(0.1);
+                    let cursor = self.interact_state.last_cursor_viewport;
+                    let view_proj = self.camera.view_proj_matrix();
+                    let vp_w = rect.width();
+                    let vp_h = rect.height();
+                    let queue = self.queue.clone();
+                    let animate = self.vcol_state.animate;
+                    let do_clear = std::mem::take(&mut self.vcol_state.clear_requested);
+                    let do_paint = self.vcol_state.paint_mode
+                        && response.hovered()
+                        && (response.dragged() || response.drag_started() || response.clicked());
+
+                    let rs = frame.wgpu_render_state().expect("wgpu required");
+                    let mut guard = rs.renderer.write();
+                    if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                        if do_clear {
+                            showcase_53_vertex_colours::vcol_clear_paint(
+                                &mut self.vcol_state,
+                                renderer,
+                                &queue,
+                            );
+                        }
+                        if animate {
+                            showcase_53_vertex_colours::vcol_animate(
+                                &mut self.vcol_state,
+                                renderer,
+                                &queue,
+                                dt,
+                            );
+                        }
+                        if do_paint {
+                            showcase_53_vertex_colours::vcol_paint(
+                                &mut self.vcol_state,
+                                renderer,
+                                &queue,
+                                cursor,
+                                vp_w,
+                                vp_h,
+                                view_proj,
+                            );
+                        }
+                    }
+                    drop(guard);
+                    if animate {
+                        ctx.request_repaint();
+                    }
+                }
+
                 // ----- Async uploads (51): advance per-asset state machines
                 // from upload_status, and keep repainting so the orbit camera
                 // animates even while no input is happening.
@@ -1536,7 +1599,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 52] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 53] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1589,6 +1652,7 @@ impl App {
             ShowcaseMode::GpuWave,
             ShowcaseMode::AsyncUploads,
             ShowcaseMode::Lod,
+            ShowcaseMode::VertexColours,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1725,6 +1789,7 @@ impl App {
             ShowcaseMode::GpuWave => !self.wave_state.built,
             ShowcaseMode::AsyncUploads => !self.async_uploads_state.built,
             ShowcaseMode::Lod => !self.lod_state.built,
+            ShowcaseMode::VertexColours => !self.vcol_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2246,6 +2311,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::VertexColours => {
+                showcase_53_vertex_colours::build_vertex_colour_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 16.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.15),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2352,6 +2427,9 @@ impl App {
                 showcase_51_async_uploads::controls_async_uploads(self, ui, frame)
             }
             ShowcaseMode::Lod => showcase_52_lod::controls_lod(self, ui),
+            ShowcaseMode::VertexColours => {
+                showcase_53_vertex_colours::controls_vertex_colour(self, ui)
+            }
         }
     }
 }
@@ -3221,6 +3299,17 @@ impl App {
                 };
                 let generation = self.lod_state.generation;
                 (items, Some(BG_COLOUR), lighting, generation, 0)
+            }
+
+            ShowcaseMode::VertexColours => {
+                let items = showcase_53_vertex_colours::vcol_scene_items(self);
+                (
+                    items,
+                    Some(BG_COLOUR),
+                    showcase_53_vertex_colours::vcol_lighting(),
+                    0,
+                    0,
+                )
             }
         };
 

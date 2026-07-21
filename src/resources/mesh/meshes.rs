@@ -786,6 +786,72 @@ impl DeviceResources {
         Ok(())
     }
 
+    /// Write per-vertex colours into an uploaded mesh in place, starting at
+    /// `start_vertex`, without re-uploading the whole mesh.
+    ///
+    /// This is the fast path for vertex painting. The per-vertex colour term is
+    /// already part of every mesh's interleaved vertex layout and is multiplied
+    /// into the base colour before lighting (see [`MeshData::vertex_colours`]),
+    /// so painted colours show up with no pipeline or shader change. Only the
+    /// colour bytes of the touched vertices are written, so a brush stroke over
+    /// `colours.len()` vertices costs O(touched vertices), not O(mesh) the way
+    /// [`replace_mesh_data`](Self::replace_mesh_data) (which rewrites the whole
+    /// interleaved vertex buffer) would.
+    ///
+    /// `colours` is one RGBA (linear 0..1) per vertex, covering the contiguous
+    /// range `[start_vertex, start_vertex + colours.len())`. Colour is
+    /// interleaved (each vertex's colour sits one vertex stride apart), so the
+    /// write is issued per vertex; a stroke touching a few hundred vertices is
+    /// a few hundred small writes, still bounded by what was painted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `mesh_id` is not registered, or
+    /// [`ViewportError::MeshLengthMismatch`](crate::error::ViewportError::MeshLengthMismatch)
+    /// if the run would extend past the mesh's vertex count.
+    pub fn update_vertex_colours(
+        &self,
+        queue: &crate::gpu::Queue,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        start_vertex: usize,
+        colours: &[[f32; 4]],
+    ) -> crate::error::ViewportResult<()> {
+        let store_len = self.mesh_store.len();
+        let mesh =
+            self.mesh_store
+                .get(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
+        if colours.is_empty() {
+            return Ok(());
+        }
+        let stride = std::mem::size_of::<Vertex>() as u64;
+        let vertex_count = (mesh.vertex_buffer.size() / stride) as usize;
+        if start_vertex + colours.len() > vertex_count {
+            return Err(crate::error::ViewportError::MeshLengthMismatch {
+                positions: start_vertex + colours.len(),
+                normals: vertex_count,
+            });
+        }
+        // Colour is the `[f32; 4]` at offset 24 in the interleaved `Vertex`
+        // (see `Vertex::buffer_layout`). Interleaving puts each vertex's colour
+        // one full stride apart, so a contiguous vertex run is written per
+        // vertex rather than in a single strided copy.
+        const COLOUR_OFFSET: u64 = 24;
+        for (i, colour) in colours.iter().enumerate() {
+            let byte_offset = (start_vertex as u64 + i as u64) * stride + COLOUR_OFFSET;
+            queue.write_buffer(
+                &mesh.vertex_buffer,
+                byte_offset,
+                bytemuck::cast_slice(std::slice::from_ref(colour)),
+            );
+        }
+        Ok(())
+    }
+
     /// Replace the mesh at `mesh_index` with new geometry data.
     ///
     /// When the new vertex and index counts match the existing mesh and no attributes are
@@ -3271,6 +3337,46 @@ mod override_tests {
             assert!(mesh.normal_override_buffer.is_none());
             assert_eq!(mesh.normal_override_gen, 2);
         }
+    }
+
+    #[test]
+    fn update_vertex_colours_writes_in_range_and_rejects_overflow() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        let vertex_count = plane.positions.len();
+
+        // A run inside the mesh is accepted.
+        let colours = vec![[1.0f32, 0.0, 0.0, 1.0]; vertex_count - 1];
+        resources
+            .update_vertex_colours(&queue, mesh_id, 1, &colours)
+            .unwrap();
+
+        // Empty write is a no-op success.
+        resources
+            .update_vertex_colours(&queue, mesh_id, 0, &[])
+            .unwrap();
+
+        // A run that would extend past the last vertex is rejected.
+        let err =
+            resources.update_vertex_colours(&queue, mesh_id, vertex_count, &[[0.0, 0.0, 1.0, 1.0]]);
+        assert!(matches!(
+            err,
+            Err(crate::error::ViewportError::MeshLengthMismatch { .. })
+        ));
+
+        // Unknown mesh id is rejected.
+        let bogus = crate::resources::mesh::mesh_store::MeshId::new(9999, 0);
+        let err = resources.update_vertex_colours(&queue, bogus, 0, &[[1.0, 1.0, 1.0, 1.0]]);
+        assert!(matches!(
+            err,
+            Err(crate::error::ViewportError::StaleHandle { .. })
+        ));
     }
 
     #[test]
