@@ -2,9 +2,36 @@
 
 ## [0.20.0]
 
-Performance release focused on scenes with many lights. A game-scale test scene (3251 instances, 251 point lights) went from 2.3 to 10.5 fps facing its densest area, and from 30 to 79 fps looking away, on an RTX 3080. GPU frame timing also now measures the whole frame instead of just the main pass. Upgrade notes are in `docs/migration-guides/v0.20.0-render-performance.md`.
+A release in two halves: custom fragment shading and many-light performance. Materials can now select runtime-registered WGSL shading hooks, so custom BRDFs, toon looks, shader-graph-style surface authoring, and per-vertex-driven effects no longer require forking the mesh shaders; a consumer that registers no plugin renders byte-identically. On the performance side, the release focuses on scenes with many lights. A game-scale test scene (3251 instances, 251 point lights) went from 2.3 to 10.5 fps facing its densest area, and from 30 to 79 fps looking away, on an RTX 3080. GPU frame timing also now measures the whole frame instead of just the main pass. Upgrade notes are in `docs/migration-guides/v0.20.0-render-performance.md`.
 
 ### Features
+
+#### Material plugins
+
+`register_material_plugin(&device, &plugin)` registers a `MaterialPlugin`: a named WGSL body defining any non-empty subset of four hooks, validated against every lit shader at registration under a wgpu error scope, so a malformed body fails with the naga message instead of poisoning the renderer. A material opts in with `Material::shading_plugin = Some(id)`; plugin draws keep scene shadows, AO, normal maps, IBL, and alpha modes.
+
+The hooks:
+
+- `shade_surface(surf) -> SurfaceOverride` authors the PBR surface (base colour, normal, metallic, roughness, emissive, alpha) and lets stock Cook-Torrance lighting, shadows, and IBL run on the result. This is the shader-graph shape: a node-graph compiler emits one of these per material. The `alpha` output is honoured only under `Mask`/`Blend` alpha modes (Mask re-tests the material's cutoff, Blend takes it as the output alpha, Opaque ignores it).
+- `shade_light(surf, light)` replaces the built-in per-light term (custom BRDFs, toon bands, wrap lighting); the lib keeps the light loop, clustering, range culling, and shadow sampling. `needs_back_hemisphere` opts into receiving lights behind the surface.
+- `shade_ambient(surf)` replaces the ambient/IBL term; blessed helpers (`ibl_ambient` and the individual IBL taps) let a body reshape the standard ambient rather than rebuild it.
+- `recolor(surf, direct, ambient)` adjusts the final colour after lighting (rim light, posterise, tint).
+
+Per-material parameters and textures ride variants: `register_material_plugin` returns the default variant and `create_material_plugin_variant` mints further ids that share the plugin's shaders and pipelines but carry their own 16 x vec4 params window and texture set (`material_texture_0..N`, 1x1 white fallback). `material_plugin_params_handle` returns a cloneable handle whose `write(&queue, ...)` updates a variant's params live each frame. `material_plugin_stats()` reports per-plugin variant and pipeline counts.
+
+Plugin draws need `max_bind_groups >= 4` (the wgpu default; registration fails with a clear error on more limited devices) and render per-object rather than instanced. Reference plugins live in `examples/plugins/` (toon, rim, detail layer, parallax relief, dissolve), all live in the "Custom Shading Plugins" showcase.
+
+#### Per-vertex extension attributes
+
+`MeshData::extension_attributes` uploads one `vec4<f32>` per vertex alongside the mesh. A material plugin that returns `reads_vertex_attribute() = true` receives it interpolated as `surf.attr`; the meaning of the components is up to the plugin (blend masks, wind weights, bake data). Meshes without the channel read `vec4(0.0)`, so one plugin serves meshes with and without the data.
+
+#### Per-material normal strength
+
+`Material::normal_strength` scales the strength of the normal map (glTF `normalScale`): 1.0 is the authored strength, 0.0 flattens the map. Applied in the TBN unpack across all lit paths.
+
+#### Dash and dot patterns for world-space polylines
+
+`PolylineItem::stroke_pattern` accepts `Solid`, `Dashed`, or `Dotted`, with cadence measured in world-space arc length along the line so the pattern is view independent and stays fixed to the geometry. This is the world-space counterpart of the overlay polyline patterns below, e.g. for dashed constraint axes on a gizmo. `Solid` stays the default, so existing polylines are unchanged.
 
 #### Deferred-submit mode
 
@@ -87,6 +114,10 @@ Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin:
 - **`ClusterCell::_pad` is now `punctual_demand`**, and the `ClusterStats` per-cluster light counts report how many lights wanted each cluster rather than how many were kept; `dropped_punctual_slots` is new.
 
 ### Bug Fixes
+
+#### Transparent surfaces ignored the material's texture transform
+
+The OIT path did not apply `uv_transform`, so a tiled or offset texture jumped when an object faded from opaque to transparent. Both paths now sample identically.
 
 #### Alpha-cutout foliage rendered as opaque cards on the instanced path
 
