@@ -125,8 +125,10 @@ impl DeviceResources {
             base,
             &self.deform.registrations,
         );
-        let source = crate::resources::builders::strip_mesh_discards(
-            crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+        let source = crate::resources::builders::strip_mesh_non_pbr(
+            crate::resources::builders::strip_mesh_discards(
+                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+            ),
         );
         let module = crate::resources::builders::wgsl_module(device, label, source.as_ref());
         let nodiscard = crate::resources::builders::wgsl_module(

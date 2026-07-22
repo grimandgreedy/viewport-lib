@@ -818,6 +818,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         }
 
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        // BEGIN_PBR_STRIP
     } else {
         // Multi-light Blinn-Phong path
         var total_colour_contrib = vec3<f32>(0.0);
@@ -889,6 +890,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
 
         let lit_rgb = hemi_rgb + direct_rgb;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        // END_PBR_STRIP
     }
 
     var res: LitResult;

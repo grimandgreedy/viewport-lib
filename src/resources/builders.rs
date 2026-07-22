@@ -89,6 +89,48 @@ pub(crate) fn strip_mesh_discards<'a>(
     std::borrow::Cow::Owned(strip_discards(&source))
 }
 
+/// Diagnostic knob: with `VIEWPORT_MESH_PBR_ONLY` set in the environment, remove
+/// the alternate-shading-model regions bracketed by `// BEGIN_PBR_STRIP` /
+/// `// END_PBR_STRIP` (Blinn-Phong, matcap, uv-vis, per-face colour) from the mesh
+/// shader source before module creation, leaving a PBR-only fragment shader.
+///
+/// This is a benchmark A/B tool for the "compose built-in shading models as
+/// separate bodies" question. It produces the smaller, specialised shader that a
+/// composed PBR-only body would compile to, so its per-fragment cost can be
+/// measured against the full branched shader on the same scene. Only render PBR
+/// materials while it is active: the stripped shader leaves `final_rgb` undefined
+/// on a non-PBR (`use_pbr == 0`) draw. It is a measurement tool, not a rendering
+/// mode; the markers are inert comments when the knob is off.
+pub(crate) fn strip_mesh_non_pbr<'a>(
+    source: impl Into<std::borrow::Cow<'a, str>>,
+) -> std::borrow::Cow<'a, str> {
+    let source = source.into();
+    if std::env::var_os("VIEWPORT_MESH_PBR_ONLY").is_none() {
+        return source;
+    }
+    const BEGIN: &str = "// BEGIN_PBR_STRIP";
+    const END: &str = "// END_PBR_STRIP";
+    if !source.contains(BEGIN) {
+        return source;
+    }
+    static NOTICE: std::sync::Once = std::sync::Once::new();
+    NOTICE.call_once(|| {
+        eprintln!(
+            "viewport-lib: VIEWPORT_MESH_PBR_ONLY active: mesh shaders compiled PBR-only \
+             (Blinn-Phong, matcap, uv-vis, and per-face colour paths removed)"
+        );
+    });
+    let mut s = source.into_owned();
+    while let Some(start) = s.find(BEGIN) {
+        let Some(rel_end) = s[start..].find(END) else {
+            break;
+        };
+        let end = start + rel_end + END.len();
+        s.replace_range(start..end, "");
+    }
+    std::borrow::Cow::Owned(s)
+}
+
 /// Remove every `discard;` statement from a WGSL source.
 ///
 /// A fragment shader containing `discard` restricts hardware early depth

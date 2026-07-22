@@ -84,8 +84,10 @@ impl DeviceResources {
         let shader = crate::resources::builders::wgsl_module(
             device,
             "mesh_shader",
-            crate::resources::builders::strip_mesh_discards(
-                crate::resources::builders::strip_debug_vis(mesh_src, false),
+            crate::resources::builders::strip_mesh_non_pbr(
+                crate::resources::builders::strip_mesh_discards(
+                    crate::resources::builders::strip_debug_vis(mesh_src, false),
+                ),
             ),
         );
 

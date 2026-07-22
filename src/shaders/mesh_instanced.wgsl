@@ -492,6 +492,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        // BEGIN_PBR_STRIP
     } else {
         var total_colour_contrib = vec3<f32>(0.0);
         let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
@@ -545,6 +546,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
         let lit_rgb = hemi_rgb + direct_rgb;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        // END_PBR_STRIP
     }
 
     var res: LitResult;
