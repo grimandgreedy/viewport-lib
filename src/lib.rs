@@ -288,8 +288,8 @@ pub use resources::{
     PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
 };
 pub use resources::{
-    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, ShadingHookDesc,
-    ShadingHookId,
+    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
+    ShadingHookDesc, ShadingHookId,
 };
 
 pub use runtime::{

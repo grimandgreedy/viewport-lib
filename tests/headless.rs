@@ -3532,6 +3532,14 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         plugin_id
     );
 
+    // Stats: registered but not yet drawn, so no pipelines are built.
+    let stats = renderer.resources().material_plugin_stats();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].name, "toon_test");
+    assert_eq!(stats[0].variants, 1);
+    assert_eq!(stats[0].texture_count, 0);
+    assert_eq!(stats[0].pipelines_built, 0);
+
     let cam = Camera::default();
     let mut frame = FrameData::default();
     frame.camera.render_camera = RenderCamera {
@@ -3564,6 +3572,10 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         "selecting the plugin must change the LDR output"
     );
 
+    // Drawing through the plugin lazily built its full pipeline set.
+    let stats = renderer.resources().material_plugin_stats();
+    assert_eq!(stats[0].pipelines_built, 9);
+
     // Live params: raising the band count and ambient changes the image.
     let params = renderer
         .resources_mut()
@@ -3584,6 +3596,10 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         .expect("variant");
     assert_eq!(variant_b.plugin_index(), plugin_id.plugin_index());
     assert_ne!(variant_b.variant_index(), plugin_id.variant_index());
+    // Variants share the plugin's pipeline set; only the variant count grows.
+    let stats = renderer.resources().material_plugin_stats();
+    assert_eq!(stats[0].variants, 2);
+    assert_eq!(stats[0].pipelines_built, 9);
     item.material.shading_plugin = Some(variant_b);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let toon_variant_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);

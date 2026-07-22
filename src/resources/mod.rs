@@ -43,8 +43,8 @@ pub use self::mesh_sidecar::registry::{
     DEFORM_PARAMS_PER_SLOT_PUB, DEFORM_SLOT_COUNT_PUB, DeformStage, DeformerDesc, DeformerId,
 };
 pub use self::mesh_sidecar::shade::{
-    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, ShadingHookDesc,
-    ShadingHookId,
+    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
+    ShadingHookDesc, ShadingHookId,
 };
 pub use self::overlay::font::{FontError, FontHandle};
 pub use self::plugin_builders::{

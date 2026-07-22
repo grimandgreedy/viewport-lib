@@ -465,6 +465,32 @@ pub(crate) struct MaterialPluginPipelines {
     pub oit: crate::gpu::RenderPipeline,
 }
 
+impl MaterialPluginPipelines {
+    /// Pipelines in one plugin's set: 4 LDR (solid, two-sided, transparent,
+    /// wireframe) + 4 HDR (same variants) + 1 OIT accumulate. This is the
+    /// whole per-plugin pipeline cost; shadow / outline / pick passes reuse
+    /// the shared depth-only pipelines.
+    pub(crate) const COUNT: u32 = 9;
+}
+
+/// Pipeline and resource counts for one registered material plugin, from
+/// [`DeviceResources::material_plugin_stats`](crate::resources::DeviceResources::material_plugin_stats).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaterialPluginStats {
+    /// The plugin's registered name.
+    pub name: &'static str,
+    /// Number of variants, including the default one.
+    pub variants: u32,
+    /// Declared texture slots per variant.
+    pub texture_count: u32,
+    /// Render pipelines currently built for this plugin. `0` until the first
+    /// `prepare` that sees a material referencing the plugin (pipelines build
+    /// lazily), then 9: 4 LDR + 4 HDR + 1 OIT. Drops back to `0` when a
+    /// deformer registration or debug-vis toggle invalidates the set, until
+    /// the next referencing `prepare` rebuilds it.
+    pub pipelines_built: u32,
+}
+
 /// One variant of a material plugin: its params window and the group-3 bind
 /// group carrying that window plus the variant's texture views.
 pub(crate) struct MaterialPluginVariantGpu {
@@ -746,6 +772,34 @@ impl crate::resources::DeviceResources {
             .map(|v| MaterialPluginParamsHandle {
                 buffer: v.params_buffer.clone(),
             })
+    }
+
+    /// Per-plugin pipeline and variant counts, sorted by registration order.
+    ///
+    /// Answers "what does each registered plugin cost in pipelines": a plugin
+    /// with `pipelines_built == 0` has been registered but not yet drawn (or
+    /// its set was invalidated by a deformer registration or debug-vis
+    /// toggle); a drawn plugin holds 9 pipelines regardless of variant count,
+    /// since variants share the plugin's WGSL and pipeline set. Empty when no
+    /// material plugin is registered.
+    pub fn material_plugin_stats(&self) -> Vec<MaterialPluginStats> {
+        let mut ids: Vec<u32> = self.material_plugins.keys().copied().collect();
+        ids.sort_unstable();
+        ids.into_iter()
+            .map(|id| {
+                let gpu = &self.material_plugins[&id];
+                MaterialPluginStats {
+                    name: self.shade_hooks[id as usize].desc.name,
+                    variants: gpu.variants.len() as u32,
+                    texture_count: gpu.texture_count,
+                    pipelines_built: if gpu.pipelines.is_some() {
+                        MaterialPluginPipelines::COUNT
+                    } else {
+                        0
+                    },
+                }
+            })
+            .collect()
     }
 
     /// Build the plugin's lit pipeline set if it is registered and not built.
