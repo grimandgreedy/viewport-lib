@@ -40,10 +40,3 @@ The invariant is enforced headlessly on every `cargo test` by
 `two_bind_group_device_renders_without_validation_errors` (`tests/headless.rs`),
 which renders the LDR, HDR/OIT, and wireframe paths on a real device capped at
 two bind groups.
-
-## History
-
-The gap this closed is recorded in
-`docs/issues/iced-max-bind-groups-2-draw-path-incomplete.md`: the pipeline
-side of the limited-device support existed before the draw side was gated, so
-the iced example crashed on the first mesh draw.
