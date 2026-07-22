@@ -2,7 +2,9 @@
 //
 // Defines the canonical `SingleLight` struct, the `Lights` header struct
 // (binding 3 of group 0), the dynamically-sized storage buffer of lights
-// (binding 13 of group 0), the cluster grid bindings (14, 15, 16), and the
+// (binding 13 of group 0), the cluster grid bindings (14, 15, 16), the
+// per-light helper `eval_light(light, world_pos) -> LightEval` (direction,
+// unshadowed radiance, range flag) used by every lit mesh loop, and the
 // per-fragment helper:
 //
 //   apply_scene_lighting(N, base_colour, two_sided, world_pos, lights) -> vec3<f32>
@@ -141,34 +143,49 @@ fn cluster_light_global(range: LightRange, j: u32) -> u32 {
     return cluster_light_indices[range.start + j];
 }
 
-fn evaluate_light(l: SingleLight, world_pos: vec3<f32>) -> array<vec3<f32>, 2> {
-    var L: vec3<f32>;
-    var radiance: vec3<f32>;
-    if l.light_type == 0u {
-        L = normalize(l.pos_or_dir);
-        radiance = l.colour * l.intensity;
-    } else if l.light_type == 1u {
-        let to_light = l.pos_or_dir - world_pos;
-        let dist = length(to_light);
-        L = to_light / max(dist, 0.0001);
-        let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-        radiance = l.colour * l.intensity * falloff * falloff;
+// Per-light geometry and unshadowed radiance for one fragment. `radiance`
+// folds in colour * intensity * distance/spot attenuation; it carries no
+// shadow factor and no N.L term. `in_range` is false when a punctual light is
+// at or beyond its range (radiance would be zero); callers skip such lights
+// outright and so avoid shadow taps and BRDF work. This is the one canonical
+// copy of the per-light attenuation math for every lit mesh loop.
+struct LightEval {
+    l:        vec3<f32>,
+    radiance: vec3<f32>,
+    in_range: bool,
+};
+
+fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
+    var ev: LightEval;
+    if light.light_type == 0u {
+        ev.l = normalize(light.pos_or_dir);
+        ev.radiance = light.colour * light.intensity;
+        ev.in_range = true;
+        return ev;
+    }
+    let to_light = light.pos_or_dir - world_pos;
+    let dist = length(to_light);
+    ev.l = to_light / max(dist, 0.0001);
+    ev.in_range = dist < light.range;
+    if !ev.in_range {
+        ev.radiance = vec3<f32>(0.0);
+        return ev;
+    }
+    let falloff = clamp(1.0 - dist / light.range, 0.0, 1.0);
+    if light.light_type == 1u {
+        ev.radiance = light.colour * light.intensity * falloff * falloff;
     } else {
-        let to_light = l.pos_or_dir - world_pos;
-        let dist = length(to_light);
-        L = to_light / max(dist, 0.0001);
-        let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-        let spot_dir = normalize(l.spot_direction);
-        let cos_angle = dot(-L, spot_dir);
-        let cos_outer = cos(l.outer_angle);
-        let cos_inner = cos(l.inner_angle);
+        let spot_dir = normalize(light.spot_direction);
+        let cos_angle = dot(-ev.l, spot_dir);
+        let cos_outer = cos(light.outer_angle);
+        let cos_inner = cos(light.inner_angle);
         let cone_att = clamp(
             (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
             0.0, 1.0,
         );
-        radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
+        ev.radiance = light.colour * light.intensity * falloff * falloff * cone_att;
     }
-    return array<vec3<f32>, 2>(L, radiance);
+    return ev;
 }
 
 fn apply_scene_lighting(
@@ -189,10 +206,11 @@ fn apply_scene_lighting(
     let range = cluster_light_range(world_pos, lights.count);
     for (var j: u32 = 0u; j < range.count; j = j + 1u) {
         let idx = cluster_light_global(range, j);
-        let r = evaluate_light(lights_storage[idx], world_pos);
-        let raw = dot(normal, r[0]);
+        let ev = eval_light(lights_storage[idx], world_pos);
+        if !ev.in_range { continue; }
+        let raw = dot(normal, ev.l);
         let n_dot_l = select(max(raw, 0.0), abs(raw), two_sided);
-        direct = direct + r[1] * n_dot_l;
+        direct = direct + ev.radiance * n_dot_l;
     }
     return base_colour * (ambient + direct);
 }

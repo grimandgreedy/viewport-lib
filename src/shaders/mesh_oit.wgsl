@@ -342,6 +342,7 @@ struct Surface {
     base_colour: vec3<f32>,
     normal: vec3<f32>,
     ao_factor: f32,
+    mat_uv: vec2<f32>,
     alpha: f32,
 };
 
@@ -359,7 +360,7 @@ struct LitResult {
 // Material prep for the transparent (OIT) path. Like the opaque shader minus
 // wireframe and matcap; the shading models that fully determine the colour emit
 // their own weighted-blend OitOut and set `resolved`, otherwise the surface
-// fields feed compute_lit. Uses raw in.uv (this path applies no uv_transform).
+// fields feed compute_lit.
 fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     var out: Surface;
     out.resolved = false;
@@ -368,6 +369,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     out.base_colour = vec3<f32>(0.0);
     out.normal = vec3<f32>(0.0, 0.0, 1.0);
     out.ao_factor = 1.0;
+    out.mat_uv = in.uv;
     out.alpha = 1.0;
 
     // Section view clipping.
@@ -379,10 +381,15 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
+    // Per-material UV transform: atlas region / tiling selection. Identity
+    // (offset 0,0 scale 1,1) passes the authored UV through unchanged.
+    let mat_uv = in.uv * object.uv_transform.zw + object.uv_transform.xy;
+    out.mat_uv = mat_uv;
+
     // Sample texture if one is assigned.
     var tex_colour = vec4<f32>(1.0);
     if object.has_texture == 1u {
-        tex_colour = textureSample(obj_texture, obj_sampler, in.uv);
+        tex_colour = textureSample(obj_texture, obj_sampler, mat_uv);
     }
     let obj_colour = vec4<f32>(
         object.colour.rgb * in.colour.rgb * tex_colour.rgb,
@@ -466,7 +473,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if object.has_normal_map != 0u {
-        let nm_sample = textureSample(normal_map, obj_sampler, in.uv).rgb;
+        let nm_sample = textureSample(normal_map, obj_sampler, mat_uv).rgb;
         var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
         ts_unpacked.x = ts_unpacked.x * object.normal_strength;
         ts_unpacked.y = ts_unpacked.y * object.normal_strength;
@@ -516,7 +523,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // before it drives shading; identity `(0, 1)` is a no-op.
     var ao_factor = 1.0;
     if object.has_ao_map != 0u {
-        let raw_ao = textureSample(ao_map, obj_sampler, in.uv).r;
+        let raw_ao = textureSample(ao_map, obj_sampler, mat_uv).r;
         ao_factor = mix(object.ao_range.x, object.ao_range.y, raw_ao);
     }
 
@@ -554,7 +561,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             // glTF ORM texture: G=roughness factor, B=metallic factor. Per-material
             // `metallic_range` / `roughness_range` remap the raw samples before the
             // scalar factor; identity `(0, 1)` is a no-op.
-            let mr = textureSample(metallic_roughness_tex, obj_sampler, in.uv);
+            let mr = textureSample(metallic_roughness_tex, obj_sampler, surface.mat_uv);
             let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.b);
             let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.g);
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
@@ -565,39 +572,12 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
         for (var j = 0u; j < pbr_range.count; j++) {
             let i = cluster_light_global(pbr_range, j);
-            let l = lights_storage[i];
-            var L: vec3<f32>;
-            var radiance: vec3<f32>;
-            if l.light_type == 0u {
-                L = normalize(l.pos_or_dir);
-                radiance = l.colour * l.intensity;
-            } else if l.light_type == 1u {
-                let to_light = l.pos_or_dir - in.world_pos;
-                let dist = length(to_light);
-                if dist >= l.range { continue; }
-                L = to_light / max(dist, 0.0001);
-                let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                radiance = l.colour * l.intensity * falloff * falloff;
-            } else {
-                let to_light = l.pos_or_dir - in.world_pos;
-                let dist = length(to_light);
-                if dist >= l.range { continue; }
-                L = to_light / max(dist, 0.0001);
-                let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                let spot_dir = normalize(l.spot_direction);
-                let cos_angle = dot(-L, spot_dir);
-                let cos_outer = cos(l.outer_angle);
-                let cos_inner = cos(l.inner_angle);
-                let cone_att = clamp(
-                    (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
-                    0.0, 1.0,
-                );
-                radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
-            }
+            let ev = eval_light(lights_storage[i], in.world_pos);
+            if !ev.in_range { continue; }
             // Backfacing: pbr_light_contrib returns exactly zero; skip it.
-            if dot(N, L) <= 0.0 { continue; }
+            if dot(N, ev.l) <= 0.0 { continue; }
             // Transparent surfaces do not cast/receive shadows (no CSM sampling).
-            Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
+            Lo += pbr_light_contrib(N, V, ev.l, ev.radiance, base_colour, metallic, roughness, F0);
         }
         dbg_direct_lum = dot(Lo, lum_weights);
         dbg_roughness  = roughness;
@@ -624,42 +604,15 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
         for (var j = 0u; j < bp_range.count; j++) {
             let i = cluster_light_global(bp_range, j);
-            let l = lights_storage[i];
-            var light_dir: vec3<f32>;
-            var attenuation = 1.0;
-            if l.light_type == 0u {
-                light_dir = normalize(l.pos_or_dir);
-            } else if l.light_type == 1u {
-                let to_light = l.pos_or_dir - in.world_pos;
-                let dist = length(to_light);
-                if dist >= l.range { continue; }
-                light_dir = to_light / max(dist, 0.0001);
-                let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                attenuation = falloff * falloff;
-            } else {
-                let to_light = l.pos_or_dir - in.world_pos;
-                let dist = length(to_light);
-                if dist >= l.range { continue; }
-                light_dir = to_light / max(dist, 0.0001);
-                let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                let spot_dir = normalize(l.spot_direction);
-                let cos_angle = dot(-light_dir, spot_dir);
-                let cos_outer = cos(l.outer_angle);
-                let cos_inner = cos(l.inner_angle);
-                let cone_att = clamp(
-                    (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
-                    0.0, 1.0,
-                );
-                attenuation = dist_falloff * dist_falloff * cone_att;
-            }
+            let ev = eval_light(lights_storage[i], in.world_pos);
+            if !ev.in_range { continue; }
             // Transparent surfaces do not participate in shadow evaluation.
-            let H = normalize(light_dir + V);
-            let n_dot_l = max(dot(N, light_dir), 0.0);
+            let H = normalize(ev.l + V);
+            let n_dot_l = max(dot(N, ev.l), 0.0);
             let n_dot_h = max(dot(N, H), 0.0);
-            let diffuse_contrib  = object.diffuse  * n_dot_l * l.intensity * attenuation;
-            let specular_contrib = object.specular * pow(n_dot_h, object.shininess)
-                                 * l.intensity * attenuation;
-            total_colour_contrib += (diffuse_contrib + specular_contrib) * l.colour;
+            let diffuse_contrib  = object.diffuse  * n_dot_l;
+            let specular_contrib = object.specular * pow(n_dot_h, object.shininess);
+            total_colour_contrib += (diffuse_contrib + specular_contrib) * ev.radiance;
         }
         let ambient_contrib = object.ambient;
         let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
@@ -710,7 +663,7 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     var emissive = object.emissive;
     if object.has_emissive_tex != 0u {
-        emissive = emissive * textureSample(emissive_tex, obj_sampler, in.uv).rgb;
+        emissive = emissive * textureSample(emissive_tex, obj_sampler, surface.mat_uv).rgb;
     }
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);

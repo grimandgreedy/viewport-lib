@@ -411,31 +411,12 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
         for (var j = 0u; j < pbr_range.count; j++) {
             let i = cluster_light_global(pbr_range, j);
-            let l = lights_storage[i];
-            var L: vec3<f32>; var radiance: vec3<f32>;
-            if l.light_type == 0u {
-                L = normalize(l.pos_or_dir); radiance = l.colour * l.intensity;
-            } else if l.light_type == 1u {
-                let to_light = l.pos_or_dir - in.world_pos; let dist = length(to_light);
-                if dist >= l.range { continue; }
-                L = to_light / max(dist, 0.0001);
-                let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                radiance = l.colour * l.intensity * falloff * falloff;
-            } else {
-                let to_light = l.pos_or_dir - in.world_pos; let dist = length(to_light);
-                if dist >= l.range { continue; }
-                L = to_light / max(dist, 0.0001);
-                let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                let spot_dir = normalize(l.spot_direction);
-                let cos_angle = dot(-L, spot_dir);
-                let cos_outer = cos(l.outer_angle); let cos_inner = cos(l.inner_angle);
-                let cone_att = clamp((cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001), 0.0, 1.0);
-                radiance = l.colour * l.intensity * dist_falloff * dist_falloff * cone_att;
-            }
+            let ev = eval_light(lights_storage[i], in.world_pos);
+            if !ev.in_range { continue; }
             // Backfacing: pbr_light_contrib returns exactly zero; skip it.
-            if dot(N, L) <= 0.0 { continue; }
+            if dot(N, ev.l) <= 0.0 { continue; }
             // Transparent surfaces: skip shadow map sampling.
-            Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
+            Lo += pbr_light_contrib(N, V, ev.l, ev.radiance, base_colour, metallic, roughness, F0);
         }
         dbg_direct_lum = dot(Lo, lum_weights);
         dbg_roughness  = roughness;
@@ -462,35 +443,15 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
         for (var j = 0u; j < bp_range.count; j++) {
             let i = cluster_light_global(bp_range, j);
-            let l = lights_storage[i];
-            var light_dir: vec3<f32>; var attenuation = 1.0;
-            if l.light_type == 0u {
-                light_dir = normalize(l.pos_or_dir);
-            } else if l.light_type == 1u {
-                let to_light = l.pos_or_dir - in.world_pos; let dist = length(to_light);
-                if dist >= l.range { continue; }
-                light_dir = to_light / max(dist, 0.0001);
-                let falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                attenuation = falloff * falloff;
-            } else {
-                let to_light = l.pos_or_dir - in.world_pos; let dist = length(to_light);
-                if dist >= l.range { continue; }
-                light_dir = to_light / max(dist, 0.0001);
-                let dist_falloff = clamp(1.0 - dist / l.range, 0.0, 1.0);
-                let spot_dir = normalize(l.spot_direction);
-                let cos_angle = dot(-light_dir, spot_dir);
-                let cos_outer = cos(l.outer_angle); let cos_inner = cos(l.inner_angle);
-                let cone_att = clamp((cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001), 0.0, 1.0);
-                attenuation = dist_falloff * dist_falloff * cone_att;
-            }
+            let ev = eval_light(lights_storage[i], in.world_pos);
+            if !ev.in_range { continue; }
             // Transparent surfaces: skip shadow map sampling.
-            let H = normalize(light_dir + V);
-            let n_dot_l = max(dot(N, light_dir), 0.0);
+            let H = normalize(ev.l + V);
+            let n_dot_l = max(dot(N, ev.l), 0.0);
             let n_dot_h = max(dot(N, H), 0.0);
-            let diffuse_contrib  = inst.diffuse  * n_dot_l * l.intensity * attenuation;
-            let specular_contrib = inst.specular * pow(n_dot_h, inst.shininess)
-                                 * l.intensity * attenuation;
-            total_colour_contrib += (diffuse_contrib + specular_contrib) * l.colour;
+            let diffuse_contrib  = inst.diffuse  * n_dot_l;
+            let specular_contrib = inst.specular * pow(n_dot_h, inst.shininess);
+            total_colour_contrib += (diffuse_contrib + specular_contrib) * ev.radiance;
         }
         let ambient_contrib = inst.ambient;
         let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
