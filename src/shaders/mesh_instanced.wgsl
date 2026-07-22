@@ -464,9 +464,9 @@ fn compute_surface(in: VertexOut) -> Surface {
 // Lighting for the instanced opaque path. Samples shadows like the per-object path.
 fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
     let inst = instances[in.instance_idx];
-    let base_colour = surface.base_colour;
+    var base_colour = surface.base_colour;
     let ao_factor = surface.ao_factor;
-    let N = surface.normal;
+    var N = surface.normal;
 
     // Use the smooth vertex normal for shadow bias (see mesh.wgsl for rationale).
     let shadow_normal = N;
@@ -485,9 +485,9 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
 
     if inst.use_pbr != 0u {
-        let metallic  = clamp(inst.metallic,  0.0, 1.0);
-        let roughness = max(inst.roughness, 0.04);
-        let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
+        var metallic  = clamp(inst.metallic,  0.0, 1.0);
+        var roughness = max(inst.roughness, 0.04);
+        var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
         // <viewport-shade-slot:surface>

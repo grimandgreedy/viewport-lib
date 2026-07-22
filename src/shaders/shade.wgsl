@@ -57,6 +57,30 @@ struct ShadingSurface {
     attr: vec4<f32>,
 };
 
+// Output of the surface-authoring hook
+// `fn <name>__shade_surface(surf: ShadingSurface) -> SurfaceOverride`. The
+// hook initialises the override from `surf` and modifies what it wants; the
+// composer applies every field unconditionally (WGSL has no optional
+// fields), renormalising `normal` and recomputing F0 from the overridden
+// base colour and metallic. Stock lighting, shadows, and IBL then run on
+// the authored surface, as do any lighting hooks the same plugin defines.
+struct SurfaceOverride {
+    // Replaces the resolved base colour for direct, ambient, and IBL terms.
+    base_colour: vec3<f32>,
+    // World-space shading normal; renormalised by the composer. Shadow-bias
+    // sampling keeps the interpolated vertex normal.
+    normal: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    // Added alongside the material's own emissive term after lighting
+    // (HDR-unclamped, so it can drive bloom).
+    emissive: vec3<f32>,
+    // Honoured only when the material's alpha mode is Mask or Blend: Blend
+    // draws take it as the output alpha; Mask draws re-test it against the
+    // material's cutoff and discard below it. Opaque draws ignore it.
+    alpha: f32,
+};
+
 // One light's data for the per-light hook. `radiance` folds in
 // colour * intensity * distance/spot attenuation. It does NOT include the
 // shadow factor (that is `shadow`, passed separately so stylised and

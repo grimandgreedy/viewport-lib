@@ -11,8 +11,8 @@
 //! creating a throwaway shader module under an error scope at registration;
 //! failures roll back with the naga message returned to the caller.
 //!
-//! The hook contract (the `ShadingSurface` / `LightSample` structs and the
-//! three hook signatures) is frozen in
+//! The hook contract (the `ShadingSurface` / `SurfaceOverride` /
+//! `LightSample` structs and the four hook signatures) is frozen in
 //! `docs/issues/lighting-shader-injection-seam.md`. This module is the
 //! composition mechanism; pipeline selection per material and the
 //! consumer-facing `MaterialPlugin` API build on top of it.
@@ -41,6 +41,7 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &[
 /// `wgsl_body` defines any non-empty subset of:
 ///
 /// ```text
+/// fn shade_surface(surf: ShadingSurface) -> SurfaceOverride
 /// fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32>
 /// fn shade_ambient(surf: ShadingSurface) -> vec3<f32>
 /// fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32>
@@ -55,16 +56,28 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &[
 ///
 /// Semantics baked into composition:
 ///
+/// - `shade_surface` authors the PBR surface before the light loop: it
+///   receives the resolved `ShadingSurface` and returns a `SurfaceOverride`
+///   (base colour, normal, metallic, roughness, emissive, alpha) that the
+///   composer applies to the live PBR inputs, recomputing F0. Stock lighting
+///   runs on the authored surface, as do this hook's own lighting functions
+///   if it defines any. Emissive adds alongside the material's term; alpha
+///   is honoured only under Mask/Blend alpha modes (Mask re-tests the
+///   cutoff, Blend takes it as output alpha, Opaque ignores it).
 /// - `shade_light` replaces the built-in `pbr_light_contrib` per-light term;
 ///   `shade_ambient` replaces the whole ambient term; `recolor` replaces the
 ///   final pre-emissive colour with `recolor(surf, Lo, ambient)`.
+/// - `hook_emissive` and `hook_alpha` are reserved identifiers in hook
+///   bodies (the composer's carriers for the surface hook's outputs).
 /// - A hook module always shades on the PBR loop: `use_pbr` is ignored and
 ///   the alternate shading-model branches are stripped.
 /// - `light.radiance` is unshadowed; the shadow factor is `light.shadow`.
 ///   OIT passes sample no shadows, so `light.shadow` is `1.0` there.
-/// - Hook bodies run inside the light loop's non-uniform control flow:
-///   sample textures with `textureSampleLevel` or `textureSampleGrad`
+/// - Lighting hook bodies run inside the light loop's non-uniform control
+///   flow: sample textures with `textureSampleLevel` or `textureSampleGrad`
 ///   (`surf.uv_ddx` / `surf.uv_ddy`), never plain `textureSample`.
+///   `shade_surface` runs before the loop in uniform control flow, where
+///   plain `textureSample` is also valid.
 #[derive(Clone, Debug)]
 pub struct ShadingHookDesc {
     /// Hook name. Must be a valid WGSL identifier, unique across shading
@@ -112,6 +125,7 @@ impl ShadingHookId {
 pub(crate) struct StoredShadingHook {
     pub desc: ShadingHookDesc,
     pub prefixed_body: String,
+    pub has_surface: bool,
     pub has_light: bool,
     pub has_ambient: bool,
     pub has_recolor: bool,
@@ -119,23 +133,36 @@ pub(crate) struct StoredShadingHook {
 
 impl StoredShadingHook {
     /// Prefix the body and detect which hook functions it defines. Errors
-    /// when the body defines none of the three.
+    /// when the body defines none of the four.
     pub(crate) fn analyse(desc: ShadingHookDesc) -> ViewportResult<Self> {
         let prefixed_body = registry::identifier_prefix(desc.name, &desc.wgsl_body);
         let name = desc.name;
+        let has_surface = prefixed_body.contains(&format!("fn {name}__shade_surface("));
         let has_light = prefixed_body.contains(&format!("fn {name}__shade_light("));
         let has_ambient = prefixed_body.contains(&format!("fn {name}__shade_ambient("));
         let has_recolor = prefixed_body.contains(&format!("fn {name}__recolor("));
-        if !has_light && !has_ambient && !has_recolor {
+        if !has_surface && !has_light && !has_ambient && !has_recolor {
             return Err(ViewportError::ShadeShaderInvalid {
                 reason: format!(
-                    "hook '{name}' defines none of shade_light / shade_ambient / recolor"
+                    "hook '{name}' defines none of shade_surface / shade_light / shade_ambient / recolor"
                 ),
             });
+        }
+        // The composer carries the surface hook's emissive and alpha outputs
+        // in module-private variables named `<name>__hook_emissive` /
+        // `<name>__hook_alpha`; a body declaring those identifiers would
+        // collide with them after prefixing.
+        for reserved in ["hook_emissive", "hook_alpha"] {
+            if prefixed_body.contains(&format!("{name}__{reserved}")) {
+                return Err(ViewportError::ShadeShaderInvalid {
+                    reason: format!("hook '{name}' declares reserved identifier '{reserved}'"),
+                });
+            }
         }
         Ok(Self {
             desc,
             prefixed_body,
+            has_surface,
             has_light,
             has_ambient,
             has_recolor,
@@ -242,6 +269,15 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
             "@group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;\n",
         );
     }
+    // Surface hooks carry their emissive and alpha outputs from the surface
+    // slot (inside compute_lit) to the assembly-stage emissive/alpha slots
+    // (inside fs_main) in module-private variables. hook_alpha < 0 means
+    // "not driven" (opaque materials, or shaders without the alpha region).
+    if hook.has_surface {
+        body.push_str(&format!(
+            "var<private> {name}__hook_emissive: vec3<f32> = vec3<f32>(0.0);\nvar<private> {name}__hook_alpha: f32 = -1.0;\n"
+        ));
+    }
     body.push_str(&hook.prefixed_body);
     body.push('\n');
     s.insert_str(idx, &body);
@@ -263,12 +299,76 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
         "1.0"
     };
 
-    let surface_line = if wire_vertex_attr {
-        "        var surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n        surf.attr = in.ext_attr;\n"
+    // The emissive/alpha slots exist only in the per-object shaders (like the
+    // vertex markers); their absence elsewhere just skips the wiring.
+    let wire_emissive = hook.has_surface && region_bounds(&s, "emissive").is_some();
+    let wire_alpha = hook.has_surface && region_bounds(&s, "alpha").is_some();
+
+    let mut surface_region = String::new();
+    if wire_vertex_attr || hook.has_surface {
+        surface_region.push_str(
+            "        var surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n",
+        );
     } else {
-        "        let surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n"
-    };
-    s = rewrite_region(&s, "surface", surface_line)?;
+        surface_region.push_str(
+            "        let surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n",
+        );
+    }
+    if wire_vertex_attr {
+        surface_region.push_str("        surf.attr = in.ext_attr;\n");
+    }
+    if hook.has_surface {
+        // Apply the override to the live PBR locals (F0 recomputed from the
+        // authored base colour and metallic) and patch `surf` so the built-in
+        // loop and any lighting hooks both see the authored surface.
+        surface_region.push_str(&format!(
+            "        let sov = {name}__shade_surface(surf);\n\
+             \x20       base_colour = sov.base_colour;\n\
+             \x20       N = normalize(sov.normal);\n\
+             \x20       metallic = clamp(sov.metallic, 0.0, 1.0);\n\
+             \x20       roughness = max(sov.roughness, 0.04);\n\
+             \x20       F0 = mix(vec3<f32>(0.04), base_colour, metallic);\n\
+             \x20       {name}__hook_emissive = sov.emissive;\n\
+             \x20       surf.base_colour = base_colour;\n\
+             \x20       surf.normal = N;\n\
+             \x20       surf.metallic = metallic;\n\
+             \x20       surf.roughness = roughness;\n\
+             \x20       surf.f0 = F0;\n"
+        ));
+        if wire_alpha {
+            // Gated alpha: only Mask/Blend materials take the hook's alpha;
+            // Mask re-tests the cutoff here (the built-in test in
+            // compute_surface ran on the texture alpha, before the hook).
+            surface_region.push_str(&format!(
+                "        if object.alpha_mode != 0u {{\n\
+                 \x20           {name}__hook_alpha = clamp(sov.alpha, 0.0, 1.0);\n\
+                 \x20           surf.alpha = {name}__hook_alpha;\n\
+                 \x20           if object.alpha_mode == 1u && {name}__hook_alpha < object.alpha_cutoff {{\n\
+                 \x20               discard;\n\
+                 \x20           }}\n\
+                 \x20       }}\n"
+            ));
+        }
+    }
+    s = rewrite_region(&s, "surface", &surface_region)?;
+    if wire_emissive {
+        s = rewrite_region(
+            &s,
+            "emissive",
+            &format!(
+                "    final_rgb += {name}__hook_emissive;\n    dbg_emissive_lum += dot({name}__hook_emissive, lum_weights);\n"
+            ),
+        )?;
+    }
+    if wire_alpha {
+        s = rewrite_region(
+            &s,
+            "alpha",
+            &format!(
+                "    final_alpha = select(final_alpha, {name}__hook_alpha, {name}__hook_alpha >= 0.0);\n"
+            ),
+        )?;
+    }
     if hook.has_light {
         if hook.desc.needs_back_hemisphere {
             s = rewrite_region(&s, "backface-cull", "")?;
@@ -447,8 +547,11 @@ impl crate::resources::DeviceResources {
 /// to the returned [`MaterialPluginId`]; those draws then shade through the
 /// plugin's hooks with shadows, AO, normal maps, and alpha modes intact.
 ///
-/// The WGSL contract (hook signatures, `ShadingSurface` / `LightSample`, the
-/// sampling rules) is documented on [`ShadingHookDesc`]. In addition, plugin
+/// The WGSL contract (the four hook signatures, `ShadingSurface` /
+/// `SurfaceOverride` / `LightSample`, the sampling rules) is documented on
+/// [`ShadingHookDesc`]. A `shade_surface` body authors the PBR surface and
+/// lets stock lighting, shadows, and IBL run downstream; the three lighting
+/// hooks replace lighting terms. In addition, plugin
 /// bodies may read `material_params`, a `vec4<f32>` array of
 /// [`MATERIAL_PLUGIN_PARAM_VEC4S`] words at `@group(3) @binding(0)`, and,
 /// when [`texture_count`](Self::texture_count) is non-zero,
@@ -1133,6 +1236,92 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let base = registry::lookup_source("mesh.wgsl").expect("lit shader");
         let composed = compose_shade_shader(base, &plain).expect("compose");
         assert!(!composed.contains("extension_attr_buffer"));
+    }
+
+    const SURFACE_BODY: &str = "\
+fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
+    var ov: SurfaceOverride;
+    ov.base_colour = vec3<f32>(1.0, 0.0, 0.0);
+    ov.normal = surf.normal;
+    ov.metallic = surf.metallic;
+    ov.roughness = surf.roughness;
+    ov.emissive = vec3<f32>(0.0, 2.0, 0.0);
+    ov.alpha = surf.alpha;
+    return ov;
+}
+";
+
+    #[test]
+    fn analyse_accepts_surface_only_and_rejects_reserved_names() {
+        let s = stored("paint", SURFACE_BODY, false);
+        assert!(s.has_surface && !s.has_light && !s.has_ambient && !s.has_recolor);
+        let err = StoredShadingHook::analyse(ShadingHookDesc {
+            name: "bad",
+            wgsl_body: format!("{SURFACE_BODY}\nconst hook_alpha: f32 = 0.0;\n"),
+            needs_back_hemisphere: false,
+            texture_count: 0,
+            reads_vertex_attribute: false,
+        })
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ViewportError::ShadeShaderInvalid { ref reason } if reason.contains("reserved")
+        ));
+    }
+
+    #[test]
+    fn compose_wires_surface_hook() {
+        let hook = stored("paint", SURFACE_BODY, false);
+        for shader in ["mesh.wgsl", "mesh_oit.wgsl"] {
+            let base = registry::lookup_source(shader).expect("lit shader");
+            let composed = compose_shade_shader(base, &hook).expect("compose");
+            assert!(
+                composed.contains("let sov = paint__shade_surface(surf);"),
+                "{shader}: missing surface hook call"
+            );
+            assert!(
+                composed.contains("F0 = mix(vec3<f32>(0.04), base_colour, metallic);"),
+                "{shader}: missing F0 recompute"
+            );
+            assert!(
+                composed.contains("var<private> paint__hook_emissive"),
+                "{shader}: missing emissive carrier"
+            );
+            assert!(
+                composed.contains("final_rgb += paint__hook_emissive;"),
+                "{shader}: missing emissive add"
+            );
+            assert!(
+                composed.contains("if object.alpha_mode != 0u {"),
+                "{shader}: missing alpha gate"
+            );
+            assert!(
+                composed.contains(
+                    "final_alpha = select(final_alpha, paint__hook_alpha, paint__hook_alpha >= 0.0);"
+                ),
+                "{shader}: missing alpha apply"
+            );
+            assert!(
+                composed.contains("discard;"),
+                "{shader}: missing mask re-test"
+            );
+        }
+        // Instanced shaders (validation-only) apply the override but carry no
+        // emissive/alpha slots, so none of that wiring appears.
+        let base = registry::lookup_source("mesh_instanced.wgsl").expect("lit shader");
+        let composed = compose_shade_shader(base, &hook).expect("compose");
+        assert!(composed.contains("let sov = paint__shade_surface(surf);"));
+        assert!(!composed.contains("final_rgb += paint__hook_emissive;"));
+        assert!(!composed.contains("alpha_mode != 0u"));
+        // A lighting-only hook gets none of the surface plumbing. (The
+        // SurfaceOverride contract comments in shade.wgsl mention the hook
+        // by name, so test for the prefixed call and carriers.)
+        let toon = stored("plainlight", TOON_BODY, false);
+        let base = registry::lookup_source("mesh.wgsl").expect("lit shader");
+        let composed = compose_shade_shader(base, &toon).expect("compose");
+        assert!(!composed.contains("plainlight__shade_surface"));
+        assert!(!composed.contains("plainlight__hook_emissive"));
+        assert!(!composed.contains("final_alpha = select"));
     }
 
     #[test]

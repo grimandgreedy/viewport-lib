@@ -757,10 +757,10 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
 // and ambient/IBL on a resolved surface. Returns the pre-emissive colour plus
 // the debug accumulators the debug-vis overlay reads.
 fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
-    let base_colour = surface.base_colour;
+    var base_colour = surface.base_colour;
     let ao_factor = surface.ao_factor;
     let mat_uv = surface.mat_uv;
-    let N = surface.normal;
+    var N = surface.normal;
 
     // Use the smooth vertex normal for shadow bias. Screen-space derivatives
     // (dpdx/dpdy) become unreliable when the surface covers few pixels (zoomed
@@ -797,7 +797,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
             roughness = max(r_remapped * roughness, 0.04);
         }
-        let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
+        var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
 
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
@@ -962,8 +962,17 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     }
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);
+    // Surface-hook emissive: the composer adds the hook's emissive term here
+    // in plugin-composed modules; inert in the base module.
+    // <viewport-shade-slot:emissive>
+    // </viewport-shade-slot:emissive>
 
     // #include "debug_vis.wgsl"
 
-    return vec4<f32>(final_rgb, surface.alpha);
+    var final_alpha = surface.alpha;
+    // Surface-hook alpha: honoured only under Mask/Blend alpha modes; the
+    // composer fills this in plugin-composed modules.
+    // <viewport-shade-slot:alpha>
+    // </viewport-shade-slot:alpha>
+    return vec4<f32>(final_rgb, final_alpha);
 }

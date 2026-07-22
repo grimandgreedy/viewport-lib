@@ -599,9 +599,9 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
 // Lighting for the transparent path. Transparent surfaces skip shadow sampling,
 // so last_shadow_sample stays at its unshadowed default.
 fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
-    let base_colour = surface.base_colour;
+    var base_colour = surface.base_colour;
     let ao_factor = surface.ao_factor;
-    let N = surface.normal;
+    var N = surface.normal;
 
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0);
@@ -630,7 +630,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
             roughness = max(r_remapped * roughness, 0.04);
         }
-        let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
+        var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
         // <viewport-shade-slot:surface>
@@ -744,13 +744,22 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     }
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);
+    // Surface-hook emissive: the composer adds the hook's emissive term here
+    // in plugin-composed modules; inert in the base module.
+    // <viewport-shade-slot:emissive>
+    // </viewport-shade-slot:emissive>
 
     // #include "debug_vis.wgsl"
 
     // ---------------------------------------------------------------------------
     // McGuire & Bavoil weighted blended OIT output.
     // ---------------------------------------------------------------------------
-    let alpha = surface.alpha;
+    var final_alpha = surface.alpha;
+    // Surface-hook alpha: honoured only under Mask/Blend alpha modes; the
+    // composer fills this in plugin-composed modules.
+    // <viewport-shade-slot:alpha>
+    // </viewport-shade-slot:alpha>
+    let alpha = final_alpha;
     let z = in.clip_pos.z;  // NDC depth 0..1
     let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
 

@@ -1,7 +1,7 @@
 //! Showcase 54: Custom Shading Plugins.
 //!
 //! Demonstrates the `MaterialPlugin` API: WGSL shading hooks registered at
-//! runtime and selected per material via `Material::shading_plugin`. Seven
+//! runtime and selected per material via `Material::shading_plugin`. Eight
 //! spheres share one light rig:
 //!
 //!   1. Built-in PBR (the reference look).
@@ -18,6 +18,8 @@
 //!      `MeshData::extension_attributes` (the custom vertex-attribute demo).
 //!   7. Parallax plugin: plugin-owned height + albedo textures with a
 //!      tangent-space parallax march, all inside the hook body.
+//!   8. Dissolve plugin: a `shade_surface` body driving the gated alpha
+//!      output on a Mask material, with an emissive glow at the edge.
 //!
 //! The plugin draws keep scene shadows, AO, and alpha modes; the toon
 //! terminator bands the shadow edge because `light.shadow` arrives as its own
@@ -37,7 +39,10 @@ mod surface_detail_plugin;
 #[path = "../plugins/toon_plugin.rs"]
 mod toon_plugin;
 
-use surface_detail_plugin::{DetailLayerPlugin, ParallaxPlugin, detail_params, parallax_params};
+use surface_detail_plugin::{
+    DetailLayerPlugin, DissolvePlugin, ParallaxPlugin, detail_params, dissolve_params,
+    parallax_params,
+};
 use toon_plugin::{RimPlugin, ToonPlugin, toon_params};
 
 // ---------------------------------------------------------------------------
@@ -53,12 +58,14 @@ pub(crate) struct CustomShadingState {
     pub rim: Option<MaterialPluginId>,
     pub detail: Option<MaterialPluginId>,
     pub parallax: Option<MaterialPluginId>,
+    pub dissolve: Option<MaterialPluginId>,
     pub detail_mesh_id: Option<MeshId>,
     pub toon_a_handle: Option<MaterialPluginParamsHandle>,
     pub toon_b_handle: Option<MaterialPluginParamsHandle>,
     pub rim_handle: Option<MaterialPluginParamsHandle>,
     pub detail_handle: Option<MaterialPluginParamsHandle>,
     pub parallax_handle: Option<MaterialPluginParamsHandle>,
+    pub dissolve_handle: Option<MaterialPluginParamsHandle>,
     // UI-tunable; written into the params windows every frame.
     pub bands_a: f32,
     pub ambient_a: f32,
@@ -72,6 +79,7 @@ pub(crate) struct CustomShadingState {
     pub detail_attr_mask: f32,
     pub parallax_height: f32,
     pub parallax_tiling: f32,
+    pub dissolve_threshold: f32,
 }
 
 impl Default for CustomShadingState {
@@ -85,12 +93,14 @@ impl Default for CustomShadingState {
             rim: None,
             detail: None,
             parallax: None,
+            dissolve: None,
             detail_mesh_id: None,
             toon_a_handle: None,
             toon_b_handle: None,
             rim_handle: None,
             detail_handle: None,
             parallax_handle: None,
+            dissolve_handle: None,
             bands_a: 3.0,
             ambient_a: 0.25,
             tint_a: [1.0, 1.0, 1.0],
@@ -103,6 +113,7 @@ impl Default for CustomShadingState {
             detail_attr_mask: 1.0,
             parallax_height: 0.06,
             parallax_tiling: 3.0,
+            dissolve_threshold: 0.35,
         }
     }
 }
@@ -154,6 +165,9 @@ impl App {
         let parallax_default = resources
             .register_material_plugin(&self.device, &ParallaxPlugin)
             .expect("register parallax plugin");
+        let dissolve = resources
+            .register_material_plugin(&self.device, &DissolvePlugin)
+            .expect("register dissolve plugin");
 
         if self.cs_state.toon_b.is_none() {
             let s = &self.cs_state;
@@ -294,6 +308,8 @@ impl App {
             .cs_state
             .parallax
             .and_then(|id| resources.material_plugin_params_handle(id));
+        self.cs_state.dissolve = Some(dissolve);
+        self.cs_state.dissolve_handle = resources.material_plugin_params_handle(dissolve);
 
         self.cs_state.mesh_id = Some(mesh_id);
         self.cs_state.detail_mesh_id = Some(detail_mesh_id);
@@ -313,7 +329,7 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
     };
     let s = &app.cs_state;
     let detail_mesh = s.detail_mesh_id.unwrap_or(mesh_id);
-    let entries: [(f32, [f32; 3], Option<MaterialPluginId>, MeshId); 7] = [
+    let entries: [(f32, [f32; 3], Option<MaterialPluginId>, MeshId); 8] = [
         (-9.0, [0.75, 0.3, 0.3], None, mesh_id), // built-in PBR reference
         (-6.0, [0.75, 0.3, 0.3], s.toon_a, mesh_id),
         (-3.0, [0.75, 0.3, 0.3], s.toon_b, mesh_id),
@@ -323,6 +339,7 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
         // extension attributes.
         (6.0, [0.4, 0.5, 0.35], s.detail, detail_mesh),
         (9.0, [0.8, 0.8, 0.8], s.parallax, mesh_id),
+        (12.0, [0.55, 0.35, 0.25], s.dissolve, mesh_id),
     ];
     entries
         .iter()
@@ -333,6 +350,11 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
                 glam::Mat4::from_translation(glam::Vec3::new(*x, 0.0, 1.0)).to_cols_array_2d();
             item.material = Material::pbr(*colour, 0.1, 0.55);
             item.material.shading_plugin = *plugin;
+            // The dissolve sphere runs on a Mask material so the hook's
+            // alpha output discards fragments below the cutoff.
+            if *plugin == s.dissolve && plugin.is_some() {
+                item.material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+            }
             item
         })
         .collect()
@@ -409,6 +431,10 @@ pub(crate) fn controls_custom_shading(app: &mut App, ui: &mut egui::Ui) {
     ui.add(egui::Slider::new(&mut app.cs_state.parallax_height, 0.0..=0.15).text("height scale"));
     ui.add(egui::Slider::new(&mut app.cs_state.parallax_tiling, 1.0..=8.0).text("tiling"));
 
+    ui.separator();
+    ui.label("Dissolve sphere (gated alpha + emissive edge)");
+    ui.add(egui::Slider::new(&mut app.cs_state.dissolve_threshold, 0.0..=1.0).text("threshold"));
+
     // Push the UI values into the params windows. The writes are five small
     // uniform uploads; doing them unconditionally keeps the sliders live.
     let s = &app.cs_state;
@@ -442,6 +468,12 @@ pub(crate) fn controls_custom_shading(app: &mut App, ui: &mut egui::Ui) {
         h.write(
             &app.queue,
             &parallax_params(s.parallax_height, s.parallax_tiling),
+        );
+    }
+    if let Some(h) = &s.dissolve_handle {
+        h.write(
+            &app.queue,
+            &dissolve_params(s.dissolve_threshold, 0.15, 1.0, [2.5, 1.2, 0.3]),
         );
     }
 }

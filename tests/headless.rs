@@ -3795,6 +3795,136 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     );
 }
 
+/// The surface-authoring hook: a plugin that defines only `shade_surface`
+/// renders its authored base colour and emissive under stock lighting, and
+/// its alpha output is honoured only under Mask/Blend alpha modes.
+#[test]
+fn material_plugin_surface_hook_authors_surface_and_gated_alpha() {
+    struct PaintPlugin;
+    impl viewport_lib::MaterialPlugin for PaintPlugin {
+        fn name(&self) -> &'static str {
+            "paint_test"
+        }
+        fn wgsl_body(&self) -> String {
+            // params[0] = (alpha, emissive_green, 0, 0)
+            "\
+fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
+    var ov: SurfaceOverride;
+    ov.base_colour = vec3<f32>(0.9, 0.1, 0.1);
+    ov.normal = surf.normal;
+    ov.metallic = surf.metallic;
+    ov.roughness = surf.roughness;
+    ov.emissive = vec3<f32>(0.0, material_params[0].y, 0.0);
+    ov.alpha = material_params[0].x;
+    return ov;
+}
+"
+            .to_string()
+        }
+        fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
+            let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
+            p[0] = [1.0, 0.0, 0.0, 0.0];
+            p
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &PaintPlugin)
+        .expect("register");
+    let params = renderer
+        .resources_mut()
+        .material_plugin_params_handle(plugin_id)
+        .expect("params handle");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: cam.aspect,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.post_process.enabled = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // Authored base colour under stock lighting.
+    item.material.shading_plugin = Some(plugin_id);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let painted = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(builtin, painted, "surface hook must change the image");
+    let red_bias = |img: &[u8]| -> i64 {
+        img.chunks(4)
+            .map(|p| p[0] as i64 - p[1] as i64)
+            .sum::<i64>()
+    };
+    assert!(
+        red_bias(&painted) > red_bias(&builtin),
+        "authored red base colour should bias the image red"
+    );
+
+    // Hook emissive reaches the image.
+    params.write(&queue, &[[1.0, 0.8, 0.0, 0.0]]);
+    let emissive = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let green = |img: &[u8]| -> i64 { img.chunks(4).map(|p| p[1] as i64).sum::<i64>() };
+    assert!(
+        green(&emissive) > green(&painted),
+        "hook emissive should raise green"
+    );
+
+    // Opaque materials ignore the hook's alpha entirely.
+    params.write(&queue, &[[0.05, 0.0, 0.0, 0.0]]);
+    let opaque_low_alpha = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(
+        painted, opaque_low_alpha,
+        "opaque draws must ignore hook alpha"
+    );
+
+    // Blend materials take it as output alpha.
+    item.material.alpha_mode = viewport_lib::material::AlphaMode::Blend;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    params.write(&queue, &[[0.9, 0.0, 0.0, 0.0]]);
+    let blend_high = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    params.write(&queue, &[[0.1, 0.0, 0.0, 0.0]]);
+    let blend_low = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(blend_high, blend_low, "blend draws must honour hook alpha");
+
+    // Mask materials re-test the cutoff against the hook's alpha: below it,
+    // every fragment discards and the image matches an empty scene.
+    item.material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    params.write(&queue, &[[0.1, 0.0, 0.0, 0.0]]);
+    let mask_discarded = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    let empty = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(
+        mask_discarded, empty,
+        "mask draws below the hook alpha cutoff must discard"
+    );
+}
+
 // The reference plugins shipped under examples/plugins/ must stay
 // registrable: their WGSL runs through the full composer + wgpu validation
 // at registration, so this catches contract or prefixer regressions (e.g.
