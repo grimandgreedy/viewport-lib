@@ -54,8 +54,12 @@ struct PolylineUniform {
     has_scalar:      u32,        // offset 92 :  4 bytes
     viewport_width:  f32,        // offset 96 :  4 bytes
     viewport_height: f32,        // offset 100 :  4 bytes
-    _pad:            vec2<f32>,  // offset 104 :  8 bytes
-};                               // total 112 bytes
+    dash_mode:       u32,        // offset 104 :  4 bytes (0 = solid, 1 = dashed/dotted)
+    dash_on:         f32,        // offset 108 :  4 bytes (visible run length, arc units)
+    dash_period:     f32,        // offset 112 :  4 bytes (on + off run length)
+    dash_offset:     f32,        // offset 116 :  4 bytes (phase shift along the line)
+    _pad:            vec2<f32>,  // offset 120 :  8 bytes
+};                               // total 128 bytes
 
 struct ClipVolumeEntry {
     volume_type: u32,
@@ -107,12 +111,14 @@ struct SegmentIn {
     @location(10) radius_a:         f32,
     @location(11) radius_b:         f32,
     @location(12) use_direct_colour: u32,
+    @location(13) dist_a:           f32,
 };
 
 struct VertexOut {
     @builtin(position) clip_pos:  vec4<f32>,
     @location(0)       colour:     vec4<f32>,
     @location(1)       world_pos: vec3<f32>,
+    @location(2)       arc_dist:  f32,
 };
 
 // Apply the per-item model matrix to a position in the consumer's input space.
@@ -224,6 +230,12 @@ fn vs_main(
     out.clip_pos  = clip_pos;
     out.world_pos = world_pos;
 
+    // Cumulative arc length at this corner, for dash placement. `dist_a` is the
+    // distance at the segment start (baked per instance); the B end adds this
+    // segment's length, measured in the same input-space units as `dist_a`.
+    let seg_len = length(seg.pos_b - seg.pos_a);
+    out.arc_dist = seg.dist_a + select(0.0f, seg_len, use_b);
+
     // Colour priority: direct RGBA > scalar LUT > default_colour.
     if seg.use_direct_colour != 0u {
         out.colour = select(seg.colour_a, seg.colour_b, use_b);
@@ -239,6 +251,19 @@ fn vs_main(
     return out;
 }
 
+// Discard the fragment when it falls in a dash gap. No-op for solid strokes.
+// The pattern repeats every `dash_period` arc-length units; the first
+// `dash_on` units of each period are drawn.
+fn dash_discard(arc_dist: f32) {
+    if pl_uniform.dash_mode != 0u && pl_uniform.dash_period > 0.0f {
+        let phase = (arc_dist + pl_uniform.dash_offset) % pl_uniform.dash_period;
+        let phase_wrapped = select(phase, phase + pl_uniform.dash_period, phase < 0.0f);
+        if phase_wrapped >= pl_uniform.dash_on {
+            discard;
+        }
+    }
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Half-space clip-plane culling (section views).
@@ -249,6 +274,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
     }
     if !clip_volume_test(in.world_pos) { discard; }
+    dash_discard(in.arc_dist);
     return in.colour;
 }
 
@@ -257,5 +283,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 // clip volume is positioned, even when multiple clips are active.
 @fragment
 fn fs_main_no_clip(in: VertexOut) -> @location(0) vec4<f32> {
+    dash_discard(in.arc_dist);
     return in.colour;
 }

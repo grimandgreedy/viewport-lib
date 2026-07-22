@@ -10,7 +10,7 @@ use crate::App;
 use eframe::egui;
 use viewport_lib::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, RibbonItem,
-    SceneRenderItem, SpriteBlend, StreamtubeItem, TubeItem,
+    SceneRenderItem, SpriteBlend, StreamtubeItem, StrokePattern, TubeItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -26,6 +26,14 @@ pub(crate) enum StreamRenderMode {
     Ribbon,
 }
 
+/// Stroke style for the Polylines mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PolylineStroke {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -37,6 +45,17 @@ pub(crate) struct StreamlinesState {
     pub tube_radius: f32,
     pub line_width: f32,
     pub colour_by_speed: bool,
+    /// Stroke style for Polylines mode (solid / dashed / dotted).
+    pub stroke: PolylineStroke,
+    /// Dash and gap run lengths in world units (Dashed style).
+    pub dash_length: f32,
+    pub gap_length: f32,
+    /// Dot spacing in world units (Dotted style).
+    pub dot_spacing: f32,
+    /// Animate the dash pattern along the line (marching ants).
+    pub dash_animate: bool,
+    /// Current phase offset, advanced each frame while `dash_animate` is on.
+    pub dash_offset: f32,
     pub colourmap: BuiltinColourmap,
     /// Flat RGBA colour used when `colour_by_speed` is false, and as tube colour.
     pub flat_colour: [f32; 4],
@@ -68,6 +87,12 @@ impl Default for StreamlinesState {
             tube_radius: 0.06,
             line_width: 4.0,
             colour_by_speed: true,
+            stroke: PolylineStroke::Solid,
+            dash_length: 0.35,
+            gap_length: 0.25,
+            dot_spacing: 0.25,
+            dash_animate: false,
+            dash_offset: 0.0,
             colourmap: BuiltinColourmap::Viridis,
             flat_colour: [0.4, 0.7, 1.0, 1.0],
             seed_count: 32,
@@ -111,6 +136,18 @@ impl App {
         item.positions = positions;
         item.strip_lengths = strip_lengths;
         item.line_width = s.line_width;
+        item.stroke_pattern = match s.stroke {
+            PolylineStroke::Solid => StrokePattern::Solid,
+            PolylineStroke::Dashed => StrokePattern::Dashed {
+                dash_length: s.dash_length,
+                gap_length: s.gap_length,
+                offset: s.dash_offset,
+            },
+            PolylineStroke::Dotted => StrokePattern::Dotted {
+                spacing: s.dot_spacing,
+                offset: s.dash_offset,
+            },
+        };
         if s.colour_by_speed {
             item.scalars = scalars;
             item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
@@ -239,6 +276,49 @@ pub(crate) fn controls_streamlines(app: &mut App, ui: &mut egui::Ui) {
         StreamRenderMode::Polylines => {
             ui.label("Line width (px):");
             ui.add(egui::Slider::new(&mut s.line_width, 0.5..=8.0).step_by(0.5));
+
+            ui.separator();
+            ui.label("Stroke pattern:");
+            ui.horizontal(|ui| {
+                if ui
+                    .radio(s.stroke == PolylineStroke::Solid, "Solid")
+                    .clicked()
+                {
+                    s.stroke = PolylineStroke::Solid;
+                }
+                if ui
+                    .radio(s.stroke == PolylineStroke::Dashed, "Dashed")
+                    .clicked()
+                {
+                    s.stroke = PolylineStroke::Dashed;
+                }
+                if ui
+                    .radio(s.stroke == PolylineStroke::Dotted, "Dotted")
+                    .clicked()
+                {
+                    s.stroke = PolylineStroke::Dotted;
+                }
+            });
+            match s.stroke {
+                PolylineStroke::Solid => {}
+                PolylineStroke::Dashed => {
+                    ui.add(egui::Slider::new(&mut s.dash_length, 0.05..=1.5).text("dash"));
+                    ui.add(egui::Slider::new(&mut s.gap_length, 0.05..=1.5).text("gap"));
+                }
+                PolylineStroke::Dotted => {
+                    ui.add(egui::Slider::new(&mut s.dot_spacing, 0.05..=1.0).text("spacing"));
+                }
+            }
+            if s.stroke != PolylineStroke::Solid {
+                ui.checkbox(&mut s.dash_animate, "Animate (marching ants)");
+                ui.label("Cadence is in world units, so dashes stay fixed to the line.");
+                // Advance the phase from the egui clock while animating; the
+                // pattern shifts along the line at ~0.6 world units/sec.
+                if s.dash_animate {
+                    s.dash_offset = ui.input(|i| i.time) as f32 * 0.6;
+                    ui.ctx().request_repaint();
+                }
+            }
         }
         StreamRenderMode::Streamtube => {
             ui.label("Tube radius:");

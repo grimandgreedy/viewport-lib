@@ -62,7 +62,7 @@ impl DeviceResources {
         //   offset  96: radius_a          f32   : line width in px at A (= line_width when node_radii is empty)
         //   offset 100: radius_b          f32   : line width in px at B
         //   offset 104: use_direct_colour  u32   : 1 = use colour_a/b, 0 = use scalar LUT / default
-        //   offset 108: _pad              u32
+        //   offset 108: dist_a            f32   : cumulative arc length at segment start (for dashing)
         let pl_instance_layout = crate::gpu::VertexBufferLayout {
             array_stride: 112,
             step_mode: crate::gpu::VertexStepMode::Instance,
@@ -132,6 +132,11 @@ impl DeviceResources {
                     shader_location: 12,
                     format: crate::gpu::VertexFormat::Uint32,
                 }, // use_direct_colour
+                crate::gpu::VertexAttribute {
+                    offset: 108,
+                    shader_location: 13,
+                    format: crate::gpu::VertexFormat::Float32,
+                }, // dist_a
             ],
         };
 
@@ -251,7 +256,7 @@ impl DeviceResources {
             radius_a: f32,          // offset  96
             radius_b: f32,          // offset 100
             use_direct_colour: u32, // offset 104
-            _pad: u32,              // offset 108
+            dist_a: f32,            // offset 108 : cumulative arc length at segment start
         }
 
         // Determine which colour/scalar/radius source to use per segment.
@@ -280,10 +285,21 @@ impl DeviceResources {
 
         for &(strip_start, strip_end) in &strip_ranges {
             let end = strip_end.min(npos);
+            // Cumulative arc length along this strip, in the units of `positions`
+            // (world space, ignoring the per-item model matrix). Used by the
+            // fragment shader for dash/dot placement. Reset per strip so the
+            // pattern restarts at each strip's first node.
+            let mut cum_dist = 0.0f32;
             for i in strip_start..end.saturating_sub(1) {
                 let j = i + 1;
                 let has_prev = i > strip_start;
                 let has_next = j + 1 < end;
+                let dist_a = cum_dist;
+                let pa = positions[i];
+                let pb = positions[j];
+                cum_dist +=
+                    ((pb[0] - pa[0]).powi(2) + (pb[1] - pa[1]).powi(2) + (pb[2] - pa[2]).powi(2))
+                        .sqrt();
 
                 // Scalar: edge_scalars (flat per segment) > per-node scalars > 0
                 let (scalar_a, scalar_b) = if use_edge_scalars {
@@ -349,7 +365,7 @@ impl DeviceResources {
                     radius_a,
                     radius_b,
                     use_direct_colour: use_direct as u32,
-                    _pad: 0,
+                    dist_a,
                 });
 
                 seg_idx_global += 1;
@@ -392,18 +408,44 @@ impl DeviceResources {
             (0u32, 0.0f32, 1.0f32)
         };
 
+        // Map the stroke pattern to shader parameters. Cadence is in the units
+        // of `positions` (world-space arc length). Dotted is expressed as a
+        // short dash so the same on/period machinery covers all three cases.
+        use crate::StrokePattern;
+        let (dash_mode, dash_on, dash_period, dash_offset) = match item.stroke_pattern {
+            StrokePattern::Solid => (0u32, 0.0f32, 0.0f32, 0.0f32),
+            StrokePattern::Dashed {
+                dash_length,
+                gap_length,
+                offset,
+            } => (
+                1,
+                dash_length.max(0.0),
+                (dash_length + gap_length).max(0.0),
+                offset,
+            ),
+            StrokePattern::Dotted { spacing, offset } => {
+                let period = spacing.max(0.0);
+                (1, (period * 0.25).max(0.0), period, offset)
+            }
+        };
+
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct PolylineUniform {
-            model: [[f32; 4]; 4],     // offset  0
-            default_colour: [f32; 4], // offset 64
-            line_width: f32,          // offset 80
-            scalar_min: f32,          // offset 84
-            scalar_max: f32,          // offset 88
-            has_scalar: u32,          // offset 92
-            viewport_width: f32,      // offset 96
+            model: [[f32; 4]; 4],     // offset   0
+            default_colour: [f32; 4], // offset  64
+            line_width: f32,          // offset  80
+            scalar_min: f32,          // offset  84
+            scalar_max: f32,          // offset  88
+            has_scalar: u32,          // offset  92
+            viewport_width: f32,      // offset  96
             viewport_height: f32,     // offset 100
-            _pad: [f32; 2],           // offset 104 (total 112 bytes)
+            dash_mode: u32,           // offset 104 : 0 = solid, 1 = dashed/dotted
+            dash_on: f32,             // offset 108 : visible run length (arc units)
+            dash_period: f32,         // offset 112 : on + off run length
+            dash_offset: f32,         // offset 116 : phase shift along the line
+            _pad: [f32; 2],           // offset 120 (total 128 bytes)
         }
         let uniform_data = PolylineUniform {
             model: item.model,
@@ -414,6 +456,10 @@ impl DeviceResources {
             has_scalar,
             viewport_width: viewport_size[0].max(1.0),
             viewport_height: viewport_size[1].max(1.0),
+            dash_mode,
+            dash_on,
+            dash_period,
+            dash_offset,
             _pad: [0.0; 2],
         };
         let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {

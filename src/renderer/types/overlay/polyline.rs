@@ -29,11 +29,14 @@ pub enum PolylineCap {
     Round,
 }
 
-/// Stroke pattern for [`OverlayPolylineItem`].
+/// Stroke pattern for a polyline.
 ///
 /// Dash and dot placement is measured in accumulated arc length along the
-/// path, in logical pixels. On closed polylines the pattern continues across
-/// the final-to-first segment.
+/// path. The unit depends on the item: logical pixels for the screen-space
+/// [`OverlayPolylineItem`], world-space units for the 3-D
+/// [`PolylineItem`](crate::renderer::types::PolylineItem) (measured along the
+/// line in its input space). On closed overlay polylines the pattern continues
+/// across the final-to-first segment.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StrokePattern {

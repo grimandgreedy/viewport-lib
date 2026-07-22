@@ -72,6 +72,12 @@ pub struct PolylineItem {
     /// preserving the historical behaviour. Set this to a translation, rotation,
     /// or scale to move a pre-uploaded polyline without rebuilding its vertex data.
     pub model: [[f32; 4]; 4],
+    /// Solid, dashed, or dotted stroke. Cadence is measured in world-space arc
+    /// length along the line (not screen pixels), so the pattern is view
+    /// independent and stays fixed to the geometry. `Solid` (the default) leaves
+    /// the historical continuous stroke unchanged. Dashing ignores any scale in
+    /// `model`; the run lengths are in the units of `positions`.
+    pub stroke_pattern: crate::StrokePattern,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -94,6 +100,7 @@ impl Default for PolylineItem {
             edge_vectors: Vec::new(),
             vector_scale: 1.0,
             model: IDENTITY_MAT4,
+            stroke_pattern: crate::StrokePattern::Solid,
             settings: ItemSettings::default(),
         }
     }
