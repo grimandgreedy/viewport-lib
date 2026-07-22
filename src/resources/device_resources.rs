@@ -538,6 +538,10 @@ pub struct ContentResources {
     /// Fallback 12-byte zero storage buffer (bound to binding 14 when no
     /// normal override is active).
     pub(crate) fallback_normal_override_buf: crate::gpu::Buffer,
+    /// Fallback 16-byte zero storage buffer (bound to binding 15 when the
+    /// mesh has no extension-attribute buffer). Single `vec4<f32>(0)` entry;
+    /// plugin modules clamp the vertex index so every read resolves to zero.
+    pub(crate) fallback_extension_attr_buf: crate::gpu::Buffer,
     /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
     /// `None` until `ensure_colourmaps_initialized()` has been called.
     pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,

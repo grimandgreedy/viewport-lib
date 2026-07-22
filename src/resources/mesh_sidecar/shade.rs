@@ -88,6 +88,12 @@ pub struct ShadingHookDesc {
     /// `textureSampleLevel`. Texture views bind per variant; undeclared slots
     /// fall back to 1x1 white.
     pub texture_count: u32,
+    /// When true, the composed per-object modules read the mesh's per-vertex
+    /// extension attribute (`MeshData::extension_attributes`, group 1 binding
+    /// 15), interpolate it, and deliver it as `surf.attr`. Meshes without the
+    /// channel read `vec4(0.0)`. When false (the default), no attribute
+    /// fetch or varying is added and `surf.attr` is always zero.
+    pub reads_vertex_attribute: bool,
 }
 
 /// Handle to a registered shading hook.
@@ -226,9 +232,28 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
             ));
         }
     }
+    // Vertex-attribute plumbing: only the per-object shaders carry the vertex
+    // marker regions (instanced compositions are validation-only and plugin
+    // draws are per-object), so gate on both the flag and the markers.
+    let wire_vertex_attr =
+        hook.desc.reads_vertex_attribute && region_bounds(&s, "vertex-fetch").is_some();
+    if wire_vertex_attr {
+        body.push_str(
+            "@group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;\n",
+        );
+    }
     body.push_str(&hook.prefixed_body);
     body.push('\n');
     s.insert_str(idx, &body);
+
+    if wire_vertex_attr {
+        s = rewrite_region(&s, "vertex-out", "    @location(8) ext_attr: vec4<f32>,\n")?;
+        s = rewrite_region(
+            &s,
+            "vertex-fetch",
+            "    let ext_len = arrayLength(&extension_attr_buffer);\n    out.ext_attr = extension_attr_buffer[min(in.vertex_index, ext_len - 1u)];\n",
+        )?;
+    }
 
     // Shadowless variants (OIT) carry no shadow region; the hook then sees a
     // shadow factor of 1.0.
@@ -238,11 +263,12 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
         "1.0"
     };
 
-    s = rewrite_region(
-        &s,
-        "surface",
-        "        let surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n",
-    )?;
+    let surface_line = if wire_vertex_attr {
+        "        var surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n        surf.attr = in.ext_attr;\n"
+    } else {
+        "        let surf = build_shading_surface(surface, in, V, metallic, roughness, F0);\n"
+    };
+    s = rewrite_region(&s, "surface", surface_line)?;
     if hook.has_light {
         if hook.desc.needs_back_hemisphere {
             s = rewrite_region(&s, "backface-cull", "")?;
@@ -299,6 +325,7 @@ fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
             .to_string(),
             needs_back_hemisphere: false,
             texture_count: 0,
+            reads_vertex_attribute: false,
         })
         .expect("builtin_pbr hook body is valid")
     })
@@ -450,6 +477,12 @@ pub trait MaterialPlugin {
     fn texture_count(&self) -> u32 {
         0
     }
+    /// Whether hook bodies read the per-vertex extension attribute
+    /// (`surf.attr`, fed from `MeshData::extension_attributes`). Default
+    /// false, which skips the attribute fetch and varying entirely.
+    fn reads_vertex_attribute(&self) -> bool {
+        false
+    }
     /// Initial contents of the default variant's params window.
     fn initial_params(&self) -> [[f32; 4]; MATERIAL_PLUGIN_PARAM_VEC4S] {
         [[0.0; 4]; MATERIAL_PLUGIN_PARAM_VEC4S]
@@ -577,6 +610,7 @@ impl crate::resources::DeviceResources {
                 wgsl_body: plugin.wgsl_body(),
                 needs_back_hemisphere: plugin.needs_back_hemisphere(),
                 texture_count,
+                reads_vertex_attribute: plugin.reads_vertex_attribute(),
             },
         )?;
 
@@ -921,6 +955,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             wgsl_body: body.to_string(),
             needs_back_hemisphere: back_hemisphere,
             texture_count: 0,
+            reads_vertex_attribute: false,
         })
         .expect("analyse")
     }
@@ -953,6 +988,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             wgsl_body: "fn helper() -> f32 { return 1.0; }".to_string(),
             needs_back_hemisphere: false,
             texture_count: 0,
+            reads_vertex_attribute: false,
         })
         .unwrap_err();
         assert!(matches!(
@@ -1060,6 +1096,46 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     }
 
     #[test]
+    fn compose_wires_vertex_attribute_when_requested() {
+        let mut hook = stored("windy", TOON_BODY, false);
+        hook.desc.reads_vertex_attribute = true;
+        // Per-object shaders carry the vertex markers and get the full wiring.
+        for shader in ["mesh.wgsl", "mesh_oit.wgsl"] {
+            let base = registry::lookup_source(shader).expect("lit shader");
+            let composed = compose_shade_shader(base, &hook).expect("compose");
+            assert!(
+                composed.contains(
+                    "@group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;"
+                ),
+                "{shader}: missing buffer declaration"
+            );
+            assert!(
+                composed.contains("@location(8) ext_attr: vec4<f32>,"),
+                "{shader}: missing varying"
+            );
+            assert!(
+                composed.contains("out.ext_attr = extension_attr_buffer["),
+                "{shader}: missing vertex fetch"
+            );
+            assert!(
+                composed.contains("surf.attr = in.ext_attr;"),
+                "{shader}: missing surface wire"
+            );
+        }
+        // Instanced shaders have no vertex markers: composition still succeeds
+        // (validation-only) with no attribute plumbing and surf.attr = 0.
+        let base = registry::lookup_source("mesh_instanced.wgsl").expect("lit shader");
+        let composed = compose_shade_shader(base, &hook).expect("compose");
+        assert!(!composed.contains("extension_attr_buffer"));
+        assert!(!composed.contains("ext_attr"));
+        // A hook that does not opt in gets none of the plumbing.
+        let plain = stored("calm", TOON_BODY, false);
+        let base = registry::lookup_source("mesh.wgsl").expect("lit shader");
+        let composed = compose_shade_shader(base, &plain).expect("compose");
+        assert!(!composed.contains("extension_attr_buffer"));
+    }
+
+    #[test]
     fn builtin_pbr_hook_composes_with_three_group_interface() {
         let Some(base) = registry::lookup_source("mesh.wgsl") else {
             return;
@@ -1156,6 +1232,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                     wgsl_body: TOON_BODY.to_string(),
                     needs_back_hemisphere: false,
                     texture_count: 0,
+                    reads_vertex_attribute: false,
                 },
             )
             .expect("register");
@@ -1173,6 +1250,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                 wgsl_body: TOON_BODY.to_string(),
                 needs_back_hemisphere: false,
                 texture_count: 0,
+                reads_vertex_attribute: false,
             },
         );
         assert!(matches!(
@@ -1187,6 +1265,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                 wgsl_body: "fn shade_light(this is not wgsl".to_string(),
                 needs_back_hemisphere: false,
                 texture_count: 0,
+                reads_vertex_attribute: false,
             },
         );
         assert!(matches!(
@@ -1217,6 +1296,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                     wgsl_body: TOON_BODY.to_string(),
                     needs_back_hemisphere: true,
                     texture_count: 0,
+                    reads_vertex_attribute: false,
                 },
             )
             .expect("register");

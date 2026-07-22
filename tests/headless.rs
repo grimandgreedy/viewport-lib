@@ -3707,6 +3707,125 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     );
 }
 
+/// A plugin with `reads_vertex_attribute` sees `MeshData::extension_attributes`
+/// as `surf.attr`; a mesh without the channel reads vec4(0).
+#[test]
+fn material_plugin_reads_vertex_attribute() {
+    struct AttrPlugin;
+    impl viewport_lib::MaterialPlugin for AttrPlugin {
+        fn name(&self) -> &'static str {
+            "attr_test"
+        }
+        fn reads_vertex_attribute(&self) -> bool {
+            true
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<f32> {
+    return direct + ambient + surf.attr.rgb;
+}
+"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let plain_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let mut green_data = box_mesh();
+    green_data.extension_attributes = Some(vec![[0.0, 0.6, 0.0, 0.0]; green_data.positions.len()]);
+    let green_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &green_data)
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &AttrPlugin)
+        .expect("register");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: cam.aspect,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.post_process.enabled = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = plain_id;
+    item.material.shading_plugin = Some(plugin_id);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let no_channel = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    item.mesh_id = green_id;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+    let with_channel = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        no_channel, with_channel,
+        "the extension attribute must reach surf.attr"
+    );
+
+    // The channel's green tint should show up in the with-channel image:
+    // compare summed green minus red across the frame.
+    let bias = |img: &[u8]| -> i64 {
+        img.chunks(4)
+            .map(|p| p[1] as i64 - p[0] as i64)
+            .sum::<i64>()
+    };
+    assert!(
+        bias(&with_channel) > bias(&no_channel),
+        "attr (0, 0.6, 0) should bias the image toward green"
+    );
+}
+
+// The reference plugins shipped under examples/plugins/ must stay
+// registrable: their WGSL runs through the full composer + wgpu validation
+// at registration, so this catches contract or prefixer regressions (e.g.
+// a body local named like a ShadingSurface field).
+#[path = "../examples/plugins/surface_detail_plugin.rs"]
+mod surface_detail_plugin;
+#[path = "../examples/plugins/toon_plugin.rs"]
+mod toon_plugin;
+
+#[test]
+fn example_reference_plugins_register() {
+    let Some((device, _queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let resources = renderer.resources_mut();
+    resources
+        .register_material_plugin(&device, &toon_plugin::ToonPlugin)
+        .expect("toon plugin registers");
+    resources
+        .register_material_plugin(&device, &toon_plugin::RimPlugin)
+        .expect("rim plugin registers");
+    resources
+        .register_material_plugin(&device, &surface_detail_plugin::DetailLayerPlugin)
+        .expect("detail plugin registers");
+    resources
+        .register_material_plugin(&device, &surface_detail_plugin::ParallaxPlugin)
+        .expect("parallax plugin registers");
+}
+
 /// A camera-facing unit quad in the XY plane (normal +Z), for the tone-map
 /// background-composite tests below.
 fn quad_mesh() -> MeshData {

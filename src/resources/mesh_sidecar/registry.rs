@@ -266,9 +266,13 @@ fn replace_whole_word(haystack: &str, needle: &str, replacement: &str) -> String
         if i + needle_bytes.len() <= bytes.len()
             && &bytes[i..i + needle_bytes.len()] == needle_bytes
         {
+            // A match right after `.` is a struct field or swizzle access,
+            // never a reference to a declared identifier: a body local that
+            // shares a field's name (e.g. `var uv` vs `surf.uv`) must not
+            // drag the field access along when it gets prefixed.
             let before_ok = i == 0 || {
                 let c = bytes[i - 1] as char;
-                !(c.is_alphanumeric() || c == '_')
+                !(c.is_alphanumeric() || c == '_' || c == '.')
             };
             let after_idx = i + needle_bytes.len();
             let after_ok = after_idx == bytes.len() || {
@@ -501,6 +505,17 @@ mod tests {
         // DeformVertex / DeformContext are external: must not get prefixed.
         assert!(out.contains("DeformVertex"));
         assert!(!out.contains("wind__DeformVertex"));
+    }
+
+    #[test]
+    fn identifier_prefix_leaves_field_accesses_alone() {
+        // A body local sharing a struct field's name gets prefixed as a
+        // declaration and a plain reference, but never after `.`.
+        let body = "fn f(surf: ShadingSurface) -> vec2<f32> {\n    var uv = surf.uv * 2.0;\n    return uv;\n}\n";
+        let out = identifier_prefix("px", body);
+        assert!(out.contains("var px__uv = surf.uv * 2.0;"));
+        assert!(out.contains("return px__uv;"));
+        assert!(!out.contains("surf.px__uv"));
     }
 
     #[test]

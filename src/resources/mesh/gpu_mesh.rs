@@ -33,12 +33,14 @@ pub struct GpuMesh {
     /// texture assignment changes (tracked via `last_tex_key`).
     pub object_bind_group: crate::gpu::BindGroup,
     /// Last texture/attribute key used to build `object_bind_group`. `u64::MAX` = fallback / none.
-    /// Fields: `(albedo, normal_map, ao_map, lut, attr_hash, matcap, warp_hash, metallic_roughness, emissive, position_override_gen, normal_override_gen)`.
-    /// The trailing two slots are bumped by `set_position_override_buffer`,
+    /// Fields: `(albedo, normal_map, ao_map, lut, attr_hash, matcap, warp_hash, metallic_roughness, emissive, position_override_gen, normal_override_gen, extension_attr)`.
+    /// The override-gen slots are bumped by `set_position_override_buffer`,
     /// `set_normal_override_buffer`, and their `clear_*` counterparts, so the
     /// next `update_mesh_texture_bind_group` call rebuilds with the real
-    /// override buffer (or the fallback) at bindings 13/14.
-    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64),
+    /// override buffer (or the fallback) at bindings 13/14. The final slot is
+    /// 1 when the mesh carries an extension-attribute buffer (uploaded with
+    /// the mesh, so a mesh with one rebuilds once and binds it at 15).
+    pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64),
     /// Per-named-attribute GPU storage buffers (f32 per vertex, STORAGE usage).
     pub attribute_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
     /// Scalar range `(min, max)` per attribute, computed at upload time.
@@ -65,6 +67,12 @@ pub struct GpuMesh {
     /// Optional per-vertex normal override buffer. Same contract as
     /// `position_override_buffer` but bound at group 1 binding 14.
     pub normal_override_buffer: Option<crate::gpu::Buffer>,
+    /// Optional per-vertex `vec4<f32>` extension-attribute buffer, uploaded
+    /// from `MeshData::extension_attributes` and bound at group 1 binding 15
+    /// (the 16-byte zero fallback when `None`). Read by material-plugin
+    /// modules whose hook sets `reads_vertex_attribute`; base shaders never
+    /// touch it.
+    pub extension_attr_buffer: Option<crate::gpu::Buffer>,
     /// Monotonic counter bumped each time `set_position_override_buffer` or
     /// `clear_position_override` is called. Folded into `last_tex_key` so the
     /// object bind group rebuilds on the next `prepare()` call.
@@ -171,6 +179,7 @@ impl GpuMesh {
             self.face_vertex_buffer.as_ref(),
             self.position_override_buffer.as_ref(),
             self.normal_override_buffer.as_ref(),
+            self.extension_attr_buffer.as_ref(),
         ]
         .into_iter()
         .flatten()

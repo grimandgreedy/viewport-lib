@@ -638,12 +638,12 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 ---
 
-## 54. Custom Shading Plugins  (`showcase_54_custom_shading.rs` + `plugins/toon_plugin.rs`, ~330 lines)
+## 54. Custom Shading Plugins  (`showcase_54_custom_shading.rs` + `plugins/toon_plugin.rs` + `plugins/surface_detail_plugin.rs`, ~530 lines)
 
-**Demos:** The `MaterialPlugin` API: WGSL shading hooks registered at runtime and selected per material. Five spheres share one mesh and light rig. A built-in PBR reference; two toon spheres running the same plugin through separate variants (independent band-count and tint params windows, proving per-material params on shared pipelines); a striped sphere whose variant binds a procedural texture to the plugin's `material_texture_0` slot; and a rim sphere whose `recolor` hook adds a view-dependent rim on top of untouched built-in lighting. Slider edits write straight into the group-3 params windows each frame.
+**Demos:** The `MaterialPlugin` API: WGSL shading hooks registered at runtime and selected per material. Seven spheres share one light rig. A built-in PBR reference; two toon spheres running the same plugin through separate variants (independent band-count and tint params windows, proving per-material params on shared pipelines); a striped sphere whose variant binds a procedural texture to the plugin's `material_texture_0` slot; a rim sphere whose `recolor` hook adds a view-dependent rim on top of untouched built-in lighting; a detail-layer sphere whose blend is gated by a per-vertex mask painted into `MeshData::extension_attributes` (read as `surf.attr` via `reads_vertex_attribute`); and a parallax sphere whose plugin carries its own height + albedo textures and runs a tangent-space parallax march in the hook body. Slider edits write straight into the group-3 params windows each frame.
 
-**Uses:** `MaterialPlugin`, `register_material_plugin`, `create_material_plugin_variant`, `material_plugin_params_handle`, `Material::shading_plugin`, `MaterialPluginId`, `upload_texture`, `primitives::sphere`.
+**Uses:** `MaterialPlugin`, `register_material_plugin`, `create_material_plugin_variant`, `material_plugin_params_handle`, `Material::shading_plugin`, `MaterialPluginId`, `MeshData::extension_attributes`, `upload_texture`, `primitives::sphere`.
 
-**Sidebar:** Toon A bands/ambient/tint; toon B bands/tint; rim colour and power. All live through `MaterialPluginParamsHandle::write`.
+**Sidebar:** Toon A bands/ambient/tint; toon B bands/tint; rim colour and power; detail tiling/strength/mask blend; parallax height scale and tiling. All live through `MaterialPluginParamsHandle::write`.
 
 **Drift:** None.

@@ -76,6 +76,7 @@ impl DeviceResources {
             &self.content.fallback_warp_buf,
             &self.content.fallback_position_override_buf,
             &self.content.fallback_normal_override_buf,
+            &self.content.fallback_extension_attr_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             vertices,
@@ -215,6 +216,7 @@ impl DeviceResources {
             &self.content.fallback_warp_buf,
             &self.content.fallback_position_override_buf,
             &self.content.fallback_normal_override_buf,
+            &self.content.fallback_extension_attr_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             &vertices,
@@ -240,6 +242,8 @@ impl DeviceResources {
         mesh.face_attribute_buffers = face_attr_bufs;
         mesh.face_colour_buffers = face_colour_bufs;
         mesh.vector_attribute_buffers = vector_attr_bufs;
+        mesh.extension_attr_buffer =
+            Self::upload_extension_attributes(device, data, vertices.len());
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>())
             as u64;
@@ -415,6 +419,7 @@ impl DeviceResources {
                                 &resources.content.fallback_warp_buf,
                                 &resources.content.fallback_position_override_buf,
                                 &resources.content.fallback_normal_override_buf,
+                                &resources.content.fallback_extension_attr_buf,
                                 &resources.fallback_metallic_roughness_texture_view,
                                 &resources.fallback_emissive_texture_view,
                                 vbuf,
@@ -447,6 +452,12 @@ impl DeviceResources {
                             mesh.face_attribute_buffers = face_attr_bufs;
                             mesh.face_colour_buffers = face_colour_bufs;
                             mesh.vector_attribute_buffers = vector_attr_bufs;
+                            mesh.extension_attr_buffer =
+                                DeviceResources::upload_extension_attributes(
+                                    &device,
+                                    &data,
+                                    data.positions.len(),
+                                );
                             let mesh_id = resources.mesh_store.insert(mesh);
                             tracing::debug!(
                                 mesh_index = mesh_id.index(),
@@ -934,7 +945,9 @@ impl DeviceResources {
                 (existing.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize;
             let in_place = existing_vc == vertices.len()
                 && existing.index_count as usize == data.indices.len()
-                && data.attributes.is_empty();
+                && data.attributes.is_empty()
+                && data.extension_attributes.is_none()
+                && existing.extension_attr_buffer.is_none();
 
             if in_place {
                 use bytemuck::cast_slice;
@@ -992,6 +1005,7 @@ impl DeviceResources {
             &self.content.fallback_warp_buf,
             &self.content.fallback_position_override_buf,
             &self.content.fallback_normal_override_buf,
+            &self.content.fallback_extension_attr_buf,
             &self.fallback_metallic_roughness_texture_view,
             &self.fallback_emissive_texture_view,
             &vertices,
@@ -1017,6 +1031,8 @@ impl DeviceResources {
         new_mesh.face_attribute_buffers = face_attr_bufs;
         new_mesh.face_colour_buffers = face_colour_bufs;
         new_mesh.vector_attribute_buffers = vector_attr_bufs;
+        new_mesh.extension_attr_buffer =
+            Self::upload_extension_attributes(device, data, vertices.len());
         // Content changed under a stable id: carry the old revision forward
         // plus one so content-keyed caches invalidate.
         new_mesh.content_rev = self
@@ -1280,6 +1296,7 @@ impl DeviceResources {
             gpu_mesh.last_tex_key.8,
             gpu_mesh.last_tex_key.9,
             gpu_mesh.last_tex_key.10,
+            gpu_mesh.last_tex_key.11,
         );
 
         Ok(())
@@ -1555,6 +1572,30 @@ impl DeviceResources {
     /// - `face_vertex_buffer`: non-indexed 3N-vertex buffer (built once if any `Face`/`FaceColour` attr exists).
     /// - `face_attribute_buffers`: per-face scalar storage buffers (3N `f32` entries, replicated).
     /// - `face_colour_buffers`: per-face colour storage buffers (3N `[f32;4]` entries, replicated).
+    /// Upload `MeshData::extension_attributes` to a per-mesh storage buffer
+    /// (one `vec4<f32>` per vertex, zero-padded / truncated to the vertex
+    /// count). `None` when the mesh declares no extension attributes.
+    pub(crate) fn upload_extension_attributes(
+        device: &crate::gpu::Device,
+        data: &MeshData,
+        vertex_count: usize,
+    ) -> Option<crate::gpu::Buffer> {
+        let attrs = data.extension_attributes.as_ref()?;
+        let mut values = vec![[0.0f32; 4]; vertex_count.max(1)];
+        for (dst, src) in values.iter_mut().zip(attrs.iter()) {
+            *dst = *src;
+        }
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("extension_attr_buf"),
+            size: (values.len() * std::mem::size_of::<[f32; 4]>()) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        crate::resources::builders::write_mapped(buf.slice(..), bytemuck::cast_slice(&values));
+        buf.unmap();
+        Some(buf)
+    }
+
     fn upload_attributes(
         device: &crate::gpu::Device,
         attributes: &std::collections::HashMap<String, AttributeData>,
@@ -2170,6 +2211,7 @@ impl DeviceResources {
         fallback_warp_buf: &crate::gpu::Buffer,
         fallback_position_override_buf: &crate::gpu::Buffer,
         fallback_normal_override_buf: &crate::gpu::Buffer,
+        fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
         vertices: &[Vertex],
@@ -2190,6 +2232,7 @@ impl DeviceResources {
             fallback_warp_buf,
             fallback_position_override_buf,
             fallback_normal_override_buf,
+            fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
             vertices,
@@ -2213,6 +2256,7 @@ impl DeviceResources {
         fallback_warp_buf: &crate::gpu::Buffer,
         fallback_position_override_buf: &crate::gpu::Buffer,
         fallback_normal_override_buf: &crate::gpu::Buffer,
+        fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
         vertices: &[Vertex],
@@ -2261,6 +2305,7 @@ impl DeviceResources {
             fallback_warp_buf,
             fallback_position_override_buf,
             fallback_normal_override_buf,
+            fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
             vertex_buffer,
@@ -2308,6 +2353,7 @@ impl DeviceResources {
         fallback_warp_buf: &crate::gpu::Buffer,
         fallback_position_override_buf: &crate::gpu::Buffer,
         fallback_normal_override_buf: &crate::gpu::Buffer,
+        fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
         vertex_buffer: crate::gpu::Buffer,
@@ -2442,6 +2488,10 @@ impl DeviceResources {
                     binding: 14,
                     resource: fallback_normal_override_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
+                    resource: fallback_extension_attr_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -2569,6 +2619,10 @@ impl DeviceResources {
                     binding: 14,
                     resource: fallback_normal_override_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
+                    resource: fallback_extension_attr_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -2596,6 +2650,7 @@ impl DeviceResources {
                 u64::MAX,
                 0,
                 0,
+                0,
             ),
             normal_uniform_buf,
             normal_bind_group,
@@ -2611,6 +2666,7 @@ impl DeviceResources {
             vector_attribute_buffers: std::collections::HashMap::new(),
             position_override_buffer: None,
             normal_override_buffer: None,
+            extension_attr_buffer: None,
             position_override_gen: 0,
             normal_override_gen: 0,
             content_rev: 0,
@@ -3941,6 +3997,17 @@ pub struct MeshData {
     /// Keys are user-defined attribute names (e.g. `"pressure"`, `"velocity_mag"`).
     /// Cell attributes are averaged to vertices at upload time.
     pub attributes: std::collections::HashMap<String, AttributeData>,
+    /// Optional per-vertex `vec4<f32>` channel for material plugins.
+    ///
+    /// Uploaded to a per-mesh storage buffer and delivered to shading-hook
+    /// bodies as `surf.attr` when the plugin sets `reads_vertex_attribute`
+    /// (interpolated across the triangle, like any vertex attribute). The
+    /// meaning of the four components is up to the plugin: blend masks,
+    /// wind weights, bake data, etc.
+    ///
+    /// `None`, entries beyond the slice length, and meshes drawn without a
+    /// reading plugin all resolve to `vec4(0.0)`.
+    pub extension_attributes: Option<Vec<[f32; 4]>>,
 }
 
 impl Default for MeshData {
@@ -3953,6 +4020,7 @@ impl Default for MeshData {
             tangents: None,
             vertex_colours: None,
             attributes: std::collections::HashMap::new(),
+            extension_attributes: None,
         }
     }
 }
@@ -4032,6 +4100,7 @@ impl crate::resources::DeviceResources {
             gpu_mesh.last_tex_key.8,
             gpu_mesh.last_tex_key.9,
             gpu_mesh.last_tex_key.10,
+            gpu_mesh.last_tex_key.11,
         );
 
         Ok(())

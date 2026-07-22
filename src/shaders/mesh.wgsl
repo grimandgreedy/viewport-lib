@@ -191,6 +191,10 @@ struct VertexOut {
     // Detected in vs_main before interpolation can corrupt the NaN bit pattern.
     @location(6) is_nan_scalar:  f32,
     @location(7) face_colour:     vec4<f32>,
+    // Plugin vertex-attribute varying: the composer adds a @location(8)
+    // member here for hooks that read the per-vertex extension attribute.
+    // <viewport-shade-slot:vertex-out>
+    // </viewport-shade-slot:vertex-out>
 };
 
 @vertex
@@ -269,6 +273,8 @@ fn vs_main(in: VertexIn) -> VertexOut {
         face_colour_buffer[fc_idx],
         object.use_face_colour != 0u && fc_len > 0u,
     );
+    // <viewport-shade-slot:vertex-fetch>
+    // </viewport-shade-slot:vertex-fetch>
     return out;
 }
 
@@ -522,6 +528,9 @@ fn build_shading_surface(
     surf.uv_ddx = dpdx(surface.mat_uv);
     surf.uv_ddy = dpdy(surface.mat_uv);
     surf.front_facing = surface.front_facing;
+    // Filled from the injected varying in modules whose hook reads the
+    // per-vertex extension attribute; zero everywhere else.
+    surf.attr = vec4<f32>(0.0);
     return surf;
 }
 

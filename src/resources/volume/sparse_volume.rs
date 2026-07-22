@@ -325,6 +325,7 @@ pub(crate) fn extract_sparse_boundary(data: &SparseVolumeGridData) -> MeshData {
         tangents: None,
         vertex_colours: None,
         attributes,
+        extension_attributes: None,
     }
 }
 

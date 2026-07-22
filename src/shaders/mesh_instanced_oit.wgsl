@@ -347,6 +347,9 @@ fn build_shading_surface(
     surf.uv_ddx = dpdx(surface.mat_uv);
     surf.uv_ddy = dpdy(surface.mat_uv);
     surf.front_facing = surface.front_facing;
+    // Filled from the injected varying in modules whose hook reads the
+    // per-vertex extension attribute; zero everywhere else.
+    surf.attr = vec4<f32>(0.0);
     return surf;
 }
 

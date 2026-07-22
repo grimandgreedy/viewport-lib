@@ -617,7 +617,8 @@ impl DeviceResources {
         // `update_mesh_texture_bind_group` rebuilds them. `last_tex_key`
         // positions holding user-texture ids are albedo, normal, ao,
         // metallic-roughness, and emissive.
-        const INVALID_KEY: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) = (
+        const INVALID_KEY: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64) = (
+            u64::MAX,
             u64::MAX,
             u64::MAX,
             u64::MAX,
@@ -1034,11 +1035,15 @@ impl DeviceResources {
         // The last two slots track GPU position/normal override (re)bind events.
         // Bumped by `set_*_override_buffer` / `clear_*_override`, so a fresh
         // override forces a bind-group rebuild here.
-        let (pos_override_gen, nrm_override_gen) = {
+        let (pos_override_gen, nrm_override_gen, has_extension_attr) = {
             let Some(mesh) = self.mesh_store.get(mesh_id) else {
                 return;
             };
-            (mesh.position_override_gen, mesh.normal_override_gen)
+            (
+                mesh.position_override_gen,
+                mesh.normal_override_gen,
+                mesh.extension_attr_buffer.is_some() as u64,
+            )
         };
 
         let key = (
@@ -1053,6 +1058,7 @@ impl DeviceResources {
             emissive_texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             pos_override_gen,
             nrm_override_gen,
+            has_extension_attr,
         );
 
         {
@@ -1140,6 +1146,10 @@ impl DeviceResources {
             .normal_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_normal_override_buf);
+        let extension_attr_buf: &crate::gpu::Buffer = mesh
+            .extension_attr_buffer
+            .as_ref()
+            .unwrap_or(&self.content.fallback_extension_attr_buf);
 
         let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
             Some(id) if self.content.textures.get(id).is_some() => {
@@ -1218,6 +1228,10 @@ impl DeviceResources {
                     binding: 14,
                     resource: normal_override_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
+                    resource: extension_attr_buf.as_entire_binding(),
+                },
             ],
         });
         mesh.last_tex_key = key;
@@ -1294,6 +1308,7 @@ impl DeviceResources {
                 .hash(&mut h);
             pos_override_gen.hash(&mut h);
             nrm_override_gen.hash(&mut h);
+            mesh.extension_attr_buffer.is_some().hash(&mut h);
             h.finish()
         };
 
@@ -1376,6 +1391,10 @@ impl DeviceResources {
             .normal_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_normal_override_buf);
+        let extension_attr_buf: &crate::gpu::Buffer = mesh
+            .extension_attr_buffer
+            .as_ref()
+            .unwrap_or(&self.content.fallback_extension_attr_buf);
 
         let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
             Some(id) if self.content.textures.get(id).is_some() => {
@@ -1453,6 +1472,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 14,
                     resource: normal_override_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 15,
+                    resource: extension_attr_buf.as_entire_binding(),
                 },
             ],
         });

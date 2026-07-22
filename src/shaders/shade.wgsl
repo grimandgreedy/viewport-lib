@@ -50,6 +50,11 @@ struct ShadingSurface {
     uv_ddy: vec2<f32>,
     // 1 on front-facing fragments, 0 on back faces.
     front_facing: u32,
+    // Per-vertex extension attribute (MeshData::extension_attributes),
+    // interpolated across the triangle. vec4(0) unless the hook declares
+    // reads_vertex_attribute and the mesh carries the channel; the meaning
+    // of the components is plugin-defined (blend masks, weights, bake data).
+    attr: vec4<f32>,
 };
 
 // One light's data for the per-light hook. `radiance` folds in

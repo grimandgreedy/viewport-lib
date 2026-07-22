@@ -581,6 +581,13 @@ impl ViewportRenderer {
                                 .fallback_normal_override_buf
                                 .as_entire_binding(),
                         },
+                        crate::gpu::BindGroupEntry {
+                            binding: 15,
+                            resource: resources
+                                .content
+                                .fallback_extension_attr_buf
+                                .as_entire_binding(),
+                        },
                     ],
                 });
                 mesh_uniforms.wireframe_uniform_bufs.push(buf);

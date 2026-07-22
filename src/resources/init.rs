@@ -252,11 +252,13 @@ impl DeviceResources {
                     count: None,
                 },
                 // Binding 14: clustered-shading grid uniform (dimensions,
-                // near/far, screen size, fallback flag).
+                // near/far, screen size, fallback flag). FRAGMENT only: the
+                // cluster helpers are fragment-stage, and the vertex-stage
+                // Metal buffer table is at capacity (the object group's
+                // binding 15 took the last slot).
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 14,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -475,6 +477,21 @@ impl DeviceResources {
                 // binding 14: normal override storage buffer (VERTEX, read-only).
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 14,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 15: per-vertex extension attribute storage buffer
+                // (VERTEX, read-only). One vec4<f32> per vertex; declared and
+                // read only by material-plugin modules whose hook sets
+                // reads_vertex_attribute. Fallback sentinel (one zero vec4)
+                // is bound for meshes without the channel.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 15,
                     visibility: crate::gpu::ShaderStages::VERTEX,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
@@ -1928,6 +1945,15 @@ impl DeviceResources {
         );
         fallback_normal_override_buf.unmap();
 
+        let fallback_extension_attr_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("fallback_extension_attr_buf"),
+            size: 16, // one vec4<f32>
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        crate::resources::builders::write_mapped(fallback_extension_attr_buf.slice(..), &[0u8; 16]);
+        fallback_extension_attr_buf.unmap();
+
         // ------------------------------------------------------------------
         // Hardcoded unit cube mesh (test scene object)
         // Created here : after fallback textures : so the combined bind group
@@ -1949,6 +1975,7 @@ impl DeviceResources {
             &fallback_warp_buf,
             &fallback_position_override_buf,
             &fallback_normal_override_buf,
+            &fallback_extension_attr_buf,
             &fallback_metallic_roughness_texture_view,
             &fallback_emissive_texture_view,
             &cube_verts,
@@ -2355,6 +2382,7 @@ impl DeviceResources {
                 fallback_warp_buf,
                 fallback_position_override_buf,
                 fallback_normal_override_buf,
+                fallback_extension_attr_buf,
                 builtin_colourmap_ids: None,
                 colourmaps_initialized: false,
             },
