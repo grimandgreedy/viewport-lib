@@ -2246,6 +2246,7 @@ impl DeviceResources {
             pipeline_cache,
             solid_pipeline,
             deform,
+            shade_hooks: Vec::new(),
             solid_two_sided_pipeline,
             transparent_pipeline,
             wireframe_pipeline,

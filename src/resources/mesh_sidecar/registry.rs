@@ -224,7 +224,7 @@ fn rewrite_marker(source: &str, marker: &str, body: &str) -> Option<String> {
 /// the same body so they stay self-consistent. Simple regex-free walker:
 /// finds `fn <ident>(`, `struct <ident>`, `let <ident>`, `const <ident>`
 /// declarations and rewrites uses of the same identifier within the body.
-fn identifier_prefix(name: &str, body: &str) -> String {
+pub(crate) fn identifier_prefix(name: &str, body: &str) -> String {
     let mut decls: Vec<String> = Vec::new();
     for tok in ["fn ", "struct ", "alias ", "const ", "var "] {
         let mut search_from = 0;

@@ -4,6 +4,26 @@
 //! that take raw `wgpu` types. GUI framework adapters (e.g. the egui
 //! `CallbackTrait` impl in the application crate) delegate to these methods.
 
+/// Bind the deform sidecar bind group (index 2) for a mesh-family draw.
+///
+/// On limited devices (`max_bind_groups < 3`, e.g. iced's shared device, which
+/// requests 2) the mesh family compiles 2-group noop pipelines and
+/// `deform.enabled` is false; issuing `set_bind_group(2, ...)` there is a wgpu
+/// validation error. Every mesh-family deform bind goes through this macro so
+/// the guard lives in one greppable place; do not open-code a deform group-2
+/// bind at a draw site. Group-2 binds for features that fundamentally need a
+/// third group (soft body, refraction, scivis LUT, volumes, glyph/tensor
+/// instance data, GPU picking) are not deform binds and are not gated: those
+/// features do not run on 2-group devices. The invariant is enforced
+/// headlessly by `two_bind_group_device_renders_without_validation_errors`.
+macro_rules! bind_deform_group {
+    ($pass:expr, $resources:expr, $bg:expr) => {
+        if $resources.deform.enabled {
+            $pass.set_bind_group(2, $bg, &[]);
+        }
+    };
+}
+
 /// Minimum scene item count to activate the instanced draw path.
 /// Use instancing for any scene with more than 1 object. The per-object path
 /// writes uniforms into a per-mesh buffer, so two scene nodes sharing the same
@@ -256,9 +276,7 @@ macro_rules! emit_draw_calls {
                                 resources.instancing.solid_nodiscard_pipeline.as_ref(),
                                 resources.instancing.solid_two_sided_nodiscard_pipeline.as_ref(),
                             );
-                            if resources.deform.enabled {
-                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
-                            }
+                            bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                             // Batches are sorted with two_sided in the key, so one- and
                             // two-sided runs are contiguous; switch pipeline on change.
                             let mut cur_pipe: Option<(bool, bool)> = None;
@@ -300,9 +318,7 @@ macro_rules! emit_draw_calls {
                     if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
                         if let Some(ref pipeline) = resources.instancing.transparent_pipeline {
                             render_pass.set_pipeline(pipeline);
-                            if resources.deform.enabled {
-                                render_pass.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
-                            }
+                            bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                             for batch in &transparent_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
@@ -331,15 +347,13 @@ macro_rules! emit_draw_calls {
                             if item.settings.hidden { continue; }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
                             render_pass.set_pipeline(&resources.wireframe_pipeline);
-                            if resources.deform.enabled {
-                                render_pass.set_bind_group(
-                                    2,
-                                    resources
-                                        .deform
-                                        .instance_bind_group_for(item.mesh_id, item.deform_instance),
-                                    &[],
-                                );
-                            }
+                            bind_deform_group!(
+                                render_pass,
+                                resources,
+                                resources
+                                    .deform
+                                    .instance_bind_group_for(item.mesh_id, item.deform_instance)
+                            );
                             let bg = wireframe_bind_groups.get(wf_idx)
                                 .unwrap_or(&mesh.object_bind_group);
                             render_pass.set_bind_group(1, bg, &[]);
@@ -388,8 +402,8 @@ macro_rules! emit_draw_calls {
                             let deform_bg = resources
                                 .deform
                                 .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                            if resources.deform.enabled && cur_deform != Some(deform_bg as *const _) {
-                                render_pass.set_bind_group(2, deform_bg, &[]);
+                            if cur_deform != Some(deform_bg as *const _) {
+                                bind_deform_group!(render_pass, resources, deform_bg);
                                 cur_deform = Some(deform_bg as *const _);
                             }
                             render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
@@ -498,8 +512,8 @@ macro_rules! emit_draw_calls {
                 macro_rules! set_deform_cached {
                     ($bg:expr) => {{
                         let bg: &crate::gpu::BindGroup = $bg;
-                        if resources.deform.enabled && cur_deform != Some(bg as *const _) {
-                            render_pass.set_bind_group(2, bg, &[]);
+                        if cur_deform != Some(bg as *const _) {
+                            bind_deform_group!(render_pass, resources, bg);
                             cur_deform = Some(bg as *const _);
                         }
                     }};
@@ -1136,9 +1150,7 @@ macro_rules! emit_scivis_draw_calls {
                     let deform_bg = resources
                         .deform
                         .instance_bind_group_for(batch.mesh_id, None);
-                    if resources.deform.enabled {
-                        render_pass.set_bind_group(2, deform_bg, &[]);
-                    }
+                    bind_deform_group!(render_pass, resources, deform_bg);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     render_pass.set_index_buffer(
                         mesh.index_buffer.slice(..),

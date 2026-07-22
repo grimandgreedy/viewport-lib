@@ -287,6 +287,7 @@ pub use resources::{
     GlyphSetId, GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender, PointCloudId,
     PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
 };
+pub use resources::{ShadingHookDesc, ShadingHookId};
 
 pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,

@@ -120,7 +120,18 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
              (Blinn-Phong, matcap, uv-vis, and per-face colour paths removed)"
         );
     });
-    let mut s = source.into_owned();
+    std::borrow::Cow::Owned(strip_pbr_regions(&source))
+}
+
+/// Unconditionally remove the `BEGIN_PBR_STRIP` / `END_PBR_STRIP` regions
+/// (Blinn-Phong and the alternate shading-model branches) from a mesh shader
+/// source. Core of the `VIEWPORT_MESH_PBR_ONLY` knob above; also applied to
+/// every shading-hook-composed module, whose materials always shade on the
+/// PBR loop.
+pub(crate) fn strip_pbr_regions(source: &str) -> String {
+    const BEGIN: &str = "// BEGIN_PBR_STRIP";
+    const END: &str = "// END_PBR_STRIP";
+    let mut s = source.to_string();
     while let Some(start) = s.find(BEGIN) {
         let Some(rel_end) = s[start..].find(END) else {
             break;
@@ -128,7 +139,7 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
         let end = start + rel_end + END.len();
         s.replace_range(start..end, "");
     }
-    std::borrow::Cow::Owned(s)
+    s
 }
 
 /// Remove every `discard;` statement from a WGSL source.

@@ -607,6 +607,10 @@ pub struct DeviceResources {
     /// binds `@group(2)` from this state; meshes without attached deformer
     /// data fall back to the renderer-owned dummy bind group.
     pub(crate) deform: crate::resources::mesh_sidecar::deform::DeformationState,
+    /// Registered fragment shading hooks (`register_shading_hook`). Each
+    /// entry composes its own lit-shader modules; the base pipelines are
+    /// untouched by registrations.
+    pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::StoredShadingHook>,
     // --- Shadow map resources ---
     /// Shadow atlas depth texture (Depth32Float, atlas_size x atlas_size, 2x2 tile grid).
     pub(crate) shadow_map_texture: crate::gpu::Texture,

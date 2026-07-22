@@ -18,3 +18,4 @@
 
 pub(crate) mod deform;
 pub(crate) mod registry;
+pub(crate) mod shade;

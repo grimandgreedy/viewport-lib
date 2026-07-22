@@ -809,9 +809,7 @@ impl ViewportRenderer {
             sample_count,
         );
         enc.set_bind_group(0, &camera_bg, &[]);
-        if resources.deform.enabled {
-            enc.set_bind_group(2, &resources.deform.dummy_bind_group, &[]);
-        }
+        bind_deform_group!(enc, resources, &resources.deform.dummy_bind_group);
 
         let mut cur_two_sided: Option<bool> = None;
         let mut cur_mesh = None;

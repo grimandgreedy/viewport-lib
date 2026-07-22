@@ -231,6 +231,25 @@ pub enum ViewportError {
         reason: String,
     },
 
+    /// A shading hook with this name is already registered (or the name
+    /// collides with a registered deformer; both splice `<name>__`-prefixed
+    /// declarations into the same modules).
+    #[error("shading hook name '{name}' already registered")]
+    ShadeNameTaken {
+        /// The duplicate name that was rejected.
+        name: String,
+    },
+
+    /// The composed lit shader failed validation, either because the supplied
+    /// `wgsl_body` is malformed, defines none of the three hook functions, or
+    /// because composition produced an invalid module. The reason carries the
+    /// underlying validator message and identifies which shader failed.
+    #[error("shading hook shader invalid: {reason}")]
+    ShadeShaderInvalid {
+        /// Validator message prefixed by the shader name that failed.
+        reason: String,
+    },
+
     /// A LOD group was registered with no levels.
     #[error("LOD group has no levels")]
     LodGroupEmpty,

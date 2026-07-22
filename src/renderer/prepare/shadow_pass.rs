@@ -811,16 +811,13 @@ impl ViewportRenderer {
                                 shadow_pass.set_pipeline(&resources.shadow_pipeline);
                             }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            if resources.deform.enabled {
-                                shadow_pass.set_bind_group(
-                                    2,
-                                    resources.deform.instance_bind_group_for(
-                                        item.mesh_id,
-                                        item.deform_instance,
-                                    ),
-                                    &[],
-                                );
-                            }
+                            bind_deform_group!(
+                                shadow_pass,
+                                resources,
+                                resources
+                                    .deform
+                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
+                            );
                             shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             shadow_pass.set_index_buffer(
                                 mesh.index_buffer.slice(..),
@@ -888,16 +885,13 @@ impl ViewportRenderer {
                                 shadow_pass.set_pipeline(&resources.shadow_pipeline);
                             }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
-                            if resources.deform.enabled {
-                                shadow_pass.set_bind_group(
-                                    2,
-                                    resources.deform.instance_bind_group_for(
-                                        item.mesh_id,
-                                        item.deform_instance,
-                                    ),
-                                    &[],
-                                );
-                            }
+                            bind_deform_group!(
+                                shadow_pass,
+                                resources,
+                                resources
+                                    .deform
+                                    .instance_bind_group_for(item.mesh_id, item.deform_instance,)
+                            );
                             shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             shadow_pass.set_index_buffer(
                                 mesh.index_buffer.slice(..),
@@ -1148,16 +1142,13 @@ impl ViewportRenderer {
                             continue;
                         }
                         pass.set_bind_group(1, &c.mesh.object_bind_group, &[]);
-                        if resources.deform.enabled {
-                            pass.set_bind_group(
-                                2,
-                                resources.deform.instance_bind_group_for(
-                                    c.item.mesh_id,
-                                    c.item.deform_instance,
-                                ),
-                                &[],
-                            );
-                        }
+                        bind_deform_group!(
+                            pass,
+                            resources,
+                            resources
+                                .deform
+                                .instance_bind_group_for(c.item.mesh_id, c.item.deform_instance,)
+                        );
                         pass.set_vertex_buffer(0, c.mesh.vertex_buffer.slice(..));
                         pass.set_index_buffer(
                             c.mesh.index_buffer.slice(..),

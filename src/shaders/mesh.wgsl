@@ -34,6 +34,9 @@ struct Camera {
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.
 // #include "scene_lighting.wgsl"
 
+// Frozen fragment-shading hook structs (ShadingSurface, LightSample).
+// #include "shade.wgsl"
+
 // Per-vertex deformation hook contract.
 // #include "deform.wgsl"
 
@@ -470,7 +473,57 @@ struct Surface {
     ao_factor: f32,
     mat_uv: vec2<f32>,
     alpha: f32,
+    front_facing: u32,
 };
+
+// Fill the frozen plugin-facing ShadingSurface (shade.wgsl) from the resolved
+// surface and the unpacked PBR terms. Called only from the shade-slot marker
+// regions of plugin-composed modules; unused in the base module. The UV
+// derivatives are taken here, before the light loop's non-uniform control
+// flow, so hook bodies can textureSampleGrad.
+fn build_shading_surface(
+    surface: Surface,
+    in: VertexOut,
+    V: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    F0: vec3<f32>,
+) -> ShadingSurface {
+    var surf: ShadingSurface;
+    surf.base_colour = surface.base_colour;
+    surf.normal = surface.normal;
+    // Keep the geometric normal in the same hemisphere as the shading normal,
+    // which compute_surface has already flipped per the backface policy.
+    var ng = normalize(in.world_normal);
+    if dot(ng, surface.normal) < 0.0 { ng = -ng; }
+    surf.geometric_normal = ng;
+    surf.view_dir = V;
+    surf.world_pos = in.world_pos;
+    // Tangent frame, orthonormalised against the shading normal. A degenerate
+    // mesh tangent gets a synthesised frame instead of NaNs.
+    let n = surface.normal;
+    var t = in.world_tangent.xyz - dot(in.world_tangent.xyz, n) * n;
+    let t_len = length(t);
+    if t_len > 1e-5 {
+        t = t / t_len;
+    } else {
+        let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.z) < 0.9);
+        t = normalize(cross(up, n));
+    }
+    let handedness = select(in.world_tangent.w, 1.0, in.world_tangent.w == 0.0);
+    surf.tangent = t;
+    surf.bitangent = cross(n, t) * handedness;
+    surf.f0 = F0;
+    surf.metallic = metallic;
+    surf.roughness = roughness;
+    surf.ao = surface.ao_factor;
+    surf.alpha = surface.alpha;
+    surf.uv = surface.mat_uv;
+    surf.uv_ddx = dpdx(surface.mat_uv);
+    surf.uv_ddy = dpdy(surface.mat_uv);
+    surf.front_facing = surface.front_facing;
+    return surf;
+}
 
 struct LitResult {
     rgb: vec3<f32>,
@@ -497,6 +550,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     out.ao_factor = 1.0;
     out.mat_uv = in.uv;
     out.alpha = 1.0;
+    out.front_facing = select(0u, 1u, is_front);
 
     // Section view: discard fragment if it falls on the clipped side of any plane.
     for (var i = 0u; i < clip_planes.count; i++) {
@@ -736,6 +790,12 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         }
         let F0 = mix(vec3<f32>(0.04), base_colour, metallic);
 
+        // Plugin shading hooks: the composer fills the shade-slot regions in
+        // plugin-composed modules; in the base module they are inert comments.
+        // See docs/issues/lighting-shader-injection-seam.md for the contract.
+        // <viewport-shade-slot:surface>
+        // </viewport-shade-slot:surface>
+
         var Lo = vec3<f32>(0.0);
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
         for (var j: u32 = 0u; j < pbr_range.count; j = j + 1u) {
@@ -746,8 +806,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             let L = ev.l;
             var radiance = ev.radiance;
             // Backfacing: pbr_light_contrib returns exactly zero, so skip
-            // the shadow samples and the BRDF outright.
+            // the shadow samples and the BRDF outright. Plugin modules whose
+            // hook wants the back hemisphere empty this region instead.
+            // <viewport-shade-slot:backface-cull>
             if dot(N, L) <= 0.0 { continue; }
+            // </viewport-shade-slot:backface-cull>
 
             // Shadow factor. Directional `lights[0]` uses CSM; point lights
             // with an allocated cubemap slot sample the point shadow array.
@@ -755,6 +818,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             // (sampled inside `sample_shadow_csm` when lights[0] is a spot;
             // unshadowed otherwise). Per-receiver opt-out via
             // ItemSettings.receive_shadows skips the sample.
+            // <viewport-shade-slot:shadow>
             var shadow_factor = 1.0;
             if lights_uniform.shadows_enabled != 0u && object.receive_shadows != 0u {
                 if i == 0u && lights_storage[0].light_type != 1u {
@@ -764,10 +828,12 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
                     shadow_factor = sample_point_shadow(l, in.world_pos);
                 }
             }
+            // </viewport-shade-slot:shadow>
+            // <viewport-shade-slot:light>
             radiance *= shadow_factor;
-
             Lo += pbr_light_contrib(N, V, L, radiance, base_colour,
                                     metallic, roughness, F0);
+            // </viewport-shade-slot:light>
         }
 
         dbg_direct_lum = dot(Lo, lum_weights);
@@ -775,6 +841,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         dbg_metallic   = metallic;
 
         // Ambient: IBL when enabled, hemisphere fallback otherwise.
+        // <viewport-shade-slot:ambient>
         var ambient: vec3<f32>;
         if lights_uniform.ibl_enabled != 0u {
             let ibl = ibl_ambient(N, V, base_colour, metallic, roughness, F0,
@@ -791,8 +858,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
+        // </viewport-shade-slot:ambient>
 
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        // <viewport-shade-slot:recolor>
+        // </viewport-shade-slot:recolor>
         // BEGIN_PBR_STRIP
     } else {
         // Multi-light Blinn-Phong path
