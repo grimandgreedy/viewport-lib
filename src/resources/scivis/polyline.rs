@@ -749,7 +749,12 @@ impl DeviceResources {
                     offset: 104,
                     shader_location: 12,
                     format: crate::gpu::VertexFormat::Uint32,
-                },
+                }, // use_direct_colour
+                crate::gpu::VertexAttribute {
+                    offset: 108,
+                    shader_location: 13,
+                    format: crate::gpu::VertexFormat::Float32,
+                }, // dist_a
             ],
         };
 
