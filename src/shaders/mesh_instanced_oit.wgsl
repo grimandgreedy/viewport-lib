@@ -287,9 +287,39 @@ fn pbr_light_contrib(
 // ---------------------------------------------------------------------------
 // OIT fragment shader : weighted blended output
 // ---------------------------------------------------------------------------
-@fragment
-fn fs_oit_main(in: VertexOut) -> OitOut {
+struct Surface {
+    resolved: bool,
+    out_oit: OitOut,
+    base_colour: vec3<f32>,
+    normal: vec3<f32>,
+    ao_factor: f32,
+    alpha: f32,
+};
+
+struct LitResult {
+    rgb: vec3<f32>,
+    dbg_direct_lum: f32,
+    dbg_ambient_lum: f32,
+    dbg_ibl_diff_lum: f32,
+    dbg_ibl_spec_lum: f32,
+    dbg_roughness: f32,
+    dbg_metallic: f32,
+    last_shadow_sample: ShadowSample,
+};
+
+// Material prep for the instanced transparent path. Unlit fully determines the
+// colour and sets `resolved`; otherwise the surface fields feed compute_lit.
+fn compute_surface(in: VertexOut) -> Surface {
     let inst = instances[in.instance_idx];
+
+    var out: Surface;
+    out.resolved = false;
+    out.out_oit.accum = vec4<f32>(0.0);
+    out.out_oit.reveal = 0.0;
+    out.base_colour = vec3<f32>(0.0);
+    out.normal = vec3<f32>(0.0, 0.0, 1.0);
+    out.ao_factor = 1.0;
+    out.alpha = 1.0;
 
     for (var i = 0u; i < clip_planes.count; i++) {
         let plane = clip_planes.planes[i];
@@ -305,16 +335,17 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
         inst.colour.rgb * in.colour.rgb * tex_colour.rgb,
         inst.colour.a   * in.colour.a   * tex_colour.a,
     );
+    out.alpha = obj_colour.a;
     let base_colour = obj_colour.rgb;
 
     // Unlit: skip all lighting, return raw colour directly through OIT.
     if inst.unlit != 0u {
         let alpha = obj_colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
-        var oit_out: OitOut;
-        oit_out.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
-        oit_out.reveal = alpha;
-        return oit_out;
+        out.resolved = true;
+        out.out_oit.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
+        out.out_oit.reveal = alpha;
+        return out;
     }
 
     var N: vec3<f32>;
@@ -346,6 +377,19 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
         ao_factor = mix(inst.ao_range.x, inst.ao_range.y, raw_ao);
     }
 
+    out.base_colour = base_colour;
+    out.normal = N;
+    out.ao_factor = ao_factor;
+    return out;
+}
+
+// Lighting for the instanced transparent path. Skips shadow sampling.
+fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
+    let inst = instances[in.instance_idx];
+    let base_colour = surface.base_colour;
+    let ao_factor = surface.ao_factor;
+    let N = surface.normal;
+
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0);
     var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
@@ -355,7 +399,6 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
     var dbg_ambient_lum  = 0.0;
     var dbg_ibl_diff_lum = 0.0;
     var dbg_ibl_spec_lum = 0.0;
-    var dbg_emissive_lum = 0.0;
     var dbg_roughness    = 0.5;
     var dbg_metallic     = 0.0;
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -461,10 +504,44 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
+    var res: LitResult;
+    res.rgb = final_rgb;
+    res.dbg_direct_lum = dbg_direct_lum;
+    res.dbg_ambient_lum = dbg_ambient_lum;
+    res.dbg_ibl_diff_lum = dbg_ibl_diff_lum;
+    res.dbg_ibl_spec_lum = dbg_ibl_spec_lum;
+    res.dbg_roughness = dbg_roughness;
+    res.dbg_metallic = dbg_metallic;
+    res.last_shadow_sample = last_shadow_sample;
+    return res;
+}
+
+@fragment
+fn fs_oit_main(in: VertexOut) -> OitOut {
+    let surface = compute_surface(in);
+    if surface.resolved {
+        return surface.out_oit;
+    }
+
+    let lit = compute_lit(surface, in);
+
+    // Re-bind the locals the debug-vis overlay reads before the include.
+    let N = surface.normal;
+    let ao_factor = surface.ao_factor;
+    let last_shadow_sample = lit.last_shadow_sample;
+    let dbg_direct_lum   = lit.dbg_direct_lum;
+    let dbg_ambient_lum  = lit.dbg_ambient_lum;
+    let dbg_ibl_diff_lum = lit.dbg_ibl_diff_lum;
+    let dbg_ibl_spec_lum = lit.dbg_ibl_spec_lum;
+    let dbg_roughness    = lit.dbg_roughness;
+    let dbg_metallic     = lit.dbg_metallic;
+    let dbg_emissive_lum = 0.0;
+    var final_rgb = lit.rgb;
+
     // #include "debug_vis.wgsl"
 
     // McGuire & Bavoil weighted blended OIT output.
-    let alpha = obj_colour.a;
+    let alpha = surface.alpha;
     let z = in.clip_pos.z;
     let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
 

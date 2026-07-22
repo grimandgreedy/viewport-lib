@@ -298,9 +298,39 @@ fn pbr_light_contrib(
     return (kD * base_colour / 3.14159265 + specular) * radiance * NdotL;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+struct Surface {
+    resolved: bool,
+    out_colour: vec4<f32>,
+    base_colour: vec3<f32>,
+    normal: vec3<f32>,
+    ao_factor: f32,
+    alpha: f32,
+};
+
+struct LitResult {
+    rgb: vec3<f32>,
+    dbg_direct_lum: f32,
+    dbg_ambient_lum: f32,
+    dbg_ibl_diff_lum: f32,
+    dbg_ibl_spec_lum: f32,
+    dbg_roughness: f32,
+    dbg_metallic: f32,
+    last_shadow_sample: ShadowSample,
+};
+
+// Material prep for the instanced opaque path. Wireframe and unlit fully
+// determine the colour and set `resolved`; otherwise the surface fields feed
+// compute_lit.
+fn compute_surface(in: VertexOut) -> Surface {
     let inst = instances[in.instance_idx];
+
+    var out: Surface;
+    out.resolved = false;
+    out.out_colour = vec4<f32>(0.0);
+    out.base_colour = vec3<f32>(0.0);
+    out.normal = vec3<f32>(0.0, 0.0, 1.0);
+    out.ao_factor = 1.0;
+    out.alpha = 1.0;
 
     for (var i = 0u; i < clip_planes.count; i++) {
         let plane = clip_planes.planes[i];
@@ -308,7 +338,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
-    if inst.wireframe != 0u { return vec4<f32>(0.75, 0.75, 0.75, 1.0); }
+    if inst.wireframe != 0u {
+        out.resolved = true;
+        out.out_colour = vec4<f32>(0.75, 0.75, 0.75, 1.0);
+        return out;
+    }
 
     let mat_uv = in.uv * inst.uv_transform.zw + inst.uv_transform.xy;
 
@@ -316,6 +350,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if inst.has_texture == 1u { tex_colour = textureSample(obj_texture, obj_sampler, mat_uv); }
     let obj_colour = vec4<f32>(inst.colour.rgb * in.colour.rgb * tex_colour.rgb,
                                inst.colour.a   * in.colour.a   * tex_colour.a);
+    out.alpha = obj_colour.a;
 
     // Alpha MASK: discard fragments whose albedo alpha is below the cutoff.
     if inst.alpha_flag == 1u && inst.has_texture == 1u && obj_colour.a < inst.alpha_cutoff {
@@ -326,7 +361,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     // Unlit: skip all lighting, return raw colour directly.
     if inst.unlit != 0u {
-        return vec4<f32>(base_colour, obj_colour.a);
+        out.resolved = true;
+        out.out_colour = vec4<f32>(base_colour, obj_colour.a);
+        return out;
     }
 
     var N: vec3<f32>;
@@ -358,6 +395,19 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         ao_factor = mix(inst.ao_range.x, inst.ao_range.y, raw_ao);
     }
 
+    out.base_colour = base_colour;
+    out.normal = N;
+    out.ao_factor = ao_factor;
+    return out;
+}
+
+// Lighting for the instanced opaque path. Samples shadows like the per-object path.
+fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
+    let inst = instances[in.instance_idx];
+    let base_colour = surface.base_colour;
+    let ao_factor = surface.ao_factor;
+    let N = surface.normal;
+
     // Use the geometric fragment normal for shadowing so the receiver test
     // matches the faceted mesh that was rasterized into the shadow atlas.
     // Use smooth vertex normal for shadow bias (see mesh.wgsl for rationale).
@@ -372,7 +422,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var dbg_ambient_lum  = 0.0;
     var dbg_ibl_diff_lum = 0.0;
     var dbg_ibl_spec_lum = 0.0;
-    var dbg_emissive_lum = 0.0;
     var dbg_roughness    = 0.5;
     var dbg_metallic     = 0.0;
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -498,7 +547,41 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
+    var res: LitResult;
+    res.rgb = final_rgb;
+    res.dbg_direct_lum = dbg_direct_lum;
+    res.dbg_ambient_lum = dbg_ambient_lum;
+    res.dbg_ibl_diff_lum = dbg_ibl_diff_lum;
+    res.dbg_ibl_spec_lum = dbg_ibl_spec_lum;
+    res.dbg_roughness = dbg_roughness;
+    res.dbg_metallic = dbg_metallic;
+    res.last_shadow_sample = last_shadow_sample;
+    return res;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let surface = compute_surface(in);
+    if surface.resolved {
+        return surface.out_colour;
+    }
+
+    let lit = compute_lit(surface, in);
+
+    // Re-bind the locals the debug-vis overlay reads before the include.
+    let N = surface.normal;
+    let ao_factor = surface.ao_factor;
+    let last_shadow_sample = lit.last_shadow_sample;
+    let dbg_direct_lum   = lit.dbg_direct_lum;
+    let dbg_ambient_lum  = lit.dbg_ambient_lum;
+    let dbg_ibl_diff_lum = lit.dbg_ibl_diff_lum;
+    let dbg_ibl_spec_lum = lit.dbg_ibl_spec_lum;
+    let dbg_roughness    = lit.dbg_roughness;
+    let dbg_metallic     = lit.dbg_metallic;
+    let dbg_emissive_lum = 0.0;
+    var final_rgb = lit.rgb;
+
     // #include "debug_vis.wgsl"
 
-    return vec4<f32>(final_rgb, obj_colour.a);
+    return vec4<f32>(final_rgb, surface.alpha);
 }

@@ -336,8 +336,40 @@ fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
 // ---------------------------------------------------------------------------
 // OIT fragment shader : writes to accum + reveal targets.
 // ---------------------------------------------------------------------------
-@fragment
-fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
+struct Surface {
+    resolved: bool,
+    out_oit: OitOut,
+    base_colour: vec3<f32>,
+    normal: vec3<f32>,
+    ao_factor: f32,
+    alpha: f32,
+};
+
+struct LitResult {
+    rgb: vec3<f32>,
+    dbg_direct_lum: f32,
+    dbg_ambient_lum: f32,
+    dbg_ibl_diff_lum: f32,
+    dbg_ibl_spec_lum: f32,
+    dbg_roughness: f32,
+    dbg_metallic: f32,
+    last_shadow_sample: ShadowSample,
+};
+
+// Material prep for the transparent (OIT) path. Like the opaque shader minus
+// wireframe and matcap; the shading models that fully determine the colour emit
+// their own weighted-blend OitOut and set `resolved`, otherwise the surface
+// fields feed compute_lit. Uses raw in.uv (this path applies no uv_transform).
+fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
+    var out: Surface;
+    out.resolved = false;
+    out.out_oit.accum = vec4<f32>(0.0);
+    out.out_oit.reveal = 0.0;
+    out.base_colour = vec3<f32>(0.0);
+    out.normal = vec3<f32>(0.0, 0.0, 1.0);
+    out.ao_factor = 1.0;
+    out.alpha = 1.0;
+
     // Section view clipping.
     for (var i = 0u; i < clip_planes.count; i++) {
         let plane = clip_planes.planes[i];
@@ -356,6 +388,7 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         object.colour.rgb * in.colour.rgb * tex_colour.rgb,
         object.colour.a   * in.colour.a   * tex_colour.a,
     );
+    out.alpha = obj_colour.a;
 
     // Alpha MASK: discard fragments whose alpha is below the cutoff.
     if object.alpha_mode == 1u && obj_colour.a < object.alpha_cutoff {
@@ -372,10 +405,10 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         }
         let alpha = fc.a * object.colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
-        var oit_out: OitOut;
-        oit_out.accum  = vec4<f32>(fc.rgb * alpha, alpha) * w;
-        oit_out.reveal = alpha;
-        return oit_out;
+        out.resolved = true;
+        out.out_oit.accum  = vec4<f32>(fc.rgb * alpha, alpha) * w;
+        out.out_oit.reveal = alpha;
+        return out;
     }
 
     // Scalar attribute colour override.
@@ -387,10 +420,10 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
             let alpha = object.nan_colour.a;
             let z = in.clip_pos.z;
             let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
-            var nan_out: OitOut;
-            nan_out.accum  = vec4<f32>(object.nan_colour.rgb * alpha * w, alpha * w);
-            nan_out.reveal = alpha;
-            return nan_out;
+            out.resolved = true;
+            out.out_oit.accum  = vec4<f32>(object.nan_colour.rgb * alpha * w, alpha * w);
+            out.out_oit.reveal = alpha;
+            return out;
         }
         let raw = in.scalar_val;
         let range = object.scalar_max - object.scalar_min;
@@ -405,10 +438,10 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     if object.unlit != 0u {
         let alpha = obj_colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
-        var oit_out: OitOut;
-        oit_out.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
-        oit_out.reveal = alpha;
-        return oit_out;
+        out.resolved = true;
+        out.out_oit.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
+        out.out_oit.reveal = alpha;
+        return out;
     }
 
     // UV parameterization visualization: procedural pattern replaces all lighting.
@@ -416,10 +449,10 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         let vis   = param_vis_colour(in.uv, object.uv_vis_mode, object.uv_vis_scale);
         let alpha = obj_colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
-        var oit_out: OitOut;
-        oit_out.accum  = vec4<f32>(vis * alpha, alpha) * w;
-        oit_out.reveal = alpha;
-        return oit_out;
+        out.resolved = true;
+        out.out_oit.accum  = vec4<f32>(vis * alpha, alpha) * w;
+        out.out_oit.reveal = alpha;
+        return out;
     }
 
     // Shading normal. `use_flat` recovers a per-fragment geometric normal
@@ -487,6 +520,19 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         ao_factor = mix(object.ao_range.x, object.ao_range.y, raw_ao);
     }
 
+    out.base_colour = base_colour;
+    out.normal = N;
+    out.ao_factor = ao_factor;
+    return out;
+}
+
+// Lighting for the transparent path. Transparent surfaces skip shadow sampling,
+// so last_shadow_sample stays at its unshadowed default.
+fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
+    let base_colour = surface.base_colour;
+    let ao_factor = surface.ao_factor;
+    let N = surface.normal;
+
     let V = normalize(camera.eye_pos - in.world_pos);
     let tint = vec4<f32>(1.0);
 
@@ -497,7 +543,6 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     var dbg_ambient_lum  = 0.0;
     var dbg_ibl_diff_lum = 0.0;
     var dbg_ibl_spec_lum = 0.0;
-    var dbg_emissive_lum = 0.0;
     var dbg_roughness    = 0.5;
     var dbg_metallic     = 0.0;
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -628,20 +673,54 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
+    var res: LitResult;
+    res.rgb = final_rgb;
+    res.dbg_direct_lum = dbg_direct_lum;
+    res.dbg_ambient_lum = dbg_ambient_lum;
+    res.dbg_ibl_diff_lum = dbg_ibl_diff_lum;
+    res.dbg_ibl_spec_lum = dbg_ibl_spec_lum;
+    res.dbg_roughness = dbg_roughness;
+    res.dbg_metallic = dbg_metallic;
+    res.last_shadow_sample = last_shadow_sample;
+    return res;
+}
+
+@fragment
+fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
+    let surface = compute_surface(in, is_front);
+    if surface.resolved {
+        return surface.out_oit;
+    }
+
+    let lit = compute_lit(surface, in);
+
+    // Re-bind the locals the debug-vis overlay reads before the include.
+    let N = surface.normal;
+    let ao_factor = surface.ao_factor;
+    let last_shadow_sample = lit.last_shadow_sample;
+    let dbg_direct_lum   = lit.dbg_direct_lum;
+    let dbg_ambient_lum  = lit.dbg_ambient_lum;
+    let dbg_ibl_diff_lum = lit.dbg_ibl_diff_lum;
+    let dbg_ibl_spec_lum = lit.dbg_ibl_spec_lum;
+    let dbg_roughness    = lit.dbg_roughness;
+    let dbg_metallic     = lit.dbg_metallic;
+    let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
+    var final_rgb = lit.rgb;
+
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     var emissive = object.emissive;
     if object.has_emissive_tex != 0u {
         emissive = emissive * textureSample(emissive_tex, obj_sampler, in.uv).rgb;
     }
     final_rgb += emissive;
-    dbg_emissive_lum = dot(emissive, lum_weights);
+    var dbg_emissive_lum = dot(emissive, lum_weights);
 
     // #include "debug_vis.wgsl"
 
     // ---------------------------------------------------------------------------
     // McGuire & Bavoil weighted blended OIT output.
     // ---------------------------------------------------------------------------
-    let alpha = obj_colour.a;
+    let alpha = surface.alpha;
     let z = in.clip_pos.z;  // NDC depth 0..1
     let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
 

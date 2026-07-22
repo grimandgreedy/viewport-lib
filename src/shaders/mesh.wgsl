@@ -462,8 +462,42 @@ fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
     }
 }
 
-@fragment
-fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+struct Surface {
+    resolved: bool,
+    out_colour: vec4<f32>,
+    base_colour: vec3<f32>,
+    normal: vec3<f32>,
+    ao_factor: f32,
+    mat_uv: vec2<f32>,
+    alpha: f32,
+};
+
+struct LitResult {
+    rgb: vec3<f32>,
+    dbg_direct_lum: f32,
+    dbg_ambient_lum: f32,
+    dbg_ibl_diff_lum: f32,
+    dbg_ibl_spec_lum: f32,
+    dbg_roughness: f32,
+    dbg_metallic: f32,
+    last_shadow_sample: ShadowSample,
+};
+
+// Material prep. Samples textures, resolves the shading normal and AO, and
+// handles the shading models that fully determine the colour (wireframe, face
+// colour, unlit, matcap, uv-vis). When one of those applies, `resolved` is set
+// and `out_colour` holds the final colour; otherwise the surface fields feed
+// `compute_lit`. Clip and alpha-mask fragments discard here.
+fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
+    var out: Surface;
+    out.resolved = false;
+    out.out_colour = vec4<f32>(0.0);
+    out.base_colour = vec3<f32>(0.0);
+    out.normal = vec3<f32>(0.0, 0.0, 1.0);
+    out.ao_factor = 1.0;
+    out.mat_uv = in.uv;
+    out.alpha = 1.0;
+
     // Section view: discard fragment if it falls on the clipped side of any plane.
     for (var i = 0u; i < clip_planes.count; i++) {
         let plane = clip_planes.planes[i];
@@ -475,12 +509,15 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
 
     // Wireframe mode: override colour to gray, no lighting.
     if object.wireframe != 0u {
-        return vec4<f32>(0.75, 0.75, 0.75, 1.0);
+        out.resolved = true;
+        out.out_colour = vec4<f32>(0.75, 0.75, 0.75, 1.0);
+        return out;
     }
 
     // Per-material UV transform: atlas region / tiling selection. Identity
     // (offset 0,0 scale 1,1) passes the authored UV through unchanged.
     let mat_uv = in.uv * object.uv_transform.zw + object.uv_transform.xy;
+    out.mat_uv = mat_uv;
 
     // Sample texture if one is assigned; fallback texture is 1x1 white (neutral multiply).
     var tex_colour = vec4<f32>(1.0);
@@ -489,6 +526,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     }
     let obj_colour = vec4<f32>(object.colour.rgb * in.colour.rgb * tex_colour.rgb,
                                object.colour.a   * in.colour.a   * tex_colour.a);
+    out.alpha = obj_colour.a;
 
     // Alpha MASK: discard fragments whose alpha is below the cutoff.
     if object.alpha_mode == 1u && obj_colour.a < object.alpha_cutoff {
@@ -503,7 +541,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             if object.use_nan_colour == 0u {
                 discard;
             }
-            return vec4<f32>(object.nan_colour.rgb, object.nan_colour.a);
+            out.resolved = true;
+            out.out_colour = vec4<f32>(object.nan_colour.rgb, object.nan_colour.a);
+            return out;
         }
         let raw = in.scalar_val;
         let range = object.scalar_max - object.scalar_min;
@@ -520,12 +560,16 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         if object.selected != 0u {
             fc = mix(fc, vec4<f32>(1.0, 0.55, 0.1, 1.0), 0.35);
         }
-        return vec4<f32>(fc.rgb, fc.a * object.colour.a);
+        out.resolved = true;
+        out.out_colour = vec4<f32>(fc.rgb, fc.a * object.colour.a);
+        return out;
     }
 
     // Unlit: skip all lighting, return raw colour directly.
     if object.unlit != 0u {
-        return vec4<f32>(base_colour, obj_colour.a);
+        out.resolved = true;
+        out.out_colour = vec4<f32>(base_colour, obj_colour.a);
+        return out;
     }
 
     // Resolve shading normal: TBN normal mapping, flat (screen-space
@@ -620,21 +664,40 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
             -view_normal.y * mc_scale * 0.5 + 0.5,
         );
         let mc = textureSample(matcap_texture, obj_sampler, matcap_uv);
+        out.resolved = true;
         if object.matcap_blendable != 0u {
             // Blendable: RGB is the matcap colour; A tints the base geometry colour.
             let blended = clamp(mc.rgb + mc.a * base_colour, vec3<f32>(0.0), vec3<f32>(1.0));
-            return vec4<f32>(blended, obj_colour.a);
+            out.out_colour = vec4<f32>(blended, obj_colour.a);
         } else {
             // Static: matcap RGB fully overrides the object colour.
-            return vec4<f32>(mc.rgb, obj_colour.a);
+            out.out_colour = vec4<f32>(mc.rgb, obj_colour.a);
         }
+        return out;
     }
 
     // UV parameterization visualization: procedural pattern replaces all lighting.
     if object.uv_vis_mode != 0u {
         let vis = param_vis_colour(in.uv, object.uv_vis_mode, object.uv_vis_scale);
-        return vec4<f32>(vis, obj_colour.a);
+        out.resolved = true;
+        out.out_colour = vec4<f32>(vis, obj_colour.a);
+        return out;
     }
+
+    out.base_colour = base_colour;
+    out.normal = N;
+    out.ao_factor = ao_factor;
+    return out;
+}
+
+// Lighting. Runs the standard PBR / Blinn-Phong light loops, shadow sampling,
+// and ambient/IBL on a resolved surface. Returns the pre-emissive colour plus
+// the debug accumulators the debug-vis overlay reads.
+fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
+    let base_colour = surface.base_colour;
+    let ao_factor = surface.ao_factor;
+    let mat_uv = surface.mat_uv;
+    let N = surface.normal;
 
     // Use the smooth vertex normal for shadow bias. Screen-space derivatives
     // (dpdx/dpdy) become unreliable when the surface covers few pixels (zoomed
@@ -653,7 +716,6 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     var dbg_ambient_lum  = 0.0;
     var dbg_ibl_diff_lum = 0.0;
     var dbg_ibl_spec_lum = 0.0;
-    var dbg_emissive_lum = 0.0;
     var dbg_roughness    = 0.5;
     var dbg_metallic     = 0.0;
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -829,15 +891,50 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
+    var res: LitResult;
+    res.rgb = final_rgb;
+    res.dbg_direct_lum = dbg_direct_lum;
+    res.dbg_ambient_lum = dbg_ambient_lum;
+    res.dbg_ibl_diff_lum = dbg_ibl_diff_lum;
+    res.dbg_ibl_spec_lum = dbg_ibl_spec_lum;
+    res.dbg_roughness = dbg_roughness;
+    res.dbg_metallic = dbg_metallic;
+    res.last_shadow_sample = last_shadow_sample;
+    return res;
+}
+
+@fragment
+fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    let surface = compute_surface(in, is_front);
+    if surface.resolved {
+        return surface.out_colour;
+    }
+
+    let lit = compute_lit(surface, in);
+
+    // Re-bind the locals the debug-vis overlay reads before the include.
+    let N = surface.normal;
+    let ao_factor = surface.ao_factor;
+    let mat_uv = surface.mat_uv;
+    let last_shadow_sample = lit.last_shadow_sample;
+    let dbg_direct_lum   = lit.dbg_direct_lum;
+    let dbg_ambient_lum  = lit.dbg_ambient_lum;
+    let dbg_ibl_diff_lum = lit.dbg_ibl_diff_lum;
+    let dbg_ibl_spec_lum = lit.dbg_ibl_spec_lum;
+    let dbg_roughness    = lit.dbg_roughness;
+    let dbg_metallic     = lit.dbg_metallic;
+    let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
+    var final_rgb = lit.rgb;
+
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     var emissive = object.emissive;
     if object.has_emissive_tex != 0u {
         emissive = emissive * textureSample(emissive_tex, obj_sampler, mat_uv).rgb;
     }
     final_rgb += emissive;
-    dbg_emissive_lum = dot(emissive, lum_weights);
+    var dbg_emissive_lum = dot(emissive, lum_weights);
 
     // #include "debug_vis.wgsl"
 
-    return vec4<f32>(final_rgb, obj_colour.a);
+    return vec4<f32>(final_rgb, surface.alpha);
 }
