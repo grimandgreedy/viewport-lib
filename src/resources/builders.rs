@@ -123,6 +123,41 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
     std::borrow::Cow::Owned(strip_pbr_regions(&source))
 }
 
+/// Diagnostic knob: with `VIEWPORT_MESH_BUILTIN_HOOK` set in the environment,
+/// compose every lit mesh shader with the internal `builtin_pbr` shading hook
+/// before module creation, so the built-in Cook-Torrance lighting runs
+/// through the fragment-shading seam instead of inline.
+///
+/// This is the A/B tool for "what does the hook mechanism itself cost": the
+/// composed module computes identical lighting via the same
+/// `pbr_light_contrib`, plus the ShadingSurface fill and per-light
+/// LightSample construction a real material plugin pays. Compare against the
+/// plain baseline and against `VIEWPORT_MESH_PBR_ONLY` (which strips the
+/// alternate branches without the hook) to separate branch-stripping gains
+/// from hook overhead. Composition forces the PBR loop, so like the PBR_ONLY
+/// knob it is only meaningful on scenes of PBR materials. Sources without
+/// shade-slot markers (non-lit shaders) pass through untouched.
+pub(crate) fn builtin_hook_env<'a>(
+    source: impl Into<std::borrow::Cow<'a, str>>,
+) -> std::borrow::Cow<'a, str> {
+    let source = source.into();
+    if std::env::var_os("VIEWPORT_MESH_BUILTIN_HOOK").is_none() {
+        return source;
+    }
+    let Some(composed) = crate::resources::mesh_sidecar::shade::compose_builtin_pbr_hook(&source)
+    else {
+        return source;
+    };
+    static NOTICE: std::sync::Once = std::sync::Once::new();
+    NOTICE.call_once(|| {
+        eprintln!(
+            "viewport-lib: VIEWPORT_MESH_BUILTIN_HOOK active: built-in PBR lighting runs \
+             through the shading-hook seam (render PBR materials only)"
+        );
+    });
+    std::borrow::Cow::Owned(composed)
+}
+
 /// Unconditionally remove the `BEGIN_PBR_STRIP` / `END_PBR_STRIP` regions
 /// (Blinn-Phong and the alternate shading-model branches) from a mesh shader
 /// source. Core of the `VIEWPORT_MESH_PBR_ONLY` knob above; also applied to

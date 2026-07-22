@@ -207,9 +207,16 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     let idx = s
         .find(anchor)
         .ok_or_else(|| "missing compute_surface anchor".to_string())?;
-    let mut body = format!(
-        "\n// shading hook: {name}\n@group(3) @binding(0) var<uniform> material_params: array<vec4<f32>, {MATERIAL_PLUGIN_PARAM_VEC4S}>;\n"
-    );
+    // The group-3 declarations are only emitted when the body uses them, so a
+    // hook that reads neither params nor textures composes to a module with
+    // the standard 3-group interface (the internal builtin-hook A/B knob
+    // relies on this to swap base pipeline modules without new bind groups).
+    let mut body = format!("\n// shading hook: {name}\n");
+    if hook.desc.texture_count > 0 || hook.prefixed_body.contains("material_params") {
+        body.push_str(&format!(
+            "@group(3) @binding(0) var<uniform> material_params: array<vec4<f32>, {MATERIAL_PLUGIN_PARAM_VEC4S}>;\n"
+        ));
+    }
     if hook.desc.texture_count > 0 {
         body.push_str("@group(3) @binding(1) var material_sampler: sampler;\n");
         for t in 0..hook.desc.texture_count {
@@ -265,6 +272,44 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
         )?;
     }
     Ok(s)
+}
+
+/// The internal hook behind the `VIEWPORT_MESH_BUILTIN_HOOK` A/B knob: the
+/// built-in Cook-Torrance per-light term replayed through the shading seam.
+/// `shade_light` calls the same `pbr_light_contrib` the inline path calls
+/// (with `radiance * shadow`, matching the inline multiply exactly), keeps the
+/// backface early-continue, and leaves ambient and recolor on the defaults.
+/// The composed module therefore computes identical lighting; what it adds is
+/// exactly the hook mechanism (ShadingSurface fill, LightSample construction,
+/// the call indirection), which is what the knob measures. The body touches
+/// neither params nor textures, so the module keeps the 3-group interface and
+/// drops into the standard pipelines.
+pub(crate) fn builtin_pbr_hook() -> &'static StoredShadingHook {
+    static HOOK: std::sync::OnceLock<StoredShadingHook> = std::sync::OnceLock::new();
+    HOOK.get_or_init(|| {
+        StoredShadingHook::analyse(ShadingHookDesc {
+            name: "builtin_pbr",
+            wgsl_body: "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    return pbr_light_contrib(surf.normal, surf.view_dir, light.l,
+                             light.radiance * light.shadow,
+                             surf.base_colour, surf.metallic, surf.roughness, surf.f0);
+}
+"
+            .to_string(),
+            needs_back_hemisphere: false,
+            texture_count: 0,
+        })
+        .expect("builtin_pbr hook body is valid")
+    })
+}
+
+/// Compose a lit shader source with the internal builtin-PBR hook, or `None`
+/// when the source carries no shade-slot markers (not a lit mesh shader).
+/// Backing for `builders::builtin_hook_env`.
+pub(crate) fn compose_builtin_pbr_hook(source: &str) -> Option<String> {
+    region_bounds(source, "light")?;
+    compose_shade_shader(source, builtin_pbr_hook()).ok()
 }
 
 impl crate::resources::DeviceResources {
@@ -958,6 +1003,69 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let plain = stored("plain", TOON_BODY, false);
         let composed = compose_shade_shader(base, &plain).expect("compose");
         assert!(!composed.contains("material_sampler"));
+    }
+
+    #[test]
+    fn builtin_pbr_hook_composes_with_three_group_interface() {
+        let Some(base) = registry::lookup_source("mesh.wgsl") else {
+            return;
+        };
+        let composed = compose_builtin_pbr_hook(base).expect("lit shader composes");
+        assert!(composed.contains("fn builtin_pbr__shade_light("));
+        assert!(composed.contains("Lo += builtin_pbr__shade_light(surf, LightSample(L, radiance,"));
+        // The body reads neither params nor textures, so no group-3
+        // declarations appear and the module keeps the standard interface.
+        assert!(!composed.contains("@group(3)"));
+        // Backface early-continue kept (needs_back_hemisphere = false).
+        assert!(composed.contains("if dot(N, L) <= 0.0 { continue; }"));
+        // Non-lit shaders pass through as None.
+        if let Some(shadow) = registry::lookup_source("shadow.wgsl") {
+            assert!(compose_builtin_pbr_hook(shadow).is_none());
+        }
+    }
+
+    /// The builtin-hook module must build the standard LDR pipelines against
+    /// the ordinary 3-group layout: this is what lets the
+    /// VIEWPORT_MESH_BUILTIN_HOOK knob swap base modules without touching
+    /// bind groups, batching, or draw sites.
+    #[test]
+    fn builtin_pbr_hook_module_builds_standard_pipelines() {
+        use crate::renderer::ViewportRenderer;
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let resources = renderer.resources_mut();
+        let base = registry::lookup_source("mesh.wgsl").expect("catalog");
+        let composed = compose_builtin_pbr_hook(base).expect("compose");
+        let (module, captured) = crate::resources::builders::capture_validation(&device, || {
+            crate::resources::builders::wgsl_module(
+                &device,
+                "builtin_hook_test_module",
+                composed.as_str(),
+            )
+        });
+        assert!(captured.is_none(), "module validation: {captured:?}");
+        let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
+            &device,
+            "builtin_hook_test_layout",
+            &resources.camera_bind_group_layout,
+            &resources.object_bind_group_layout,
+            Some(&resources.deform.bind_group_layout),
+        );
+        let (_pipelines, captured) =
+            crate::resources::builders::capture_validation(&device, || {
+                crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
+                    &device,
+                    &layout,
+                    &module,
+                    crate::gpu::TextureFormat::Bgra8UnormSrgb,
+                    1,
+                    None,
+                )
+            });
+        assert!(captured.is_none(), "pipeline validation: {captured:?}");
     }
 
     #[test]

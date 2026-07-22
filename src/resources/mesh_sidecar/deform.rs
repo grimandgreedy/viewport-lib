@@ -1039,7 +1039,9 @@ impl DeviceResources {
             let shader = crate::resources::builders::wgsl_module(
                 device,
                 "mesh_shader_composed",
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                crate::resources::builders::builtin_hook_env(
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                ),
             );
 
             let ldr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
@@ -1090,7 +1092,12 @@ impl DeviceResources {
                 let shader = crate::resources::builders::wgsl_module(
                     device,
                     "mesh_oit_shader_composed",
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                    crate::resources::builders::builtin_hook_env(
+                        crate::resources::builders::strip_debug_vis(
+                            composed,
+                            self.debug_vis_shaders,
+                        ),
+                    ),
                 );
                 let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
                     device,
@@ -1170,7 +1177,9 @@ impl DeviceResources {
         if let Some(base) = lookup_source("mesh_instanced.wgsl") {
             let composed = compose_shader(base, &registrations);
             let src = crate::resources::builders::strip_mesh_discards(
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                crate::resources::builders::builtin_hook_env(
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                ),
             );
             let shader = crate::resources::builders::wgsl_module(
                 device,
@@ -1294,7 +1303,9 @@ impl DeviceResources {
             let shader = crate::resources::builders::wgsl_module(
                 device,
                 "mesh_instanced_oit_shader_composed",
-                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                crate::resources::builders::builtin_hook_env(
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                ),
             );
             if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
                 if self.oit.instanced_pipeline.is_some() {
