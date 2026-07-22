@@ -59,7 +59,7 @@ struct InstanceData {
     unlit: u32,
     receive_shadows: u32,
     use_flat: u32,
-    _pad_inst1: u32,
+    normal_strength: f32,
     uv_transform: vec4<f32>,
     ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
     alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
@@ -338,7 +338,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         N = Nf;
     } else if inst.has_normal_map != 0u {
         let nm_sample = textureSample(normal_map, obj_sampler, mat_uv).rgb;
-        let ts_normal = normalize(nm_sample * 2.0 - vec3<f32>(1.0));
+        var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
+        ts_unpacked.x = ts_unpacked.x * inst.normal_strength;
+        ts_unpacked.y = ts_unpacked.y * inst.normal_strength;
+        let ts_normal = normalize(ts_unpacked);
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
         let T_orth = normalize(T - dot(T, Ng) * Ng);

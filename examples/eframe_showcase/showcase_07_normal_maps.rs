@@ -2,8 +2,10 @@
 //!
 //! Demonstrates normal-mapped and AO-mapped surfaces on a variety of shapes:
 //! a sphere, a cube, and a flat wall panel, all on a tiled ground plane.
-//! Toggles let you enable/disable normal maps and AO maps across all objects
-//! to see the difference they make.
+//! Toggles enable/disable normal maps and AO maps across all objects. A
+//! normal-strength slider (glTF `normalScale`) dials the tangent-normal XY up or
+//! down, and an occlusion-strength slider shows glTF `occlusionStrength` mapping
+//! onto the existing `ao_range` field (`ao_range = [1 - s, 1]`).
 
 use crate::App;
 use crate::geometry::{
@@ -23,12 +25,20 @@ pub(crate) struct NormalMapsState {
     /// (node_id, normal_map_id, ao_map_id) for every mapped object.
     pub mapped_nodes: Vec<(NodeId, viewport_lib::TextureId, viewport_lib::TextureId)>,
     pub normal_on: bool,
+    /// Scales the tangent-space normal XY before the TBN transform
+    /// (`Material::normal_strength`, glTF `normalScale`). 1.0 is the authored
+    /// strength; 0.0 flattens to the geometric normal; >1.0 exaggerates relief.
+    pub normal_strength: f32,
     pub ao_on: bool,
     /// Min/max remap applied to the AO map's R sample. Identity `[0.0, 1.0]`
     /// passes the sample through unchanged. Shrinking the range from the
     /// minimum side brightens cavities; raising the minimum compresses the
     /// cavity factor toward fully lit.
     pub ao_range: [f32; 2],
+    /// glTF `occlusionStrength` view of `ao_range`: setting this to `s` writes
+    /// `ao_range = [1 - s, 1]`, which is exactly `mix(1.0, sample, s)`. Shows
+    /// that the renderer needs no dedicated occlusion-strength field.
+    pub occlusion_strength: f32,
     pub clip_enabled: bool,
     pub cap_fill: bool,
 }
@@ -40,8 +50,10 @@ impl Default for NormalMapsState {
             scene: Scene::new(),
             mapped_nodes: Vec::new(),
             normal_on: true,
+            normal_strength: 1.0,
             ao_on: true,
             ao_range: [0.0, 1.0],
+            occlusion_strength: 1.0,
             clip_enabled: false,
             cap_fill: true,
         }
@@ -197,7 +209,9 @@ impl App {
         );
 
         self.nm_state.normal_on = true;
+        self.nm_state.normal_strength = 1.0;
         self.nm_state.ao_on = true;
+        self.nm_state.occlusion_strength = 1.0;
         self.nm_state.clip_enabled = false;
         self.nm_state.built = true;
     }
@@ -222,6 +236,26 @@ pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
         }
     }
 
+    if app.nm_state.normal_on {
+        let changed = ui
+            .add(
+                egui::Slider::new(&mut app.nm_state.normal_strength, 0.0..=2.0)
+                    .text("Normal strength"),
+            )
+            .on_hover_text("Material::normal_strength (glTF normalScale). 0 = flat, 1 = authored, 2 = deepened.")
+            .changed();
+        if changed {
+            let s = app.nm_state.normal_strength;
+            for &(node_id, _, _) in &app.nm_state.mapped_nodes.clone() {
+                if let Some(node) = app.nm_state.scene.node(node_id) {
+                    let mut mat = *node.material();
+                    mat.normal_strength = s;
+                    app.nm_state.scene.set_material(node_id, mat);
+                }
+            }
+        }
+    }
+
     if ui.checkbox(&mut app.nm_state.ao_on, "AO map").changed() {
         let on = app.nm_state.ao_on;
         for &(node_id, _, ao_id) in &app.nm_state.mapped_nodes.clone() {
@@ -235,6 +269,20 @@ pub(crate) fn controls_normal_maps(app: &mut App, ui: &mut egui::Ui) {
 
     if app.nm_state.ao_on {
         let mut changed = false;
+        // glTF occlusionStrength expressed through the existing ao_range field:
+        // mix(1.0, sample, s) == mix(1 - s, 1, sample). No dedicated field needed.
+        if ui
+            .add(
+                egui::Slider::new(&mut app.nm_state.occlusion_strength, 0.0..=1.0)
+                    .text("Occlusion strength"),
+            )
+            .on_hover_text("glTF occlusionStrength: writes ao_range = [1 - s, 1].")
+            .changed()
+        {
+            let s = app.nm_state.occlusion_strength;
+            app.nm_state.ao_range = [1.0 - s, 1.0];
+            changed = true;
+        }
         ui.horizontal(|ui| {
             ui.label("AO range");
             changed |= ui

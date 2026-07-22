@@ -30,7 +30,7 @@ struct InstanceData {
     unlit: u32,
     receive_shadows: u32,
     use_flat: u32,
-    _pad_inst1: u32,
+    normal_strength: f32,
     uv_transform: vec4<f32>,
     ao_range: vec2<f32>,
     alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)

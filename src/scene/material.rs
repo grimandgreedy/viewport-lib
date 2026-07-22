@@ -287,6 +287,13 @@ pub struct Material {
     /// The normal map must be in tangent-space with XY encoded as RG (0..1 -> -1..+1).
     /// Requires UVs and tangents on the mesh for correct TBN construction.
     pub normal_map_id: Option<crate::resources::TextureId>,
+    /// Scales the tangent-space normal's XY before the TBN transform, so a normal
+    /// map can be dialled up or down without re-authoring the texture. Default 1.0
+    /// (the map is used at authored strength). `0.0` flattens to the geometric
+    /// normal; values above 1.0 exaggerate the relief. Matches glTF `normalScale`
+    /// and Unity `_BumpScale`. No effect when `normal_map_id` is None.
+    #[cfg_attr(feature = "serde", serde(default = "default_normal_strength"))]
+    pub normal_strength: f32,
     /// Optional ambient occlusion map texture identifier. None = no AO map. Default None.
     ///
     /// The AO map R channel encodes cavity factor (0=fully occluded, 1=fully lit).
@@ -349,6 +356,11 @@ pub struct Material {
     /// The remap is `mix(min, max, raw_sample)`. Useful when a packed mask
     /// map authors AO in a reduced range (e.g. `[0.4, 1.0]`) and the renderer
     /// needs to normalise the sample before it drives lighting.
+    ///
+    /// This field also expresses glTF `occlusionStrength`: since strength is
+    /// `mix(1.0, sample, strength)`, set `ao_range = [1.0 - strength, 1.0]`.
+    /// There is deliberately no separate `occlusion_strength` field; an importer
+    /// maps the glTF value onto this range. (grep: occlusionStrength, occlusion_strength)
     pub ao_range: [f32; 2],
     /// Min/max range applied to the metallic sample (B channel of the
     /// metallic-roughness texture in the glTF/ORM convention). Identity
@@ -366,6 +378,14 @@ pub struct Material {
     pub roughness_range: [f32; 2],
 }
 
+/// serde default for [`Material::normal_strength`]: the neutral 1.0, so a material
+/// deserialized from data saved before this field existed reads as full strength
+/// rather than the type default of 0.0 (which would flatten normals).
+#[cfg(feature = "serde")]
+fn default_normal_strength() -> f32 {
+    1.0
+}
+
 impl Default for Material {
     fn default() -> Self {
         Self {
@@ -378,6 +398,7 @@ impl Default for Material {
             roughness: 0.5,
             texture_id: None,
             normal_map_id: None,
+            normal_strength: 1.0,
             ao_map_id: None,
             metallic_roughness_texture_id: None,
             emissive: [0.0, 0.0, 0.0],

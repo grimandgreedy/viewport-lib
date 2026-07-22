@@ -150,7 +150,7 @@ impl ViewportRenderer {
                                 unlit: cm.unlit,
                                 receive_shadows: cm.receive_shadows,
                                 use_flat: cm.use_flat,
-                                _pad_inst: 0,
+                                normal_strength: cm.normal_strength,
                                 uv_transform: cm.uv_transform,
                                 ao_range: cm.ao_range,
                                 alpha_cutoff: cm.alpha_cutoff,

@@ -85,7 +85,7 @@ struct Object {
     has_emissive_tex: u32,                 // offset 252
     uv_transform: vec4<f32>,               // offset 256 : (offset.xy, scale.xy)
     deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
-    _pad_after_deform: u32,                // offset 276 : pad to align next vec2 to 8 bytes
+    normal_strength: f32,                  // offset 276 : scales tangent normal XY (also aligns next vec2)
     ao_range: vec2<f32>,                   // offset 280 : (min, max) remap of AO map R sample
     metallic_range: vec2<f32>,             // offset 288 : (min, max) remap of MR texture B channel
     roughness_range: vec2<f32>,            // offset 296 : (min, max) remap of MR texture G channel
@@ -434,7 +434,10 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
         N = Nf;
     } else if object.has_normal_map != 0u {
         let nm_sample = textureSample(normal_map, obj_sampler, in.uv).rgb;
-        let ts_normal = normalize(nm_sample * 2.0 - vec3<f32>(1.0));
+        var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
+        ts_unpacked.x = ts_unpacked.x * object.normal_strength;
+        ts_unpacked.y = ts_unpacked.y * object.normal_strength;
+        let ts_normal = normalize(ts_unpacked);
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
         let T_orth = normalize(T - dot(T, Ng) * Ng);

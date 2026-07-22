@@ -76,15 +76,13 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 ---
 
-## 7. Normal Maps  (`showcase_07_normal_maps.rs`, 273 lines)
+## 7. Normal Maps  (`showcase_07_normal_maps.rs`, surface-detail showcase)
 
-**Demos:** Tile-textured ground, brick-mapped sphere, tile-mapped cube, brick wall panel, plain comparison sphere — all with procedurally generated 128x128 normal + AO maps. Toggling controls live-edits `normal_map_id` / `ao_map_id` / `ao_range` across all mapped nodes.
+**Demos:** Tile-textured ground, brick-mapped sphere, tile-mapped cube, brick wall panel, and a plain comparison sphere, all with procedurally generated 128x128 normal + AO maps. Toggling controls live-edits `normal_map_id` / `normal_strength` / `ao_map_id` / `ao_range` across all mapped nodes.
 
-**Uses:** `Material`, `BackfacePolicy`, `Scene`, custom `make_brick_*` / `make_tile_*` map helpers.
+**Uses:** `Material` (incl. `normal_strength`), `BackfacePolicy`, `Scene`, custom `make_brick_*` / `make_tile_*` map helpers.
 
-**Sidebar:** Normal-map and AO-map checkboxes; AO range min/max sliders + reset; clip-plane toggle with cap-fill sub-toggle.
-
-**Drift:** Header doesn't mention AO-range remap or the clip-plane / cap-fill section.
+**Sidebar:** Normal-map checkbox + normal-strength slider (glTF `normalScale`); AO-map checkbox + occlusion-strength slider (glTF `occlusionStrength`, drives `ao_range = [1 - s, 1]`) + AO range min/max sliders + reset; clip-plane toggle with cap-fill sub-toggle.
 
 ---
 

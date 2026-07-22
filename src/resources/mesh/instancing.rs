@@ -1413,7 +1413,7 @@ impl DeviceResources {
 /// - has_emissive_tex:           u32      =  4 bytes  offset 252
 /// - uv_transform:               [f32;4]  = 16 bytes  offset 256  (offset.xy, scale.xy)
 /// - deform_flags:               u32      =  4 bytes  offset 272  (bit i = deformer slot i active)
-/// - _pad_after_deform:          u32      =  4 bytes  offset 276  (align next vec2 to 8)
+/// - normal_strength:            f32      =  4 bytes  offset 276  (also aligns next vec2 to 8)
 /// - ao_range:                   [f32;2]  =  8 bytes  offset 280
 /// - metallic_range:             [f32;2]  =  8 bytes  offset 288
 /// - roughness_range:            [f32;2]  =  8 bytes  offset 296
@@ -1474,7 +1474,10 @@ pub(crate) struct ObjectUniform {
     /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
     /// no deformer registry has attached data for this mesh.
     pub(crate) deform_flags: u32, //   4 bytes, offset 272
-    pub(crate) _pad_after_deform: u32, //   4 bytes, offset 276 (align next vec2 to 8)
+    /// Scales the tangent-space normal XY before the TBN transform. Mirrors
+    /// `Material::normal_strength`; 1.0 is neutral. Occupies the word that used to
+    /// pad `ao_range` to its 8-byte alignment, so the struct size is unchanged.
+    pub(crate) normal_strength: f32, //   4 bytes, offset 276 (also aligns next vec2 to 8)
     /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
     /// Mirrors `Material::ao_range`.
     pub(crate) ao_range: [f32; 2], //   8 bytes, offset 280
@@ -1513,7 +1516,10 @@ pub(crate) struct InstanceData {
     /// 1 = recover the shading normal from screen-space derivatives of
     /// `world_pos` (`ShadingModel::Flat`).
     pub(crate) use_flat: u32, //   4 bytes, offset 136
-    pub(crate) _pad_inst: u32,       //   4 bytes, offset 140
+    /// Scales the tangent-space normal XY before the TBN transform. Mirrors
+    /// `Material::normal_strength`; 1.0 is neutral. Occupies the former padding word
+    /// that aligned `uv_transform` to 16, so the struct stride is unchanged.
+    pub(crate) normal_strength: f32, //   4 bytes, offset 140
     /// Per-material UV transform; mirrors `ObjectUniform::uv_transform`.
     /// `[offset_x, offset_y, scale_x, scale_y]`.
     pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 144
