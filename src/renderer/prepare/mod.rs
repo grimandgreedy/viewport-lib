@@ -259,6 +259,15 @@ impl ViewportRenderer {
         }
 
         let per_object_start = std::time::Instant::now();
+        // Build any material-plugin pipeline set the frame references before
+        // draw time (paint has no mutable access). Already-built ids
+        // early-return inside; unknown ids are ignored and those items fall
+        // back to built-in shading.
+        for item in scene_items.iter() {
+            if let Some(pid) = item.material.shading_plugin {
+                resources.ensure_material_plugin_pipelines(device, pid);
+            }
+        }
         // Evaluate instanceability once per frame and share the result. Each
         // `is_instanceable` call does several mesh-store and deform lookups plus
         // a linear scan over the compute-filter results, so computing it once

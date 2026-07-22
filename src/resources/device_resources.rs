@@ -611,6 +611,10 @@ pub struct DeviceResources {
     /// entry composes its own lit-shader modules; the base pipelines are
     /// untouched by registrations.
     pub(crate) shade_hooks: Vec<crate::resources::mesh_sidecar::shade::StoredShadingHook>,
+    /// Per-material-plugin GPU state (`register_material_plugin`), keyed by
+    /// hook index: group-3 params window + lazily built lit pipeline set.
+    pub(crate) material_plugins:
+        std::collections::HashMap<u32, crate::resources::mesh_sidecar::shade::MaterialPluginGpu>,
     // --- Shadow map resources ---
     /// Shadow atlas depth texture (Depth32Float, atlas_size x atlas_size, 2x2 tile grid).
     pub(crate) shadow_map_texture: crate::gpu::Texture,

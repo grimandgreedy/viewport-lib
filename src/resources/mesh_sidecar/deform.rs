@@ -1024,6 +1024,13 @@ impl DeviceResources {
         if !self.deform.enabled {
             return;
         }
+        // Material-plugin pipeline sets compose on top of the deformer
+        // registrations and the debug-vis strip state, both of which changed
+        // when this runs. Drop them; the next prepare that references a
+        // plugin id rebuilds its set from the fresh composition.
+        for plugin in self.material_plugins.values_mut() {
+            plugin.pipelines = None;
+        }
         let registrations = self.deform.registrations.clone();
 
         // mesh.wgsl: LDR + HDR families.

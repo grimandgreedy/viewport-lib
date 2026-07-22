@@ -24,6 +24,19 @@ macro_rules! bind_deform_group {
     };
 }
 
+/// Bind a material plugin's group-3 params bind group for a plugin draw.
+///
+/// Only called with a bind group resolved by `material_plugin_draw`, which
+/// only exists on devices that passed the `max_bind_groups >= 4` registration
+/// gate, so no runtime capability check is needed here. Route every group-3
+/// material bind through this macro (the same choke-point rule as
+/// `bind_deform_group!` above).
+macro_rules! bind_material_group {
+    ($pass:expr, $bg:expr) => {
+        $pass.set_bind_group(3, $bg, &[]);
+    };
+}
+
 /// Minimum scene item count to activate the instanced draw path.
 /// Use instancing for any scene with more than 1 object. The per-object path
 /// writes uniforms into a per-mesh buffer, so two scene nodes sharing the same
@@ -388,7 +401,16 @@ macro_rules! emit_draw_calls {
                             };
                             let is_blended = item.settings.opacity < 1.0
                                 || item.material.is_blend();
-                            let pipeline: &crate::gpu::RenderPipeline = if is_blended {
+                            let plug = resources.material_plugin_draw(item.material.shading_plugin);
+                            let pipeline: &crate::gpu::RenderPipeline = if let Some((pp, _)) = plug {
+                                if is_blended {
+                                    &pp.ldr.transparent
+                                } else if item.material.is_two_sided() {
+                                    &pp.ldr.solid_two_sided
+                                } else {
+                                    &pp.ldr.solid
+                                }
+                            } else if is_blended {
                                 &resources.transparent_pipeline
                             } else if item.material.is_two_sided() {
                                 &resources.solid_two_sided_pipeline
@@ -407,6 +429,9 @@ macro_rules! emit_draw_calls {
                                 cur_deform = Some(deform_bg as *const _);
                             }
                             render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
+                            if let Some((_, mat_bg)) = plug {
+                                bind_material_group!(render_pass, mat_bg);
+                            }
 
                             let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
                                 matches!(
@@ -523,6 +548,11 @@ macro_rules! emit_draw_calls {
                         let (item_idx, item): (usize, &SceneRenderItem) = $entry;
                         let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
                         render_pass.set_bind_group(1, per_item_object_bind_groups.get(item_idx).and_then(|opt| opt.as_ref()).unwrap_or(&mesh.object_bind_group), &[]);
+                        if let Some((_, mat_bg)) =
+                            resources.material_plugin_draw(item.material.shading_plugin)
+                        {
+                            bind_material_group!(render_pass, mat_bg);
+                        }
 
                         let deform_bg = resources
                             .deform
@@ -604,7 +634,14 @@ macro_rules! emit_draw_calls {
                 }
 
                 for entry in &opaque {
-                    let pl = if entry.1.material.is_two_sided() {
+                    let plug = resources.material_plugin_draw(entry.1.material.shading_plugin);
+                    let pl = if let Some((pp, _)) = plug {
+                        if entry.1.material.is_two_sided() {
+                            &pp.ldr.solid_two_sided
+                        } else {
+                            &pp.ldr.solid
+                        }
+                    } else if entry.1.material.is_two_sided() {
                         &resources.solid_two_sided_pipeline
                     } else {
                         &resources.solid_pipeline
@@ -612,7 +649,14 @@ macro_rules! emit_draw_calls {
                     draw_item!((entry.0, entry.1), pl);
                 }
                 for entry in &transparent {
-                    draw_item!((entry.0, entry.1), &resources.transparent_pipeline);
+                    let pl = if let Some((pp, _)) =
+                        resources.material_plugin_draw(entry.1.material.shading_plugin)
+                    {
+                        &pp.ldr.transparent
+                    } else {
+                        &resources.transparent_pipeline
+                    };
+                    draw_item!((entry.0, entry.1), pl);
                 }
             }
         }

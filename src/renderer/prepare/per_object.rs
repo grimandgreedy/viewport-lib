@@ -668,6 +668,9 @@ impl ViewportRenderer {
                     || item.warp_attribute.is_some()
                     || item.active_attribute.is_some()
                     || item.deform_instance.is_some()
+                    // Material-plugin items need a per-item pipeline and a
+                    // group-3 bind the bundle recorder does not capture.
+                    || item.material.shading_plugin.is_some()
                 {
                     break 'plan None;
                 }

@@ -376,6 +376,35 @@ pub struct Material {
     /// Applied to the texture sample before the scalar `roughness` factor:
     /// `final = max(mix(min, max, raw.g) * roughness, 0.04)`.
     pub roughness_range: [f32; 2],
+    /// Custom shading through a registered material plugin. Default None (the
+    /// built-in shading models above).
+    ///
+    /// `Some(id)` routes this material through the plugin registered with
+    /// `register_material_plugin` under that id: the plugin's `shade_light` /
+    /// `shade_ambient` / `recolor` hooks replace the built-in lighting terms,
+    /// always on the PBR loop structure (`shading_model` is ignored for the
+    /// lit path). Items with a plugin draw per-object rather than instanced.
+    /// The id is a small `Copy` handle; plugin parameters live in the plugin's
+    /// group-3 params buffer, not on this struct.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub shading_plugin: Option<MaterialPluginId>,
+}
+
+/// Handle to a material plugin registered with `register_material_plugin`.
+///
+/// A small `Copy` id carried on [`Material::shading_plugin`]. The renderer
+/// resolves it against the plugin registry at draw time; an id from a
+/// different session (e.g. a deserialized scene rendered before the plugin is
+/// re-registered) simply falls back to built-in shading for the frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MaterialPluginId(pub(crate) u32);
+
+impl MaterialPluginId {
+    /// Index of the underlying shading-hook registration.
+    pub fn index(&self) -> u32 {
+        self.0
+    }
 }
 
 /// serde default for [`Material::normal_strength`]: the neutral 1.0, so a material
@@ -412,6 +441,7 @@ impl Default for Material {
             ao_range: [0.0, 1.0],
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
+            shading_plugin: None,
         }
     }
 }

@@ -155,8 +155,8 @@ pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
 pub use scene::material::{
-    BackfacePattern, BackfacePolicy, ItemSettings, Material, ParamVis, ParamVisMode, PatternConfig,
-    ShadingModel,
+    BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
+    ParamVisMode, PatternConfig, ShadingModel,
 };
 pub use scene::scene::{
     DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats,
@@ -287,7 +287,10 @@ pub use resources::{
     GlyphSetId, GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender, PointCloudId,
     PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
 };
-pub use resources::{ShadingHookDesc, ShadingHookId};
+pub use resources::{
+    MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, ShadingHookDesc,
+    ShadingHookId,
+};
 
 pub use runtime::{
     CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,

@@ -710,7 +710,14 @@ impl ViewportRenderer {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
-                            let pipeline = if item.material.is_two_sided() {
+                            let plug = resources.material_plugin_draw(item.material.shading_plugin);
+                            let pipeline = if let Some((pp, _)) = plug {
+                                if item.material.is_two_sided() {
+                                    &pp.hdr.solid_two_sided
+                                } else {
+                                    &pp.hdr.solid
+                                }
+                            } else if item.material.is_two_sided() {
                                 hdr_solid_two_sided
                             } else {
                                 hdr_solid
@@ -730,6 +737,9 @@ impl ViewportRenderer {
                                 .and_then(|opt| opt.as_ref())
                                 .unwrap_or(&mesh.object_bind_group);
                             render_pass.set_bind_group(1, obj_bg, &[]);
+                            if let Some((_, mat_bg)) = plug {
+                                bind_material_group!(render_pass, mat_bg);
+                            }
                             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                             let filter = compute_filter_results
                                 .iter()
@@ -843,6 +853,10 @@ impl ViewportRenderer {
                                 .and_then(|opt| opt.as_ref())
                                 .unwrap_or(&mesh.object_bind_group);
                             render_pass.set_bind_group(1, obj_bg, &[]);
+                            let plug = resources.material_plugin_draw(item.material.shading_plugin);
+                            if let Some((_, mat_bg)) = plug {
+                                bind_material_group!(render_pass, mat_bg);
+                            }
 
                             let deform_bg = resources
                                 .deform
@@ -869,7 +883,15 @@ impl ViewportRenderer {
                                 }
                             } else if is_face_attr {
                                 if let Some(ref fvb) = mesh.face_vertex_buffer {
-                                    let pl = if item.settings.opacity < 1.0 {
+                                    let pl = if let Some((pp, _)) = plug {
+                                        if item.settings.opacity < 1.0 {
+                                            &pp.hdr.transparent
+                                        } else if item.material.is_two_sided() {
+                                            &pp.hdr.solid_two_sided
+                                        } else {
+                                            &pp.hdr.solid
+                                        }
+                                    } else if item.settings.opacity < 1.0 {
                                         trans_pl
                                     } else {
                                         solid_pl
@@ -883,7 +905,15 @@ impl ViewportRenderer {
                                 let filter = compute_filter_results
                                     .iter()
                                     .find(|r| r.mesh_id == item.mesh_id);
-                                let pl = if item.settings.opacity < 1.0 {
+                                let pl = if let Some((pp, _)) = plug {
+                                    if item.settings.opacity < 1.0 {
+                                        &pp.hdr.transparent
+                                    } else if item.material.is_two_sided() {
+                                        &pp.hdr.solid_two_sided
+                                    } else {
+                                        &pp.hdr.solid
+                                    }
+                                } else if item.settings.opacity < 1.0 {
                                     trans_pl
                                 } else {
                                     solid_pl
@@ -2289,6 +2319,7 @@ impl ViewportRenderer {
                     // Render them here individually so they are not invisible at opacity < 1.
                     if let Some(ref pipeline) = self.resources.oit.pipeline {
                         oit_pass.set_pipeline(pipeline);
+                        let mut plugin_pipeline_active = false;
                         for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || (item.settings.opacity >= 1.0 && !item.material.is_blend())
@@ -2307,6 +2338,21 @@ impl ViewportRenderer {
                             let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
+                            match self
+                                .resources
+                                .material_plugin_draw(item.material.shading_plugin)
+                            {
+                                Some((pp, mat_bg)) => {
+                                    oit_pass.set_pipeline(&pp.oit);
+                                    bind_material_group!(oit_pass, mat_bg);
+                                    plugin_pipeline_active = true;
+                                }
+                                None if plugin_pipeline_active => {
+                                    oit_pass.set_pipeline(pipeline);
+                                    plugin_pipeline_active = false;
+                                }
+                                None => {}
+                            }
                             let deform_bg = self
                                 .resources
                                 .deform
@@ -2329,6 +2375,7 @@ impl ViewportRenderer {
                     }
                 } else if let Some(ref pipeline) = self.resources.oit.pipeline {
                     oit_pass.set_pipeline(pipeline);
+                    let mut plugin_pipeline_active = false;
                     for (item_idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden
                             || (item.settings.opacity >= 1.0 && !item.material.is_blend())
@@ -2338,6 +2385,21 @@ impl ViewportRenderer {
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                             continue;
                         };
+                        match self
+                            .resources
+                            .material_plugin_draw(item.material.shading_plugin)
+                        {
+                            Some((pp, mat_bg)) => {
+                                oit_pass.set_pipeline(&pp.oit);
+                                bind_material_group!(oit_pass, mat_bg);
+                                plugin_pipeline_active = true;
+                            }
+                            None if plugin_pipeline_active => {
+                                oit_pass.set_pipeline(pipeline);
+                                plugin_pipeline_active = false;
+                            }
+                            None => {}
+                        }
                         let deform_bg = self
                             .resources
                             .deform

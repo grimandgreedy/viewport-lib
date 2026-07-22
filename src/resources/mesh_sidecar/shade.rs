@@ -18,8 +18,13 @@
 //! consumer-facing `MaterialPlugin` API build on top of it.
 
 use crate::error::{ViewportError, ViewportResult};
+use crate::scene::material::MaterialPluginId;
 
 use super::registry;
+
+/// Number of `vec4<f32>` words in a material plugin's group-3 params window
+/// (`material_params` in hook WGSL). 256 bytes per plugin.
+pub const MATERIAL_PLUGIN_PARAM_VEC4S: usize = 16;
 
 /// Lit shaders that carry the shade-slot marker regions. Depth-only passes
 /// (shadow, outline mask, picking) produce no colour and are not composed.
@@ -186,12 +191,18 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     s = s.replace("if object.use_pbr != 0u {", "if true {");
     s = s.replace("if inst.use_pbr != 0u {", "if true {");
 
-    // Splice the prefixed body above the fragment stage.
+    // Splice the prefixed body above the fragment stage, preceded by the
+    // group-3 params window every material plugin gets. Bodies read it as
+    // `material_params[k]`; the composed pipeline layout always carries the
+    // group-3 BGL and draws always bind the plugin's params bind group, so a
+    // body that ignores it costs nothing.
     let anchor = "fn compute_surface(";
     let idx = s
         .find(anchor)
         .ok_or_else(|| "missing compute_surface anchor".to_string())?;
-    let mut body = format!("\n// shading hook: {name}\n");
+    let mut body = format!(
+        "\n// shading hook: {name}\n@group(3) @binding(0) var<uniform> material_params: array<vec4<f32>, {MATERIAL_PLUGIN_PARAM_VEC4S}>;\n"
+    );
     body.push_str(&hook.prefixed_body);
     body.push('\n');
     s.insert_str(idx, &body);
@@ -269,6 +280,21 @@ impl crate::resources::DeviceResources {
         device: &crate::gpu::Device,
         desc: ShadingHookDesc,
     ) -> ViewportResult<ShadingHookId> {
+        // Composed modules declare the group-3 params window and hook
+        // pipelines carry a 4-group layout, so custom shading needs the wgpu
+        // default of 4 bind groups. iced's shared device requests 2 (see
+        // notes/iced-two-bind-group-ceiling.md); fail here with a clear
+        // message instead of at module validation.
+        let max_groups = device.limits().max_bind_groups;
+        if max_groups < 4 {
+            return Err(ViewportError::ShadeShaderInvalid {
+                reason: format!(
+                    "shading hook '{}' requires max_bind_groups >= 4, but the device \
+                     reports {max_groups}; custom shading is unavailable on this device",
+                    desc.name
+                ),
+            });
+        }
         validate_hook_name(&self.shade_hooks, &self.deform.registrations, desc.name)?;
         let stored = StoredShadingHook::analyse(desc)?;
 
@@ -322,6 +348,264 @@ impl crate::resources::DeviceResources {
         let base = registry::lookup_source(shader_name)?;
         let with_deform = registry::compose_shader(base, &self.deform.registrations);
         compose_shade_shader(&with_deform, hook).ok()
+    }
+}
+
+/// A custom shading plugin for mesh materials.
+///
+/// The consumer-facing layer over [`ShadingHookDesc`], registered with
+/// `register_material_plugin`. A material selects the plugin by setting
+/// [`Material::shading_plugin`](crate::scene::material::Material::shading_plugin)
+/// to the returned [`MaterialPluginId`]; those draws then shade through the
+/// plugin's hooks with shadows, AO, normal maps, and alpha modes intact.
+///
+/// The WGSL contract (hook signatures, `ShadingSurface` / `LightSample`, the
+/// sampling rules) is documented on [`ShadingHookDesc`]. In addition, plugin
+/// bodies may read `material_params`, a `vec4<f32>` array of
+/// [`MATERIAL_PLUGIN_PARAM_VEC4S`] words at `@group(3) @binding(0)`, seeded
+/// from [`initial_params`](Self::initial_params) and writable per frame
+/// through the handle from `material_plugin_params_handle`. The params window
+/// is per plugin: every material using the plugin sees the same values.
+pub trait MaterialPlugin {
+    /// Plugin name: a unique, valid WGSL identifier.
+    fn name(&self) -> &'static str;
+    /// The WGSL body defining `shade_light` / `shade_ambient` / `recolor`
+    /// (any non-empty subset) plus helpers.
+    fn wgsl_body(&self) -> String;
+    /// Whether `shade_light` wants lights with `dot(N, L) <= 0` (wrap
+    /// lighting, subsurface, toon rim). Defaults to false, which keeps the
+    /// built-in backface early-continue and its skipped shadow taps.
+    fn needs_back_hemisphere(&self) -> bool {
+        false
+    }
+    /// Initial contents of the group-3 params window.
+    fn initial_params(&self) -> [[f32; 4]; MATERIAL_PLUGIN_PARAM_VEC4S] {
+        [[0.0; 4]; MATERIAL_PLUGIN_PARAM_VEC4S]
+    }
+}
+
+/// The lit pipelines composed for one material plugin: LDR + HDR families
+/// from `mesh.wgsl` and the OIT accumulate pipeline from `mesh_oit.wgsl`,
+/// all on the 4-group layout (camera, object, deform, plugin params).
+pub(crate) struct MaterialPluginPipelines {
+    pub ldr: crate::resources::mesh::mesh_pipelines::LdrMeshPipelines,
+    pub hdr: crate::resources::mesh::mesh_pipelines::HdrMeshPipelines,
+    pub oit: crate::gpu::RenderPipeline,
+}
+
+/// GPU state per registered material plugin: the params window and the
+/// lazily built pipeline set (invalidated by deformer registration and
+/// debug-vis toggles, rebuilt on the next prepare that references it).
+pub(crate) struct MaterialPluginGpu {
+    pub params_buffer: crate::gpu::Buffer,
+    pub bind_group_layout: crate::gpu::BindGroupLayout,
+    pub bind_group: crate::gpu::BindGroup,
+    pub pipelines: Option<MaterialPluginPipelines>,
+}
+
+/// Cloneable handle for writing a material plugin's params window from
+/// contexts that only carry a `&wgpu::Queue` (mirrors `DeformSlotHandle`).
+#[derive(Clone)]
+pub struct MaterialPluginParamsHandle {
+    buffer: crate::gpu::Buffer,
+}
+
+impl MaterialPluginParamsHandle {
+    /// Write `params` into the window starting at word 0. Slices longer than
+    /// [`MATERIAL_PLUGIN_PARAM_VEC4S`] are truncated.
+    pub fn write(&self, queue: &crate::gpu::Queue, params: &[[f32; 4]]) {
+        let n = params.len().min(MATERIAL_PLUGIN_PARAM_VEC4S);
+        if n == 0 {
+            return;
+        }
+        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&params[..n]));
+    }
+}
+
+impl crate::resources::DeviceResources {
+    /// Register a custom shading plugin for mesh materials.
+    ///
+    /// Registers the plugin's WGSL through [`Self::register_shading_hook`]
+    /// (validating every composed lit module), creates the group-3 params
+    /// window, and returns the id a [`Material`](crate::scene::material::Material)
+    /// selects it by. Pipelines build lazily on the first prepare that sees a
+    /// material referencing the id.
+    ///
+    /// Idempotent per name: re-registering a name that is already a material
+    /// plugin returns the existing id, so installers can run more than once.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewportError::ShadeShaderInvalid`] on a device with fewer than 4
+    /// bind groups, an invalid body, or a failed composition;
+    /// [`ViewportError::ShadeNameTaken`] when the name collides with a
+    /// deformer or a raw shading hook that is not a material plugin.
+    ///
+    /// [`ViewportError::ShadeNameTaken`]: crate::error::ViewportError::ShadeNameTaken
+    /// [`ViewportError::ShadeShaderInvalid`]: crate::error::ViewportError::ShadeShaderInvalid
+    pub fn register_material_plugin(
+        &mut self,
+        device: &crate::gpu::Device,
+        plugin: &dyn MaterialPlugin,
+    ) -> ViewportResult<MaterialPluginId> {
+        if let Some(existing) = self.shading_hook_id_by_name(plugin.name()) {
+            let id = existing.0 as u32;
+            if self.material_plugins.contains_key(&id) {
+                return Ok(MaterialPluginId(id));
+            }
+            return Err(ViewportError::ShadeNameTaken {
+                name: plugin.name().to_string(),
+            });
+        }
+
+        let hook_id = self.register_shading_hook(
+            device,
+            ShadingHookDesc {
+                name: plugin.name(),
+                wgsl_body: plugin.wgsl_body(),
+                needs_back_hemisphere: plugin.needs_back_hemisphere(),
+            },
+        )?;
+
+        use crate::gpu::util::DeviceExt;
+        let params = plugin.initial_params();
+        let params_buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some(&format!("material_plugin_{}_params", plugin.name())),
+            contents: bytemuck::cast_slice(&params),
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+        });
+        let bind_group_layout =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some(&format!("material_plugin_{}_bgl", plugin.name())),
+                entries: &[crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some(&format!("material_plugin_{}_bg", plugin.name())),
+            layout: &bind_group_layout,
+            entries: &[crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: params_buffer.as_entire_binding(),
+            }],
+        });
+
+        let id = hook_id.0 as u32;
+        self.material_plugins.insert(
+            id,
+            MaterialPluginGpu {
+                params_buffer,
+                bind_group_layout,
+                bind_group,
+                pipelines: None,
+            },
+        );
+        Ok(MaterialPluginId(id))
+    }
+
+    /// Handle for writing a material plugin's params window per frame.
+    /// Returns `None` for an id this registry did not issue.
+    pub fn material_plugin_params_handle(
+        &self,
+        id: MaterialPluginId,
+    ) -> Option<MaterialPluginParamsHandle> {
+        self.material_plugins
+            .get(&id.0)
+            .map(|gpu| MaterialPluginParamsHandle {
+                buffer: gpu.params_buffer.clone(),
+            })
+    }
+
+    /// Build the plugin's lit pipeline set if it is registered and not built.
+    /// Called from prepare for every plugin id the frame references; paint
+    /// has no mutable access, so an id that never went through prepare draws
+    /// with built-in shading instead.
+    pub(crate) fn ensure_material_plugin_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        id: MaterialPluginId,
+    ) {
+        let Some(gpu) = self.material_plugins.get(&id.0) else {
+            return;
+        };
+        if gpu.pipelines.is_some() {
+            return;
+        }
+        let hook_id = ShadingHookId(id.0 as usize);
+        let Some(mesh_src) = self.composed_shading_hook_source(hook_id, "mesh.wgsl") else {
+            return;
+        };
+        let Some(oit_src) = self.composed_shading_hook_source(hook_id, "mesh_oit.wgsl") else {
+            return;
+        };
+        let name = self.shade_hooks[id.0 as usize].desc.name;
+
+        let mesh_module = crate::resources::builders::wgsl_module(
+            device,
+            &format!("material_plugin_{name}_mesh"),
+            crate::resources::builders::strip_debug_vis(mesh_src, self.debug_vis_shaders),
+        );
+        let oit_module = crate::resources::builders::wgsl_module(
+            device,
+            &format!("material_plugin_{name}_oit"),
+            crate::resources::builders::strip_debug_vis(oit_src, self.debug_vis_shaders),
+        );
+
+        let gpu = self.material_plugins.get(&id.0).expect("checked above");
+        let label = format!("material_plugin_{name}_layout");
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            label.as_str(),
+            &[
+                &self.camera_bind_group_layout,
+                &self.object_bind_group_layout,
+                &self.deform.bind_group_layout,
+                &gpu.bind_group_layout,
+            ],
+        );
+        let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
+            device,
+            &layout,
+            &mesh_module,
+            self.target_format,
+            self.sample_count,
+            None,
+        );
+        let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
+            device,
+            &layout,
+            &mesh_module,
+        );
+        let oit = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+            device,
+            &layout,
+            &oit_module,
+        );
+        self.material_plugins
+            .get_mut(&id.0)
+            .expect("checked above")
+            .pipelines = Some(MaterialPluginPipelines { ldr, hdr, oit });
+    }
+
+    /// Resolve a material's plugin selection to its pipeline set and params
+    /// bind group. `None` when the material has no plugin, the id is unknown
+    /// (e.g. deserialized from another session), or the pipelines have not
+    /// been built yet; callers fall back to the built-in pipelines.
+    pub(crate) fn material_plugin_draw(
+        &self,
+        plugin: Option<MaterialPluginId>,
+    ) -> Option<(&MaterialPluginPipelines, &crate::gpu::BindGroup)> {
+        let id = plugin?;
+        let gpu = self.material_plugins.get(&id.0)?;
+        let pipes = gpu.pipelines.as_ref()?;
+        Some((pipes, &gpu.bind_group))
     }
 }
 

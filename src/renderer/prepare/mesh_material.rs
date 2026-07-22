@@ -26,6 +26,9 @@ pub(crate) fn is_instanceable(
 ) -> bool {
     !item.settings.hidden
         && item.active_attribute.is_none()
+        // Material-plugin items select a per-item pipeline set and a group-3
+        // params bind; the instanced path has neither, so they draw per-object.
+        && item.material.shading_plugin.is_none()
         // A GPU vertex warp is a per-object-only feature: the instanced pipeline
         // has no warp support and would draw the mesh undeformed, ignoring
         // `warp_scale`. Keep warp items on the per-object path (matching the

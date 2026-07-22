@@ -3475,6 +3475,118 @@ fn two_bind_group_device_renders_without_validation_errors() {
     assert_eq!(wireframe_pixels.len(), 64 * 64 * 4);
 }
 
+/// End-to-end proof of the material-plugin path: a registered plugin with a
+/// toon `shade_light` + `shade_ambient` body, selected per material via
+/// `Material::shading_plugin`, must change the rendered output on the LDR
+/// path, respond to live params writes, and run the HDR and OIT paths
+/// without validation errors (wgpu's uncaptured-error handler panics the
+/// thread on any validation failure, so completing the renders is itself the
+/// assertion).
+#[test]
+fn material_plugin_changes_rendered_output() {
+    struct ToonPlugin;
+    impl viewport_lib::MaterialPlugin for ToonPlugin {
+        fn name(&self) -> &'static str {
+            "toon_test"
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    let bands = max(material_params[0].x, 1.0);
+    let ndl = max(dot(surf.normal, light.l), 0.0);
+    let stepped = ceil(ndl * bands) / bands;
+    return surf.base_colour * stepped * light.radiance * light.shadow;
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour * material_params[0].y * surf.ao;
+}
+"
+            .to_string()
+        }
+        fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
+            let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
+            p[0] = [2.0, 0.25, 0.0, 0.0];
+            p
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &ToonPlugin)
+        .expect("register material plugin");
+    // Idempotent re-registration returns the same id.
+    assert_eq!(
+        renderer
+            .resources_mut()
+            .register_material_plugin(&device, &ToonPlugin)
+            .unwrap(),
+        plugin_id
+    );
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: cam.aspect,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.post_process.enabled = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    item.material.shading_plugin = Some(plugin_id);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let toon = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        builtin, toon,
+        "selecting the plugin must change the LDR output"
+    );
+
+    // Live params: raising the band count and ambient changes the image.
+    let params = renderer
+        .resources_mut()
+        .material_plugin_params_handle(plugin_id)
+        .expect("params handle");
+    params.write(&queue, &[[16.0, 0.9, 0.0, 0.0]]);
+    let toon_reparam = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        toon, toon_reparam,
+        "params writes must be live in the next render"
+    );
+
+    // HDR path (and, with a transparent second item, the OIT path).
+    let mut transparent = item.clone();
+    transparent.settings.opacity = 0.5;
+    transparent.model =
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item, transparent].into());
+    frame.effects.post_process.enabled = true;
+    let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(hdr.len(), 64 * 64 * 4);
+}
+
 /// A camera-facing unit quad in the XY plane (normal +Z), for the tone-map
 /// background-composite tests below.
 fn quad_mesh() -> MeshData {
