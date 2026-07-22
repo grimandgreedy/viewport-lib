@@ -635,3 +635,15 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 **Sidebar:** Paint mode toggle (suppresses orbit while dragging); brush colour picker, radius, and strength sliders; clear-painted-colours button; animate-grid toggle.
 
 **Drift:** None.
+
+---
+
+## 54. Custom Shading Plugins  (`showcase_54_custom_shading.rs` + `plugins/toon_plugin.rs`, ~330 lines)
+
+**Demos:** The `MaterialPlugin` API: WGSL shading hooks registered at runtime and selected per material. Five spheres share one mesh and light rig. A built-in PBR reference; two toon spheres running the same plugin through separate variants (independent band-count and tint params windows, proving per-material params on shared pipelines); a striped sphere whose variant binds a procedural texture to the plugin's `material_texture_0` slot; and a rim sphere whose `recolor` hook adds a view-dependent rim on top of untouched built-in lighting. Slider edits write straight into the group-3 params windows each frame.
+
+**Uses:** `MaterialPlugin`, `register_material_plugin`, `create_material_plugin_variant`, `material_plugin_params_handle`, `Material::shading_plugin`, `MaterialPluginId`, `upload_texture`, `primitives::sphere`.
+
+**Sidebar:** Toon A bands/ambient/tint; toon B bands/tint; rim colour and power. All live through `MaterialPluginParamsHandle::write`.
+
+**Drift:** None.

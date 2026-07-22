@@ -71,6 +71,7 @@ mod showcase_50_gpu_wave;
 mod showcase_51_async_uploads;
 mod showcase_52_lod;
 mod showcase_53_vertex_colours;
+mod showcase_54_custom_shading;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -231,6 +232,7 @@ fn main() -> eframe::Result {
                 async_uploads_state: showcase_51_async_uploads::AsyncUploadsState::default(),
                 lod_state: showcase_52_lod::LodState::default(),
                 vcol_state: showcase_53_vertex_colours::VertexColourState::default(),
+                cs_state: showcase_54_custom_shading::CustomShadingState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -298,6 +300,7 @@ enum ShowcaseMode {
     AsyncUploads,
     Lod,
     VertexColours,
+    CustomShading,
 }
 
 impl ShowcaseMode {
@@ -356,6 +359,7 @@ impl ShowcaseMode {
             Self::AsyncUploads => "51: Async Asset Streaming",
             Self::Lod => "52: Level of Detail",
             Self::VertexColours => "53: Vertex Colours & Painting",
+            Self::CustomShading => "54: Custom Shading Plugins",
         }
     }
 }
@@ -539,6 +543,9 @@ pub(crate) struct App {
 
     // --- Showcase 53 ---
     pub(crate) vcol_state: showcase_53_vertex_colours::VertexColourState,
+
+    // --- Showcase 54 ---
+    pub(crate) cs_state: showcase_54_custom_shading::CustomShadingState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -741,6 +748,7 @@ impl eframe::App for App {
                     ShowcaseMode::AsyncUploads,
                     ShowcaseMode::Lod,
                     ShowcaseMode::VertexColours,
+                    ShowcaseMode::CustomShading,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1599,7 +1607,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 53] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 54] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1653,6 +1661,7 @@ impl App {
             ShowcaseMode::AsyncUploads,
             ShowcaseMode::Lod,
             ShowcaseMode::VertexColours,
+            ShowcaseMode::CustomShading,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1790,6 +1799,7 @@ impl App {
             ShowcaseMode::AsyncUploads => !self.async_uploads_state.built,
             ShowcaseMode::Lod => !self.lod_state.built,
             ShowcaseMode::VertexColours => !self.vcol_state.built,
+            ShowcaseMode::CustomShading => !self.cs_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2321,6 +2331,15 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::CustomShading => {
+                self.build_custom_shading_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(0.0, 0.0, 1.0),
+                    distance: 15.0,
+                    orientation: glam::Quat::from_rotation_x(1.1),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2429,6 +2448,9 @@ impl App {
             ShowcaseMode::Lod => showcase_52_lod::controls_lod(self, ui),
             ShowcaseMode::VertexColours => {
                 showcase_53_vertex_colours::controls_vertex_colour(self, ui)
+            }
+            ShowcaseMode::CustomShading => {
+                showcase_54_custom_shading::controls_custom_shading(self, ui)
             }
         }
     }
@@ -3299,6 +3321,17 @@ impl App {
                 };
                 let generation = self.lod_state.generation;
                 (items, Some(BG_COLOUR), lighting, generation, 0)
+            }
+
+            ShowcaseMode::CustomShading => {
+                let items = showcase_54_custom_shading::custom_shading_items(self);
+                (
+                    items,
+                    Some(BG_COLOUR),
+                    showcase_54_custom_shading::custom_shading_lighting(),
+                    0,
+                    0,
+                )
             }
 
             ShowcaseMode::VertexColours => {

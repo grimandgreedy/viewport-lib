@@ -3576,6 +3576,23 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
         "params writes must be live in the next render"
     );
 
+    // Per-material params: a second variant with different params renders
+    // differently from the default variant in the same frame's plugin.
+    let variant_b = renderer
+        .resources_mut()
+        .create_material_plugin_variant(&device, plugin_id, &[[2.0, 0.05, 0.0, 0.0]], &[])
+        .expect("variant");
+    assert_eq!(variant_b.plugin_index(), plugin_id.plugin_index());
+    assert_ne!(variant_b.variant_index(), plugin_id.variant_index());
+    item.material.shading_plugin = Some(variant_b);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let toon_variant_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        toon_reparam, toon_variant_b,
+        "a second variant must carry its own params window"
+    );
+    item.material.shading_plugin = Some(plugin_id);
+
     // HDR path (and, with a transparent second item, the OIT path).
     let mut transparent = item.clone();
     transparent.settings.opacity = 0.5;
@@ -3585,6 +3602,93 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.effects.post_process.enabled = true;
     let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(hdr.len(), 64 * 64 * 4);
+}
+
+/// A plugin declaring a texture slot samples the per-variant texture: a
+/// variant bound to a red texture must render differently from the default
+/// variant's 1x1 white fallback.
+#[test]
+fn material_plugin_texture_variant_renders() {
+    struct StripePlugin;
+    impl viewport_lib::MaterialPlugin for StripePlugin {
+        fn name(&self) -> &'static str {
+            "stripe_test"
+        }
+        fn texture_count(&self) -> u32 {
+            1
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    let tex = textureSampleGrad(material_texture_0, material_sampler, surf.uv, surf.uv_ddx, surf.uv_ddy).rgb;
+    let ndl = max(dot(surf.normal, light.l), 0.0);
+    return surf.base_colour * tex * ndl * light.radiance * light.shadow;
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    let tex = textureSampleGrad(material_texture_0, material_sampler, surf.uv, surf.uv_ddx, surf.uv_ddy).rgb;
+    return surf.base_colour * tex * 0.3;
+}
+"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &StripePlugin)
+        .expect("register");
+
+    let red = vec![[255u8, 0, 0, 255]; 16].concat();
+    let red_tex = renderer
+        .resources_mut()
+        .upload_texture(&device, &queue, 4, 4, &red)
+        .expect("upload texture");
+    let red_variant = renderer
+        .resources_mut()
+        .create_material_plugin_variant(&device, plugin_id, &[], &[red_tex])
+        .expect("variant");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera {
+        view: cam.view_matrix(),
+        projection: cam.proj_matrix(),
+        eye_position: cam.eye_position().to_array(),
+        forward: [0.0, 0.0, -1.0],
+        orientation: cam.orientation,
+        near: cam.effective_znear(),
+        far: cam.zfar,
+        distance: cam.distance,
+        fov: cam.fov_y,
+        aspect: cam.aspect,
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.post_process.enabled = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material.shading_plugin = Some(plugin_id);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
+    let white_fallback = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    item.material.shading_plugin = Some(red_variant);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+    let red_textured = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        white_fallback, red_textured,
+        "a variant's texture must reach the hook"
+    );
 }
 
 /// A camera-facing unit quad in the XY plane (normal +Z), for the tone-map

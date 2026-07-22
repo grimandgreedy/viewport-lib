@@ -390,20 +390,34 @@ pub struct Material {
     pub shading_plugin: Option<MaterialPluginId>,
 }
 
-/// Handle to a material plugin registered with `register_material_plugin`.
+/// Handle to a material plugin registered with `register_material_plugin`,
+/// optionally qualified to one of its variants
+/// (`create_material_plugin_variant`).
 ///
-/// A small `Copy` id carried on [`Material::shading_plugin`]. The renderer
-/// resolves it against the plugin registry at draw time; an id from a
-/// different session (e.g. a deserialized scene rendered before the plugin is
-/// re-registered) simply falls back to built-in shading for the frame.
+/// A small `Copy` id carried on [`Material::shading_plugin`]. All variants of
+/// a plugin share its WGSL and pipelines; each variant owns its group-3
+/// params window and texture set, which is how two materials run the same
+/// plugin with different parameters. `register_material_plugin` returns the
+/// default variant (index 0). The renderer resolves the id against the
+/// registry at draw time; an id from a different session (e.g. a deserialized
+/// scene rendered before the plugin is re-registered) simply falls back to
+/// built-in shading for the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct MaterialPluginId(pub(crate) u32);
+pub struct MaterialPluginId {
+    pub(crate) plugin: u32,
+    pub(crate) variant: u32,
+}
 
 impl MaterialPluginId {
     /// Index of the underlying shading-hook registration.
-    pub fn index(&self) -> u32 {
-        self.0
+    pub fn plugin_index(&self) -> u32 {
+        self.plugin
+    }
+
+    /// Variant index within the plugin (0 is the default variant).
+    pub fn variant_index(&self) -> u32 {
+        self.variant
     }
 }
 
