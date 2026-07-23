@@ -21,7 +21,7 @@ Per-material parameters and textures ride variants: `register_material_plugin` r
 
 Plugin draws need `max_bind_groups >= 4` (the wgpu default; registration fails with a clear error on more limited devices) and render per-object rather than instanced. Reference plugins live in `examples/plugins/` (toon, rim, detail layer, parallax relief, dissolve), all live in the "Custom Shading Plugins" showcase.
 
-A plugin's pipeline set (roughly nine render pipelines plus two shader compiles) is not built at registration. It builds on the first frame that references the plugin, capped at a few plugins per frame; materials whose plugin is still cold draw built-in shading until their set is ready. To pay that cost at a moment you control (a load screen, scene setup) instead, call `warm_material_plugin_pipelines(&device, &ids)` with the plugins the scene uses, or `warm_all_material_plugin_pipelines(&device)`.
+A plugin's pipeline set (roughly nine render pipelines plus two shader compiles) is not built at registration. It builds on the first frame that references the plugin, capped at a few plugins per frame; materials whose plugin is still cold draw built-in shading until their set is ready. To pay that cost at a moment you control (a load screen, scene setup) instead, call `warm_material_plugin_pipelines(&device, &ids)` with the plugins the scene uses, or `warm_all_material_plugin_pipelines(&device)`. `material_plugin_pipelines_ready(id)` reports whether a plugin's set is built (false while cold or invalidated), and `MaterialPluginStats` carries the plugin's `id` so stats rows correlate with held ids without matching on name.
 
 #### Per-vertex extension attributes
 

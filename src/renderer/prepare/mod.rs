@@ -288,7 +288,7 @@ impl ViewportRenderer {
             let Some(pid) = item.material.shading_plugin else {
                 continue;
             };
-            if resources.material_plugin_pipelines_ready(pid) || cold_seen.contains(&pid.plugin) {
+            if !resources.material_plugin_needs_build(pid) || cold_seen.contains(&pid.plugin) {
                 continue;
             }
             cold_seen.push(pid.plugin);

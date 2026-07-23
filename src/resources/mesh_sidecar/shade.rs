@@ -613,6 +613,10 @@ impl MaterialPluginPipelines {
 /// [`DeviceResources::material_plugin_stats`](crate::resources::DeviceResources::material_plugin_stats).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaterialPluginStats {
+    /// The plugin's default-variant id, as returned by
+    /// `register_material_plugin`. Lets a consumer correlate a stats row
+    /// with the ids it holds without matching on `name`.
+    pub id: MaterialPluginId,
     /// The plugin's registered name.
     pub name: &'static str,
     /// Number of variants, including the default one.
@@ -926,6 +930,10 @@ impl crate::resources::DeviceResources {
             .map(|id| {
                 let gpu = &self.material_plugins[&id];
                 MaterialPluginStats {
+                    id: MaterialPluginId {
+                        plugin: id,
+                        variant: 0,
+                    },
                     name: self.shade_hooks[id as usize].desc.name,
                     variants: gpu.variants.len() as u32,
                     texture_count: gpu.texture_count,
@@ -981,17 +989,40 @@ impl crate::resources::DeviceResources {
         }
     }
 
-    /// True when the plugin's pipeline set does not need a build: either it
-    /// is already built or the id is unknown (unknown ids draw built-in
-    /// shading and are never built). Lets prepare budget cold builds
-    /// without calling into the builder.
-    pub(crate) fn material_plugin_pipelines_ready(
+    /// True once the plugin's pipeline set is built, i.e. materials
+    /// selecting it draw plugin shading rather than the built-in fallback.
+    ///
+    /// `false` while the set is cold: before the first referencing
+    /// `prepare()` (or `warm_material_plugin_pipelines` call) builds it, and
+    /// again after a deformer registration or debug-vis toggle invalidates
+    /// it until the next build. Also `false` for ids this registry did not
+    /// issue, which never build. The variant field is ignored: variants
+    /// share the plugin's pipeline set.
+    ///
+    /// Cold sets referenced by a frame build within a few frames (see the
+    /// per-frame cap in prepare), so polling this per frame is cheap and
+    /// converges quickly; use it to gate work that should wait for plugin
+    /// shading to be live, e.g. revealing an object only once it stops
+    /// drawing fallback shading.
+    pub fn material_plugin_pipelines_ready(
         &self,
         id: crate::scene::material::MaterialPluginId,
     ) -> bool {
         self.material_plugins
             .get(&id.plugin)
-            .is_none_or(|gpu| gpu.pipelines.is_some())
+            .is_some_and(|gpu| gpu.pipelines.is_some())
+    }
+
+    /// True when the plugin is registered and its pipeline set is cold: the
+    /// budget-relevant question for prepare, where an unknown id must not
+    /// consume a build slot (it would no-op in the builder every frame).
+    pub(crate) fn material_plugin_needs_build(
+        &self,
+        id: crate::scene::material::MaterialPluginId,
+    ) -> bool {
+        self.material_plugins
+            .get(&id.plugin)
+            .is_some_and(|gpu| gpu.pipelines.is_none())
     }
 
     /// Build the plugin's lit pipeline set if it is registered and not built.
@@ -1136,6 +1167,53 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
             }))
             .ok()?;
         Some((device, queue))
+    }
+
+    /// Readiness reporting across the pipeline-set lifecycle: cold after
+    /// registration, built after warm-up, and unknown ids read as neither
+    /// ready nor needing a build.
+    #[test]
+    fn material_plugin_readiness_tracks_pipeline_builds() {
+        use crate::renderer::ViewportRenderer;
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let resources = renderer.resources_mut();
+
+        struct ReadyProbe;
+        impl MaterialPlugin for ReadyProbe {
+            fn name(&self) -> &'static str {
+                "ready_probe"
+            }
+            fn wgsl_body(&self) -> String {
+                TOON_BODY.to_string()
+            }
+        }
+
+        let id = resources
+            .register_material_plugin(&device, &ReadyProbe)
+            .expect("register");
+        assert!(!resources.material_plugin_pipelines_ready(id));
+        assert!(resources.material_plugin_needs_build(id));
+        let stats = resources.material_plugin_stats();
+        let row = stats.iter().find(|s| s.id == id).expect("stats row");
+        assert_eq!(row.pipelines_built, 0);
+
+        resources.warm_material_plugin_pipelines(&device, &[id]);
+        assert!(resources.material_plugin_pipelines_ready(id));
+        assert!(!resources.material_plugin_needs_build(id));
+        let stats = resources.material_plugin_stats();
+        let row = stats.iter().find(|s| s.id == id).expect("stats row");
+        assert_eq!(row.pipelines_built, MaterialPluginPipelines::COUNT);
+
+        let unknown = MaterialPluginId {
+            plugin: 9999,
+            variant: 0,
+        };
+        assert!(!resources.material_plugin_pipelines_ready(unknown));
+        assert!(!resources.material_plugin_needs_build(unknown));
     }
 
     #[test]
