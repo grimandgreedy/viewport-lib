@@ -39,6 +39,14 @@ pub(super) struct PointShadowFace {
 /// per-face dynamic-offset uniform buffer.
 pub(super) const POINT_FACE_STRIDE: u64 = 256;
 
+/// How many cold material-plugin pipeline sets one `prepare()` will build.
+/// Each set is roughly nine render pipelines plus two shader-module
+/// compilations, so an uncapped frame that references many cold plugins
+/// stalls for their combined compile time. Plugins past the cap draw
+/// built-in shading until a later frame (or an explicit
+/// `warm_material_plugin_pipelines` call) builds them.
+const MATERIAL_PLUGIN_BUILDS_PER_PREPARE: usize = 4;
+
 /// Transient per-frame lighting results produced by the lighting phase and
 /// consumed by the shadow depth pass: the directional cascade matrices and the
 /// point-light cube-map faces to render this frame.
@@ -178,6 +186,12 @@ impl ViewportRenderer {
             self.compute_filter_results.clear();
         }
 
+        // Run the mesh-family pipeline rebuild that deformer registration
+        // deferred, before anything draws or builds against those pipelines.
+        // A burst of registrations since the last frame costs one rebuild
+        // here instead of one per call.
+        self.resources.flush_mesh_pipeline_rebuild(device);
+
         // Ensure built-in colourmaps and matcaps are uploaded on first frame.
         self.resources.ensure_colourmaps_initialized(device, queue);
         self.resources.ensure_matcaps_initialized(device, queue);
@@ -259,14 +273,38 @@ impl ViewportRenderer {
         }
 
         let per_object_start = std::time::Instant::now();
-        // Build any material-plugin pipeline set the frame references before
-        // draw time (paint has no mutable access). Already-built ids
-        // early-return inside; unknown ids are ignored and those items fall
-        // back to built-in shading.
+        // Build material-plugin pipeline sets the frame references before
+        // draw time (paint has no mutable access), capped per frame so a
+        // scene that suddenly references many cold plugins pays a bounded
+        // cost instead of one long stall. Items whose plugin is still cold
+        // draw with built-in shading until its set is built on a later
+        // frame; `warm_material_plugin_pipelines` builds ahead of time for
+        // consumers that want to avoid the pop-in entirely. Unknown ids are
+        // ignored and those items fall back to built-in shading.
+        let mut plugin_builds = 0usize;
+        let mut plugin_builds_deferred = 0usize;
+        let mut cold_seen: Vec<u32> = Vec::new();
         for item in scene_items.iter() {
-            if let Some(pid) = item.material.shading_plugin {
-                resources.ensure_material_plugin_pipelines(device, pid);
+            let Some(pid) = item.material.shading_plugin else {
+                continue;
+            };
+            if resources.material_plugin_pipelines_ready(pid) || cold_seen.contains(&pid.plugin) {
+                continue;
             }
+            cold_seen.push(pid.plugin);
+            if plugin_builds >= MATERIAL_PLUGIN_BUILDS_PER_PREPARE {
+                plugin_builds_deferred += 1;
+                continue;
+            }
+            resources.ensure_material_plugin_pipelines(device, pid);
+            plugin_builds += 1;
+        }
+        if plugin_builds_deferred > 0 {
+            tracing::debug!(
+                built = plugin_builds,
+                deferred = plugin_builds_deferred,
+                "material plugin pipeline builds hit the per-frame cap; deferred plugins draw built-in shading this frame"
+            );
         }
         // Evaluate instanceability once per frame and share the result. Each
         // `is_instanceable` call does several mesh-store and deform lookups plus

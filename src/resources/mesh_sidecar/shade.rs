@@ -939,10 +939,66 @@ impl crate::resources::DeviceResources {
             .collect()
     }
 
+    /// Build the lit pipeline sets for the given plugins now instead of on
+    /// the first frame that draws them.
+    ///
+    /// Each cold plugin costs roughly nine render pipelines plus two shader
+    /// module compilations, built synchronously in this call. Without
+    /// warm-up that cost lands inside `prepare()` on the first frame that
+    /// references the plugin, rate-limited to a few plugins per frame with
+    /// affected materials drawing built-in shading until their set is
+    /// ready. Call this behind a load screen (or whenever a hitch is
+    /// acceptable) with the plugins the upcoming scene uses.
+    ///
+    /// Already-built plugins and unknown ids are skipped, so the call is
+    /// idempotent and safe with any id set. The variant field is ignored:
+    /// variants share the plugin's pipeline set.
+    pub fn warm_material_plugin_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        ids: &[crate::scene::material::MaterialPluginId],
+    ) {
+        // A pending deformer registration would drop every plugin set when
+        // it flushes; run it first so the warm-up is not thrown away.
+        self.flush_mesh_pipeline_rebuild(device);
+        for id in ids {
+            self.ensure_material_plugin_pipelines(device, *id);
+        }
+    }
+
+    /// [`Self::warm_material_plugin_pipelines`] over every registered
+    /// plugin. Prefer the id-list form when the set of plugins a scene
+    /// actually uses is known; warming plugins that never draw spends
+    /// compile time and pipeline memory for nothing.
+    pub fn warm_all_material_plugin_pipelines(&mut self, device: &crate::gpu::Device) {
+        self.flush_mesh_pipeline_rebuild(device);
+        let ids: Vec<u32> = self.material_plugins.keys().copied().collect();
+        for plugin in ids {
+            self.ensure_material_plugin_pipelines(
+                device,
+                crate::scene::material::MaterialPluginId { plugin, variant: 0 },
+            );
+        }
+    }
+
+    /// True when the plugin's pipeline set does not need a build: either it
+    /// is already built or the id is unknown (unknown ids draw built-in
+    /// shading and are never built). Lets prepare budget cold builds
+    /// without calling into the builder.
+    pub(crate) fn material_plugin_pipelines_ready(
+        &self,
+        id: crate::scene::material::MaterialPluginId,
+    ) -> bool {
+        self.material_plugins
+            .get(&id.plugin)
+            .is_none_or(|gpu| gpu.pipelines.is_some())
+    }
+
     /// Build the plugin's lit pipeline set if it is registered and not built.
-    /// Called from prepare for every plugin id the frame references; paint
-    /// has no mutable access, so an id that never went through prepare draws
-    /// with built-in shading instead.
+    /// Called from prepare (budgeted per frame) for plugin ids the frame
+    /// references, and from the warm-up methods above; paint has no mutable
+    /// access, so an id that never went through either draws with built-in
+    /// shading instead.
     pub(crate) fn ensure_material_plugin_pipelines(
         &mut self,
         device: &crate::gpu::Device,

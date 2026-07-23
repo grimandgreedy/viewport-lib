@@ -885,11 +885,12 @@ impl DeviceResources {
     /// Validates the descriptor's name and allocates a slot, composes every
     /// mesh-family base shader with the new deformer plus all previously
     /// registered ones, and runs each composed module through wgpu's
-    /// validator. On success, the LDR and HDR `mesh.wgsl` pipelines are
-    /// rebuilt from the freshly composed source so subsequent draws run
-    /// the registered body. Other mesh-family pipelines (instanced,
-    /// shadow, outline mask, OIT) continue to run the identity path until
-    /// their factories migrate to the same rebuild path.
+    /// validator. On success the registration is stored and the mesh-family
+    /// pipelines are marked for rebuild; the rebuild itself runs once at the
+    /// start of the next `prepare()`, so registering N deformers in a row
+    /// costs one recompose-and-rebuild pass, not N. Other mesh-family
+    /// pipelines (instanced, shadow, outline mask, OIT) continue to run the
+    /// identity path until their factories migrate to the same rebuild path.
     ///
     /// On any validation failure the registration is rolled back: the
     /// previously composed sources stay live and the returned error names
@@ -932,7 +933,7 @@ impl DeviceResources {
         }
 
         self.deform.registrations.push(candidate);
-        self.rebuild_mesh_pipelines(device);
+        self.mesh_pipelines_dirty = true;
         Ok(DeformerId(slot))
     }
 
@@ -967,7 +968,7 @@ impl DeviceResources {
         }
 
         self.deform.registrations.push(candidate);
-        self.rebuild_mesh_pipelines(device);
+        self.mesh_pipelines_dirty = true;
         Ok(DeformerId(slot))
     }
 
@@ -998,11 +999,11 @@ impl DeviceResources {
     }
 
     /// Re-compose every mesh-family shader and rebuild the pipelines that
-    /// draw from it. Called by `register_deformer` once a new registration
-    /// has validated; safe to call between frames with zero registrations
-    /// to reset to the identity shader. The instanced and instanced-OIT
-    /// pipelines stay on their build-time shader modules until their
-    /// factories migrate to the same rebuild flow.
+    /// draw from it. Runs from `flush_mesh_pipeline_rebuild` once any number
+    /// of deformer registrations have validated; safe to call between frames
+    /// with zero registrations to reset to the identity shader. The
+    /// instanced and instanced-OIT pipelines stay on their build-time shader
+    /// modules until their factories migrate to the same rebuild flow.
     /// Swap the lit pipelines between the stripped and debug-vis shader
     /// variants (see `builders::strip_debug_vis`). Called when the per-frame
     /// `DebugVis` state flips. The swap recompiles the mesh-family
@@ -1017,6 +1018,22 @@ impl DeviceResources {
             return;
         }
         self.debug_vis_shaders = active;
+        // Rebuild immediately (not via the dirty flag) so the toggle takes
+        // effect in the frame that flipped it; the flag is cleared because
+        // this rebuild also covers any pending deformer registration.
+        self.mesh_pipelines_dirty = false;
+        self.rebuild_mesh_pipelines(device);
+    }
+
+    /// Run the mesh-family pipeline rebuild that deformer registration
+    /// deferred. Called at the start of every `prepare()`; a burst of
+    /// `register_deformer` calls between frames collapses into the single
+    /// rebuild here. No-op when nothing is pending.
+    pub(crate) fn flush_mesh_pipeline_rebuild(&mut self, device: &crate::gpu::Device) {
+        if !self.mesh_pipelines_dirty {
+            return;
+        }
+        self.mesh_pipelines_dirty = false;
         self.rebuild_mesh_pipelines(device);
     }
 
@@ -1492,13 +1509,13 @@ mod tests {
     }
 
     /// Registering a deformer that actually reads from `deform_data` must
-    /// produce a rebuilt LDR `mesh.wgsl` pipeline family. The simplest
-    /// proof: if the composed source were broken, `register_deformer`
-    /// would fail at validation; if the rebuild path were broken (e.g.
-    /// shader module created from stale source), this test would still
-    /// pass because no draw is issued. So we also re-fetch the LDR
-    /// pipelines and confirm they are not the originals that the renderer
-    /// was constructed with.
+    /// produce a rebuilt LDR `mesh.wgsl` pipeline family once the deferred
+    /// rebuild flushes. The simplest proof: if the composed source were
+    /// broken, `register_deformer` would fail at validation; if the rebuild
+    /// path were broken (e.g. shader module created from stale source),
+    /// this test would still pass because no draw is issued. So we also
+    /// re-fetch the LDR pipelines and confirm they are not the originals
+    /// that the renderer was constructed with.
     #[test]
     fn register_deformer_rebuilds_ldr_mesh_pipelines() {
         use crate::renderer::ViewportRenderer;
@@ -1524,6 +1541,9 @@ mod tests {
             .register_deformer(&device, desc)
             .expect("register");
         assert_eq!(id.slot(), 0);
+        renderer
+            .resources_mut()
+            .flush_mesh_pipeline_rebuild(&device);
 
         let solid_after: *const crate::gpu::RenderPipeline = &renderer.resources().solid_pipeline;
         let wf_after: *const crate::gpu::RenderPipeline = &renderer.resources().wireframe_pipeline;

@@ -566,6 +566,12 @@ pub struct DeviceResources {
     /// depth rejection (see `builders::strip_debug_vis`). Toggled per frame
     /// from the `DebugVis` state, which rebuilds the lit pipelines.
     pub(crate) debug_vis_shaders: bool,
+    /// Set by `register_deformer` / `register_internal_deformer` instead of
+    /// rebuilding the mesh-family pipelines inline, so a burst of
+    /// registrations costs one recompose instead of one per call. Cleared by
+    /// `flush_mesh_pipeline_rebuild`, which prepare runs at the start of
+    /// every frame.
+    pub(crate) mesh_pipelines_dirty: bool,
     /// Optional pipeline cache shared by every pipeline built here. `Some` only
     /// when the device enables `Features::PIPELINE_CACHE`. Persist its contents
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader

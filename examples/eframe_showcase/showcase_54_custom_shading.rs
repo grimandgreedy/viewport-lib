@@ -169,6 +169,14 @@ impl App {
             .register_material_plugin(&self.device, &DissolvePlugin)
             .expect("register dissolve plugin");
 
+        // Build all five pipeline sets now, during scene setup, instead of
+        // letting the first rendered frame pay for them a few at a time
+        // (cold plugins draw built-in shading until their set is built).
+        resources.warm_material_plugin_pipelines(
+            &self.device,
+            &[toon_a, rim, detail, parallax_default, dissolve],
+        );
+
         if self.cs_state.toon_b.is_none() {
             let s = &self.cs_state;
             self.cs_state.toon_b = Some(

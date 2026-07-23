@@ -205,8 +205,3 @@ required-features = ["wgpu27", "example-iced"]
 name = "runtime-jobs"
 path = "examples/runtime_jobs.rs"
 required-features = ["wgpu27"]
-
-[[example]]
-name = "offthread-submit-spike"
-path = "examples/offthread_submit_spike.rs"
-required-features = ["wgpu27"]

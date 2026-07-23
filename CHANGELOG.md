@@ -21,6 +21,8 @@ Per-material parameters and textures ride variants: `register_material_plugin` r
 
 Plugin draws need `max_bind_groups >= 4` (the wgpu default; registration fails with a clear error on more limited devices) and render per-object rather than instanced. Reference plugins live in `examples/plugins/` (toon, rim, detail layer, parallax relief, dissolve), all live in the "Custom Shading Plugins" showcase.
 
+A plugin's pipeline set (roughly nine render pipelines plus two shader compiles) is not built at registration. It builds on the first frame that references the plugin, capped at a few plugins per frame; materials whose plugin is still cold draw built-in shading until their set is ready. To pay that cost at a moment you control (a load screen, scene setup) instead, call `warm_material_plugin_pipelines(&device, &ids)` with the plugins the scene uses, or `warm_all_material_plugin_pipelines(&device)`.
+
 #### Per-vertex extension attributes
 
 `MeshData::extension_attributes` uploads one `vec4<f32>` per vertex alongside the mesh. A material plugin that returns `reads_vertex_attribute() = true` receives it interpolated as `surf.attr`; the meaning of the components is up to the plugin (blend masks, wind weights, bake data). Meshes without the channel read `vec4(0.0)`, so one plugin serves meshes with and without the data.
@@ -74,6 +76,8 @@ Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin:
 `OverlayPolylineItem::closed_from_path` builds a closed, filled polygon from a closure, sampling `[0, 1)` so the closing segment does not double the start point. `set_points_from_path` resamples the points in place following the item's `closed` flag, for animating a function-generated path each frame.
 
 ### Improvements
+
+- **Deformer registration no longer rebuilds pipelines per call.** `register_deformer` validates immediately (errors still surface at the call) but defers the mesh-family pipeline rebuild to the start of the next `prepare()`, so registering N deformers in a row costs one recompose-and-rebuild pass instead of N.
 
 - **Scenes with many lights are much faster on the instanced path.** Instanced draws previously lit every pixel with every light in the scene; they now use the same per-cluster light lists the per-object path uses, so each pixel only pays for the lights that can actually reach it. Scenes with 16 or fewer lights are unchanged.
 
