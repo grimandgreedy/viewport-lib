@@ -267,7 +267,19 @@ fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
     return textureSampleLevel(ibl_irradiance, ibl_sampler, dir_to_equirect_uv(N, rotation), 0.0).rgb;
 }
 fn sample_ibl_prefiltered(R: vec3<f32>, roughness: f32, rotation: f32) -> vec3<f32> {
-    return textureSampleLevel(ibl_prefiltered, ibl_sampler, dir_to_equirect_uv(R, rotation), roughness * 4.0).rgb;
+    // Mip floored by the screen-space footprint of R (see mesh.wgsl).
+    let dr = max(length(dpdx(R)), length(dpdy(R)));
+    let footprint_mip = clamp(log2(max(dr * 128.0 / (2.0 * IBL_PI), 1.0)), 0.0, 4.0);
+    let mip = max(roughness * 4.0, footprint_mip);
+    return textureSampleLevel(ibl_prefiltered, ibl_sampler, dir_to_equirect_uv(R, rotation), mip).rgb;
+}
+// Geometric specular AA: widen roughness by normal variance (see mesh.wgsl).
+fn specular_aa_roughness(N: vec3<f32>, roughness: f32) -> f32 {
+    let du = dpdx(N);
+    let dv = dpdy(N);
+    let kernel = min(0.5 * (dot(du, du) + dot(dv, dv)), 0.18);
+    let alpha = roughness * roughness;
+    return sqrt(sqrt(clamp(alpha * alpha + kernel, 0.0, 1.0)));
 }
 fn sample_brdf_lut(NdotV: f32, roughness: f32) -> vec2<f32> {
     return textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(NdotV, roughness), 0.0).rg;
@@ -630,6 +642,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
             roughness = max(r_remapped * roughness, 0.04);
         }
+        roughness = specular_aa_roughness(N, roughness);
         var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.

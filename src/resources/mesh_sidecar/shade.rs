@@ -765,7 +765,7 @@ impl crate::resources::DeviceResources {
                 address_mode_v: crate::gpu::AddressMode::Repeat,
                 mag_filter: crate::gpu::FilterMode::Linear,
                 min_filter: crate::gpu::FilterMode::Linear,
-                mipmap_filter: crate::gpu::FilterMode::Linear,
+                mipmap_filter: crate::resources::builders::dmipmap(crate::gpu::FilterMode::Linear),
                 ..Default::default()
             })
         });

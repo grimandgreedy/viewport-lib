@@ -17,9 +17,16 @@ pub(crate) struct ToneMapUniform {
     pub(crate) far_plane: f32,
     pub(crate) lic_enabled: u32,
     pub(crate) lic_strength: f32,
+    /// 1 when the render target format is not an sRGB format, so the shader
+    /// must gamma-encode its output. With an sRGB target the hardware encodes
+    /// on write and this stays 0. Non-sRGB targets are what egui hosts hand
+    /// out (egui-wgpu prefers Bgra8Unorm / Rgba8Unorm); without the shader
+    /// encode the whole viewport displays gamma-darkened.
+    pub(crate) srgb_encode: u32,
+    pub(crate) _pad: [u32; 3],
 }
 
-const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 64);
+const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 80);
 
 /// Bloom pass uniform (16 bytes).
 #[repr(C)]

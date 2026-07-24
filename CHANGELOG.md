@@ -143,6 +143,14 @@ Reading GPU timestamps could hang the frame on Metal; timestamps now resolve one
 
 The field was documented as the direction light travels; the shaders have always treated it as the surface-to-light vector. The doc now says so. No behaviour change.
 
+#### HDR output displayed gamma-darkened on non-sRGB render targets
+
+egui hosts hand the renderer a non-sRGB target format (egui-wgpu prefers `Bgra8Unorm` / `Rgba8Unorm`), but the tone-map pass wrote linear values and relied on the target format for the sRGB encode. The whole viewport displayed gamma-darkened: crushed shadows, oversaturated colours, and PBR+IBL scenes reading dark and murky where the same scene on an sRGB target looked correct. The tone-map pass now applies the sRGB transfer function in the shader when the target format is not sRGB, so output matches across target formats. Scenes tuned against the old darkened output will read brighter. Overlays drawn after tone mapping (the axes widget) are unaffected by this change.
+
+#### PBR specular aliased into speckle on normal-mapped surfaces under IBL
+
+With an environment map active, a detailed normal map at low-to-moderate roughness rendered as per-pixel multi-colour glints, and low-roughness surfaces washed out into a flat environment reflection that swallowed the albedo. Two changes in all lit paths: perceptual roughness is widened by the screen-space variance of the shading normal (geometric specular anti-aliasing), and the prefiltered environment sample floors its mip level by the screen-space footprint of the reflection vector, so magnified reflections integrate over the environment instead of point-sampling hot HDR texels. Smooth normals at ordinary viewing distances are unaffected; direct specular highlights on detailed normal maps get slightly wider and dimmer instead of sparkling.
+
 ## [0.19.0]
 
 ### Features

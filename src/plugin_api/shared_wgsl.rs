@@ -495,6 +495,17 @@ fn viewport_dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
     );
 }
 
+// Geometric specular anti-aliasing: widen perceptual roughness by the
+// screen-space variance of the shading normal so detailed normal maps do
+// not alias into per-pixel glints. Matches the built-in mesh pipelines.
+fn viewport_specular_aa_roughness(n: vec3<f32>, roughness: f32) -> f32 {
+    let du = dpdx(n);
+    let dv = dpdy(n);
+    let kernel = min(0.5 * (dot(du, du) + dot(dv, dv)), 0.18);
+    let alpha = roughness * roughness;
+    return sqrt(sqrt(clamp(alpha * alpha + kernel, 0.0, 1.0)));
+}
+
 fn viewport_fresnel_roughness(cos_theta: f32, f0: vec3<f32>, roughness: f32) -> vec3<f32> {
     let fr = max(vec3<f32>(1.0 - roughness), f0);
     return f0 + (fr - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
@@ -520,11 +531,16 @@ fn viewport_ibl_ambient(
     let irradiance =
         textureSampleLevel(ibl_irradiance_tex, ibl_sampler, viewport_dir_to_equirect_uv(n, rotation), 0.0).rgb;
     let r = reflect(-v, n);
+    // Mip floored by the screen-space footprint of r, matching the built-in
+    // mesh pipelines: magnified reflections on detailed normals would
+    // otherwise point-sample hot mip-0 texels and read as speckle.
+    let dr = max(length(dpdx(r)), length(dpdy(r)));
+    let footprint_mip = clamp(log2(max(dr * 128.0 / (2.0 * 3.14159265), 1.0)), 0.0, 4.0);
     let prefiltered = textureSampleLevel(
         ibl_specular_tex,
         ibl_sampler,
         viewport_dir_to_equirect_uv(r, rotation),
-        roughness * 4.0,
+        max(roughness * 4.0, footprint_mip),
     ).rgb;
     let brdf = textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, roughness), 0.0).rg;
     let diffuse = kd * irradiance * albedo * ao;
@@ -539,7 +555,7 @@ fn viewport_ibl_ambient(
 fn viewport_pbr_shade(inp: PbrInputs) -> vec3<f32> {
     let N = normalize(inp.world_n);
     let V = normalize(inp.view_dir);
-    let roughness = max(inp.roughness, 0.04);
+    let roughness = viewport_specular_aa_roughness(N, max(inp.roughness, 0.04));
     let alpha = roughness * roughness;
     let alpha2 = alpha * alpha;
     let f0 = mix(vec3<f32>(0.04), inp.albedo, inp.metallic);

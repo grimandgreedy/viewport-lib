@@ -358,11 +358,34 @@ fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
 }
 
 /// Sample the prefiltered specular map at a roughness-derived mip level.
+///
+/// The mip is floored by the screen-space footprint of the reflection vector:
+/// on a detailed normal map, R swings across many prefiltered-map texels
+/// between adjacent pixels, and point-sampling mip 0 there turns hot HDR
+/// texels into per-pixel speckle. The footprint floor integrates them instead.
 fn sample_ibl_prefiltered(R: vec3<f32>, roughness: f32, rotation: f32) -> vec3<f32> {
     let uv = dir_to_equirect_uv(R, rotation);
     let max_mip = 4.0; // 5 mip levels -> max index 4
-    let mip = roughness * max_mip;
+    // Texels covered per pixel: |dR| radians mapped onto the 128-texel-wide
+    // equirect prefiltered map (2*PI radians of longitude).
+    let dr = max(length(dpdx(R)), length(dpdy(R)));
+    let texels = dr * 128.0 / (2.0 * IBL_PI);
+    let footprint_mip = clamp(log2(max(texels, 1.0)), 0.0, max_mip);
+    let mip = max(roughness * max_mip, footprint_mip);
     return textureSampleLevel(ibl_prefiltered, ibl_sampler, uv, mip).rgb;
+}
+
+/// Geometric specular anti-aliasing (Kaplanyan-style): widen perceptual
+/// roughness by the screen-space variance of the shading normal so a detailed
+/// normal map does not alias into per-pixel glints on a single-sampled
+/// target. Neutral on smooth normals; applies to direct and IBL specular.
+fn specular_aa_roughness(N: vec3<f32>, roughness: f32) -> f32 {
+    let du = dpdx(N);
+    let dv = dpdy(N);
+    let variance = 0.25 * (dot(du, du) + dot(dv, dv));
+    let kernel = min(2.0 * variance, 0.18);
+    let alpha = roughness * roughness;
+    return sqrt(sqrt(clamp(alpha * alpha + kernel, 0.0, 1.0)));
 }
 
 /// Look up the BRDF integration LUT (x=NdotV, y=roughness).
@@ -797,6 +820,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
             roughness = max(r_remapped * roughness, 0.04);
         }
+        roughness = specular_aa_roughness(N, roughness);
         var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
 
         // Plugin shading hooks: the composer fills the shade-slot regions in

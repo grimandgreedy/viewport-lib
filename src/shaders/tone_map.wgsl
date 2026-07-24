@@ -15,6 +15,12 @@ struct ToneMapUniform {
     far_plane:               f32,
     lic_enabled:             u32,
     lic_strength:            f32,
+    // 1 = gamma-encode the output in the shader because the target format is
+    // not sRGB (egui hosts hand out Bgra8Unorm / Rgba8Unorm targets).
+    srgb_encode:             u32,
+    _pad0:                   u32,
+    _pad1:                   u32,
+    _pad2:                   u32,
 }
 
 @group(0) @binding(0) var hdr_texture:  texture_2d<f32>;
@@ -45,6 +51,15 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 fn reinhard(x: vec3<f32>) -> vec3<f32> {
     return x / (x + vec3<f32>(1.0));
+}
+
+// Linear -> sRGB transfer function, applied only when the render target
+// format cannot encode in hardware (params.srgb_encode == 1).
+fn encode_srgb(c: vec3<f32>) -> vec3<f32> {
+    let x = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    let lo = x * 12.92;
+    let hi = 1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, x <= vec3<f32>(0.0031308));
 }
 
 fn aces(x: vec3<f32>) -> vec3<f32> {
@@ -103,7 +118,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         bloom = textureSample(bloom_texture, hdr_sampler, in.uv).rgb;
     }
     if is_background && hdr.a < 0.001 && dot(bloom, vec3<f32>(1.0)) < 0.0003 {
-        return params.background_colour;
+        var bg = params.background_colour.rgb;
+        if params.srgb_encode != 0u {
+            bg = encode_srgb(bg);
+        }
+        return vec4<f32>(bg, params.background_colour.a);
     }
 
     // Add bloom additively before tone mapping.
@@ -194,6 +213,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // saturated regions fully replace the background.
     if is_background {
         colour = colour + params.background_colour.rgb * (1.0 - clamp(hdr.a, 0.0, 1.0));
+    }
+
+    if params.srgb_encode != 0u {
+        colour = encode_srgb(colour);
     }
 
     return vec4<f32>(colour, 1.0);
