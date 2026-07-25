@@ -135,9 +135,6 @@ const HEX_FACES: [[usize; 4]; 6] = [
     [1, 5, 6, 2], // right  (+X)
 ];
 
-/// Opposite face index for each entry in [`HEX_FACES`].
-const HEX_FACE_OPPOSITE: [usize; 6] = [1, 0, 3, 2, 5, 4];
-
 // ---------------------------------------------------------------------------
 // Pyramid face tables
 // ---------------------------------------------------------------------------

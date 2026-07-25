@@ -109,7 +109,6 @@ pub(crate) fn strip_mesh_non_pbr<'a>(
         return source;
     }
     const BEGIN: &str = "// BEGIN_PBR_STRIP";
-    const END: &str = "// END_PBR_STRIP";
     if !source.contains(BEGIN) {
         return source;
     }

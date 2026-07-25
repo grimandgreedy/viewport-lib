@@ -2222,6 +2222,9 @@ pub struct GpuTexture {
     pub view: crate::gpu::TextureView,
     /// Sampler bound alongside the view.
     pub sampler: crate::gpu::Sampler,
-    /// Bind group that binds `view` and `sampler` for use in shaders.
+    /// Bind group that binds `view` and `sampler` for use in shaders. Built at
+    /// upload time and kept with the texture; draw paths currently build their
+    /// own material bind groups, so this one is not read.
+    #[allow(dead_code)]
     pub bind_group: crate::gpu::BindGroup,
 }

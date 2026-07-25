@@ -22,12 +22,17 @@ pub(crate) use self::oit::OitResources;
 /// intermediate textures and per-frame uniforms live on `ViewportHdrState`.
 #[derive(Default)]
 pub(crate) struct PostProcessResources {
+    // The viewport-sized FXAA texture, view, and bind group now live on
+    // `ViewportHdrState`; these slots are still populated but no longer read.
+    #[allow(dead_code)]
     pub(crate) fxaa_texture: Option<crate::gpu::Texture>,
+    #[allow(dead_code)]
     pub(crate) fxaa_view: Option<crate::gpu::TextureView>,
     pub(crate) fxaa_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) fxaa_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) ssaa_resolve_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) ssaa_resolve_bgl: Option<crate::gpu::BindGroupLayout>,
+    #[allow(dead_code)]
     pub(crate) fxaa_bind_group: Option<crate::gpu::BindGroup>,
     pub(crate) fxaa_sampler: Option<crate::gpu::Sampler>,
     pub(crate) bloom_bgl: Option<crate::gpu::BindGroupLayout>,

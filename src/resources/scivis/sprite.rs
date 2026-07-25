@@ -44,7 +44,9 @@ pub(crate) struct SpriteResources {
     pub(crate) lit_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Fallback bind group for the lit normal map binding.
     pub(crate) lit_fallback_bg: Option<crate::gpu::BindGroup>,
-    /// 1x1 RGBA8Unorm texture backing the lit fallback bind group.
+    /// 1x1 RGBA8Unorm texture backing the lit fallback bind group. Held so the
+    /// fallback bind group keeps a valid texture; not read after construction.
+    #[allow(dead_code)]
     pub(crate) lit_fallback_tex: Option<crate::gpu::Texture>,
     /// Sprite outline mask pipeline (R8Unorm). None until first selected sprite.
     pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
