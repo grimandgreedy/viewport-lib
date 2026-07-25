@@ -67,6 +67,14 @@
 //!   version. Signature changes ride minor bumps and are listed in the
 //!   CHANGELOG.
 //!
+//! - **[`PluginInstallCtx`] grows additively.** The struct is
+//!   `#[non_exhaustive]`, so new borrows are appended as fields and existing
+//!   ones keep their names and types within a minor version. Construct it
+//!   through [`PluginInstallCtx::new`]; adding a field is a minor bump noted in
+//!   the CHANGELOG. [`ViewportPlugin::install`] returns a
+//!   [`crate::ViewportResult`], so a feature that needs a piece the context did
+//!   not carry fails with [`crate::ViewportError`] rather than panicking.
+//!
 //! Anything not listed above is internal: a plugin that reaches past the
 //! published surface (private modules, undocumented constants) may break at
 //! any release.
@@ -82,11 +90,13 @@
 //! `wgpu` dependency is coupled to one version and must match the library's.
 
 pub mod cull;
+pub mod install;
 pub mod item_type;
 pub mod shared_wgsl;
 pub mod target_desc;
 
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
+pub use install::{PluginInstallCtx, ViewportPlugin, install_plugin};
 pub use item_type::{
     ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickPassContext, PickRay,
     PluginItemCollection, ShadowCastContext,

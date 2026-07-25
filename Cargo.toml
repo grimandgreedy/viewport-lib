@@ -205,3 +205,8 @@ required-features = ["wgpu27", "example-iced"]
 name = "runtime-jobs"
 path = "examples/runtime_jobs.rs"
 required-features = ["wgpu27"]
+
+[[example]]
+name = "skinned-feature"
+path = "examples/skinned_feature.rs"
+required-features = ["wgpu27"]

@@ -2,6 +2,7 @@
 
 use super::context::RuntimeStepContext;
 use crate::interaction::select::selection::NodeId;
+use std::sync::{Arc, Mutex};
 
 /// Named priority band constants for runtime plugins.
 ///
@@ -149,4 +150,41 @@ pub trait RuntimePlugin: Send + 'static {
     /// all other priorities, `ctx.dt` is the wall-clock frame delta and this
     /// is called once per frame.
     fn step(&mut self, ctx: &mut RuntimeStepContext<'_>);
+}
+
+/// Lets a plugin behind an `Arc<Mutex<P>>` register as a runtime plugin.
+///
+/// A feature that steps on the CPU and also encodes GPU work can implement both
+/// `RuntimePlugin` and `GpuPlugin` on one struct, wrap it in `Arc<Mutex<..>>`,
+/// and register the same object into both lists by cloning the `Arc`. The host
+/// keeps a clone for its own mutation.
+///
+/// `type_name` forwards to the inner plugin so `RuntimeStats` keys stay keyed by
+/// the real plugin name rather than the wrapper. The host must not hold the lock
+/// across `runtime.step()` / `pre_prepare()`: the runtime and GPU dispatch run
+/// in sequence from the frame loop, so the mutex is uncontended in that usage.
+impl<P: RuntimePlugin> RuntimePlugin for Arc<Mutex<P>> {
+    fn priority(&self) -> i32 {
+        self.lock().unwrap().priority()
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.lock().unwrap().type_name()
+    }
+
+    fn submit(&mut self, ctx: &RuntimeStepContext<'_>) {
+        self.lock().unwrap().submit(ctx);
+    }
+
+    fn collect(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+        self.lock().unwrap().collect(ctx);
+    }
+
+    fn on_event(&mut self, event: &RuntimeEvent, ctx: &mut RuntimeStepContext<'_>) {
+        self.lock().unwrap().on_event(event, ctx);
+    }
+
+    fn step(&mut self, ctx: &mut RuntimeStepContext<'_>) {
+        self.lock().unwrap().step(ctx);
+    }
 }

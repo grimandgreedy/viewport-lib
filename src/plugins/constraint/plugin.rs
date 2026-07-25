@@ -138,3 +138,18 @@ impl RuntimePlugin for ConstraintPlugin {
         }
     }
 }
+
+impl crate::plugin_api::ViewportPlugin for ConstraintPlugin {
+    type Handle = ();
+
+    /// Register the configured plugin on the runtime. Add constraints first,
+    /// then install.
+    fn install(
+        self,
+        ctx: &mut crate::plugin_api::PluginInstallCtx<'_>,
+    ) -> crate::error::ViewportResult<()> {
+        ctx.require_runtime("a ViewportRuntime for the constraint plugin")?
+            .add_plugin(self);
+        Ok(())
+    }
+}

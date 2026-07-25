@@ -250,6 +250,15 @@ pub enum ViewportError {
         reason: String,
     },
 
+    /// A plugin's `install` needed a piece the install context did not carry,
+    /// most often a `ViewportRuntime` on a host that does not use one. The
+    /// message names what was missing.
+    #[error("plugin install requires {needed}, but the install context did not provide it")]
+    PluginInstallMissing {
+        /// Name of the missing piece, e.g. "a ViewportRuntime".
+        needed: &'static str,
+    },
+
     /// A LOD group was registered with no levels.
     #[error("LOD group has no levels")]
     LodGroupEmpty,

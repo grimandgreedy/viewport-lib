@@ -146,6 +146,8 @@ pub use scene::traits;
 
 pub use error::{ViewportError, ViewportResult};
 
+pub use plugin_api::{PluginInstallCtx, ViewportPlugin, install_plugin};
+
 pub use camera::camera::{Camera, CameraTarget, Projection};
 pub use camera::controllers::TurntableController;
 pub use camera::controllers::{CameraAnimator, CameraDamping, Easing};

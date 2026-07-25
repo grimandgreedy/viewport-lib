@@ -25,6 +25,7 @@
 
 use crate::camera::Camera;
 use crate::renderer::ViewportId;
+use std::sync::{Arc, Mutex};
 
 /// Priority bands for GPU plugin lifecycle points.
 ///
@@ -257,6 +258,52 @@ pub trait GpuPlugin: Send + 'static {
         _ctx: &GpuFrameContext<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         Vec::new()
+    }
+}
+
+/// Lets a plugin behind an `Arc<Mutex<P>>` register as a GPU plugin.
+///
+/// The GPU-side counterpart to the same impl on [`RuntimePlugin`]. A feature
+/// that implements both traits on one struct wraps it in `Arc<Mutex<..>>` and
+/// registers the same object into the runtime and GPU lists by cloning the
+/// `Arc`. `type_name` forwards to the inner plugin so `RuntimeStats` keys stay
+/// meaningful. The host must not hold the lock across `runtime.step()` /
+/// `pre_prepare()`: those run in sequence from the frame loop, so the mutex is
+/// uncontended in that usage.
+impl<P: GpuPlugin> GpuPlugin for Arc<Mutex<P>> {
+    fn priority(&self) -> i32 {
+        self.lock().unwrap().priority()
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.lock().unwrap().type_name()
+    }
+
+    fn init_gpu(&mut self, device: &crate::gpu::Device) {
+        self.lock().unwrap().init_gpu(device);
+    }
+
+    fn on_device_recreated(&mut self, device: &crate::gpu::Device, queue: &crate::gpu::Queue) {
+        self.lock().unwrap().on_device_recreated(device, queue);
+    }
+
+    fn pre_prepare(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        ctx: &GpuFrameContext<'_>,
+    ) -> Vec<crate::gpu::CommandBuffer> {
+        self.lock().unwrap().pre_prepare(device, queue, ctx)
+    }
+
+    fn post_paint(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        targets: &PostPaintTargets<'_>,
+        ctx: &GpuFrameContext<'_>,
+    ) -> Vec<crate::gpu::CommandBuffer> {
+        self.lock().unwrap().post_paint(device, queue, targets, ctx)
     }
 }
 
@@ -558,5 +605,98 @@ mod tests {
         assert_eq!(*log.lock().unwrap(), vec![100], "only ran for vp_a");
         // init_gpu still runs unconditionally on first frame.
         assert_eq!(*init_count.lock().unwrap(), 1);
+    }
+
+    // One object implementing both traits, wrapped once and registered into
+    // both lists via the Arc<Mutex<P>> blanket impls.
+    struct HybridPlugin {
+        step_calls: u32,
+        pre_prepare_calls: u32,
+    }
+
+    impl crate::runtime::RuntimePlugin for HybridPlugin {
+        fn priority(&self) -> i32 {
+            crate::runtime::plugin::phase::ANIMATE
+        }
+        fn type_name(&self) -> &'static str {
+            "hybrid_test_plugin"
+        }
+        fn step(&mut self, _ctx: &mut crate::runtime::RuntimeStepContext<'_>) {
+            self.step_calls += 1;
+        }
+    }
+
+    impl GpuPlugin for HybridPlugin {
+        fn type_name(&self) -> &'static str {
+            "hybrid_test_plugin"
+        }
+        fn pre_prepare(
+            &mut self,
+            _device: &crate::gpu::Device,
+            _queue: &crate::gpu::Queue,
+            _ctx: &GpuFrameContext<'_>,
+        ) -> Vec<crate::gpu::CommandBuffer> {
+            self.pre_prepare_calls += 1;
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn arc_mutex_registers_as_both_kinds() {
+        use crate::interaction::select::selection::Selection;
+        use crate::runtime::RuntimeFrameContext;
+        use crate::scene::scene::Scene;
+
+        let hybrid = Arc::new(Mutex::new(HybridPlugin {
+            step_calls: 0,
+            pre_prepare_calls: 0,
+        }));
+
+        let mut runtime = crate::runtime::ViewportRuntime::new().with_plugin(hybrid.clone());
+        runtime.add_gpu_plugin(hybrid.clone());
+
+        // CPU path: the runtime step runs through the wrapper.
+        let mut scene = Scene::new();
+        let mut sel = Selection::new();
+        let mut frame = RuntimeFrameContext::default();
+        frame.dt = 1.0 / 60.0;
+        runtime.step(&mut scene, &mut sel, &frame);
+
+        assert_eq!(
+            hybrid.lock().unwrap().step_calls,
+            1,
+            "runtime step ran through the Arc<Mutex<..>> wrapper"
+        );
+        assert!(
+            runtime
+                .last_stats()
+                .step_ms
+                .contains_key("hybrid_test_plugin"),
+            "stats keyed by the inner type_name, got {:?}",
+            runtime.last_stats().step_ms.keys().collect::<Vec<_>>()
+        );
+
+        // GPU path needs an adapter; skip the rest without one.
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping GPU-path assertions: no wgpu adapter available");
+            return;
+        };
+
+        let camera = Camera::default();
+        let ctx = GpuFrameContext::new(&camera, glam::Vec2::new(800.0, 600.0), 1.0 / 60.0, 0);
+        let _ = runtime.pre_prepare(&device, &queue, &ctx);
+
+        assert_eq!(
+            hybrid.lock().unwrap().pre_prepare_calls,
+            1,
+            "gpu pre_prepare ran through the same wrapped object"
+        );
+        assert!(
+            runtime
+                .last_stats()
+                .pre_prepare_ms
+                .contains_key("hybrid_test_plugin"),
+            "gpu stats keyed by the inner type_name"
+        );
     }
 }

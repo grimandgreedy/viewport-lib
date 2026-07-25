@@ -184,3 +184,18 @@ impl RuntimePlugin for AnimationPlugin {
         }
     }
 }
+
+impl crate::plugin_api::ViewportPlugin for AnimationPlugin {
+    type Handle = ();
+
+    /// Register the configured plugin on the runtime. Build the tracks first,
+    /// then install.
+    fn install(
+        self,
+        ctx: &mut crate::plugin_api::PluginInstallCtx<'_>,
+    ) -> crate::error::ViewportResult<()> {
+        ctx.require_runtime("a ViewportRuntime for the animation plugin")?
+            .add_plugin(self);
+        Ok(())
+    }
+}

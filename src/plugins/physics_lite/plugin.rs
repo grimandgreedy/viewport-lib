@@ -223,3 +223,18 @@ impl RuntimePlugin for PhysicsLitePlugin {
         }
     }
 }
+
+impl crate::plugin_api::ViewportPlugin for PhysicsLitePlugin {
+    type Handle = ();
+
+    /// Register the configured plugin on the runtime. Add bodies and set
+    /// gravity first, then install.
+    fn install(
+        self,
+        ctx: &mut crate::plugin_api::PluginInstallCtx<'_>,
+    ) -> crate::error::ViewportResult<()> {
+        ctx.require_runtime("a ViewportRuntime for the physics_lite plugin")?
+            .add_plugin(self);
+        Ok(())
+    }
+}
