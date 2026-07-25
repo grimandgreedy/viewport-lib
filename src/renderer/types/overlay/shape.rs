@@ -122,30 +122,24 @@ impl Default for OverlayShape {
 /// ```rust
 /// # use viewport_lib::{OverlayShapeItem, OverlayShape, OverlayFill};
 /// // Rounded-rect panel background.
-/// let panel = OverlayShapeItem {
-///     position: [20.0, 20.0],
-///     size: [300.0, 200.0],
-///     shape: OverlayShape::Rect { corner_radius: 8.0 },
-///     fill: OverlayFill::Solid([0.1, 0.1, 0.1, 0.85]),
-///     border_width: 1.0,
-///     border_colour: [0.4, 0.4, 0.4, 1.0],
-///     ..Default::default()
-/// };
+/// let panel = OverlayShapeItem::new(
+///     OverlayShape::Rect { corner_radius: 8.0 },
+///     [20.0, 20.0],
+///     [300.0, 200.0],
+/// )
+/// .with_fill(OverlayFill::Solid([0.1, 0.1, 0.1, 0.85]))
+/// .with_border([0.4, 0.4, 0.4, 1.0], 1.0);
 ///
 /// // Circle with a left-to-right gradient.
-/// let grad_dot = OverlayShapeItem {
-///     position: [100.0, 100.0],
-///     size: [60.0, 60.0],
-///     shape: OverlayShape::Circle,
-///     fill: OverlayFill::LinearGradient {
+/// let grad_dot = OverlayShapeItem::new(OverlayShape::Circle, [100.0, 100.0], [60.0, 60.0])
+///     .with_fill(OverlayFill::LinearGradient {
 ///         start_colour: [0.0, 0.4, 1.0, 1.0],
 ///         end_colour: [0.0, 1.0, 0.5, 1.0],
 ///         angle: 0.0,
-///     },
-///     ..Default::default()
-/// };
+///     });
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OverlayShapeItem {
     /// Top-left position in logical pixels from the viewport top-left.
     pub position: [f32; 2],
@@ -487,6 +481,118 @@ fn sd_triangle(p: [f32; 2], hs: [f32; 2]) -> f32 {
 }
 
 impl OverlayShapeItem {
+    /// Create a shape at `position` (top-left, logical pixels) with `size`
+    /// (width, height). All other fields take their defaults; set them with the
+    /// `with_*` methods below.
+    pub fn new(shape: OverlayShape, position: [f32; 2], size: [f32; 2]) -> Self {
+        Self {
+            shape,
+            position,
+            size,
+            ..Default::default()
+        }
+    }
+
+    /// Set the fill style (solid colour or gradient).
+    pub fn with_fill(mut self, fill: OverlayFill) -> Self {
+        self.fill = fill;
+        self
+    }
+
+    /// Set the overall opacity multiplier (0.0 to 1.0).
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
+    }
+
+    /// Set the border colour and width. A width of `0.0` disables the border.
+    pub fn with_border(mut self, colour: [f32; 4], width: f32) -> Self {
+        self.border_colour = colour;
+        self.border_width = width;
+        self
+    }
+
+    /// Set where the border sits relative to the shape edge.
+    pub fn with_border_mode(mut self, mode: BorderMode) -> Self {
+        self.border_mode = mode;
+        self
+    }
+
+    /// Set the draw order. Lower values render first (further back).
+    pub fn with_z_order(mut self, z_order: i32) -> Self {
+        self.z_order = z_order;
+        self
+    }
+
+    /// Fill the shape with an uploaded overlay texture, clipped by the SDF.
+    pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
+        self.texture = Some(texture);
+        self
+    }
+
+    /// Set the outer (or inset) shadow colour, blur radius, and offset.
+    pub fn with_shadow(mut self, colour: [f32; 4], radius: f32, offset: [f32; 2]) -> Self {
+        self.shadow_colour = colour;
+        self.shadow_radius = radius;
+        self.shadow_offset = offset;
+        self
+    }
+
+    /// Render the shadow as an inner (inset) shadow instead of an outer one.
+    pub fn with_shadow_inset(mut self, inset: bool) -> Self {
+        self.shadow_inset = inset;
+        self
+    }
+
+    /// Set the backdrop blur radius (frosted-glass effect) in logical pixels.
+    pub fn with_backdrop_blur(mut self, radius: f32) -> Self {
+        self.backdrop_blur = radius;
+        self
+    }
+
+    /// Set the rotation around the shape centre, in radians.
+    pub fn with_rotation(mut self, radians: f32) -> Self {
+        self.rotation = radians;
+        self
+    }
+
+    /// Mark this shape as a clip mask with the given id. Other shapes whose
+    /// clip id matches are clipped to this shape's bounding box.
+    pub fn with_clip_mask(mut self, mask_id: u32) -> Self {
+        self.clip_mask_id = Some(mask_id);
+        self
+    }
+
+    /// Clip this shape to the bounding box of the mask shape with this id.
+    pub fn with_clip(mut self, clip_id: u32) -> Self {
+        self.clip_id = Some(clip_id);
+        self
+    }
+
+    /// Set 9-slice sampling for the texture fill.
+    pub fn with_nine_slice(mut self, nine_slice: NineSlice) -> Self {
+        self.nine_slice = Some(nine_slice);
+        self
+    }
+
+    /// Set the affine transform applied to the texture sample before lookup.
+    pub fn with_texture_transform(mut self, transform: TextureTransform) -> Self {
+        self.texture_transform = transform;
+        self
+    }
+
+    /// Set the single-property opacity animation.
+    pub fn with_animation(mut self, animation: OverlayAnimation) -> Self {
+        self.animation = animation;
+        self
+    }
+
+    /// Set the multi-channel animation tracks.
+    pub fn with_animations(mut self, animations: OverlayAnimations) -> Self {
+        self.animations = animations;
+        self
+    }
+
     /// Signed distance from a screen-space point to the shape boundary.
     ///
     /// The point is in logical pixels from the top-left of the viewport (the

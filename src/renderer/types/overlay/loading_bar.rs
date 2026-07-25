@@ -16,14 +16,12 @@ pub enum LoadingBarAnchor {
 ///
 /// ```no_run
 /// use viewport_lib::{LoadingBarItem, LoadingBarAnchor};
-/// let bar = LoadingBarItem {
-///     progress: 0.42,
-///     label: Some("Building scene... 420 000 / 1 000 000".into()),
-///     anchor: LoadingBarAnchor::BottomCenter,
-///     ..LoadingBarItem::default()
-/// };
+/// let bar = LoadingBarItem::new(0.42)
+///     .with_label("Building scene... 420 000 / 1 000 000")
+///     .with_anchor(LoadingBarAnchor::BottomCenter);
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct LoadingBarItem {
     /// Progress fraction in [0.0, 1.0].
     pub progress: f32,
@@ -67,5 +65,84 @@ impl Default for LoadingBarItem {
             corner_radius: 4.0,
             font: None,
         }
+    }
+}
+
+impl LoadingBarItem {
+    /// Create a loading bar showing `progress` (a fraction in [0.0, 1.0]). All
+    /// other fields take their defaults; set them with the `with_*` methods
+    /// below.
+    pub fn new(progress: f32) -> Self {
+        Self {
+            progress,
+            ..Default::default()
+        }
+    }
+
+    /// Set the label displayed alongside the bar.
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Set the viewport anchor for the bar.
+    pub fn with_anchor(mut self, anchor: LoadingBarAnchor) -> Self {
+        self.anchor = anchor;
+        self
+    }
+
+    /// Set the bar width in logical pixels.
+    pub fn with_width(mut self, width: f32) -> Self {
+        self.width_px = width;
+        self
+    }
+
+    /// Set the bar height in logical pixels.
+    pub fn with_height(mut self, height: f32) -> Self {
+        self.height_px = height;
+        self
+    }
+
+    /// Set the distance from the anchored viewport edge in logical pixels.
+    pub fn with_margin(mut self, margin: f32) -> Self {
+        self.margin_px = margin;
+        self
+    }
+
+    /// Set the background (unfilled) colour.
+    pub fn with_background_colour(mut self, colour: [f32; 4]) -> Self {
+        self.background_colour = colour;
+        self
+    }
+
+    /// Set the fill (progress) colour.
+    pub fn with_fill_colour(mut self, colour: [f32; 4]) -> Self {
+        self.fill_colour = colour;
+        self
+    }
+
+    /// Set the label text colour.
+    pub fn with_label_colour(mut self, colour: [f32; 4]) -> Self {
+        self.label_colour = colour;
+        self
+    }
+
+    /// Set the label font size in logical pixels.
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
+    /// Set the corner radius of the bar rectangles in logical pixels.
+    pub fn with_corner_radius(mut self, corner_radius: f32) -> Self {
+        self.corner_radius = corner_radius;
+        self
+    }
+
+    /// Set the font for the label text. Without this the built-in default font
+    /// is used.
+    pub fn with_font(mut self, font: crate::resources::overlay::font::FontHandle) -> Self {
+        self.font = Some(font);
+        self
     }
 }

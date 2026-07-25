@@ -32,17 +32,13 @@ pub enum ScalarBarOrientation {
 ///
 /// ```rust
 /// # use viewport_lib::{ScalarBarItem, ScalarBarAnchor, ScalarBarOrientation};
-/// let bar = ScalarBarItem {
-///     colourmap_id: viewport_lib::ColourmapId(0),
-///     scalar_min: 0.0,
-///     scalar_max: 1.0,
-///     title: Some("Height (m)".into()),
-///     anchor: ScalarBarAnchor::BottomRight,
-///     orientation: ScalarBarOrientation::Vertical,
-///     ..Default::default()
-/// };
+/// let bar = ScalarBarItem::new(viewport_lib::ColourmapId(0), 0.0, 1.0)
+///     .with_title("Height (m)")
+///     .with_anchor(ScalarBarAnchor::BottomRight)
+///     .with_orientation(ScalarBarOrientation::Vertical);
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ScalarBarItem {
     /// Colourmap to sample for the gradient strip.
     pub colourmap_id: crate::resources::ColourmapId,
@@ -121,5 +117,102 @@ impl Default for ScalarBarItem {
             ticks_reversed: false,
             title_font_size: None,
         }
+    }
+}
+
+impl ScalarBarItem {
+    /// Create a scalar bar for `colourmap_id` spanning `scalar_min` to
+    /// `scalar_max`. All other fields take their defaults; set them with the
+    /// `with_*` methods below.
+    pub fn new(
+        colourmap_id: crate::resources::ColourmapId,
+        scalar_min: f32,
+        scalar_max: f32,
+    ) -> Self {
+        Self {
+            colourmap_id,
+            scalar_min,
+            scalar_max,
+            ..Default::default()
+        }
+    }
+
+    /// Set the title drawn above the gradient strip.
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the viewport corner the bar anchors to.
+    pub fn with_anchor(mut self, anchor: ScalarBarAnchor) -> Self {
+        self.anchor = anchor;
+        self
+    }
+
+    /// Set the long-axis orientation of the gradient strip.
+    pub fn with_orientation(mut self, orientation: ScalarBarOrientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Set the short-axis size of the gradient strip in logical pixels.
+    pub fn with_bar_width(mut self, bar_width: f32) -> Self {
+        self.bar_width_px = bar_width;
+        self
+    }
+
+    /// Set the long-axis size of the gradient strip in logical pixels.
+    pub fn with_bar_length(mut self, bar_length: f32) -> Self {
+        self.bar_length_px = bar_length;
+        self
+    }
+
+    /// Set the distance from the viewport edge in logical pixels.
+    pub fn with_margin(mut self, margin: f32) -> Self {
+        self.margin_px = margin;
+        self
+    }
+
+    /// Set the font for tick labels and title. Without this the built-in
+    /// default font is used.
+    pub fn with_font(mut self, font: crate::resources::overlay::font::FontHandle) -> Self {
+        self.font = Some(font);
+        self
+    }
+
+    /// Set the font size for tick labels and title in logical pixels.
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
+    /// Set the colour for tick labels and title.
+    pub fn with_label_colour(mut self, colour: [f32; 4]) -> Self {
+        self.label_colour = colour;
+        self
+    }
+
+    /// Set the number of evenly-spaced labelled ticks (including min and max).
+    pub fn with_tick_count(mut self, tick_count: u32) -> Self {
+        self.tick_count = tick_count;
+        self
+    }
+
+    /// Set the background box colour (including alpha).
+    pub fn with_background_colour(mut self, colour: [f32; 4]) -> Self {
+        self.background_colour = colour;
+        self
+    }
+
+    /// Reverse the value direction of the gradient.
+    pub fn with_ticks_reversed(mut self, ticks_reversed: bool) -> Self {
+        self.ticks_reversed = ticks_reversed;
+        self
+    }
+
+    /// Set the font size used for the title text, overriding `font_size`.
+    pub fn with_title_font_size(mut self, title_font_size: f32) -> Self {
+        self.title_font_size = Some(title_font_size);
+        self
     }
 }

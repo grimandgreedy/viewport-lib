@@ -14,6 +14,7 @@ use crate::resources::CameraUniform;
 /// `FrameData`. Application-side orbit cameras resolve into this type
 /// before frame submission.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RenderCamera {
     /// World-to-view transform matrix.
     pub view: glam::Mat4,

@@ -71,6 +71,7 @@ pub enum StrokePattern {
 /// Use `OverlayPolylineItem::from_path` to construct from a closure that
 /// samples a curve at N points (Bezier traces, lissajous, custom paths).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OverlayPolylineItem {
     /// Waypoints in logical pixels from the viewport top-left.
     pub points: Vec<[f32; 2]>,
@@ -137,6 +138,95 @@ impl Default for OverlayPolylineItem {
 }
 
 impl OverlayPolylineItem {
+    /// Create a polyline from `points` (waypoints in logical pixels from the
+    /// viewport top-left). All other fields take their defaults; set them with
+    /// the `with_*` methods below.
+    pub fn new(points: Vec<[f32; 2]>) -> Self {
+        Self {
+            points,
+            ..Default::default()
+        }
+    }
+
+    /// Set the stroke thickness in logical pixels.
+    pub fn with_thickness(mut self, thickness: f32) -> Self {
+        self.thickness = thickness;
+        self
+    }
+
+    /// Set the stroke colour.
+    pub fn with_colour(mut self, colour: [f32; 4]) -> Self {
+        self.colour = colour;
+        self
+    }
+
+    /// Set how segment joints are drawn.
+    pub fn with_join(mut self, join: LineJoin) -> Self {
+        self.join = join;
+        self
+    }
+
+    /// Set the mitre limit as a multiple of `thickness` before a mitre joint
+    /// falls back to a bevel.
+    pub fn with_mitre_limit(mut self, mitre_limit: f32) -> Self {
+        self.mitre_limit = mitre_limit;
+        self
+    }
+
+    /// Set the end-cap style for open polylines and dash ends.
+    pub fn with_cap(mut self, cap: PolylineCap) -> Self {
+        self.cap = cap;
+        self
+    }
+
+    /// Set the stroke pattern (solid, dashed, or dotted).
+    pub fn with_stroke_pattern(mut self, stroke_pattern: StrokePattern) -> Self {
+        self.stroke_pattern = stroke_pattern;
+        self
+    }
+
+    /// Set whether the last point connects back to the first.
+    pub fn with_closed(mut self, closed: bool) -> Self {
+        self.closed = closed;
+        self
+    }
+
+    /// Set the interior fill. Only used when the polyline is closed.
+    pub fn with_fill(mut self, fill: OverlayFill) -> Self {
+        self.fill = Some(fill);
+        self
+    }
+
+    /// Set the interior texture fill. Only used when the polyline is closed.
+    pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
+        self.texture = Some(texture);
+        self
+    }
+
+    /// Set per-point UVs for a textured interior. Must have one entry per point.
+    pub fn with_uvs(mut self, uvs: Vec<[f32; 2]>) -> Self {
+        self.uvs = Some(uvs);
+        self
+    }
+
+    /// Set the affine transform applied to texture UVs before sampling.
+    pub fn with_texture_transform(mut self, texture_transform: TextureTransform) -> Self {
+        self.texture_transform = texture_transform;
+        self
+    }
+
+    /// Set the overall opacity multiplier (0.0 to 1.0).
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
+    }
+
+    /// Set the draw order. Lower values render first (further back).
+    pub fn with_z_order(mut self, z_order: i32) -> Self {
+        self.z_order = z_order;
+        self
+    }
+
     /// Construct a polyline by sampling the given closure at `samples + 1`
     /// evenly-spaced parameter values across `[0, 1]`. The closure is called
     /// once per sample at construction time; the resulting points are stored

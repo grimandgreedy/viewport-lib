@@ -188,18 +188,17 @@ impl App {
             s.range
         };
 
-        ScalarBarItem {
-            colourmap_id: viewport_lib::ColourmapId(s.colourmap as usize),
+        ScalarBarItem::new(
+            viewport_lib::ColourmapId(s.colourmap as usize),
             scalar_min,
             scalar_max,
-            anchor: s.bar_anchor,
-            orientation: s.bar_orientation,
-            bar_width_px: 20.0,
-            bar_length_px: 140.0,
-            margin_px: 12.0,
-            tick_count: 3,
-            ..Default::default()
-        }
+        )
+        .with_anchor(s.bar_anchor)
+        .with_orientation(s.bar_orientation)
+        .with_bar_width(20.0)
+        .with_bar_length(140.0)
+        .with_margin(12.0)
+        .with_tick_count(3)
     }
 }
 

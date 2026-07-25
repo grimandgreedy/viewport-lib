@@ -174,23 +174,22 @@ impl App {
                 Material::from_colour(part.colour),
             );
 
-            self.lbl_state.labels.push(LabelItem {
-                world_anchor: Some(exploded_pos),
-                text: format!("{}: {}", part.name, part.detail),
-                colour: part.label_colour,
-                font_size: 12.0,
-                leader_line: true,
-                background: true,
-                background_colour: [0.05, 0.05, 0.1, 0.75],
-                leader_colour: [
-                    part.label_colour[0],
-                    part.label_colour[1],
-                    part.label_colour[2],
-                    0.35,
-                ],
-                z_order: 0,
-                ..Default::default()
-            });
+            self.lbl_state.labels.push(
+                LabelItem::new(format!("{}: {}", part.name, part.detail))
+                    .with_world_anchor(exploded_pos)
+                    .with_colour(part.label_colour)
+                    .with_font_size(12.0)
+                    .with_leader_line(true)
+                    .with_background(true)
+                    .with_background_colour([0.05, 0.05, 0.1, 0.75])
+                    .with_leader_colour([
+                        part.label_colour[0],
+                        part.label_colour[1],
+                        part.label_colour[2],
+                        0.35,
+                    ])
+                    .with_z_order(0),
+            );
         }
 
         self.lbl_state.built = true;
@@ -205,32 +204,30 @@ impl App {
 
         // -- Title (centered at top) --
         if self.lbl_state.show_hud_labels {
-            out.push(LabelItem {
-                screen_anchor: Some([cx, 36.0]),
-                text: "Gearbox Assembly: Exploded View".into(),
-                colour: [1.0, 1.0, 1.0, 1.0],
-                font_size: 48.0,
-                background: true,
-                background_colour: [0.1, 0.1, 0.2, 0.0],
-                border_radius: 4.0,
-                anchor_align: LabelAnchor::Center,
-                z_order: 200,
-                ..Default::default()
-            });
+            out.push(
+                LabelItem::new("Gearbox Assembly: Exploded View")
+                    .with_screen_anchor([cx, 36.0])
+                    .with_colour([1.0, 1.0, 1.0, 1.0])
+                    .with_font_size(48.0)
+                    .with_background(true)
+                    .with_background_colour([0.1, 0.1, 0.2, 0.0])
+                    .with_border_radius(4.0)
+                    .with_anchor_align(LabelAnchor::Center)
+                    .with_z_order(200),
+            );
 
             // Legend (centered at bottom).
-            out.push(LabelItem {
-                screen_anchor: Some([cx, vp_h - 24.0]),
-                text: "Grey=Casing  Gold=Gears  Blue=Bearings  Yellow=Shafts".into(),
-                colour: [0.8, 0.8, 0.8, 1.0],
-                font_size: 11.0,
-                background: true,
-                background_colour: [0.0, 0.0, 0.0, 0.65],
-                border_radius: 3.0,
-                anchor_align: LabelAnchor::Center,
-                z_order: 200,
-                ..Default::default()
-            });
+            out.push(
+                LabelItem::new("Grey=Casing  Gold=Gears  Blue=Bearings  Yellow=Shafts")
+                    .with_screen_anchor([cx, vp_h - 24.0])
+                    .with_colour([0.8, 0.8, 0.8, 1.0])
+                    .with_font_size(11.0)
+                    .with_background(true)
+                    .with_background_colour([0.0, 0.0, 0.0, 0.65])
+                    .with_border_radius(3.0)
+                    .with_anchor_align(LabelAnchor::Center)
+                    .with_z_order(200),
+            );
         }
 
         if !self.lbl_state.show_feature_demos {
@@ -247,14 +244,11 @@ impl App {
 
         // Helper: section heading.
         let heading = |y: f32, text: &str| -> LabelItem {
-            LabelItem {
-                screen_anchor: Some([col, y]),
-                text: text.into(),
-                colour: heading_colour,
-                font_size: 11.0,
-                z_order: 100,
-                ..Default::default()
-            }
+            LabelItem::new(text)
+                .with_screen_anchor([col, y])
+                .with_colour(heading_colour)
+                .with_font_size(11.0)
+                .with_z_order(100)
         };
 
         // -- Row 1: Anchor alignment --
@@ -269,17 +263,16 @@ impl App {
         .iter()
         .enumerate()
         {
-            out.push(LabelItem {
-                screen_anchor: Some([col + 90.0, y + i as f32 * 20.0]),
-                text: format!("{} aligned", name),
-                colour: [0.9, 0.95, 1.0, 1.0],
-                font_size: 12.0,
-                background: true,
-                background_colour: demo_bg,
-                anchor_align: *align,
-                z_order: 100,
-                ..Default::default()
-            });
+            out.push(
+                LabelItem::new(format!("{} aligned", name))
+                    .with_screen_anchor([col + 90.0, y + i as f32 * 20.0])
+                    .with_colour([0.9, 0.95, 1.0, 1.0])
+                    .with_font_size(12.0)
+                    .with_background(true)
+                    .with_background_colour(demo_bg)
+                    .with_anchor_align(*align)
+                    .with_z_order(100),
+            );
         }
 
         // -- Row 2: Opacity --
@@ -287,17 +280,16 @@ impl App {
         out.push(heading(y, "opacity:"));
         y += 16.0;
         for (i, opacity) in [1.0f32, 0.75, 0.5, 0.25].iter().enumerate() {
-            out.push(LabelItem {
-                screen_anchor: Some([col + i as f32 * 65.0, y]),
-                text: format!("{:.0}%", opacity * 100.0),
-                colour: [1.0, 0.8, 0.3, 1.0],
-                font_size: 13.0,
-                background: true,
-                background_colour: demo_bg,
-                opacity: *opacity,
-                z_order: 100,
-                ..Default::default()
-            });
+            out.push(
+                LabelItem::new(format!("{:.0}%", opacity * 100.0))
+                    .with_screen_anchor([col + i as f32 * 65.0, y])
+                    .with_colour([1.0, 0.8, 0.3, 1.0])
+                    .with_font_size(13.0)
+                    .with_background(true)
+                    .with_background_colour(demo_bg)
+                    .with_opacity(*opacity)
+                    .with_z_order(100),
+            );
         }
 
         // -- Row 3: Offset --
@@ -313,17 +305,16 @@ impl App {
         .iter()
         .enumerate()
         {
-            out.push(LabelItem {
-                screen_anchor: Some([col + i as f32 * 65.0, y]),
-                text: (*desc).into(),
-                colour: [0.6, 1.0, 0.7, 1.0],
-                font_size: 11.0,
-                background: true,
-                background_colour: demo_bg,
-                offset: *off,
-                z_order: 100,
-                ..Default::default()
-            });
+            out.push(
+                LabelItem::new(*desc)
+                    .with_screen_anchor([col + i as f32 * 65.0, y])
+                    .with_colour([0.6, 1.0, 0.7, 1.0])
+                    .with_font_size(11.0)
+                    .with_background(true)
+                    .with_background_colour(demo_bg)
+                    .with_offset(*off)
+                    .with_z_order(100),
+            );
         }
 
         // -- Row 4: Max width (word wrap) --
@@ -336,17 +327,17 @@ impl App {
                 None => format!("None: {}", wrap_text),
                 Some(w) => format!("{:.0}px: {}", w, wrap_text),
             };
-            out.push(LabelItem {
-                screen_anchor: Some([col, y + i as f32 * 55.0]),
-                text: label_text,
-                colour: [1.0, 0.7, 0.9, 1.0],
-                font_size: 11.0,
-                background: true,
-                background_colour: demo_bg,
-                max_width: *max_w,
-                z_order: 100,
-                ..Default::default()
-            });
+            let mut label = LabelItem::new(label_text)
+                .with_screen_anchor([col, y + i as f32 * 55.0])
+                .with_colour([1.0, 0.7, 0.9, 1.0])
+                .with_font_size(11.0)
+                .with_background(true)
+                .with_background_colour(demo_bg)
+                .with_z_order(100);
+            if let Some(w) = *max_w {
+                label = label.with_max_width(w);
+            }
+            out.push(label);
         }
 
         // -- Row 5: Border radius --
@@ -354,17 +345,16 @@ impl App {
         out.push(heading(y, "border_radius:"));
         y += 16.0;
         for (i, radius) in [0.0f32, 3.0, 6.0, 12.0].iter().enumerate() {
-            out.push(LabelItem {
-                screen_anchor: Some([col + i as f32 * 65.0, y]),
-                text: format!("{:.0}px", radius),
-                colour: [0.8, 0.85, 1.0, 1.0],
-                font_size: 12.0,
-                background: true,
-                background_colour: [0.15, 0.15, 0.3, 0.8],
-                border_radius: *radius,
-                z_order: 100,
-                ..Default::default()
-            });
+            out.push(
+                LabelItem::new(format!("{:.0}px", radius))
+                    .with_screen_anchor([col + i as f32 * 65.0, y])
+                    .with_colour([0.8, 0.85, 1.0, 1.0])
+                    .with_font_size(12.0)
+                    .with_background(true)
+                    .with_background_colour([0.15, 0.15, 0.3, 0.8])
+                    .with_border_radius(*radius)
+                    .with_z_order(100),
+            );
         }
 
         // -- Row 6: Padding --
@@ -372,17 +362,16 @@ impl App {
         out.push(heading(y, "padding:"));
         y += 16.0;
         for (i, pad) in [0.0f32, 3.0, 8.0, 16.0].iter().enumerate() {
-            out.push(LabelItem {
-                screen_anchor: Some([col + i as f32 * 72.0, y]),
-                text: format!("{:.0}px", pad),
-                colour: [0.9, 1.0, 0.8, 1.0],
-                font_size: 12.0,
-                background: true,
-                background_colour: [0.15, 0.3, 0.15, 0.8],
-                padding: *pad,
-                z_order: 100,
-                ..Default::default()
-            });
+            out.push(
+                LabelItem::new(format!("{:.0}px", pad))
+                    .with_screen_anchor([col + i as f32 * 72.0, y])
+                    .with_colour([0.9, 1.0, 0.8, 1.0])
+                    .with_font_size(12.0)
+                    .with_background(true)
+                    .with_background_colour([0.15, 0.3, 0.15, 0.8])
+                    .with_padding(*pad)
+                    .with_z_order(100),
+            );
         }
 
         // -- Row 7: Font size --
@@ -390,55 +379,51 @@ impl App {
         out.push(heading(y, "font_size:"));
         y += 16.0;
         for (i, size) in [10.0f32, 13.0, 16.0, 20.0].iter().enumerate() {
-            out.push(LabelItem {
-                screen_anchor: Some([col + i as f32 * 65.0, y]),
-                text: format!("{:.0}px", size),
-                colour: [1.0, 1.0, 1.0, 1.0],
-                font_size: *size,
-                background: true,
-                background_colour: demo_bg,
-                z_order: 100,
-                ..Default::default()
-            });
+            out.push(
+                LabelItem::new(format!("{:.0}px", size))
+                    .with_screen_anchor([col + i as f32 * 65.0, y])
+                    .with_colour([1.0, 1.0, 1.0, 1.0])
+                    .with_font_size(*size)
+                    .with_background(true)
+                    .with_background_colour(demo_bg)
+                    .with_z_order(100),
+            );
         }
 
         // -- Row 8: Z-order (overlapping labels) --
         y += 38.0;
         out.push(heading(y, "z_order (overlap):"));
         y += 16.0;
-        out.push(LabelItem {
-            screen_anchor: Some([col, y]),
-            text: "z=98 (back)".into(),
-            colour: [1.0, 1.0, 1.0, 1.0],
-            font_size: 12.0,
-            background: true,
-            background_colour: [0.6, 0.15, 0.15, 0.9],
-            border_radius: 3.0,
-            z_order: 98,
-            ..Default::default()
-        });
-        out.push(LabelItem {
-            screen_anchor: Some([col + 45.0, y + 6.0]),
-            text: "z=99 (mid)".into(),
-            colour: [1.0, 1.0, 1.0, 1.0],
-            font_size: 12.0,
-            background: true,
-            background_colour: [0.15, 0.5, 0.15, 0.9],
-            border_radius: 3.0,
-            z_order: 99,
-            ..Default::default()
-        });
-        out.push(LabelItem {
-            screen_anchor: Some([col + 90.0, y + 12.0]),
-            text: "z=100 (front)".into(),
-            colour: [1.0, 1.0, 1.0, 1.0],
-            font_size: 12.0,
-            background: true,
-            background_colour: [0.15, 0.15, 0.6, 0.9],
-            border_radius: 3.0,
-            z_order: 100,
-            ..Default::default()
-        });
+        out.push(
+            LabelItem::new("z=98 (back)")
+                .with_screen_anchor([col, y])
+                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_font_size(12.0)
+                .with_background(true)
+                .with_background_colour([0.6, 0.15, 0.15, 0.9])
+                .with_border_radius(3.0)
+                .with_z_order(98),
+        );
+        out.push(
+            LabelItem::new("z=99 (mid)")
+                .with_screen_anchor([col + 45.0, y + 6.0])
+                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_font_size(12.0)
+                .with_background(true)
+                .with_background_colour([0.15, 0.5, 0.15, 0.9])
+                .with_border_radius(3.0)
+                .with_z_order(99),
+        );
+        out.push(
+            LabelItem::new("z=100 (front)")
+                .with_screen_anchor([col + 90.0, y + 12.0])
+                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_font_size(12.0)
+                .with_background(true)
+                .with_background_colour([0.15, 0.15, 0.6, 0.9])
+                .with_border_radius(3.0)
+                .with_z_order(100),
+        );
 
         out
     }

@@ -38,3 +38,35 @@ impl Default for OverlayImageItem {
         }
     }
 }
+
+impl OverlayImageItem {
+    /// Create an image overlay from RGBA8 `pixels` (row-major, top-to-bottom)
+    /// with the given `width` and `height`. All other fields take their
+    /// defaults; set them with the `with_*` methods below.
+    pub fn new(pixels: Vec<[u8; 4]>, width: u32, height: u32) -> Self {
+        Self {
+            pixels,
+            width,
+            height,
+            ..Default::default()
+        }
+    }
+
+    /// Set which corner (or center) of the viewport the image anchors to.
+    pub fn with_anchor(mut self, anchor: ImageAnchor) -> Self {
+        self.anchor = anchor;
+        self
+    }
+
+    /// Set the scale factor relative to natural pixel size.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    /// Set the overall opacity multiplier applied on top of per-pixel alpha.
+    pub fn with_alpha(mut self, alpha: f32) -> Self {
+        self.alpha = alpha;
+        self
+    }
+}

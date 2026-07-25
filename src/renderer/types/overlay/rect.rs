@@ -8,6 +8,7 @@
 /// `border_width` pixels of it are visible on each side of the fill rect.
 /// Set `border_width` to `0.0` for no border.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OverlayRectItem {
     /// Top-left position in logical pixels from the viewport top-left.
     pub position: [f32; 2],
@@ -39,5 +40,44 @@ impl Default for OverlayRectItem {
             border_width: 0.0,
             z_order: 0,
         }
+    }
+}
+
+impl OverlayRectItem {
+    /// Create a rect at `position` (top-left, logical pixels) with `size`
+    /// (width, height) and fill `colour`. All other fields take their defaults;
+    /// set them with the `with_*` methods below.
+    pub fn new(position: [f32; 2], size: [f32; 2], colour: [f32; 4]) -> Self {
+        Self {
+            position,
+            size,
+            colour,
+            ..Default::default()
+        }
+    }
+
+    /// Set the overall opacity multiplier (0.0 to 1.0).
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
+    }
+
+    /// Set the corner radius in logical pixels. `0.0` produces sharp corners.
+    pub fn with_corner_radius(mut self, corner_radius: f32) -> Self {
+        self.corner_radius = corner_radius;
+        self
+    }
+
+    /// Set the border colour and width. A width of `0.0` disables the border.
+    pub fn with_border(mut self, colour: [f32; 4], width: f32) -> Self {
+        self.border_colour = colour;
+        self.border_width = width;
+        self
+    }
+
+    /// Set the draw order. Lower values render first (further back).
+    pub fn with_z_order(mut self, z_order: i32) -> Self {
+        self.z_order = z_order;
+        self
     }
 }

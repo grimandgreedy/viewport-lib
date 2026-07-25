@@ -3744,12 +3744,11 @@ impl App {
                     "Building scene\u{2026} {} / 125 000",
                     showcase_23_performance::format_count(n),
                 );
-                fd.overlays.loading_bars.push(LoadingBarItem {
-                    progress: n as f32 / 125_000.0,
-                    label: Some(label),
-                    anchor: LoadingBarAnchor::BottomCenter,
-                    ..LoadingBarItem::default()
-                });
+                fd.overlays.loading_bars.push(
+                    LoadingBarItem::new(n as f32 / 125_000.0)
+                        .with_label(label)
+                        .with_anchor(LoadingBarAnchor::BottomCenter),
+                );
             }
         }
 

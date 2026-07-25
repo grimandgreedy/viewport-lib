@@ -415,18 +415,13 @@ pub(crate) fn build_overlay_frame(
 ) {
     let colourmap_id = ColourmapId(app.ovl_state.colourmap as usize);
 
-    let bar = ScalarBarItem {
-        colourmap_id,
-        scalar_min: -1.5,
-        scalar_max: 1.5,
-        title: Some("Height (m)".into()),
-        anchor: app.ovl_state.bar_anchor,
-        orientation: app.ovl_state.bar_orientation,
-        tick_count: app.ovl_state.tick_count,
-        bar_length_px: app.ovl_state.bar_size,
-        background_colour: app.ovl_state.bg_colour,
-        ..ScalarBarItem::default()
-    };
+    let bar = ScalarBarItem::new(colourmap_id, -1.5, 1.5)
+        .with_title("Height (m)")
+        .with_anchor(app.ovl_state.bar_anchor)
+        .with_orientation(app.ovl_state.bar_orientation)
+        .with_tick_count(app.ovl_state.tick_count)
+        .with_bar_length(app.ovl_state.bar_size)
+        .with_background_colour(app.ovl_state.bg_colour);
 
     let mut labels = Vec::new();
     if app.ovl_state.show_labels {
@@ -439,32 +434,29 @@ pub(crate) fn build_overlay_frame(
             ("Trough -1.5 m", [-1.57, 3.14, -1.5], [1.0, 0.4, 0.3, 1.0]),
             ("Origin", [0.0, 0.0, 0.0], [0.9, 0.9, 0.9, 1.0]),
         ] {
-            labels.push(LabelItem {
-                world_anchor: Some(pos),
-                text: text.into(),
-                colour,
-                leader_line: true,
-                leader_colour: [colour[0], colour[1], colour[2], 0.7],
-                background: true,
-                background_colour: [0.0, 0.0, 0.0, 0.5],
-                border_radius: 4.0,
-                padding: 4.0,
-                anchor_align: LabelAnchor::Leading,
-                ..LabelItem::default()
-            });
+            labels.push(
+                LabelItem::new(text)
+                    .with_world_anchor(pos)
+                    .with_colour(colour)
+                    .with_leader_line(true)
+                    .with_leader_colour([colour[0], colour[1], colour[2], 0.7])
+                    .with_background(true)
+                    .with_background_colour([0.0, 0.0, 0.0, 0.5])
+                    .with_border_radius(4.0)
+                    .with_padding(4.0)
+                    .with_anchor_align(LabelAnchor::Leading),
+            );
         }
     }
 
     let ruler = if app.ovl_state.show_ruler {
-        Some(RulerItem {
-            start: [1.57, 0.0, 0.0],
-            end: [-1.57, 3.14, 0.0],
-            colour: [1.0, 0.85, 0.2, 1.0],
-            label_colour: [1.0, 0.85, 0.2, 1.0],
-            label_format: Some("{:.2} m".into()),
-            end_caps: true,
-            ..RulerItem::default()
-        })
+        Some(
+            RulerItem::new([1.57, 0.0, 0.0], [-1.57, 3.14, 0.0])
+                .with_colour([1.0, 0.85, 0.2, 1.0])
+                .with_label_colour([1.0, 0.85, 0.2, 1.0])
+                .with_label_format("{:.2} m")
+                .with_end_caps(true),
+        )
     } else {
         None
     };
@@ -560,16 +552,12 @@ pub(crate) fn build_overlay_frame(
         ];
 
         for (w, h, shape, colour, border_colour) in items.drain(..) {
-            shapes.push(OverlayShapeItem {
-                position: [x, y_mid - h * 0.5],
-                size: [w, h],
-                shape,
-                fill: OverlayFill::Solid(colour),
-                border_colour,
-                border_width: bw,
-                z_order: 0,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(shape, [x, y_mid - h * 0.5], [w, h])
+                    .with_fill(OverlayFill::Solid(colour))
+                    .with_border(border_colour, bw)
+                    .with_z_order(0),
+            );
             x += w + gap;
         }
 
@@ -586,31 +574,27 @@ pub(crate) fn build_overlay_frame(
             // Circle: colour-wheel gradient texture, white border.
             if let Some(tid) = app.ovl_state.tex_id {
                 let sz = 90.0_f32;
-                shapes.push(OverlayShapeItem {
-                    position: [x2, y2_mid - sz * 0.5],
-                    size: [sz, sz],
-                    shape: OverlayShape::Circle,
-                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
-                    border_colour: [1.0, 1.0, 1.0, 0.9],
-                    border_width: bw2,
-                    texture: Some(tid),
-                    ..Default::default()
-                });
+                shapes.push(
+                    OverlayShapeItem::new(OverlayShape::Circle, [x2, y2_mid - sz * 0.5], [sz, sz])
+                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                        .with_border([1.0, 1.0, 1.0, 0.9], bw2)
+                        .with_texture(tid),
+                );
                 x2 += sz + gap;
             }
 
             // Rounded rect: Carl Gauss portrait.
             if let Some(tid) = app.ovl_state.carlgauss_tex_id {
-                shapes.push(OverlayShapeItem {
-                    position: [x2, y2_mid - row2_h * 0.5],
-                    size: [140.0, row2_h],
-                    shape: OverlayShape::Rect { corner_radius: cr },
-                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
-                    border_colour: [0.8, 0.8, 0.8, 0.9],
-                    border_width: bw2,
-                    texture: Some(tid),
-                    ..Default::default()
-                });
+                shapes.push(
+                    OverlayShapeItem::new(
+                        OverlayShape::Rect { corner_radius: cr },
+                        [x2, y2_mid - row2_h * 0.5],
+                        [140.0, row2_h],
+                    )
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                    .with_border([0.8, 0.8, 0.8, 0.9], bw2)
+                    .with_texture(tid),
+                );
                 x2 += 140.0 + gap;
             }
 
@@ -619,41 +603,37 @@ pub(crate) fn build_overlay_frame(
             if let Some(tid) = app.ovl_state.tex_id {
                 let sz = 90.0_f32;
                 let t = app.ovl_state.start_time.elapsed().as_secs_f32();
-                shapes.push(OverlayShapeItem {
-                    position: [x2, y2_mid - sz * 0.5],
-                    size: [sz, sz],
-                    shape: OverlayShape::Circle,
-                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
-                    border_colour: [1.0, 1.0, 1.0, 0.9],
-                    border_width: bw2,
-                    texture: Some(tid),
-                    texture_transform: viewport_lib::TextureTransform {
-                        rotation: t * 0.5,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                });
+                shapes.push(
+                    OverlayShapeItem::new(OverlayShape::Circle, [x2, y2_mid - sz * 0.5], [sz, sz])
+                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                        .with_border([1.0, 1.0, 1.0, 0.9], bw2)
+                        .with_texture(tid)
+                        .with_texture_transform(viewport_lib::TextureTransform {
+                            rotation: t * 0.5,
+                            ..Default::default()
+                        }),
+                );
                 x2 += sz + gap;
             }
 
             // Texture-transform: same colour-wheel tiled 3x3 across a wider
             // rect using TileMode::Tile and scale = 1/3.
             if let Some(tid) = app.ovl_state.tex_id {
-                shapes.push(OverlayShapeItem {
-                    position: [x2, y2_mid - row2_h * 0.5],
-                    size: [180.0, row2_h],
-                    shape: OverlayShape::Rect { corner_radius: cr },
-                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
-                    border_colour: [1.0, 1.0, 1.0, 0.9],
-                    border_width: bw2,
-                    texture: Some(tid),
-                    texture_transform: viewport_lib::TextureTransform {
+                shapes.push(
+                    OverlayShapeItem::new(
+                        OverlayShape::Rect { corner_radius: cr },
+                        [x2, y2_mid - row2_h * 0.5],
+                        [180.0, row2_h],
+                    )
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                    .with_border([1.0, 1.0, 1.0, 0.9], bw2)
+                    .with_texture(tid)
+                    .with_texture_transform(viewport_lib::TextureTransform {
                         scale: [3.0, 3.0],
                         tile_mode: viewport_lib::TileMode::Tile,
                         ..Default::default()
-                    },
-                    ..Default::default()
-                });
+                    }),
+                );
             }
         }
 
@@ -667,162 +647,156 @@ pub(crate) fn build_overlay_frame(
             let mut x3 = 20.0_f32;
 
             // Rounded rect: left-to-right blue-to-teal gradient.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [120.0, row3_h],
-                shape: OverlayShape::Rect { corner_radius: cr },
-                fill: OverlayFill::LinearGradient {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: cr },
+                    [x3, y3_mid - row3_h * 0.5],
+                    [120.0, row3_h],
+                )
+                .with_fill(OverlayFill::LinearGradient {
                     start_colour: [0.05, 0.15, 0.55, 0.9],
                     end_colour: [0.05, 0.65, 0.65, 0.9],
                     angle: 0.0,
-                },
-                border_colour: [0.3, 0.7, 1.0, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([0.3, 0.7, 1.0, 0.8], bw),
+            );
             x3 += 120.0 + gap;
 
             // Per-corner rect: diagonal gradient (PI/4 = 45 degrees).
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [120.0, row3_h],
-                shape: OverlayShape::RoundedRect {
-                    radii: [cr, 0.0, cr, 0.0],
-                },
-                fill: OverlayFill::LinearGradient {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::RoundedRect {
+                        radii: [cr, 0.0, cr, 0.0],
+                    },
+                    [x3, y3_mid - row3_h * 0.5],
+                    [120.0, row3_h],
+                )
+                .with_fill(OverlayFill::LinearGradient {
                     start_colour: [0.5, 0.05, 0.15, 0.9],
                     end_colour: [1.0, 0.6, 0.1, 0.9],
                     angle: PI / 4.0,
-                },
-                border_colour: [1.0, 0.5, 0.2, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([1.0, 0.5, 0.2, 0.8], bw),
+            );
             x3 += 120.0 + gap;
 
             // Circle: top-to-bottom (angle = PI/2) dark-to-bright gradient.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [row3_h, row3_h],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::LinearGradient {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Circle,
+                    [x3, y3_mid - row3_h * 0.5],
+                    [row3_h, row3_h],
+                )
+                .with_fill(OverlayFill::LinearGradient {
                     start_colour: [0.05, 0.35, 0.05, 0.9],
                     end_colour: [0.5, 1.0, 0.3, 0.9],
                     angle: PI / 2.0,
-                },
-                border_colour: [0.4, 1.0, 0.3, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([0.4, 1.0, 0.3, 0.8], bw),
+            );
             x3 += row3_h + gap;
 
             // Ellipse: horizontal gradient, purple-to-pink.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - 30.0],
-                size: [120.0, 60.0],
-                shape: OverlayShape::Ellipse,
-                fill: OverlayFill::LinearGradient {
-                    start_colour: [0.35, 0.05, 0.55, 0.9],
-                    end_colour: [0.9, 0.3, 0.6, 0.9],
-                    angle: 0.0,
-                },
-                border_colour: [0.8, 0.4, 1.0, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(OverlayShape::Ellipse, [x3, y3_mid - 30.0], [120.0, 60.0])
+                    .with_fill(OverlayFill::LinearGradient {
+                        start_colour: [0.35, 0.05, 0.55, 0.9],
+                        end_colour: [0.9, 0.3, 0.6, 0.9],
+                        angle: 0.0,
+                    })
+                    .with_border([0.8, 0.4, 1.0, 0.8], bw),
+            );
             x3 += 120.0 + gap;
 
             // Capsule: horizontal gradient, dark grey to white.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - 20.0],
-                size: [120.0, 40.0],
-                shape: OverlayShape::Capsule,
-                fill: OverlayFill::LinearGradient {
-                    start_colour: [0.15, 0.15, 0.15, 0.9],
-                    end_colour: [0.85, 0.85, 0.85, 0.9],
-                    angle: 0.0,
-                },
-                border_colour: [0.6, 0.6, 0.6, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(OverlayShape::Capsule, [x3, y3_mid - 20.0], [120.0, 40.0])
+                    .with_fill(OverlayFill::LinearGradient {
+                        start_colour: [0.15, 0.15, 0.15, 0.9],
+                        end_colour: [0.85, 0.85, 0.85, 0.9],
+                        angle: 0.0,
+                    })
+                    .with_border([0.6, 0.6, 0.6, 0.8], bw),
+            );
             x3 += 120.0 + gap;
 
             // Ring: diagonal gradient creates a highlight effect.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [row3_h, row3_h],
-                shape: OverlayShape::Ring {
-                    inner_radius_frac: 0.65,
-                },
-                fill: OverlayFill::LinearGradient {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Ring {
+                        inner_radius_frac: 0.65,
+                    },
+                    [x3, y3_mid - row3_h * 0.5],
+                    [row3_h, row3_h],
+                )
+                .with_fill(OverlayFill::LinearGradient {
                     start_colour: [0.1, 0.3, 0.6, 0.9],
                     end_colour: [0.7, 0.9, 1.0, 0.9],
                     angle: -PI / 4.0,
-                },
-                border_colour: [0.3, 0.7, 1.0, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([0.3, 0.7, 1.0, 0.8], bw),
+            );
             x3 += row3_h + gap;
 
             // Triangle: bottom-to-top warm gradient.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [60.0, row3_h],
-                shape: OverlayShape::Triangle {
-                    direction: TriangleDirection::Up,
-                },
-                fill: OverlayFill::LinearGradient {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Triangle {
+                        direction: TriangleDirection::Up,
+                    },
+                    [x3, y3_mid - row3_h * 0.5],
+                    [60.0, row3_h],
+                )
+                .with_fill(OverlayFill::LinearGradient {
                     start_colour: [0.7, 0.15, 0.05, 0.9],
                     end_colour: [1.0, 0.9, 0.1, 0.9],
                     angle: PI / 2.0,
-                },
-                border_colour: [1.0, 0.6, 0.2, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([1.0, 0.6, 0.2, 0.8], bw),
+            );
             x3 += 60.0 + gap;
 
             // Circle with a radial gradient: bright centre, dark edge.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [row3_h, row3_h],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::RadialGradient {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Circle,
+                    [x3, y3_mid - row3_h * 0.5],
+                    [row3_h, row3_h],
+                )
+                .with_fill(OverlayFill::RadialGradient {
                     centre_colour: [1.0, 0.95, 0.7, 1.0],
                     edge_colour: [0.2, 0.05, 0.0, 0.9],
-                },
-                border_colour: [1.0, 0.8, 0.4, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([1.0, 0.8, 0.4, 0.8], bw),
+            );
             x3 += row3_h + gap;
 
             // Circle with a conical (sweep) gradient: colour-wheel arc.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [row3_h, row3_h],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::ConicalGradient {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Circle,
+                    [x3, y3_mid - row3_h * 0.5],
+                    [row3_h, row3_h],
+                )
+                .with_fill(OverlayFill::ConicalGradient {
                     start_colour: [0.95, 0.2, 0.4, 1.0],
                     end_colour: [0.2, 0.6, 1.0, 1.0],
                     offset_angle: 0.0,
-                },
-                border_colour: [0.9, 0.9, 0.9, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([0.9, 0.9, 0.9, 0.8], bw),
+            );
             x3 += row3_h + gap;
 
             // Multi-stop linear gradient (sunset ramp): 4 stops at uneven
             // positions, demonstrating the OverlayFill::LinearGradientMulti
             // path.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [120.0, row3_h],
-                shape: OverlayShape::Rect { corner_radius: cr },
-                fill: OverlayFill::LinearGradientMulti {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: cr },
+                    [x3, y3_mid - row3_h * 0.5],
+                    [120.0, row3_h],
+                )
+                .with_fill(OverlayFill::LinearGradientMulti {
                     stops: vec![
                         viewport_lib::GradientStop::new(0.0, [0.05, 0.05, 0.20, 1.0]),
                         viewport_lib::GradientStop::new(0.4, [0.55, 0.10, 0.45, 1.0]),
@@ -830,20 +804,20 @@ pub(crate) fn build_overlay_frame(
                         viewport_lib::GradientStop::new(1.0, [1.0, 0.95, 0.55, 1.0]),
                     ],
                     angle: 0.0,
-                },
-                border_colour: [1.0, 0.85, 0.4, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([1.0, 0.85, 0.4, 0.8], bw),
+            );
             x3 += 120.0 + gap;
 
             // Multi-stop conical gradient: 4 stops around the sweep, shows
             // how positions can be packed asymmetrically.
-            shapes.push(OverlayShapeItem {
-                position: [x3, y3_mid - row3_h * 0.5],
-                size: [row3_h, row3_h],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::ConicalGradientMulti {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Circle,
+                    [x3, y3_mid - row3_h * 0.5],
+                    [row3_h, row3_h],
+                )
+                .with_fill(OverlayFill::ConicalGradientMulti {
                     stops: vec![
                         viewport_lib::GradientStop::new(0.0, [0.95, 0.2, 0.2, 1.0]),
                         viewport_lib::GradientStop::new(0.25, [1.0, 0.85, 0.2, 1.0]),
@@ -851,11 +825,9 @@ pub(crate) fn build_overlay_frame(
                         viewport_lib::GradientStop::new(1.0, [0.3, 0.5, 1.0, 1.0]),
                     ],
                     offset_angle: 0.0,
-                },
-                border_colour: [0.9, 0.9, 0.9, 0.8],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([0.9, 0.9, 0.9, 0.8], bw),
+            );
             let _ = x3;
         }
 
@@ -868,98 +840,74 @@ pub(crate) fn build_overlay_frame(
             let mut x4 = 20.0_f32;
 
             // Rounded rect with drop shadow.
-            shapes.push(OverlayShapeItem {
-                position: [x4, y4_mid - row4_h * 0.5],
-                size: [120.0, row4_h],
-                shape: OverlayShape::Rect { corner_radius: cr },
-                fill: OverlayFill::Solid([0.15, 0.15, 0.2, 0.95]),
-                border_colour: [0.5, 0.5, 0.6, 0.8],
-                border_width: bw,
-                shadow_colour: [0.0, 0.0, 0.0, 0.5],
-                shadow_radius: 12.0,
-                shadow_offset: [4.0, 4.0],
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: cr },
+                    [x4, y4_mid - row4_h * 0.5],
+                    [120.0, row4_h],
+                )
+                .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.95]))
+                .with_border([0.5, 0.5, 0.6, 0.8], bw)
+                .with_shadow([0.0, 0.0, 0.0, 0.5], 12.0, [4.0, 4.0]),
+            );
             x4 += 120.0 + gap + 16.0; // extra gap for shadow bleed
 
             // Circle with blue glow (no offset).
             let sz = row4_h;
-            shapes.push(OverlayShapeItem {
-                position: [x4, y4_mid - sz * 0.5],
-                size: [sz, sz],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::Solid([0.1, 0.15, 0.35, 0.95]),
-                border_colour: [0.3, 0.5, 1.0, 0.9],
-                border_width: bw,
-                shadow_colour: [0.2, 0.4, 1.0, 0.6],
-                shadow_radius: 16.0,
-                shadow_offset: [0.0, 0.0],
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(OverlayShape::Circle, [x4, y4_mid - sz * 0.5], [sz, sz])
+                    .with_fill(OverlayFill::Solid([0.1, 0.15, 0.35, 0.95]))
+                    .with_border([0.3, 0.5, 1.0, 0.9], bw)
+                    .with_shadow([0.2, 0.4, 1.0, 0.6], 16.0, [0.0, 0.0]),
+            );
             x4 += sz + gap + 16.0;
 
             // Capsule with warm glow.
-            shapes.push(OverlayShapeItem {
-                position: [x4, y4_mid - 20.0],
-                size: [120.0, 40.0],
-                shape: OverlayShape::Capsule,
-                fill: OverlayFill::Solid([0.3, 0.15, 0.05, 0.95]),
-                border_colour: [1.0, 0.6, 0.2, 0.9],
-                border_width: bw,
-                shadow_colour: [1.0, 0.5, 0.1, 0.45],
-                shadow_radius: 14.0,
-                shadow_offset: [0.0, 2.0],
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(OverlayShape::Capsule, [x4, y4_mid - 20.0], [120.0, 40.0])
+                    .with_fill(OverlayFill::Solid([0.3, 0.15, 0.05, 0.95]))
+                    .with_border([1.0, 0.6, 0.2, 0.9], bw)
+                    .with_shadow([1.0, 0.5, 0.1, 0.45], 14.0, [0.0, 2.0]),
+            );
             x4 += 120.0 + gap + 16.0;
 
             // Ellipse with offset shadow.
-            shapes.push(OverlayShapeItem {
-                position: [x4, y4_mid - 30.0],
-                size: [120.0, 60.0],
-                shape: OverlayShape::Ellipse,
-                fill: OverlayFill::Solid([0.2, 0.3, 0.15, 0.95]),
-                border_colour: [0.5, 0.9, 0.3, 0.9],
-                border_width: bw,
-                shadow_colour: [0.0, 0.0, 0.0, 0.45],
-                shadow_radius: 10.0,
-                shadow_offset: [3.0, 5.0],
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(OverlayShape::Ellipse, [x4, y4_mid - 30.0], [120.0, 60.0])
+                    .with_fill(OverlayFill::Solid([0.2, 0.3, 0.15, 0.95]))
+                    .with_border([0.5, 0.9, 0.3, 0.9], bw)
+                    .with_shadow([0.0, 0.0, 0.0, 0.45], 10.0, [3.0, 5.0]),
+            );
             x4 += 120.0 + gap + 16.0;
 
             // Triangle with green glow.
-            shapes.push(OverlayShapeItem {
-                position: [x4, y4_mid - row4_h * 0.5],
-                size: [60.0, row4_h],
-                shape: OverlayShape::Triangle {
-                    direction: TriangleDirection::Up,
-                },
-                fill: OverlayFill::Solid([0.05, 0.25, 0.1, 0.95]),
-                border_colour: [0.3, 1.0, 0.4, 0.9],
-                border_width: bw,
-                shadow_colour: [0.1, 0.8, 0.2, 0.5],
-                shadow_radius: 14.0,
-                shadow_offset: [0.0, 0.0],
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Triangle {
+                        direction: TriangleDirection::Up,
+                    },
+                    [x4, y4_mid - row4_h * 0.5],
+                    [60.0, row4_h],
+                )
+                .with_fill(OverlayFill::Solid([0.05, 0.25, 0.1, 0.95]))
+                .with_border([0.3, 1.0, 0.4, 0.9], bw)
+                .with_shadow([0.1, 0.8, 0.2, 0.5], 14.0, [0.0, 0.0]),
+            );
             x4 += 60.0 + gap + 16.0;
 
             // Pressed-button effect using shadow_inset: a dark inner shadow
             // offset slightly down makes the surface read as recessed.
-            shapes.push(OverlayShapeItem {
-                position: [x4, y4_mid - row4_h * 0.5],
-                size: [120.0, row4_h],
-                shape: OverlayShape::Rect { corner_radius: cr },
-                fill: OverlayFill::Solid([0.22, 0.24, 0.30, 1.0]),
-                border_colour: [0.05, 0.07, 0.12, 0.9],
-                border_width: 1.0,
-                shadow_colour: [0.0, 0.0, 0.0, 0.7],
-                shadow_radius: 14.0,
-                shadow_offset: [0.0, 4.0],
-                shadow_inset: true,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: cr },
+                    [x4, y4_mid - row4_h * 0.5],
+                    [120.0, row4_h],
+                )
+                .with_fill(OverlayFill::Solid([0.22, 0.24, 0.30, 1.0]))
+                .with_border([0.05, 0.07, 0.12, 0.9], 1.0)
+                .with_shadow([0.0, 0.0, 0.0, 0.7], 14.0, [0.0, 4.0])
+                .with_shadow_inset(true),
+            );
             let _ = x4;
         }
 
@@ -973,88 +921,86 @@ pub(crate) fn build_overlay_frame(
             let mut x5 = 20.0_f32;
 
             // Inset border (default).
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - row5_h * 0.5],
-                size: [100.0, row5_h],
-                shape: OverlayShape::Rect { corner_radius: cr },
-                fill: OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]),
-                border_colour: [0.9, 0.9, 0.3, 1.0],
-                border_width: 3.0,
-                border_mode: BorderMode::Inset,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: cr },
+                    [x5, y5_mid - row5_h * 0.5],
+                    [100.0, row5_h],
+                )
+                .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]))
+                .with_border([0.9, 0.9, 0.3, 1.0], 3.0)
+                .with_border_mode(BorderMode::Inset),
+            );
             x5 += 100.0 + gap;
 
             // Outer border.
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - row5_h * 0.5],
-                size: [100.0, row5_h],
-                shape: OverlayShape::Rect { corner_radius: cr },
-                fill: OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]),
-                border_colour: [0.3, 0.9, 0.5, 1.0],
-                border_width: 3.0,
-                border_mode: BorderMode::Outer,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: cr },
+                    [x5, y5_mid - row5_h * 0.5],
+                    [100.0, row5_h],
+                )
+                .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]))
+                .with_border([0.3, 0.9, 0.5, 1.0], 3.0)
+                .with_border_mode(BorderMode::Outer),
+            );
             x5 += 100.0 + gap;
 
             // Center border on a circle.
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - row5_h * 0.5],
-                size: [row5_h, row5_h],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]),
-                border_colour: [0.5, 0.5, 1.0, 1.0],
-                border_width: 3.0,
-                border_mode: BorderMode::Center,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Circle,
+                    [x5, y5_mid - row5_h * 0.5],
+                    [row5_h, row5_h],
+                )
+                .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]))
+                .with_border([0.5, 0.5, 1.0, 1.0], 3.0)
+                .with_border_mode(BorderMode::Center),
+            );
             x5 += row5_h + gap;
 
             // Pulsing circle.
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - row5_h * 0.5],
-                size: [row5_h, row5_h],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::Solid([0.2, 0.5, 1.0, 0.9]),
-                border_colour: [0.4, 0.7, 1.0, 0.9],
-                border_width: bw,
-                animation: OverlayAnimation::Pulse {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Circle,
+                    [x5, y5_mid - row5_h * 0.5],
+                    [row5_h, row5_h],
+                )
+                .with_fill(OverlayFill::Solid([0.2, 0.5, 1.0, 0.9]))
+                .with_border([0.4, 0.7, 1.0, 0.9], bw)
+                .with_animation(OverlayAnimation::Pulse {
                     start_time: 0.0,
                     period: 2.0,
-                },
-                ..Default::default()
-            });
+                }),
+            );
             x5 += row5_h + gap;
 
             // Repeating fade-in capsule: restarts every 4 seconds.
             let now = app.ovl_state.start_time.elapsed().as_secs_f64();
             let cycle = 4.0;
             let fade_start = (now / cycle).floor() * cycle;
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - 20.0],
-                size: [120.0, 40.0],
-                shape: OverlayShape::Capsule,
-                fill: OverlayFill::Solid([0.6, 0.2, 0.1, 0.9]),
-                border_colour: [1.0, 0.5, 0.3, 0.9],
-                border_width: bw,
-                animation: OverlayAnimation::FadeIn {
-                    start_time: fade_start,
-                    duration: 3.0,
-                },
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(OverlayShape::Capsule, [x5, y5_mid - 20.0], [120.0, 40.0])
+                    .with_fill(OverlayFill::Solid([0.6, 0.2, 0.1, 0.9]))
+                    .with_border([1.0, 0.5, 0.3, 0.9], bw)
+                    .with_animation(OverlayAnimation::FadeIn {
+                        start_time: fade_start,
+                        duration: 3.0,
+                    }),
+            );
             x5 += 120.0 + gap;
 
             // Rotating circle filled with a multi-stop conical gradient.
             // The gradient rotates with the shape because the SDF is
             // evaluated in the unrotated local frame.
             let t = app.ovl_state.start_time.elapsed().as_secs_f32();
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - row5_h * 0.5],
-                size: [row5_h, row5_h],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::ConicalGradientMulti {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Circle,
+                    [x5, y5_mid - row5_h * 0.5],
+                    [row5_h, row5_h],
+                )
+                .with_fill(OverlayFill::ConicalGradientMulti {
                     stops: vec![
                         viewport_lib::GradientStop::new(0.0, [0.27, 0.0, 0.33, 1.0]),
                         viewport_lib::GradientStop::new(0.25, [0.13, 0.32, 0.55, 1.0]),
@@ -1063,27 +1009,25 @@ pub(crate) fn build_overlay_frame(
                         viewport_lib::GradientStop::new(1.0, [0.99, 0.91, 0.14, 1.0]),
                     ],
                     offset_angle: 0.0,
-                },
-                rotation: t * 0.8,
-                border_colour: [1.0, 1.0, 1.0, 0.7],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_rotation(t * 0.8)
+                .with_border([1.0, 1.0, 1.0, 0.7], bw),
+            );
             x5 += row5_h + gap;
 
             // Rotating cross.
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - row5_h * 0.5],
-                size: [row5_h, row5_h],
-                shape: OverlayShape::Cross {
-                    arm_width_frac: 0.35,
-                },
-                fill: OverlayFill::Solid([0.3, 0.8, 0.5, 0.9]),
-                rotation: -t * 1.2,
-                border_colour: [0.5, 1.0, 0.7, 0.9],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Cross {
+                        arm_width_frac: 0.35,
+                    },
+                    [x5, y5_mid - row5_h * 0.5],
+                    [row5_h, row5_h],
+                )
+                .with_fill(OverlayFill::Solid([0.3, 0.8, 0.5, 0.9]))
+                .with_rotation(-t * 1.2)
+                .with_border([0.5, 1.0, 0.7, 0.9], bw),
+            );
             x5 += row5_h + gap;
 
             // Multi-channel animation demos. Each shape isolates
@@ -1092,14 +1036,15 @@ pub(crate) fn build_overlay_frame(
             let base_x = x5;
 
             // Position: sliding rect, PingPong EaseInOut.
-            shapes.push(OverlayShapeItem {
-                position: [base_x, y5_mid - 14.0],
-                size: [44.0, 28.0],
-                shape: OverlayShape::Rect { corner_radius: 4.0 },
-                fill: OverlayFill::Solid([0.95, 0.65, 0.25, 0.95]),
-                border_colour: [1.0, 0.85, 0.4, 0.9],
-                border_width: bw,
-                animations: viewport_lib::OverlayAnimations {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 4.0 },
+                    [base_x, y5_mid - 14.0],
+                    [44.0, 28.0],
+                )
+                .with_fill(OverlayFill::Solid([0.95, 0.65, 0.25, 0.95]))
+                .with_border([1.0, 0.85, 0.4, 0.9], bw)
+                .with_animations(viewport_lib::OverlayAnimations {
                     position: Some(viewport_lib::AnimTrack {
                         start_time: 0.0,
                         duration: 1.8,
@@ -1109,22 +1054,22 @@ pub(crate) fn build_overlay_frame(
                         repeat: viewport_lib::RepeatMode::PingPong,
                     }),
                     ..Default::default()
-                },
-                ..Default::default()
-            });
+                }),
+            );
             x5 += 100.0 + gap;
 
             // Size: pulsating circle, PingPong Pulse easing.
             let pulse_cx = x5 + row5_h * 0.5;
             let pulse_cy = y5_mid;
-            shapes.push(OverlayShapeItem {
-                position: [pulse_cx - 22.0, pulse_cy - 22.0],
-                size: [44.0, 44.0],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::Solid([0.45, 0.85, 1.0, 0.95]),
-                border_colour: [0.7, 0.95, 1.0, 0.9],
-                border_width: bw,
-                animations: viewport_lib::OverlayAnimations {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Circle,
+                    [pulse_cx - 22.0, pulse_cy - 22.0],
+                    [44.0, 44.0],
+                )
+                .with_fill(OverlayFill::Solid([0.45, 0.85, 1.0, 0.95]))
+                .with_border([0.7, 0.95, 1.0, 0.9], bw)
+                .with_animations(viewport_lib::OverlayAnimations {
                     size: Some(viewport_lib::AnimTrack {
                         start_time: 0.0,
                         duration: 1.4,
@@ -1144,21 +1089,21 @@ pub(crate) fn build_overlay_frame(
                         repeat: viewport_lib::RepeatMode::Loop,
                     }),
                     ..Default::default()
-                },
-                ..Default::default()
-            });
+                }),
+            );
             x5 += row5_h + gap;
 
             // Fill colour: colour cycles smoothly between two colours,
             // Loop with EaseInOut for a soft transition.
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - row5_h * 0.5],
-                size: [70.0, row5_h],
-                shape: OverlayShape::Rect { corner_radius: cr },
-                fill: OverlayFill::Solid([0.95, 0.25, 0.5, 0.95]),
-                border_colour: [1.0, 1.0, 1.0, 0.7],
-                border_width: bw,
-                animations: viewport_lib::OverlayAnimations {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: cr },
+                    [x5, y5_mid - row5_h * 0.5],
+                    [70.0, row5_h],
+                )
+                .with_fill(OverlayFill::Solid([0.95, 0.25, 0.5, 0.95]))
+                .with_border([1.0, 1.0, 1.0, 0.7], bw)
+                .with_animations(viewport_lib::OverlayAnimations {
                     fill: Some(viewport_lib::AnimTrack {
                         start_time: 0.0,
                         duration: 1.6,
@@ -1168,24 +1113,24 @@ pub(crate) fn build_overlay_frame(
                         repeat: viewport_lib::RepeatMode::PingPong,
                     }),
                     ..Default::default()
-                },
-                ..Default::default()
-            });
+                }),
+            );
             x5 += 70.0 + gap;
 
             // Rotation: a Star slowly spinning via the rotation channel
             // (Linear, Loop).
-            shapes.push(OverlayShapeItem {
-                position: [x5, y5_mid - row5_h * 0.5],
-                size: [row5_h, row5_h],
-                shape: OverlayShape::Star {
-                    points: 5,
-                    inner_radius_frac: 0.45,
-                },
-                fill: OverlayFill::Solid([0.95, 0.9, 0.3, 0.95]),
-                border_colour: [1.0, 0.95, 0.5, 0.9],
-                border_width: bw,
-                animations: viewport_lib::OverlayAnimations {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Star {
+                        points: 5,
+                        inner_radius_frac: 0.45,
+                    },
+                    [x5, y5_mid - row5_h * 0.5],
+                    [row5_h, row5_h],
+                )
+                .with_fill(OverlayFill::Solid([0.95, 0.9, 0.3, 0.95]))
+                .with_border([1.0, 0.95, 0.5, 0.9], bw)
+                .with_animations(viewport_lib::OverlayAnimations {
                     rotation: Some(viewport_lib::AnimTrack {
                         start_time: 0.0,
                         duration: 4.0,
@@ -1195,9 +1140,8 @@ pub(crate) fn build_overlay_frame(
                         repeat: viewport_lib::RepeatMode::Loop,
                     }),
                     ..Default::default()
-                },
-                ..Default::default()
-            });
+                }),
+            );
             x5 += row5_h + gap;
 
             // A small circle following a closed cubic Bezier
@@ -1221,25 +1165,21 @@ pub(crate) fn build_overlay_frame(
                     2.0,
                     [1.0, 1.0, 1.0, 0.45],
                 );
-                polylines.push(viewport_lib::OverlayPolylineItem {
-                    closed: true,
-                    z_order: -1,
-                    ..trace
-                });
+                polylines.push(trace.with_closed(true).with_z_order(-1));
 
-                shapes.push(OverlayShapeItem {
-                    position: [cx - dot_size * 0.5, cy - dot_size * 0.5],
-                    size: [dot_size, dot_size],
-                    shape: OverlayShape::Circle,
-                    fill: OverlayFill::Solid([0.95, 0.45, 0.85, 1.0]),
-                    border_colour: [1.0, 0.7, 0.95, 0.9],
-                    border_width: bw,
-                    animations: viewport_lib::OverlayAnimations {
+                shapes.push(
+                    OverlayShapeItem::new(
+                        OverlayShape::Circle,
+                        [cx - dot_size * 0.5, cy - dot_size * 0.5],
+                        [dot_size, dot_size],
+                    )
+                    .with_fill(OverlayFill::Solid([0.95, 0.45, 0.85, 1.0]))
+                    .with_border([1.0, 0.7, 0.95, 0.9], bw)
+                    .with_animations(viewport_lib::OverlayAnimations {
                         position_path: Some(path),
                         ..Default::default()
-                    },
-                    ..Default::default()
-                });
+                    }),
+                );
                 x5 += 260.0 + gap;
             }
             let _ = x5;
@@ -1265,119 +1205,119 @@ pub(crate) fn build_overlay_frame(
             let mut x6 = 20.0_f32;
 
             // Diagonal line (round cap).
-            shapes.push(OverlayShapeItem {
-                position: [x6, y6_mid - row6_h * 0.5],
-                size: [100.0, row6_h],
-                shape: OverlayShape::Line {
-                    thickness: 6.0,
-                    cap: LineCap::Round,
-                },
-                fill: OverlayFill::Solid([0.2, 0.7, 1.0, 0.9]),
-                border_colour: [0.5, 0.9, 1.0, 0.9],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Line {
+                        thickness: 6.0,
+                        cap: LineCap::Round,
+                    },
+                    [x6, y6_mid - row6_h * 0.5],
+                    [100.0, row6_h],
+                )
+                .with_fill(OverlayFill::Solid([0.2, 0.7, 1.0, 0.9]))
+                .with_border([0.5, 0.9, 1.0, 0.9], bw),
+            );
             x6 += 100.0 + gap;
 
             // Horizontal line (square cap): thin 3px stroke.
-            shapes.push(OverlayShapeItem {
-                position: [x6, y6_mid - 2.0],
-                size: [120.0, 4.0],
-                shape: OverlayShape::Line {
-                    thickness: 4.0,
-                    cap: LineCap::Square,
-                },
-                fill: OverlayFill::Solid([1.0, 0.6, 0.2, 0.9]),
-                border_colour: [1.0, 0.8, 0.4, 0.9],
-                border_width: 0.0,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Line {
+                        thickness: 4.0,
+                        cap: LineCap::Square,
+                    },
+                    [x6, y6_mid - 2.0],
+                    [120.0, 4.0],
+                )
+                .with_fill(OverlayFill::Solid([1.0, 0.6, 0.2, 0.9]))
+                .with_border([1.0, 0.8, 0.4, 0.9], 0.0),
+            );
             x6 += 120.0 + gap;
 
             // 5-pointed star.
-            shapes.push(OverlayShapeItem {
-                position: [x6, y6_mid - row6_h * 0.5],
-                size: [row6_h, row6_h],
-                shape: OverlayShape::Star {
-                    points: 5,
-                    inner_radius_frac: 0.45,
-                },
-                fill: OverlayFill::Solid([1.0, 0.85, 0.1, 0.9]),
-                border_colour: [1.0, 1.0, 0.5, 0.9],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Star {
+                        points: 5,
+                        inner_radius_frac: 0.45,
+                    },
+                    [x6, y6_mid - row6_h * 0.5],
+                    [row6_h, row6_h],
+                )
+                .with_fill(OverlayFill::Solid([1.0, 0.85, 0.1, 0.9]))
+                .with_border([1.0, 1.0, 0.5, 0.9], bw),
+            );
             x6 += row6_h + gap;
 
             // 6-pointed star.
-            shapes.push(OverlayShapeItem {
-                position: [x6, y6_mid - row6_h * 0.5],
-                size: [row6_h, row6_h],
-                shape: OverlayShape::Star {
-                    points: 6,
-                    inner_radius_frac: 0.5,
-                },
-                fill: OverlayFill::Solid([0.9, 0.3, 0.9, 0.9]),
-                border_colour: [1.0, 0.6, 1.0, 0.9],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Star {
+                        points: 6,
+                        inner_radius_frac: 0.5,
+                    },
+                    [x6, y6_mid - row6_h * 0.5],
+                    [row6_h, row6_h],
+                )
+                .with_fill(OverlayFill::Solid([0.9, 0.3, 0.9, 0.9]))
+                .with_border([1.0, 0.6, 1.0, 0.9], bw),
+            );
             x6 += row6_h + gap;
 
             // Pentagon.
-            shapes.push(OverlayShapeItem {
-                position: [x6, y6_mid - row6_h * 0.5],
-                size: [row6_h, row6_h],
-                shape: OverlayShape::RegularPolygon { sides: 5 },
-                fill: OverlayFill::Solid([0.2, 0.8, 0.4, 0.9]),
-                border_colour: [0.4, 1.0, 0.6, 0.9],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::RegularPolygon { sides: 5 },
+                    [x6, y6_mid - row6_h * 0.5],
+                    [row6_h, row6_h],
+                )
+                .with_fill(OverlayFill::Solid([0.2, 0.8, 0.4, 0.9]))
+                .with_border([0.4, 1.0, 0.6, 0.9], bw),
+            );
             x6 += row6_h + gap;
 
             // Hexagon.
-            shapes.push(OverlayShapeItem {
-                position: [x6, y6_mid - row6_h * 0.5],
-                size: [row6_h, row6_h],
-                shape: OverlayShape::RegularPolygon { sides: 6 },
-                fill: OverlayFill::Solid([0.1, 0.5, 0.9, 0.9]),
-                border_colour: [0.3, 0.7, 1.0, 0.9],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::RegularPolygon { sides: 6 },
+                    [x6, y6_mid - row6_h * 0.5],
+                    [row6_h, row6_h],
+                )
+                .with_fill(OverlayFill::Solid([0.1, 0.5, 0.9, 0.9]))
+                .with_border([0.3, 0.7, 1.0, 0.9], bw),
+            );
             x6 += row6_h + gap;
 
             // Cross (wide arms).
-            shapes.push(OverlayShapeItem {
-                position: [x6, y6_mid - row6_h * 0.5],
-                size: [row6_h, row6_h],
-                shape: OverlayShape::Cross {
-                    arm_width_frac: 0.35,
-                },
-                fill: OverlayFill::Solid([0.9, 0.2, 0.2, 0.9]),
-                border_colour: [1.0, 0.5, 0.5, 0.9],
-                border_width: bw,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Cross {
+                        arm_width_frac: 0.35,
+                    },
+                    [x6, y6_mid - row6_h * 0.5],
+                    [row6_h, row6_h],
+                )
+                .with_fill(OverlayFill::Solid([0.9, 0.2, 0.2, 0.9]))
+                .with_border([1.0, 0.5, 0.5, 0.9], bw),
+            );
             x6 += row6_h + gap;
 
             // Cross with gradient fill and thin arms.
-            shapes.push(OverlayShapeItem {
-                position: [x6, y6_mid - row6_h * 0.5],
-                size: [row6_h, row6_h],
-                shape: OverlayShape::Cross {
-                    arm_width_frac: 0.2,
-                },
-                fill: OverlayFill::LinearGradient {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Cross {
+                        arm_width_frac: 0.2,
+                    },
+                    [x6, y6_mid - row6_h * 0.5],
+                    [row6_h, row6_h],
+                )
+                .with_fill(OverlayFill::LinearGradient {
                     start_colour: [1.0, 0.3, 0.1, 0.9],
                     end_colour: [0.1, 0.3, 1.0, 0.9],
                     angle: std::f32::consts::PI * 0.25,
-                },
-                border_colour: [0.8, 0.8, 0.8, 0.9],
-                border_width: bw,
-                ..Default::default()
-            });
+                })
+                .with_border([0.8, 0.8, 0.8, 0.9], bw),
+            );
             let _ = x6;
         }
 
@@ -1406,38 +1346,39 @@ pub(crate) fn build_overlay_frame(
                 + 24.0;
             // Mask: the left half of the decagon's bounding box. Anything
             // with clip_id == 7 is only visible inside this rect.
-            shapes.push(OverlayShapeItem {
-                position: [px, py],
-                size: [poly_size * 0.5, poly_size],
-                shape: OverlayShape::Rect { corner_radius: 0.0 },
-                clip_mask_id: Some(7),
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [px, py],
+                    [poly_size * 0.5, poly_size],
+                )
+                .with_clip_mask(7),
+            );
             // Outline so the clip edge is visible.
-            shapes.push(OverlayShapeItem {
-                position: [px, py],
-                size: [poly_size * 0.5, poly_size],
-                shape: OverlayShape::Rect { corner_radius: 0.0 },
-                fill: OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]),
-                border_colour: [1.0, 1.0, 1.0, 0.5],
-                border_width: 1.0,
-                border_mode: BorderMode::Outer,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [px, py],
+                    [poly_size * 0.5, poly_size],
+                )
+                .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]))
+                .with_border([1.0, 1.0, 1.0, 0.5], 1.0)
+                .with_border_mode(BorderMode::Outer),
+            );
             // The rotating decagon, sized to the full square. Only the
             // left half passes the clip.
             let t = app.ovl_state.start_time.elapsed().as_secs_f32();
-            shapes.push(OverlayShapeItem {
-                position: [px, py],
-                size: [poly_size, poly_size],
-                shape: OverlayShape::RegularPolygon { sides: 10 },
-                rotation: t * 0.6,
-                fill: OverlayFill::Solid([0.9, 0.55, 0.2, 0.95]),
-                border_colour: [1.0, 0.8, 0.3, 0.9],
-                border_width: bw,
-                clip_id: Some(7),
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::RegularPolygon { sides: 10 },
+                    [px, py],
+                    [poly_size, poly_size],
+                )
+                .with_rotation(t * 0.6)
+                .with_fill(OverlayFill::Solid([0.9, 0.55, 0.2, 0.95]))
+                .with_border([1.0, 0.8, 0.3, 0.9], bw)
+                .with_clip(7),
+            );
         }
 
         // 9-slice A/B comparison: two panels, same texture, same final size.
@@ -1466,29 +1407,30 @@ pub(crate) fn build_overlay_frame(
             let x_right = x_left + panel_w + gap;
 
             // Left: plain stretched texture (no 9-slice).
-            shapes.push(OverlayShapeItem {
-                position: [x_left, py],
-                size: [panel_w, panel_h],
-                shape: OverlayShape::Rect { corner_radius: 0.0 },
-                texture: Some(tid),
-                fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
-                nine_slice: None,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [x_left, py],
+                    [panel_w, panel_h],
+                )
+                .with_texture(tid)
+                .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0])),
+            );
             // Right: same source, same size, 9-slice on.
-            shapes.push(OverlayShapeItem {
-                position: [x_right, py],
-                size: [panel_w, panel_h],
-                shape: OverlayShape::Rect { corner_radius: 0.0 },
-                texture: Some(tid),
-                fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]),
-                nine_slice: Some(viewport_lib::NineSlice {
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: 0.0 },
+                    [x_right, py],
+                    [panel_w, panel_h],
+                )
+                .with_texture(tid)
+                .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                .with_nine_slice(viewport_lib::NineSlice {
                     insets_px: [10.0, 10.0, 10.0, 10.0],
                     centre_mode: viewport_lib::TileMode::Stretch,
                     edge_mode: viewport_lib::TileMode::Stretch,
                 }),
-                ..Default::default()
-            });
+            );
         }
 
         // Closed polyline fills: the left polygon uses OverlayFill directly;
@@ -1510,25 +1452,24 @@ pub(crate) fn build_overlay_frame(
             let x_poly = 20.0 + 70.0 + gap + 180.0 + gap + 180.0 + gap + 32.0;
             let y_poly = py + 35.0;
 
-            polylines.push(viewport_lib::OverlayPolylineItem {
-                points: vec![
+            polylines.push(
+                viewport_lib::OverlayPolylineItem::new(vec![
                     [x_poly, y_poly - 30.0],
                     [x_poly + 48.0, y_poly - 12.0],
                     [x_poly + 42.0, y_poly + 28.0],
                     [x_poly - 18.0, y_poly + 22.0],
                     [x_poly - 36.0, y_poly - 10.0],
-                ],
-                thickness: 2.0,
-                colour: [1.0, 1.0, 1.0, 0.8],
-                closed: true,
-                fill: Some(OverlayFill::LinearGradient {
+                ])
+                .with_thickness(2.0)
+                .with_colour([1.0, 1.0, 1.0, 0.8])
+                .with_closed(true)
+                .with_fill(OverlayFill::LinearGradient {
                     start_colour: [0.12, 0.65, 0.95, 0.78],
                     end_colour: [0.95, 0.35, 0.7, 0.82],
                     angle: std::f32::consts::PI * 0.25,
-                }),
-                z_order: 1,
-                ..Default::default()
-            });
+                })
+                .with_z_order(1),
+            );
 
             if let Some(tid) = app.ovl_state.carlgauss_tex_id {
                 let tx = x_poly + 128.0;
@@ -1552,17 +1493,16 @@ pub(crate) fn build_overlay_frame(
                     .iter()
                     .map(|p| [(p[0] - (tx - 36.0)) / 72.0, (p[1] - (y_poly - 36.0)) / 72.0])
                     .collect::<Vec<_>>();
-                polylines.push(viewport_lib::OverlayPolylineItem {
-                    points: heart_points,
-                    thickness: 2.0,
-                    colour: [1.0, 0.78, 0.9, 0.9],
-                    closed: true,
-                    fill: Some(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95])),
-                    texture: Some(tid),
-                    uvs: Some(heart_uvs),
-                    z_order: 1,
-                    ..Default::default()
-                });
+                polylines.push(
+                    viewport_lib::OverlayPolylineItem::new(heart_points)
+                        .with_thickness(2.0)
+                        .with_colour([1.0, 0.78, 0.9, 0.9])
+                        .with_closed(true)
+                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95]))
+                        .with_texture(tid)
+                        .with_uvs(heart_uvs)
+                        .with_z_order(1),
+                );
             }
 
             // Stroke controls: a marching-ants dashed marquee, a round-capped
@@ -1571,66 +1511,67 @@ pub(crate) fn build_overlay_frame(
                 let t = app.ovl_state.start_time.elapsed().as_secs_f32();
                 let x_stroke = x_poly + 128.0 + 64.0;
 
-                polylines.push(viewport_lib::OverlayPolylineItem {
-                    points: vec![
+                polylines.push(
+                    viewport_lib::OverlayPolylineItem::new(vec![
                         [x_stroke, y_poly - 28.0],
                         [x_stroke + 64.0, y_poly - 28.0],
                         [x_stroke + 64.0, y_poly + 28.0],
                         [x_stroke, y_poly + 28.0],
-                    ],
-                    thickness: 2.0,
-                    colour: [1.0, 1.0, 1.0, 0.85],
-                    closed: true,
-                    stroke_pattern: viewport_lib::StrokePattern::Dashed {
+                    ])
+                    .with_thickness(2.0)
+                    .with_colour([1.0, 1.0, 1.0, 0.85])
+                    .with_closed(true)
+                    .with_stroke_pattern(viewport_lib::StrokePattern::Dashed {
                         dash_length: 8.0,
                         gap_length: 6.0,
                         offset: t * 20.0,
-                    },
-                    z_order: 1,
-                    ..Default::default()
-                });
+                    })
+                    .with_z_order(1),
+                );
 
                 let x_wave = x_stroke + 64.0 + 28.0;
-                polylines.push(viewport_lib::OverlayPolylineItem {
-                    points: (0..=40)
-                        .map(|i| {
-                            let f = i as f32 / 40.0;
-                            [
-                                x_wave + f * 90.0,
-                                y_poly + (f * std::f32::consts::TAU).sin() * 22.0,
-                            ]
-                        })
-                        .collect(),
-                    thickness: 5.0,
-                    colour: [0.3, 0.9, 0.6, 0.9],
-                    cap: viewport_lib::PolylineCap::Round,
-                    stroke_pattern: viewport_lib::StrokePattern::Dashed {
+                polylines.push(
+                    viewport_lib::OverlayPolylineItem::new(
+                        (0..=40)
+                            .map(|i| {
+                                let f = i as f32 / 40.0;
+                                [
+                                    x_wave + f * 90.0,
+                                    y_poly + (f * std::f32::consts::TAU).sin() * 22.0,
+                                ]
+                            })
+                            .collect(),
+                    )
+                    .with_thickness(5.0)
+                    .with_colour([0.3, 0.9, 0.6, 0.9])
+                    .with_cap(viewport_lib::PolylineCap::Round)
+                    .with_stroke_pattern(viewport_lib::StrokePattern::Dashed {
                         dash_length: 18.0,
                         gap_length: 9.0,
                         offset: 0.0,
-                    },
-                    z_order: 1,
-                    ..Default::default()
-                });
+                    })
+                    .with_z_order(1),
+                );
 
                 let x_dot = x_wave + 90.0 + 44.0;
-                polylines.push(viewport_lib::OverlayPolylineItem {
-                    points: (0..48)
-                        .map(|i| {
-                            let a = i as f32 / 48.0 * std::f32::consts::TAU;
-                            [x_dot + a.cos() * 26.0, y_poly + a.sin() * 26.0]
-                        })
-                        .collect(),
-                    thickness: 4.0,
-                    colour: [1.0, 0.75, 0.3, 0.9],
-                    closed: true,
-                    stroke_pattern: viewport_lib::StrokePattern::Dotted {
+                polylines.push(
+                    viewport_lib::OverlayPolylineItem::new(
+                        (0..48)
+                            .map(|i| {
+                                let a = i as f32 / 48.0 * std::f32::consts::TAU;
+                                [x_dot + a.cos() * 26.0, y_poly + a.sin() * 26.0]
+                            })
+                            .collect(),
+                    )
+                    .with_thickness(4.0)
+                    .with_colour([1.0, 0.75, 0.3, 0.9])
+                    .with_closed(true)
+                    .with_stroke_pattern(viewport_lib::StrokePattern::Dotted {
                         spacing: 10.0,
                         offset: 0.0,
-                    },
-                    z_order: 1,
-                    ..Default::default()
-                });
+                    })
+                    .with_z_order(1),
+                );
             }
 
             // Closure-generated closed fills: an animated blob resampled every
@@ -1690,16 +1631,12 @@ pub(crate) fn build_overlay_frame(
 
         // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).
         if app.ovl_state.backdrop_blur_radius > 0.0 {
-            shapes.push(OverlayShapeItem {
-                position: [x + gap, 20.0],
-                size: [140.0, 140.0],
-                shape: OverlayShape::Circle,
-                fill: OverlayFill::Solid([1.0, 1.0, 1.0, 0.12]),
-                border_colour: [1.0, 1.0, 1.0, 0.3],
-                border_width: 1.0,
-                backdrop_blur: app.ovl_state.backdrop_blur_radius,
-                ..Default::default()
-            });
+            shapes.push(
+                OverlayShapeItem::new(OverlayShape::Circle, [x + gap, 20.0], [140.0, 140.0])
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.12]))
+                    .with_border([1.0, 1.0, 1.0, 0.3], 1.0)
+                    .with_backdrop_blur(app.ovl_state.backdrop_blur_radius),
+            );
         }
     }
 

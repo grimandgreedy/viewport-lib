@@ -28,14 +28,12 @@ pub enum LabelAnchor {
 ///
 /// ```rust
 /// # use viewport_lib::LabelItem;
-/// let label = LabelItem {
-///     world_anchor: Some([2.0, 3.0, 0.0]),
-///     text: "Peak Pressure: 101.3 kPa".into(),
-///     leader_line: true,
-///     ..Default::default()
-/// };
+/// let label = LabelItem::new("Peak Pressure: 101.3 kPa")
+///     .with_world_anchor([2.0, 3.0, 0.0])
+///     .with_leader_line(true);
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct LabelItem {
     /// World-space anchor.  Projected to screen by the renderer each frame.
     /// Set `screen_anchor` instead for fixed screen positions.
@@ -125,5 +123,120 @@ impl Default for LabelItem {
             z_order: 0,
             occlude: false,
         }
+    }
+}
+
+impl LabelItem {
+    /// Create a label with the given `text`. All other fields take their
+    /// defaults; set them with the `with_*` methods below.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Pin the label to a world-space position, reprojected each frame.
+    pub fn with_world_anchor(mut self, anchor: [f32; 3]) -> Self {
+        self.world_anchor = Some(anchor);
+        self
+    }
+
+    /// Pin the label to a fixed screen position in logical pixels from
+    /// top-left. Takes precedence over the world anchor when both are set.
+    pub fn with_screen_anchor(mut self, anchor: [f32; 2]) -> Self {
+        self.screen_anchor = Some(anchor);
+        self
+    }
+
+    /// Set the text colour.
+    pub fn with_colour(mut self, colour: [f32; 4]) -> Self {
+        self.colour = colour;
+        self
+    }
+
+    /// Set the font size in logical pixels.
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
+    /// Set the font. Without this the built-in default font is used.
+    pub fn with_font(mut self, font: crate::resources::overlay::font::FontHandle) -> Self {
+        self.font = Some(font);
+        self
+    }
+
+    /// Draw a filled rectangle behind the text.
+    pub fn with_background(mut self, background: bool) -> Self {
+        self.background = background;
+        self
+    }
+
+    /// Set the background rectangle colour.
+    pub fn with_background_colour(mut self, colour: [f32; 4]) -> Self {
+        self.background_colour = colour;
+        self
+    }
+
+    /// Set the padding between the text and the background rectangle edge.
+    pub fn with_padding(mut self, padding: f32) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    /// Draw a leader line from the projected world anchor to the text origin.
+    pub fn with_leader_line(mut self, leader_line: bool) -> Self {
+        self.leader_line = leader_line;
+        self
+    }
+
+    /// Set the leader line colour.
+    pub fn with_leader_colour(mut self, colour: [f32; 4]) -> Self {
+        self.leader_colour = colour;
+        self
+    }
+
+    /// Set the horizontal alignment of the text relative to its anchor.
+    pub fn with_anchor_align(mut self, anchor_align: LabelAnchor) -> Self {
+        self.anchor_align = anchor_align;
+        self
+    }
+
+    /// Set the pixel offset applied after anchor resolution and alignment.
+    pub fn with_offset(mut self, offset: [f32; 2]) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Set the overall opacity multiplier (0.0 to 1.0).
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
+    }
+
+    /// Set the maximum text width in logical pixels. Text wider than this wraps
+    /// to multiple lines.
+    pub fn with_max_width(mut self, max_width: f32) -> Self {
+        self.max_width = Some(max_width);
+        self
+    }
+
+    /// Set the corner radius of the background rectangle in logical pixels.
+    pub fn with_border_radius(mut self, border_radius: f32) -> Self {
+        self.border_radius = border_radius;
+        self
+    }
+
+    /// Set the draw order. Lower values render first (further back).
+    pub fn with_z_order(mut self, z_order: i32) -> Self {
+        self.z_order = z_order;
+        self
+    }
+
+    /// Set the depth-occlusion flag (reserved; not yet implemented).
+    pub fn with_occlude(mut self, occlude: bool) -> Self {
+        self.occlude = occlude;
+        self
     }
 }

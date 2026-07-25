@@ -325,16 +325,16 @@ impl ApplicationHandler for App {
                 frame_data.effects = effects;
 
                 // Backdrop blur demo: a large frosted-glass circle in the centre.
-                frame_data.overlays.shapes.push(OverlayShapeItem {
-                    position: [w * 0.5 - 100.0, h * 0.5 - 100.0],
-                    size: [200.0, 200.0],
-                    shape: OverlayShape::Circle,
-                    fill: OverlayFill::Solid([1.0, 1.0, 1.0, 0.1]),
-                    border_colour: [1.0, 1.0, 1.0, 0.4],
-                    border_width: 1.5,
-                    backdrop_blur: 20.0,
-                    ..Default::default()
-                });
+                frame_data.overlays.shapes.push(
+                    OverlayShapeItem::new(
+                        OverlayShape::Circle,
+                        [w * 0.5 - 100.0, h * 0.5 - 100.0],
+                        [200.0, 200.0],
+                    )
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1]))
+                    .with_border([1.0, 1.0, 1.0, 0.4], 1.5)
+                    .with_backdrop_blur(20.0),
+                );
 
                 // render() owns the full HDR pipeline:
                 //   prepare -> shadow pass -> HDR scene -> post-process -> tone map -> output_view

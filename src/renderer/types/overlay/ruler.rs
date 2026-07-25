@@ -8,15 +8,12 @@
 ///
 /// ```rust
 /// # use viewport_lib::RulerItem;
-/// let ruler = RulerItem {
-///     start: [0.0, 0.0, 0.0],
-///     end: [2.5, 0.0, 0.0],
-///     colour: [1.0, 1.0, 1.0, 1.0],
-///     label_format: Some("{:.2} m".into()),
-///     ..Default::default()
-/// };
+/// let ruler = RulerItem::new([0.0, 0.0, 0.0], [2.5, 0.0, 0.0])
+///     .with_colour([1.0, 1.0, 1.0, 1.0])
+///     .with_label_format("{:.2} m");
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RulerItem {
     /// World-space start endpoint.
     pub start: [f32; 3],
@@ -55,5 +52,61 @@ impl Default for RulerItem {
             label_format: None,
             end_caps: true,
         }
+    }
+}
+
+impl RulerItem {
+    /// Create a ruler between the world-space `start` and `end` points. All
+    /// other fields take their defaults; set them with the `with_*` methods
+    /// below.
+    pub fn new(start: [f32; 3], end: [f32; 3]) -> Self {
+        Self {
+            start,
+            end,
+            ..Default::default()
+        }
+    }
+
+    /// Set the colour of the ruler line and end caps.
+    pub fn with_colour(mut self, colour: [f32; 4]) -> Self {
+        self.colour = colour;
+        self
+    }
+
+    /// Set the line thickness in screen pixels.
+    pub fn with_line_width(mut self, line_width: f32) -> Self {
+        self.line_width_px = line_width;
+        self
+    }
+
+    /// Set the font for the distance label. Without this the built-in default
+    /// font is used.
+    pub fn with_font(mut self, font: crate::resources::FontHandle) -> Self {
+        self.font = Some(font);
+        self
+    }
+
+    /// Set the font size for the distance label in logical pixels.
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
+    /// Set the distance label text colour.
+    pub fn with_label_colour(mut self, colour: [f32; 4]) -> Self {
+        self.label_colour = colour;
+        self
+    }
+
+    /// Set the `format!`-style string used to render the distance value.
+    pub fn with_label_format(mut self, label_format: impl Into<String>) -> Self {
+        self.label_format = Some(label_format.into());
+        self
+    }
+
+    /// Set whether to draw perpendicular tick marks at each endpoint.
+    pub fn with_end_caps(mut self, end_caps: bool) -> Self {
+        self.end_caps = end_caps;
+        self
     }
 }

@@ -58,35 +58,23 @@ impl App {
         place_marker(renderer, glam::Vec3::new(0.0, 300.0, 0.0), [1.0, 0.0, 0.0]);
 
         self.ann_state.labels = vec![
-            LabelItem {
-                world_anchor: Some([0.0, 0.0, 0.0]),
-                text: "Origin (0,0,0)".into(),
-                colour: [1.0, 1.0, 1.0, 1.0],
-                background: true,
-                ..Default::default()
-            },
-            LabelItem {
-                world_anchor: Some([2.0, 3.0, 0.0]),
-                text: "Peak Pressure: 101.3 kPa".into(),
-                colour: [1.0, 0.9, 0.1, 1.0],
-                leader_line: true,
-                background: true,
-                ..Default::default()
-            },
-            LabelItem {
-                world_anchor: Some([-3.0, 2.0, 0.0]),
-                text: "Outlet".into(),
-                colour: [0.4, 0.8, 1.0, 1.0],
-                background: true,
-                ..Default::default()
-            },
-            LabelItem {
-                world_anchor: Some([0.0, 300.0, 0.0]),
-                text: "Behind camera (clipped)".into(),
-                colour: [1.0, 0.0, 0.0, 1.0],
-                background: true,
-                ..Default::default()
-            },
+            LabelItem::new("Origin (0,0,0)")
+                .with_world_anchor([0.0, 0.0, 0.0])
+                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_background(true),
+            LabelItem::new("Peak Pressure: 101.3 kPa")
+                .with_world_anchor([2.0, 3.0, 0.0])
+                .with_colour([1.0, 0.9, 0.1, 1.0])
+                .with_leader_line(true)
+                .with_background(true),
+            LabelItem::new("Outlet")
+                .with_world_anchor([-3.0, 2.0, 0.0])
+                .with_colour([0.4, 0.8, 1.0, 1.0])
+                .with_background(true),
+            LabelItem::new("Behind camera (clipped)")
+                .with_world_anchor([0.0, 300.0, 0.0])
+                .with_colour([1.0, 0.0, 0.0, 1.0])
+                .with_background(true),
         ];
 
         self.ann_state.built = true;
