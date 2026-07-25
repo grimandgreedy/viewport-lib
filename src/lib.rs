@@ -142,6 +142,13 @@ pub use scene::traits;
 
 // ---------------------------------------------------------------------------
 // Flat re-exports : these form the public crate API.
+//
+// A type belongs here when a host names it in ordinary integration code: the
+// frame data types, scene and material types, cameras and controllers, the
+// handles returned by uploads, and the plugin traits and their contexts. Types
+// a host only touches in rare or advanced cases stay at their module path. If
+// a type is a public field or parameter of something already re-exported here,
+// re-export it too so the caller can name it without a deep import.
 // ---------------------------------------------------------------------------
 
 pub use error::{ViewportError, ViewportResult};
@@ -157,7 +164,7 @@ pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
 pub use scene::material::{
-    BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
+    AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
     ParamVisMode, PatternConfig, ShadingModel,
 };
 pub use scene::scene::{
@@ -241,13 +248,13 @@ pub use renderer::{
     RepeatMode, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
     ScalarBarOrientation, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
     SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape,
-    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteOrientation, SpriteSetRefItem,
-    SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern, SubObjectRef, SubSelection,
-    SubSelectionRef, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem,
-    TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem,
-    VelocityDist, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer, VolumeItem,
-    VolumeMeshItem, VolumeSelectionInfo, VolumeSurfaceSliceItem, VolumeTransparency,
-    aabb_wireframe_polyline, sphere_wireframe_polyline,
+    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
+    SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
+    StrokePattern, SubObjectRef, SubSelection, SubSelectionRef, SurfaceLICConfig,
+    SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode,
+    ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
+    ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSelectionInfo,
+    VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 
@@ -274,7 +281,7 @@ pub use resources::volume::volume_mesh::{
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc,
-    ComputeFilterResult, DeviceResources, FontError, FontHandle, GpuImplicitItem,
+    ComputeFilterResult, DeviceResources, FontError, FontHandle, FrameBudget, GpuImplicitItem,
     GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId,
     LightUniform, LightsUniform, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes,
     SingleLightUniform, TextureId, TextureMemoryStats, UploadStatus, VolumeId, VramBudget,
@@ -295,9 +302,10 @@ pub use resources::{
 };
 
 pub use runtime::{
-    CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep,
-    ManipulationSystem, NodeTransformOp, RuntimeFrameContext, RuntimeOutput, RuntimePhase,
-    RuntimePlugin, RuntimeStats, RuntimeStepContext, SceneRuntimeMode, SelectionOp,
+    CameraFollow, DebugDraw, DebugLayer, DebugPrim, FixedStepIter, FixedTimestep, GpuFrameContext,
+    GpuPlugin, JobPoll, JobSender, JobSlot, ManipulationSystem, NodeTransformOp, PostPaintTargets,
+    RuntimeEventBus, RuntimeFrameContext, RuntimeOutput, RuntimePhase, RuntimePlugin,
+    RuntimeResources, RuntimeStats, RuntimeStepContext, SceneRuntimeMode, SelectionOp,
     SelectionSystem, SimulationStepContext, TransformSnapshot, TransformSnapshotTable,
     TransformWriteback, ViewportRuntime,
 };
