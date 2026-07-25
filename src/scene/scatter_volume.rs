@@ -266,7 +266,7 @@ impl Default for RefractionParams {
 /// Packed GPU layout for a refractive volume. 80 bytes, 16-byte aligned.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct GpuRefractionVolume {
+pub(crate) struct GpuRefractionVolume {
     /// 0 = Box, 1 = Sphere.
     pub shape_kind: u32,
     /// Padding to keep the following `vec4<f32>` 16-byte aligned.
@@ -326,7 +326,7 @@ impl GpuRefractionVolume {
 /// `src/shaders/scatter_volume.wgsl`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct GpuScatterVolume {
+pub(crate) struct GpuScatterVolume {
     /// 0 = Box, 1 = Sphere. Future variants extend this number.
     pub shape_kind: u32,
     /// Bit flags: 1 = unlit (skip in-scattering), 2 = receive_shadows,
@@ -360,15 +360,15 @@ pub struct GpuScatterVolume {
 }
 
 /// Flag bit: skip in-scattering (treat the volume as `unlit`).
-pub const SCATTER_FLAG_UNLIT: u32 = 1;
+pub(crate) const SCATTER_FLAG_UNLIT: u32 = 1;
 /// Flag bit: sample the shadow map at each march step.
-pub const SCATTER_FLAG_RECEIVE_SHADOWS: u32 = 2;
+pub(crate) const SCATTER_FLAG_RECEIVE_SHADOWS: u32 = 2;
 /// Flag bit: this volume's colour comes from the bound colourmap LUT.
-pub const SCATTER_FLAG_USE_RAMP: u32 = 4;
+pub(crate) const SCATTER_FLAG_USE_RAMP: u32 = 4;
 /// Flag bit: modulate per-step density by procedural noise.
-pub const SCATTER_FLAG_USE_NOISE: u32 = 8;
+pub(crate) const SCATTER_FLAG_USE_NOISE: u32 = 8;
 /// Flag bit: modulate per-step density by sampling the bound 3D density texture.
-pub const SCATTER_FLAG_USE_DENSITY_TEXTURE: u32 = 16;
+pub(crate) const SCATTER_FLAG_USE_DENSITY_TEXTURE: u32 = 16;
 
 impl GpuScatterVolume {
     /// Pack a CPU `ScatterVolume` into the GPU layout. `density_multiplier`
@@ -481,7 +481,7 @@ impl GpuScatterVolume {
 /// Returns `Some((t_enter, t_exit))` in ray parameter units. Both are clamped
 /// to be non-negative (camera-inside case sets `t_enter = 0`). Returns `None`
 /// when the ray misses the shape or exits before entering.
-pub fn ray_intersect(
+pub(crate) fn ray_intersect(
     shape: &ScatterShape,
     origin: glam::Vec3,
     dir: glam::Vec3,

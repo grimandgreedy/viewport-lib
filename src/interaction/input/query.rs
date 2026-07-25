@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use super::binding::{ActivationMode, KeyCode, Modifiers, MouseButton, TriggerKind};
 use std::collections::HashSet;
 
@@ -6,6 +8,7 @@ use std::collections::HashSet;
 /// This is framework-agnostic - the egui-specific translation happens in the
 /// host application's viewport adapter.
 #[derive(Debug, Clone)]
+#[deprecated(note = "superseded by ViewportInput and ActionFrame")]
 pub struct FrameInput {
     /// Keys pressed this frame (rising edge).
     pub keys_pressed: HashSet<KeyCode>,
@@ -58,6 +61,7 @@ impl Default for FrameInput {
 
 /// Result of querying whether an action is active this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[deprecated(note = "superseded by ResolvedActionState")]
 pub enum ActionState {
     /// Action is not active.
     Inactive,

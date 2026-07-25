@@ -59,9 +59,9 @@ pub(crate) use self::scivis::curve_store::{
     GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
-pub use self::types::BatchMeta;
-#[allow(deprecated)]
-pub use self::types::ClipVolumeUniform;
+// BatchMeta is published to plugins through `plugin_api::cull`; keep the
+// `resources` path crate-internal so there is a single public home for it.
+pub(crate) use self::types::BatchMeta;
 pub(crate) use self::types::ScatterViewportState;
 #[allow(deprecated)]
 pub use self::types::ViewportGpuResources;
@@ -84,10 +84,17 @@ pub(crate) use self::types::{
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, DeviceResources, GpuMesh,
-    GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS, MatcapId, MeshData, OverlayVertex,
-    PointCloudGpuData, PolylineGpuData, ProjectedTetId, ResidentBytes, ScreenImageGpuData,
-    SingleLightUniform, TextureMemoryStats, Vertex, VolumeGpuData, VolumeId, VramBudget,
+    ClipVolumeEntry, ClipVolumesUniform, ColourmapId, DeviceResources, MatcapId, MeshData,
+    ProjectedTetId, ResidentBytes, TextureMemoryStats, VolumeId, VramBudget,
+};
+// GPU-side layout types (uniform blocks, vertex and per-item buffer structs).
+// These mirror shader-side memory and have no use outside the renderer, so they
+// stay crate-internal. Plugins build against the WGSL contract in
+// `plugin_api::shared_wgsl` instead.
+pub(crate) use self::types::{
+    CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
+    OverlayVertex, PointCloudGpuData, PolylineGpuData, ScreenImageGpuData, SingleLightUniform,
+    Vertex, VolumeGpuData,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
@@ -97,9 +104,6 @@ pub use self::volume::implicit::{GpuImplicitOptions, ImplicitBlendMode, Implicit
 pub use self::volume::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
-#[allow(deprecated)] // TET_SENTINEL is a deprecated alias kept for downstream compatibility.
-pub use self::volume::volume_mesh::{
-    CELL_SENTINEL, TET_SENTINEL, VolumeMeshData, extract_clipped_volume_faces,
-};
+pub use self::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 pub use crate::renderer::GpuImplicitItem;
 pub use crate::renderer::GpuMarchingCubesJob;

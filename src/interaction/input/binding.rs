@@ -1,5 +1,9 @@
 //! Input binding types: triggers, modifiers, and bindings that map actions to physical inputs.
 
+// `Binding` (the legacy action-to-trigger map) is deprecated but still built and
+// consumed within this module; suppress the deprecation lint here.
+#![allow(deprecated)]
+
 use super::action::Action;
 use super::mode::InputMode;
 
@@ -340,6 +344,7 @@ pub struct Trigger {
 /// Maps an action to a physical trigger, optionally restricted to specific modes.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[deprecated(note = "superseded by ViewportBinding")]
 pub struct Binding {
     /// The semantic action this binding fires.
     pub action: Action,

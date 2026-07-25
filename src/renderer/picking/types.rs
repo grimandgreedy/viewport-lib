@@ -25,18 +25,6 @@ pub struct PickHit {
     pub world_pos: glam::Vec3,
     /// Surface normal at the hit point, in world space.
     pub normal: glam::Vec3,
-    /// Which triangle was hit (from parry3d `FeatureId::Face`).
-    /// `u32::MAX` if the feature was not a face (edge/vertex hit : rare for TriMesh).
-    ///
-    /// **Deprecated** : use [`sub_object`](Self::sub_object) instead.
-    #[deprecated(since = "0.5.0", note = "use `sub_object` instead")]
-    pub triangle_index: u32,
-    /// Index of the hit point within a [`crate::renderer::PointCloudItem`].
-    /// `None` for mesh picks; set when a point cloud item is hit.
-    ///
-    /// **Deprecated** : use [`sub_object`](Self::sub_object) instead.
-    #[deprecated(since = "0.5.0", note = "use `sub_object` instead")]
-    pub point_index: Option<u32>,
     /// Interpolated scalar attribute value at the hit point.
     ///
     /// Populated by the `_with_probe` picking variants when an active attribute
@@ -82,8 +70,6 @@ impl PickHit {
             sub_object: None,
             world_pos,
             normal,
-            triangle_index: u32::MAX,
-            point_index: None,
             scalar_value: None,
             sub_object_world_pos: None,
         }

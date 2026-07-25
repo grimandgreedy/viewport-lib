@@ -34,10 +34,6 @@ const PARALLEL_THRESHOLD: usize = 1024;
 /// For example, a tet uses slots `[0..4]`; slots `[4..8]` must be `CELL_SENTINEL`.
 pub const CELL_SENTINEL: u32 = u32::MAX;
 
-/// Deprecated alias for [`CELL_SENTINEL`].
-#[deprecated(since = "0.13.0", note = "use `CELL_SENTINEL` instead")]
-pub const TET_SENTINEL: u32 = CELL_SENTINEL;
-
 /// Input data for an unstructured volume mesh (tets, hexes, or mixed).
 ///
 /// Each cell is represented as exactly 8 vertex indices.  For cells with fewer
@@ -968,7 +964,7 @@ fn generate_section_tris(
 ///
 /// Returns `(mesh_data, face_to_cell)` where `face_to_cell[i]` is the cell
 /// index that output triangle `i` belongs to.
-pub fn extract_clipped_volume_faces(
+pub(crate) fn extract_clipped_volume_faces(
     data: &VolumeMeshData,
     clip_planes: &[[f32; 4]],
 ) -> (MeshData, Vec<u32>) {

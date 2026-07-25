@@ -746,8 +746,6 @@ impl ViewportRenderer {
                     sub_object: None,
                     world_pos: ray_origin + ray_dir * 0.001,
                     normal: -ray_dir,
-                    triangle_index: u32::MAX,
-                    point_index: None,
                     scalar_value: None,
                     sub_object_world_pos: None,
                 });

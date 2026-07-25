@@ -40,7 +40,7 @@ pub struct RenderCamera {
 
 impl RenderCamera {
     /// Build the GPU-facing camera uniform from this camera's state.
-    pub fn camera_uniform(&self) -> CameraUniform {
+    pub(crate) fn camera_uniform(&self) -> CameraUniform {
         let vp = self.view_proj();
         CameraUniform {
             view_proj: vp.to_cols_array_2d(),

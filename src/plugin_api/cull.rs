@@ -19,7 +19,7 @@
 //! Submit via [`crate::renderer::ViewportRenderer::submit_cull`] or
 //! [`crate::renderer::ViewportRenderer::submit_cull_shadow`].
 
-pub use crate::resources::BatchMeta;
+pub use crate::resources::mesh::instancing::BatchMeta;
 
 /// Per-instance world-space bounding box for GPU culling.
 ///

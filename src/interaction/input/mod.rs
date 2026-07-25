@@ -16,6 +16,10 @@
 //!
 //! The older [`InputSystem`] / [`FrameInput`] query model remains available.
 
+// The legacy query types below are deprecated but still defined and wired up
+// here; suppress the deprecation lint for their in-module use.
+#![allow(deprecated)]
+
 /// Semantic action enum.
 pub mod action;
 /// Binding, trigger, and modifier types.
@@ -58,6 +62,9 @@ pub use viewport_input::ViewportInput;
 
 /// Central input system that evaluates action queries against the current
 /// binding table and input mode.
+#[deprecated(
+    note = "superseded by ViewportInput and the camera controllers in camera::controllers"
+)]
 pub struct InputSystem {
     bindings: Vec<Binding>,
     mode: InputMode,

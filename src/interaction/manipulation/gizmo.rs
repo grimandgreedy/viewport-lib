@@ -414,7 +414,7 @@ fn ray_segment_t(
 // ---------------------------------------------------------------------------
 
 /// Vertex type reused from resources module (position, normal, colour).
-pub use crate::resources::Vertex;
+pub(crate) use crate::resources::Vertex;
 
 /// Axis colour definitions (per UI-SPEC).
 /// X = red, Y = green, Z = blue; brightened variants for hover.

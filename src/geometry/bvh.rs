@@ -268,11 +268,6 @@ impl PickAccelerator {
                 let toi = intersection.time_of_impact * avg_scale;
 
                 let sub_object = SubObjectRef::from_feature_id(intersection.feature);
-                let triangle_index = if let Some(SubObjectRef::Face(i)) = sub_object {
-                    i
-                } else {
-                    u32::MAX
-                };
 
                 // Transform hit point to world space.
                 // scaled_origin and scaled_dir are in inv-scaled local space, so:
@@ -292,10 +287,8 @@ impl PickAccelerator {
                 let hit = crate::renderer::PickHit {
                     id: 0, // placeholder : caller fills in actual node_id
                     sub_object,
-                    triangle_index,
                     world_pos,
                     normal: world_normal,
-                    point_index: None,
                     scalar_value: None,
                     sub_object_world_pos: None,
                 };

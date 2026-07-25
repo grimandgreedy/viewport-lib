@@ -179,6 +179,7 @@ pub use geometry::implicit::{
 pub use geometry::isoline::{IsolineItem, extract_isolines};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
 
+#[allow(deprecated)]
 pub use interaction::input::{
     Action, ActionState, Binding, FrameInput, InputMode, InputSystem, KeyCode, Modifiers,
     MouseButton, NavigationMode,
@@ -276,16 +277,15 @@ pub use resources::mesh::mesh_store::MeshId;
 pub use resources::volume::sparse_volume::SparseVolumeGridData;
 pub use resources::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use resources::volume::volume_mesh::{
-    CELL_SENTINEL, ConversionReport, ToTetMeshError, VolumeMeshData, extract_clipped_volume_faces,
+    CELL_SENTINEL, ConversionReport, ToTetMeshError, VolumeMeshData,
 };
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
-    CameraUniform, ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc,
-    ComputeFilterResult, DeviceResources, FontError, FontHandle, FrameBudget, GpuImplicitItem,
-    GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId,
-    LightUniform, LightsUniform, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes,
-    SingleLightUniform, TextureId, TextureMemoryStats, UploadStatus, VolumeId, VramBudget,
-    lerp_attributes, supports_texture_format, vram_budget,
+    ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, ComputeFilterResult,
+    DeviceResources, FontError, FontHandle, FrameBudget, GpuImplicitItem, GpuImplicitOptions,
+    GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId, MatcapId, McVolumeId,
+    MeshData, ProgressHandle, ResidentBytes, TextureId, TextureMemoryStats, UploadStatus, VolumeId,
+    VramBudget, lerp_attributes, supports_texture_format, vram_budget,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,

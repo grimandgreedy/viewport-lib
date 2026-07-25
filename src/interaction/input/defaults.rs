@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use super::action::Action;
 use super::binding::*;
 use super::mode::InputMode;
@@ -53,6 +55,7 @@ fn mouse_click(btn: MouseButton) -> Trigger {
 }
 
 /// Returns the default binding table for viewport navigation and manipulation.
+#[deprecated(note = "superseded by viewport_all_bindings")]
 pub fn default_bindings() -> Vec<Binding> {
     let normal = &[InputMode::Normal];
     let fly = &[InputMode::FlyMode];

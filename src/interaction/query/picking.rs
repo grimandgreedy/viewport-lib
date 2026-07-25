@@ -126,19 +126,11 @@ pub fn pick_scene_cpu(
                             let world_pos = ray_origin + ray_dir * toi;
                             // intersection.normal is already in world space (pose transforms it).
                             let normal = intersection.normal;
-                            let triangle_index = if let Some(SubObjectRef::Face(i)) = sub_object {
-                                i
-                            } else {
-                                u32::MAX
-                            };
-                            #[allow(deprecated)]
                             let hit = PickHit {
                                 id: obj.id(),
                                 sub_object,
-                                triangle_index,
                                 world_pos,
                                 normal,
-                                point_index: None,
                                 scalar_value: None,
                                 sub_object_world_pos: None,
                             };
@@ -701,8 +693,6 @@ pub fn pick_volume_cpu(
                 sub_object: Some(SubObjectRef::Voxel(flat)),
                 world_pos,
                 normal: world_normal,
-                triangle_index: u32::MAX,
-                point_index: None,
                 scalar_value: Some(scalar),
                 sub_object_world_pos: None,
             });
@@ -958,8 +948,6 @@ pub fn pick_gaussian_splat_cpu(
         sub_object: Some(SubObjectRef::Point(idx)),
         world_pos: best_world,
         normal: glam::Vec3::Y,
-        triangle_index: u32::MAX,
-        point_index: Some(idx),
         scalar_value: None,
         sub_object_world_pos: None,
     })
@@ -1107,8 +1095,6 @@ pub fn pick_transparent_volume_mesh_cpu(
         sub_object: Some(SubObjectRef::Cell(cell_idx)),
         world_pos: world_hit,
         normal: -ray_dir.normalize(),
-        triangle_index: u32::MAX,
-        point_index: None,
         scalar_value: None,
         sub_object_world_pos: None,
     })
