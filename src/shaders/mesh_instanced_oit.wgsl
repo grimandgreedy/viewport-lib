@@ -240,18 +240,17 @@ fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
 fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
     return textureSampleLevel(ibl_irradiance, ibl_sampler, dir_to_equirect_uv(N, rotation), 0.0).rgb;
 }
-fn sample_ibl_prefiltered(R: vec3<f32>, roughness: f32, rotation: f32) -> vec3<f32> {
-    // Mip floored by the screen-space footprint of R (see mesh.wgsl).
-    let dr = max(length(dpdx(R)), length(dpdy(R)));
+// Mip floored by the screen-space footprint of R (see mesh.wgsl). `dr` (the
+// screen-space length of the reflection vector's derivative) is supplied by
+// the caller, computed in uniform control flow.
+fn sample_ibl_prefiltered(R: vec3<f32>, roughness: f32, rotation: f32, dr: f32) -> vec3<f32> {
     let footprint_mip = clamp(log2(max(dr * 128.0 / (2.0 * IBL_PI), 1.0)), 0.0, 4.0);
     let mip = max(roughness * 4.0, footprint_mip);
     return textureSampleLevel(ibl_prefiltered, ibl_sampler, dir_to_equirect_uv(R, rotation), mip).rgb;
 }
-// Geometric specular AA: widen roughness by normal variance (see mesh.wgsl).
-fn specular_aa_roughness(N: vec3<f32>, roughness: f32) -> f32 {
-    let du = dpdx(N);
-    let dv = dpdy(N);
-    let kernel = min(0.5 * (dot(du, du) + dot(dv, dv)), 0.18);
+// Geometric specular AA: widen roughness by the caller-supplied normal-variance
+// kernel (computed in uniform control flow; see mesh.wgsl).
+fn specular_aa_roughness(roughness: f32, kernel: f32) -> f32 {
     let alpha = roughness * roughness;
     return sqrt(sqrt(clamp(alpha * alpha + kernel, 0.0, 1.0)));
 }
@@ -267,13 +266,13 @@ struct IblContrib {
 }
 
 fn ibl_ambient(N: vec3<f32>, V: vec3<f32>, base_colour: vec3<f32>, metallic: f32,
-               roughness: f32, F0: vec3<f32>, ao: f32, intensity: f32, rotation: f32) -> IblContrib {
+               roughness: f32, F0: vec3<f32>, ao: f32, intensity: f32, rotation: f32, dr: f32) -> IblContrib {
     let NdotV = max(dot(N, V), 0.001);
     let F = F_Schlick_roughness(NdotV, F0, roughness);
     let kD = (vec3<f32>(1.0) - F) * (1.0 - metallic);
     let irradiance = sample_ibl_irradiance(N, rotation);
     let R = reflect(-V, N);
-    let prefiltered = sample_ibl_prefiltered(R, roughness, rotation);
+    let prefiltered = sample_ibl_prefiltered(R, roughness, rotation, dr);
     let brdf = sample_brdf_lut(NdotV, roughness);
     let diffuse_ibl = kD * irradiance * base_colour * ao * intensity;
     let specular_ibl = prefiltered * (F * brdf.x + brdf.y) * ao * intensity;
@@ -463,6 +462,15 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
     var N = surface.normal;
 
     let V = normalize(camera.eye_pos - in.world_pos);
+
+    // Screen-space derivatives for geometric specular AA and the IBL
+    // reflection footprint, computed here in uniform control flow. The PBR
+    // block below is gated on per-instance data, so evaluating derivatives
+    // inside it would violate WGSL uniformity.
+    let saa_kernel = min(0.5 * (dot(dpdx(N), dpdx(N)) + dot(dpdy(N), dpdy(N))), 0.18);
+    let refl = reflect(-V, N);
+    let refl_dr = max(length(dpdx(refl)), length(dpdy(refl)));
+
     let tint = vec4<f32>(1.0);
     var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
     var final_rgb: vec3<f32>;
@@ -477,7 +485,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
 
     if inst.use_pbr != 0u {
         var metallic  = clamp(inst.metallic,  0.0, 1.0);
-        var roughness = specular_aa_roughness(N, max(inst.roughness, 0.04));
+        var roughness = specular_aa_roughness(max(inst.roughness, 0.04), saa_kernel);
         var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
@@ -508,7 +516,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         if lights_uniform.ibl_enabled != 0u {
             let ibl = ibl_ambient(N, V, base_colour, metallic, roughness, F0,
                                   ao_factor, lights_uniform.ibl_intensity,
-                                  lights_uniform.ibl_rotation);
+                                  lights_uniform.ibl_rotation, refl_dr);
             ambient = ibl.diffuse + ibl.specular;
             dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
             dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
