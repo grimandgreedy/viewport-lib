@@ -961,7 +961,7 @@ fn generate_section_tris(
 ///
 /// Returns `(mesh_data, face_to_cell)` where `face_to_cell[i]` is the cell
 /// index that output triangle `i` belongs to.
-pub(crate) fn extract_clipped_volume_faces(
+pub fn extract_clipped_volume_faces(
     data: &VolumeMeshData,
     clip_planes: &[[f32; 4]],
 ) -> (MeshData, Vec<u32>) {

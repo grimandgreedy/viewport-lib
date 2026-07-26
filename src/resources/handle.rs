@@ -74,6 +74,18 @@ macro_rules! slot_handle {
             pub(crate) fn new(index: u32, generation: u32) -> Self {
                 Self { index, generation }
             }
+
+            /// Fabricate a handle naming raw slot `index` at generation 0, the
+            /// generation a freshly inserted slot carries.
+            ///
+            /// Hidden from the documented surface: production code obtains
+            /// handles from upload calls and treats them as opaque. This exists
+            /// for tests, benches, and fixtures that need to name a slot
+            /// directly (or synthesize a deliberately out-of-range id).
+            #[doc(hidden)]
+            pub fn from_index(index: u32) -> Self {
+                Self { index, generation: 0 }
+            }
         }
 
         impl $crate::resources::handle::ContentHandle for $name {

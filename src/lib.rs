@@ -277,7 +277,7 @@ pub use resources::mesh::mesh_store::MeshId;
 pub use resources::volume::sparse_volume::SparseVolumeGridData;
 pub use resources::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use resources::volume::volume_mesh::{
-    CELL_SENTINEL, ConversionReport, ToTetMeshError, VolumeMeshData,
+    CELL_SENTINEL, ConversionReport, ToTetMeshError, VolumeMeshData, extract_clipped_volume_faces,
 };
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
