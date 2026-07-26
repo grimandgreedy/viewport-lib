@@ -1,6 +1,7 @@
 /target
 **/target
 book/build/
+book/
 
 # Cargo lockfiles are usually omitted for library-style crates and examples here.
 /Cargo.lock
