@@ -1026,6 +1026,13 @@ impl Scene {
                 lod_group: node.lod_group,
             });
         }
+        // Nodes live in a `HashMap`, whose iteration order is randomised per
+        // process, so emit in node-id order instead: a stable, creation-ordered
+        // sequence. Without this the submission order — and therefore which of
+        // two coplanar opaque surfaces wins the `LessEqual` depth tie — changes
+        // every run, so equal-depth geometry (a carpet flush on a stair) flickers
+        // between launches.
+        items.sort_unstable_by_key(|it| it.settings.pick_id.0);
         items
     }
 
@@ -1172,6 +1179,11 @@ impl Scene {
             };
         }
 
+        // Both paths above visit nodes in a process-randomised order (the octree
+        // is populated from the `HashMap`, the flat walk iterates it directly).
+        // Emit in node-id order so the submission order — and the `LessEqual`
+        // depth tie-break between coplanar opaque surfaces — is stable run to run.
+        items.sort_unstable_by_key(|it| it.settings.pick_id.0);
         (items, stats)
     }
 

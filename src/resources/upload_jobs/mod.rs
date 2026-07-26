@@ -895,7 +895,15 @@ impl JobRunner {
         let _ = device.poll(crate::gpu::PollType::Poll);
 
         let mut completions = Vec::new();
-        let ids: Vec<u64> = self.slots.keys().copied().collect();
+        // `slots` is a `HashMap`, whose key order is randomised per process.
+        // Applying completed uploads in that order assigns mesh/texture store
+        // slots (and therefore `MeshId`s) non-deterministically, which then
+        // reorders `mesh_id`-keyed draw batching and flips the depth tie between
+        // coplanar opaque surfaces from run to run. Drain in job-id order (job
+        // ids are issued at submit time, so this is a stable submission order)
+        // to keep slot assignment — and everything downstream of it — stable.
+        let mut ids: Vec<u64> = self.slots.keys().copied().collect();
+        ids.sort_unstable();
         for id in ids {
             // Stage 1: pick up the worker result if we have not already.
             if self.slots.get(&id).is_some_and(|s| s.awaiting.is_none()) {
