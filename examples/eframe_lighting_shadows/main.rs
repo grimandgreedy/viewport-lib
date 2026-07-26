@@ -223,6 +223,10 @@ struct App {
 
     // Scene toggles
     show_platform: bool,
+    // When true every lit (non-matcap) material renders as PBR; when false as
+    // Phong. Flips the whole scene between the two shading models for A/B
+    // comparison, the same flip the headless PBR/Phong repros use.
+    pbr_enabled: bool,
 
     // Instancing status (updated each frame by the paint callback)
     instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
@@ -311,6 +315,7 @@ impl App {
             last_picked_pos: None,
             last_picked_values: None,
             show_platform: true,
+            pbr_enabled: true,
             instancing_status: std::sync::Arc::new(std::sync::Mutex::new((false, 0))),
             shadow_stats: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
@@ -377,6 +382,21 @@ impl App {
         }
     }
 
+    /// Force a lit material to the shading model selected by the PBR toggle.
+    /// Matcap materials keep their matcap; PBR and Phong swap.
+    fn apply_pbr_toggle(&self, m: &mut Material) {
+        match m.shading_model {
+            viewport_lib::ShadingModel::Matcap(_) => {}
+            _ => {
+                m.shading_model = if self.pbr_enabled {
+                    viewport_lib::ShadingModel::Pbr
+                } else {
+                    viewport_lib::ShadingModel::Phong
+                };
+            }
+        }
+    }
+
     fn build_basic_items(&self) -> Vec<SceneRenderItem> {
         let mut items = Vec::new();
 
@@ -417,6 +437,9 @@ impl App {
         torus.material = Material::from_colour([0.95, 0.82, 0.74]);
         items.push(torus);
 
+        for it in &mut items {
+            self.apply_pbr_toggle(&mut it.material);
+        }
         items
     }
 
@@ -491,6 +514,9 @@ impl App {
         percy.material.backface_policy = BackfacePolicy::Cull;
         items.push(percy);
 
+        for it in &mut items {
+            self.apply_pbr_toggle(&mut it.material);
+        }
         items
     }
 }
@@ -750,6 +776,7 @@ impl App {
             .default_open(false)
             .show(ui, |ui| {
                 ui.checkbox(&mut self.show_platform, "Show platform");
+                ui.checkbox(&mut self.pbr_enabled, "PBR shading (off = Phong)");
             });
 
         ui.add_space(4.0);

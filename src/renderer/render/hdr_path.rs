@@ -144,14 +144,6 @@ impl ViewportRenderer {
                 .filter(|i| !i.settings.hidden)
                 .find_map(|i| i.lic.as_ref().map(|l| l.config.strength))
                 .unwrap_or(0.5),
-            // Non-sRGB targets (what egui hosts hand out) get the gamma
-            // encode in the shader; sRGB targets encode in hardware.
-            srgb_encode: if self.resources.target_format.is_srgb() {
-                0
-            } else {
-                1
-            },
-            _pad: [0; 3],
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();

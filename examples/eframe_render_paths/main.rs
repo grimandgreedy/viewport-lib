@@ -338,6 +338,8 @@ struct App {
 
     // Render-path toggles.
     hdr: bool,
+    // Flip every lit (non-matcap) material to PBR when on, Phong when off.
+    pbr: bool,
     gpu_culling: bool,
     gpu_culling_supported: bool,
     wireframe: bool,
@@ -388,6 +390,7 @@ impl App {
             drag_start: None,
             last_cursor: glam::Vec2::ZERO,
             hdr: true,
+            pbr: false,
             gpu_culling: false,
             gpu_culling_supported: false,
             wireframe: false,
@@ -572,6 +575,19 @@ impl App {
         ground.material.roughness = 0.9;
         ground.material.backface_policy = BackfacePolicy::Cull;
         items.push(ground);
+
+        // Flip every lit (non-matcap) material between PBR and Phong. Matcap
+        // keeps its own model; scalar/param-vis items still shade through the
+        // selected lit model underneath. Best viewed with the HDR path on.
+        for it in &mut items {
+            if !matches!(it.material.shading_model, ShadingModel::Matcap(_)) {
+                it.material.shading_model = if self.pbr {
+                    ShadingModel::Pbr
+                } else {
+                    ShadingModel::Phong
+                };
+            }
+        }
 
         // Clip the filtered sphere to its top half (local mesh space, before the model transform).
         let mut clip = ComputeFilterItem::default();
@@ -839,6 +855,7 @@ impl App {
                 if !self.hdr {
                     ui.label("  LDR inline path (straight-alpha transparency)");
                 }
+                ui.checkbox(&mut self.pbr, "PBR shading (off = Phong)");
                 ui.add_enabled(
                     self.gpu_culling_supported,
                     egui::Checkbox::new(&mut self.gpu_culling, "GPU-driven culling (indirect)"),
