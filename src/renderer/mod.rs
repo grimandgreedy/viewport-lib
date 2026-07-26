@@ -820,6 +820,16 @@ impl ViewportRenderer {
         self.last_stats
     }
 
+    /// The LOD level drawn for the item with this pick id on the last prepared
+    /// frame, or `None` when the pick id names no tracked LOD item this frame
+    /// (it is not an LOD item, was culled below its threshold, or was not
+    /// submitted). Level 0 is the highest-detail mesh; larger indices are
+    /// coarser. Only items carrying a non-zero pick id are tracked, since the
+    /// level is keyed by it and carried across frames for switch hysteresis.
+    pub fn lod_level(&self, pick_id: u64) -> Option<usize> {
+        self.lod_levels.get(&pick_id).copied()
+    }
+
     /// Diagnostics from the cluster build pass on the most recent frame that
     /// requested them (`ViewportFrame::cluster_stats_request`). Returns
     /// `None` until a request has been served.
