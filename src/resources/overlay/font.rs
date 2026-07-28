@@ -161,16 +161,24 @@ impl GlyphAtlas {
     /// Glyphs that are not yet in the atlas are rasterized and packed on the
     /// fly.  Call [`upload_if_dirty`] after all layout calls for the frame to
     /// push new glyphs to the GPU.
+    /// Lay out a single run of text.
+    ///
+    /// `ppp` is the display's pixels-per-point. Glyphs are rasterised into the
+    /// atlas at the physical size (`font_size * ppp`) so the bitmap matches the
+    /// display resolution, and the returned quad positions, sizes, and metrics
+    /// are converted back to logical points. At `ppp == 1` this is identical to
+    /// laying out at `font_size` directly.
     pub fn layout_text(
         &mut self,
         text: &str,
         font_size: f32,
         font: Option<FontHandle>,
+        ppp: f32,
         device: &crate::gpu::Device,
     ) -> TextLayout {
         let font_index = font.map_or(0, |h| h.0);
-        let size_tenths = (font_size * 10.0).round() as u32;
-        let px = font_size;
+        let px = font_size * ppp;
+        let size_tenths = (px * 10.0).round() as u32;
 
         let metrics = self.fonts[font_index].horizontal_line_metrics(px);
         let line_height = metrics
@@ -227,10 +235,19 @@ impl GlyphAtlas {
         }
         max_width = max_width.max(pen_x);
 
+        // Physical -> logical. UVs are untouched: they index the physical atlas
+        // cell, which is what keeps the text crisp when the logical quad is
+        // stretched across the physical target at NDC time.
+        let inv = 1.0 / ppp;
+        for q in &mut quads {
+            q.pos = [q.pos[0] * inv, q.pos[1] * inv];
+            q.size = [q.size[0] * inv, q.size[1] * inv];
+        }
+
         TextLayout {
             quads,
-            total_width: max_width,
-            height: pen_y + line_height,
+            total_width: max_width * inv,
+            height: (pen_y + line_height) * inv,
         }
     }
 
@@ -245,10 +262,15 @@ impl GlyphAtlas {
         font_size: f32,
         font: Option<FontHandle>,
         max_width: f32,
+        ppp: f32,
         device: &crate::gpu::Device,
     ) -> TextLayout {
         let font_index = font.map_or(0, |h| h.0);
-        let px = font_size;
+        // Lay out at physical size (see `layout_text`). `max_width` arrives in
+        // logical points, so scale it up to match the physical pen units the
+        // wrap test below works in.
+        let px = font_size * ppp;
+        let max_width = max_width * ppp;
 
         let metrics = self.fonts[font_index].horizontal_line_metrics(px);
         let line_height = metrics
@@ -350,10 +372,17 @@ impl GlyphAtlas {
             line_y + line_height
         };
 
+        // Physical -> logical, matching `layout_text`.
+        let inv = 1.0 / ppp;
+        for q in &mut quads {
+            q.pos = [q.pos[0] * inv, q.pos[1] * inv];
+            q.size = [q.size[0] * inv, q.size[1] * inv];
+        }
+
         TextLayout {
             quads,
-            total_width: max_line_width,
-            height: total_height,
+            total_width: max_line_width * inv,
+            height: total_height * inv,
         }
     }
 

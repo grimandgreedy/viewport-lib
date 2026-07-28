@@ -112,8 +112,11 @@ pub struct CameraFrame {
     /// Physical pixels per logical pixel. Set from the window or egui context
     /// (e.g. `ui.ctx().pixels_per_point()`). Default: 1.0.
     ///
-    /// The renderer uses this only for GPU texture allocation. All screen-space
-    /// math (projection, picking, widget layout) uses `viewport_size` directly.
+    /// Screen-space math (projection, picking, widget layout) and overlay
+    /// positions/sizes are all in logical pixels and use `viewport_size`
+    /// directly. `pixels_per_point` sizes the physical render target and
+    /// rasterises overlay text at display resolution, so overlay labels stay
+    /// crisp on HiDPI displays. At 1.0 the physical and logical spaces coincide.
     pub pixels_per_point: f32,
     /// Multi-viewport slot index. Default: 0 (single-viewport mode).
     pub viewport_index: usize,
@@ -149,8 +152,9 @@ impl CameraFrame {
     /// Set the physical pixels per logical pixel for this camera frame.
     ///
     /// Pass `ui.ctx().pixels_per_point()` from egui, or the equivalent scale
-    /// factor from your window system. Only affects GPU texture allocation;
-    /// all screen-space math continues to use `viewport_size`.
+    /// factor from your window system. Sizes the physical render target and
+    /// rasterises overlay text at display resolution; all screen-space math and
+    /// overlay authoring stay in logical `viewport_size` units.
     pub fn with_pixels_per_point(mut self, pixels_per_point: f32) -> Self {
         self.pixels_per_point = pixels_per_point.max(0.001);
         self

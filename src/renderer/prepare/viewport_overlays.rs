@@ -49,6 +49,7 @@ impl ViewportRenderer {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
+            let ppp = frame.camera.pixels_per_point;
             if vp_w > 0.0 && vp_h > 0.0 {
                 let view = &frame.camera.render_camera.view;
                 let proj = &frame.camera.render_camera.projection;
@@ -157,6 +158,7 @@ impl ViewportRenderer {
                             label.font_size,
                             label.font,
                             max_w,
+                            ppp,
                             device,
                         )
                     } else {
@@ -164,6 +166,7 @@ impl ViewportRenderer {
                             &label.text,
                             label.font_size,
                             label.font,
+                            ppp,
                             device,
                         )
                     };
@@ -303,6 +306,7 @@ impl ViewportRenderer {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
+            let ppp = frame.camera.pixels_per_point;
             if vp_w > 0.0 && vp_h > 0.0 {
                 let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
@@ -349,7 +353,7 @@ impl ViewportRenderer {
                             .resources
                             .content
                             .glyph_atlas
-                            .layout_text(&text, tick_fs, bar.font, device);
+                            .layout_text(&text, tick_fs, bar.font, ppp, device);
                         max_tick_w = max_tick_w.max(layout.total_width);
                         tick_h = layout.height;
                         tick_data.push((text, layout.total_width, layout.height));
@@ -374,7 +378,7 @@ impl ViewportRenderer {
                         self.resources
                             .content
                             .glyph_atlas
-                            .layout_text(t, title_fs, bar.font, device)
+                            .layout_text(t, title_fs, bar.font, ppp, device)
                             .total_width
                     } else {
                         0.0
@@ -507,7 +511,7 @@ impl ViewportRenderer {
                             .resources
                             .content
                             .glyph_atlas
-                            .layout_text(text, tick_fs, bar.font, device);
+                            .layout_text(text, tick_fs, bar.font, ppp, device);
 
                         let (lx, ly) = if is_vertical {
                             // Place text to the right of the strip, vertically centered
@@ -551,7 +555,7 @@ impl ViewportRenderer {
                             .resources
                             .content
                             .glyph_atlas
-                            .layout_text(title_text, title_fs, bar.font, device);
+                            .layout_text(title_text, title_fs, bar.font, ppp, device);
                         let title_ascent = self
                             .resources
                             .content
@@ -627,6 +631,7 @@ impl ViewportRenderer {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
+            let ppp = frame.camera.pixels_per_point;
             if vp_w > 0.0 && vp_h > 0.0 {
                 let view = &frame.camera.render_camera.view;
                 let proj = &frame.camera.render_camera.projection;
@@ -720,6 +725,7 @@ impl ViewportRenderer {
                         &text,
                         ruler.font_size,
                         ruler.font,
+                        ppp,
                         device,
                     );
                     let font_index = ruler.font.map_or(0, |h| h.0);
@@ -813,6 +819,7 @@ impl ViewportRenderer {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
+            let ppp = frame.camera.pixels_per_point;
             if vp_w > 0.0 && vp_h > 0.0 {
                 let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
@@ -835,6 +842,7 @@ impl ViewportRenderer {
                             text,
                             bar.font_size,
                             bar.font,
+                            ppp,
                             device,
                         );
                         let font_index = bar.font.map_or(0, |h| h.0);
