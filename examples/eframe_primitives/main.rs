@@ -154,117 +154,121 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
-            let (rect, response) =
-                ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+                let (rect, response) =
+                    ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.controller.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.has_focus(),
-                viewport_size: [rect.width(), rect.height()],
-            });
+                self.controller.begin_frame(ViewportContext {
+                    hovered: response.hovered(),
+                    focused: response.has_focus(),
+                    viewport_size: [rect.width(), rect.height()],
+                });
 
-            ui.input(|i| {
-                self.controller.push_event(ViewportEvent::ModifiersChanged(
-                    viewport_lib::Modifiers {
-                        alt: i.modifiers.alt,
-                        shift: i.modifiers.shift,
-                        ctrl: i.modifiers.command,
-                    },
-                ));
+                ui.input(|i| {
+                    self.controller.push_event(ViewportEvent::ModifiersChanged(
+                        viewport_lib::Modifiers {
+                            alt: i.modifiers.alt,
+                            shift: i.modifiers.shift,
+                            ctrl: i.modifiers.command,
+                        },
+                    ));
 
-                if let Some(pos) = i.pointer.interact_pos() {
-                    self.controller.push_event(ViewportEvent::PointerMoved {
-                        position: glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top()),
-                    });
-                }
-
-                for event in &i.events {
-                    match event {
-                        egui::Event::PointerButton {
-                            button, pressed, ..
-                        } => {
-                            let vp_button = match button {
-                                egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
-                                egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
-                                egui::PointerButton::Middle => viewport_lib::MouseButton::Middle,
-                                _ => continue,
-                            };
-                            self.controller.push_event(ViewportEvent::MouseButton {
-                                button: vp_button,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                            });
-                        }
-                        egui::Event::MouseWheel { unit, delta, .. } => {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.controller.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                        _ => {}
+                    if let Some(pos) = i.pointer.interact_pos() {
+                        self.controller.push_event(ViewportEvent::PointerMoved {
+                            position: glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top()),
+                        });
                     }
+
+                    for event in &i.events {
+                        match event {
+                            egui::Event::PointerButton {
+                                button, pressed, ..
+                            } => {
+                                let vp_button = match button {
+                                    egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
+                                    egui::PointerButton::Secondary => {
+                                        viewport_lib::MouseButton::Right
+                                    }
+                                    egui::PointerButton::Middle => {
+                                        viewport_lib::MouseButton::Middle
+                                    }
+                                    _ => continue,
+                                };
+                                self.controller.push_event(ViewportEvent::MouseButton {
+                                    button: vp_button,
+                                    state: if *pressed {
+                                        ButtonState::Pressed
+                                    } else {
+                                        ButtonState::Released
+                                    },
+                                });
+                            }
+                            egui::Event::MouseWheel { unit, delta, .. } => {
+                                let units = match unit {
+                                    egui::MouseWheelUnit::Line => ScrollUnits::Lines,
+                                    egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
+                                    egui::MouseWheelUnit::Page => ScrollUnits::Pages,
+                                };
+                                self.controller.push_event(ViewportEvent::Wheel {
+                                    delta: glam::Vec2::new(delta.x, delta.y),
+                                    units,
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+
+                let w = rect.width();
+                let h = rect.height();
+
+                self.controller.apply_to_camera(&mut self.camera);
+                self.camera.set_aspect_ratio(w, h);
+
+                let mut frame_data = FrameData::new(
+                    CameraFrame::from_camera(&self.camera, [w, h]),
+                    SceneFrame::from_surface_items(self.scene_items.clone()),
+                );
+                frame_data.effects.lighting = {
+                    let mut _t = LightingSettings::default();
+                    _t.lights = vec![
+                        {
+                            let mut _t = LightSource::default();
+                            _t.kind = LightKind::Directional {
+                                direction: [0.4, -0.5, 1.2],
+                            };
+                            _t.colour = [1.0, 0.97, 0.92];
+                            _t.intensity = 1.0;
+                            _t
+                        },
+                        {
+                            let mut _t = LightSource::default();
+                            _t.kind = LightKind::Directional {
+                                direction: [-0.8, 0.6, 0.3],
+                            };
+                            _t.colour = [0.70, 0.82, 1.0];
+                            _t.intensity = 0.35;
+                            _t
+                        },
+                    ];
+                    _t.hemisphere_intensity = 0.35;
+                    _t.sky_colour = [0.80, 0.90, 1.0];
+                    _t.ground_colour = [0.35, 0.28, 0.22];
+                    _t
+                };
+                frame_data.viewport.show_grid = false;
+                frame_data.viewport.show_axes_indicator = true;
+
+                ui.painter()
+                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                        rect,
+                        viewport_callback::ViewportCallback { frame: frame_data },
+                    ));
+
+                if response.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                } else if response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                 }
             });
-
-            let w = rect.width();
-            let h = rect.height();
-
-            self.controller.apply_to_camera(&mut self.camera);
-            self.camera.set_aspect_ratio(w, h);
-
-            let mut frame_data = FrameData::new(
-                CameraFrame::from_camera(&self.camera, [w, h]),
-                SceneFrame::from_surface_items(self.scene_items.clone()),
-            );
-            frame_data.effects.lighting = {
-                let mut _t = LightingSettings::default();
-                _t.lights = vec![
-                    {
-                        let mut _t = LightSource::default();
-                        _t.kind = LightKind::Directional {
-                            direction: [0.4, -0.5, 1.2],
-                        };
-                        _t.colour = [1.0, 0.97, 0.92];
-                        _t.intensity = 1.0;
-                        _t
-                    },
-                    {
-                        let mut _t = LightSource::default();
-                        _t.kind = LightKind::Directional {
-                            direction: [-0.8, 0.6, 0.3],
-                        };
-                        _t.colour = [0.70, 0.82, 1.0];
-                        _t.intensity = 0.35;
-                        _t
-                    },
-                ];
-                _t.hemisphere_intensity = 0.35;
-                _t.sky_colour = [0.80, 0.90, 1.0];
-                _t.ground_colour = [0.35, 0.28, 0.22];
-                _t
-            };
-            frame_data.viewport.show_grid = false;
-            frame_data.viewport.show_axes_indicator = true;
-
-            ui.painter()
-                .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                    rect,
-                    viewport_callback::ViewportCallback { frame: frame_data },
-                ));
-
-            if response.dragged() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-            } else if response.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-            }
-        });
     }
 }
