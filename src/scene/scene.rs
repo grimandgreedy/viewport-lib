@@ -136,6 +136,15 @@ impl SceneNode {
         self.visible
     }
 
+    /// Which per-instance deformer slot this node draws with (the GPU-skinning joint
+    /// palette / morph weights), or `None` for a non-deformed node. The read counterpart
+    /// of [`Scene::set_deform_instance`]; a consumer building its own `SceneRenderItem`
+    /// from this node (e.g. to submit it to the foreground pass) needs this so the item
+    /// binds the same palette and is not drawn undeformed.
+    pub fn deform_instance(&self) -> Option<u32> {
+        self.deform_instance
+    }
+
     /// Whether per-vertex normals are rendered for this node.
     pub fn show_normals(&self) -> bool {
         self.show_normals
