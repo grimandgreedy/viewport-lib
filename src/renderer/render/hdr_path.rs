@@ -68,6 +68,124 @@ fn decal_scissor(model: &glam::Mat4, view_proj: &glam::Mat4, vp_w: u32, vp_h: u3
     }
 }
 
+/// Encode one non-instanced mesh item's draws: bind the object (group 1),
+/// material plugin (group 3), and deform (group 2) groups, pick the pipeline,
+/// and draw. `obj_bg_override` is the item's per-item bind group when one was
+/// prepared; `None` falls back to the mesh's shared object bind group. `hdr`
+/// selects the material-plugin pipeline family; the built-in pipelines are
+/// passed in by the caller. Shared by the HDR scene pass and the HDR/LDR
+/// foreground passes; group 0 must already be bound by the caller.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_mesh_item(
+    resources: &DeviceResources,
+    compute_filter_results: &[crate::resources::ComputeFilterResult],
+    render_pass: &mut crate::gpu::RenderPass<'_>,
+    item: &SceneRenderItem,
+    obj_bg_override: Option<&crate::gpu::BindGroup>,
+    wireframe_mode: bool,
+    hdr: bool,
+    solid_pl: &crate::gpu::RenderPipeline,
+    trans_pl: &crate::gpu::RenderPipeline,
+    wf_pl: &crate::gpu::RenderPipeline,
+) {
+    let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
+        return;
+    };
+    let obj_bg = obj_bg_override.unwrap_or(&mesh.object_bind_group);
+    render_pass.set_bind_group(1, obj_bg, &[]);
+    let plug = resources.material_plugin_draw(item.material.shading_plugin);
+    if let Some((_, mat_bg)) = plug {
+        bind_material_group!(render_pass, mat_bg);
+    }
+
+    let deform_bg = resources
+        .deform
+        .instance_bind_group_for(item.mesh_id, item.deform_instance);
+    let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
+        matches!(
+            a.kind,
+            crate::resources::AttributeKind::Face
+                | crate::resources::AttributeKind::FaceColour
+                | crate::resources::AttributeKind::Halfedge
+                | crate::resources::AttributeKind::Corner
+        )
+    });
+    if wireframe_mode {
+        if let Some(edge_buf) = &mesh.edge_index_buffer {
+            render_pass.set_pipeline(wf_pl);
+            bind_deform_group!(render_pass, resources, deform_bg);
+            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+        }
+    } else if is_face_attr {
+        if let Some(ref fvb) = mesh.face_vertex_buffer {
+            let pl = if let Some((pp, _)) = plug {
+                match (
+                    hdr,
+                    item.settings.opacity < 1.0,
+                    item.material.is_two_sided(),
+                ) {
+                    (true, true, _) => &pp.hdr.transparent,
+                    (true, false, true) => &pp.hdr.solid_two_sided,
+                    (true, false, false) => &pp.hdr.solid,
+                    (false, true, _) => &pp.ldr.transparent,
+                    (false, false, true) => &pp.ldr.solid_two_sided,
+                    (false, false, false) => &pp.ldr.solid,
+                }
+            } else if item.settings.opacity < 1.0 {
+                trans_pl
+            } else {
+                solid_pl
+            };
+            render_pass.set_pipeline(pl);
+            bind_deform_group!(render_pass, resources, deform_bg);
+            render_pass.set_vertex_buffer(0, fvb.slice(..));
+            render_pass.draw(0..mesh.index_count, 0..1);
+        }
+    } else {
+        let filter = compute_filter_results
+            .iter()
+            .find(|r| r.mesh_id == item.mesh_id);
+        let pl = if let Some((pp, _)) = plug {
+            if item.settings.opacity < 1.0 {
+                &pp.hdr.transparent
+            } else if item.material.is_two_sided() {
+                &pp.hdr.solid_two_sided
+            } else {
+                &pp.hdr.solid
+            }
+        } else if item.settings.opacity < 1.0 {
+            trans_pl
+        } else {
+            solid_pl
+        };
+        render_pass.set_pipeline(pl);
+        bind_deform_group!(render_pass, resources, deform_bg);
+        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+        if let Some(fr) = filter {
+            render_pass
+                .set_index_buffer(fr.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+        } else {
+            render_pass
+                .set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+        }
+    }
+    if item.show_normals {
+        if let Some(ref nl_buf) = mesh.normal_line_buffer {
+            if mesh.normal_line_count > 0 {
+                render_pass.set_pipeline(wf_pl);
+                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
+                render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, nl_buf.slice(..));
+                render_pass.draw(0..mesh.normal_line_count, 0..1);
+            }
+        }
+    }
+}
+
 impl ViewportRenderer {
     /// Timestamp writes for one measured pass. `begin` and `end` select
     /// which boundary of the slot's begin/end pair this pass writes, so a
@@ -144,6 +262,8 @@ impl ViewportRenderer {
                 .filter(|i| !i.settings.hidden)
                 .find_map(|i| i.lic.as_ref().map(|l| l.config.strength))
                 .unwrap_or(0.5),
+            foreground_enabled: if self.foreground_active(frame) { 1 } else { 0 },
+            _pad: [0; 3],
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
@@ -240,7 +360,11 @@ impl ViewportRenderer {
                 far_plane: frame.camera.render_camera.far,
                 viewport_width: w,
                 viewport_height: h,
-                _pad: 0.0,
+                foreground_enabled: if self.foreground_active(frame) {
+                    1.0
+                } else {
+                    0.0
+                },
             };
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             queue.write_buffer(
@@ -248,6 +372,19 @@ impl ViewportRenderer {
                 0,
                 bytemuck::cast_slice(&[dof_uniform]),
             );
+        }
+
+        // Pre-allocate the foreground depth target so the tone-map / DOF bind
+        // groups rebuilt below can reference it as the coverage mask. The pass
+        // draws into hdr_view after the SSAA resolve, so the depth target is
+        // scene-sized (matching hdr_view, OIT, and the other post-resolve
+        // passes), not SSAA-sized.
+        let use_foreground = self.foreground_active(frame);
+        if use_foreground {
+            let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
+            let [sw, sh] = hdr.scene_size;
+            self.resources
+                .ensure_viewport_foreground_depth(device, hdr, sw, sh);
         }
 
         // Rebuild tone-map bind group with correct bloom/AO/DoF texture views.
@@ -263,6 +400,7 @@ impl ViewportRenderer {
                     .iter()
                     .any(|i| i.lic.is_some() && !i.settings.hidden),
                 pp.dof_enabled,
+                use_foreground,
             );
         }
 
@@ -323,7 +461,9 @@ impl ViewportRenderer {
         self.hdr_oit(&ctx, &mut encoder);
         self.hdr_scatter(&ctx, &mut encoder);
         self.hdr_lic(&ctx, &mut encoder);
-        self.hdr_outline_and_post(&ctx, &mut encoder);
+        self.hdr_outline_composite(&ctx, &mut encoder);
+        self.hdr_foreground(&ctx, &mut encoder);
+        self.hdr_post_effects(&ctx, &mut encoder);
         self.hdr_tonemap_resolve(&ctx, &mut encoder);
         self.hdr_scene_overlays(&ctx, &mut encoder);
         self.hdr_final_overlay(&ctx, &mut encoder);
@@ -840,117 +980,6 @@ impl ViewportRenderer {
                     }
 
                     let per_item_bgs = &self.mesh_uniforms.bind_groups;
-                    let draw_item_hdr =
-                        |render_pass: &mut crate::gpu::RenderPass<'_>,
-                         item_idx: usize,
-                         item: &SceneRenderItem,
-                         solid_pl: &crate::gpu::RenderPipeline,
-                         trans_pl: &crate::gpu::RenderPipeline,
-                         wf_pl: &crate::gpu::RenderPipeline| {
-                            let mesh = resources.mesh_store.get(item.mesh_id).unwrap();
-                            let obj_bg = per_item_bgs
-                                .get(item_idx)
-                                .and_then(|opt| opt.as_ref())
-                                .unwrap_or(&mesh.object_bind_group);
-                            render_pass.set_bind_group(1, obj_bg, &[]);
-                            let plug = resources.material_plugin_draw(item.material.shading_plugin);
-                            if let Some((_, mat_bg)) = plug {
-                                bind_material_group!(render_pass, mat_bg);
-                            }
-
-                            let deform_bg = resources
-                                .deform
-                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                            let is_face_attr = item.active_attribute.as_ref().map_or(false, |a| {
-                                matches!(
-                                    a.kind,
-                                    crate::resources::AttributeKind::Face
-                                        | crate::resources::AttributeKind::FaceColour
-                                        | crate::resources::AttributeKind::Halfedge
-                                        | crate::resources::AttributeKind::Corner
-                                )
-                            });
-                            if frame.viewport.wireframe_mode {
-                                if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                    render_pass.set_pipeline(wf_pl);
-                                    bind_deform_group!(render_pass, resources, deform_bg);
-                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                    render_pass.set_index_buffer(
-                                        edge_buf.slice(..),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
-                                }
-                            } else if is_face_attr {
-                                if let Some(ref fvb) = mesh.face_vertex_buffer {
-                                    let pl = if let Some((pp, _)) = plug {
-                                        if item.settings.opacity < 1.0 {
-                                            &pp.hdr.transparent
-                                        } else if item.material.is_two_sided() {
-                                            &pp.hdr.solid_two_sided
-                                        } else {
-                                            &pp.hdr.solid
-                                        }
-                                    } else if item.settings.opacity < 1.0 {
-                                        trans_pl
-                                    } else {
-                                        solid_pl
-                                    };
-                                    render_pass.set_pipeline(pl);
-                                    bind_deform_group!(render_pass, resources, deform_bg);
-                                    render_pass.set_vertex_buffer(0, fvb.slice(..));
-                                    render_pass.draw(0..mesh.index_count, 0..1);
-                                }
-                            } else {
-                                let filter = compute_filter_results
-                                    .iter()
-                                    .find(|r| r.mesh_id == item.mesh_id);
-                                let pl = if let Some((pp, _)) = plug {
-                                    if item.settings.opacity < 1.0 {
-                                        &pp.hdr.transparent
-                                    } else if item.material.is_two_sided() {
-                                        &pp.hdr.solid_two_sided
-                                    } else {
-                                        &pp.hdr.solid
-                                    }
-                                } else if item.settings.opacity < 1.0 {
-                                    trans_pl
-                                } else {
-                                    solid_pl
-                                };
-                                render_pass.set_pipeline(pl);
-                                bind_deform_group!(render_pass, resources, deform_bg);
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                if let Some(fr) = filter {
-                                    render_pass.set_index_buffer(
-                                        fr.index_buffer.slice(..),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
-                                } else {
-                                    render_pass.set_index_buffer(
-                                        mesh.index_buffer.slice(..),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                                }
-                            }
-                            if item.show_normals {
-                                if let Some(ref nl_buf) = mesh.normal_line_buffer {
-                                    if mesh.normal_line_count > 0 {
-                                        render_pass.set_pipeline(wf_pl);
-                                        bind_deform_group!(
-                                            render_pass,
-                                            resources,
-                                            &resources.deform.dummy_bind_group
-                                        );
-                                        render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
-                                        render_pass.set_vertex_buffer(0, nl_buf.slice(..));
-                                        render_pass.draw(0..mesh.normal_line_count, 0..1);
-                                    }
-                                }
-                            }
-                        };
 
                     // NOTE: only opaque items are drawn here. Transparent items are
                     // routed to the OIT pass below.
@@ -972,10 +1001,15 @@ impl ViewportRenderer {
                             } else {
                                 hdr_solid
                             };
-                            draw_item_hdr(
+                            let obj_bg = per_item_bgs.get(*item_idx).and_then(|opt| opt.as_ref());
+                            draw_mesh_item(
+                                resources,
+                                compute_filter_results,
                                 &mut render_pass,
-                                *item_idx,
                                 item,
+                                obj_bg,
+                                frame.viewport.wireframe_mode,
+                                true,
                                 solid_pl,
                                 hdr_trans,
                                 hdr_wf,
@@ -3057,14 +3091,12 @@ impl ViewportRenderer {
         }
     }
 
-    fn hdr_outline_and_post(
+    fn hdr_outline_composite(
         &mut self,
         ctx: &HdrFrameCtx,
         encoder: &mut crate::gpu::CommandEncoder,
     ) {
         let vp_idx = ctx.vp_idx;
-        let frame = ctx.frame;
-        let pp = &frame.effects.post_process;
         let slot = &self.viewport_slots[vp_idx];
         let slot_hdr = slot.hdr.as_ref().unwrap();
         // -----------------------------------------------------------------------
@@ -3131,6 +3163,135 @@ impl ViewportRenderer {
                 outline_pass.draw(0..3, 0..1);
             }
         }
+    }
+
+    /// Foreground pass: draw `SceneFrame::foreground_items` (and foreground
+    /// plugin items) over the composited scene, against a freshly cleared
+    /// depth target. Runs after the outline composite and before the
+    /// post-effect sub-passes, so foreground emissives feed bloom and DOF
+    /// sees the foreground colour (its coverage mask keeps covered pixels
+    /// sharp). The cleared own depth is what makes foreground geometry
+    /// neither occluded by nor clipped into world geometry; the group-0
+    /// bind group carries the foreground camera and disabled clip planes.
+    fn hdr_foreground(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let frame = ctx.frame;
+        if !self.foreground_active(frame) {
+            return;
+        }
+        let vp_idx = ctx.vp_idx;
+        let resources = &self.resources;
+        let slot = &self.viewport_slots[vp_idx];
+        let slot_hdr = slot.hdr.as_ref().unwrap();
+        let Some(fg_depth_view) = slot_hdr.foreground_depth_view.as_ref() else {
+            return;
+        };
+        let (Some(hdr_solid), Some(hdr_solid_two_sided), Some(hdr_trans), Some(hdr_wf)) = (
+            &resources.hdr_solid_pipeline,
+            &resources.hdr_solid_two_sided_pipeline,
+            &resources.hdr_transparent_pipeline,
+            &resources.hdr_wireframe_pipeline,
+        ) else {
+            return;
+        };
+
+        let fg_camera = frame
+            .camera
+            .render_camera
+            .foreground_camera(frame.effects.foreground.as_ref());
+
+        // Opaque front-to-back, then blended back-to-front. Foreground
+        // transparency is plain sorted alpha blending against the foreground
+        // depth, not OIT.
+        let eye = glam::Vec3::from(fg_camera.eye_position);
+        let dist_from_eye = |item: &SceneRenderItem| -> f32 {
+            let pos = glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
+            (pos - eye).length()
+        };
+        let items = &frame.scene.foreground_items;
+        let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
+        let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
+        for (idx, item) in items.iter().enumerate() {
+            if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
+                continue;
+            }
+            if item.settings.opacity < 1.0 || item.material.is_blend() {
+                transparent.push((idx, item));
+            } else {
+                opaque.push((idx, item));
+            }
+        }
+        opaque.sort_by(|a, b| {
+            dist_from_eye(a.1)
+                .partial_cmp(&dist_from_eye(b.1))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        transparent.sort_by(|a, b| {
+            dist_from_eye(b.1)
+                .partial_cmp(&dist_from_eye(a.1))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+            #[cfg(feature = "wgpu29")]
+            multiview_mask: None,
+            label: Some("hdr_foreground_pass"),
+            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                view: &slot_hdr.hdr_view,
+                resolve_target: None,
+                ops: crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Load,
+                    store: crate::gpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                view: fg_depth_view,
+                depth_ops: Some(crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Clear(1.0),
+                    store: crate::gpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Clear(0),
+                    store: crate::gpu::StoreOp::Discard,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_bind_group(0, &slot.foreground_camera_bind_group, &[]);
+
+        for (idx, item) in opaque.iter().chain(transparent.iter()) {
+            let solid_pl = if item.material.is_two_sided() {
+                hdr_solid_two_sided
+            } else {
+                hdr_solid
+            };
+            let obj_bg = slot
+                .foreground_objects
+                .get(*idx)
+                .and_then(|e| e.bind_group.as_ref());
+            draw_mesh_item(
+                resources,
+                &self.compute_filter_results,
+                &mut render_pass,
+                item,
+                obj_bg,
+                false,
+                true,
+                solid_pl,
+                hdr_trans,
+                hdr_wf,
+            );
+        }
+
+        self.dispatch_plugin_paint_foreground(&mut render_pass, frame, &fg_camera);
+    }
+
+    fn hdr_post_effects(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let vp_idx = ctx.vp_idx;
+        let frame = ctx.frame;
+        let pp = &frame.effects.post_process;
+        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
 
         // Effect throttling. Flag was computed in prepare() so that
         // FrameStats reports exactly what fired rather than an approximation.
@@ -3522,6 +3683,51 @@ impl ViewportRenderer {
                     blit_pass.set_bind_group(0, blit_bg, &[]);
                     blit_pass.draw(0..3, 0..1);
                 }
+            }
+        }
+
+        // Foreground depth stamp: write near depth into output_depth_view
+        // wherever the foreground pass drew, so the post-tone-map passes
+        // below (grid, ground plane, gizmos) are occluded by foreground
+        // geometry. Runs after the depth blit in both render-scale cases
+        // (at scale 1.0 output_depth_view aliases the scene depth, which the
+        // tone map pass has already consumed).
+        if self.foreground_active(ctx.frame) {
+            let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            if let (Some(fg_view), Some(pipeline), Some(bgl)) = (
+                slot_hdr.foreground_depth_only_view.as_ref(),
+                self.resources.post.foreground_stamp_pipeline.as_ref(),
+                self.resources.post.foreground_stamp_bgl.as_ref(),
+            ) {
+                let stamp_bg = ctx
+                    .device
+                    .create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("foreground_stamp_bg"),
+                        layout: bgl,
+                        entries: &[crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(fg_view),
+                        }],
+                    });
+                let mut stamp_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                    #[cfg(feature = "wgpu29")]
+                    multiview_mask: None,
+                    label: Some("foreground_depth_stamp_pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                        view: &slot_hdr.output_depth_view,
+                        depth_ops: Some(crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Load,
+                            store: crate::gpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                stamp_pass.set_pipeline(pipeline);
+                stamp_pass.set_bind_group(0, &stamp_bg, &[]);
+                stamp_pass.draw(0..3, 0..1);
             }
         }
     }

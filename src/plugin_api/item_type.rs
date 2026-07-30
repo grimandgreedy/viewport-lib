@@ -6,10 +6,12 @@
 //! and submits a per-frame collection through
 //! [`SceneFrame::submit_plugin_items`](crate::renderer::SceneFrame::submit_plugin_items).
 //!
-//! Current surface: registration, per-frame `prepare`, and `paint` inside
-//! the main HDR scene pass. Picking, outline-mask, shadow casting, frustum
-//! cull, and transparent OIT integration arrive as additional
-//! default-empty trait methods as those features are added.
+//! Surface: registration, per-frame `prepare`, and drawing hooks the lib calls
+//! inside its own passes: `paint` (opaque HDR scene), `paint_transparent`
+//! (OIT), `outline_mask` (selection outline), `cast_shadow_pass` (shadow
+//! cascades), `cull` (per-frame frustum cull), and `pick` / `render_pick` (CPU
+//! and GPU picking). All hooks but `type_name` are default-empty; implement the
+//! ones an item type needs.
 
 use std::any::Any;
 
@@ -290,6 +292,37 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     ///
     /// Plugins that ship only opaque items leave this empty.
     fn paint_transparent<'a>(
+        &'a self,
+        _pass: &mut crate::gpu::RenderPass<'a>,
+        _ctx: &PaintContext<'a>,
+        _items: &'a dyn PluginItemCollection,
+    ) {
+    }
+
+    /// `true` when this plugin draws in the foreground pass.
+    ///
+    /// The renderer opens the foreground pass only when foreground work
+    /// exists; implementing [`paint_foreground`](Self::paint_foreground)
+    /// without overriding this to `true` means the hook is never called.
+    fn draws_foreground(&self) -> bool {
+        false
+    }
+
+    /// Issue draw calls inside the lib's foreground pass.
+    ///
+    /// The foreground pass runs after the world is drawn. It loads the HDR
+    /// colour and clears its own depth target, so foreground geometry draws
+    /// over the scene without being occluded by or clipping into it. The
+    /// pass has a group-0 bind group bound on entry whose camera at binding
+    /// 0 carries the foreground projection (the scene projection, or the
+    /// override from `EffectsFrame::foreground`) and whose clip planes are
+    /// disabled; `ctx.camera` reflects the same projection. Plugins must
+    /// restore group 0 if they rebind it. Build a compatible pipeline via
+    /// [`build_foreground_pipeline`](crate::resources::DeviceResources::build_foreground_pipeline).
+    ///
+    /// Only called when [`draws_foreground`](Self::draws_foreground)
+    /// returns `true`.
+    fn paint_foreground<'a>(
         &'a self,
         _pass: &mut crate::gpu::RenderPass<'a>,
         _ctx: &PaintContext<'a>,

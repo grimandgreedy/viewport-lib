@@ -99,6 +99,22 @@ impl Default for BundleChurnGate {
     }
 }
 
+/// Per-item draw resources for one viewport's foreground items, indexed by
+/// the item's position in `SceneFrame::foreground_items`. Foreground items
+/// are keyed positionally rather than through the [`PerObjectKey`] cache:
+/// the list is small, per-viewport, and rebuilt from scratch when it shrinks.
+pub(crate) struct ForegroundObjectEntry {
+    /// This item's own uniform buffer.
+    pub(crate) uniform_buf: crate::gpu::Buffer,
+    /// Bind group pairing the uniform with the item's mesh textures.
+    /// `None` until first built (or while the item's mesh is missing).
+    pub(crate) bind_group: Option<crate::gpu::BindGroup>,
+    /// Material/texture fingerprint the bind group was built from.
+    pub(crate) cache_key: u64,
+    /// Last `ObjectUniform` written, used to skip unchanged writes.
+    pub(crate) last_uniform: Option<crate::resources::ObjectUniform>,
+}
+
 pub(crate) struct PerObjectState {
     /// Per-object draw resources keyed by [`PerObjectKey`].
     pub(crate) cache: HashMap<PerObjectKey, PerObjectCacheEntry>,

@@ -54,6 +54,14 @@ pub(crate) struct PostProcessResources {
     pub(crate) bloom_placeholder_view: Option<crate::gpu::TextureView>,
     pub(crate) ao_placeholder_view: Option<crate::gpu::TextureView>,
     pub(crate) cs_placeholder_view: Option<crate::gpu::TextureView>,
+    /// 1x1 depth placeholder at 1.0 (uncovered) bound in place of the
+    /// foreground depth when the foreground pass did not run.
+    pub(crate) foreground_placeholder_view: Option<crate::gpu::TextureView>,
+    /// Writes near depth into the output depth buffer where the foreground
+    /// depth records coverage, so post-tone-map passes (grid, ground plane)
+    /// are occluded by foreground geometry.
+    pub(crate) foreground_stamp_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) foreground_stamp_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) pp_linear_sampler: Option<crate::gpu::Sampler>,
     pub(crate) pp_nearest_sampler: Option<crate::gpu::Sampler>,
     pub(crate) depth_blit_pipeline: Option<crate::gpu::RenderPipeline>,
@@ -399,6 +407,19 @@ impl DeviceResources {
                 1,
             );
             self.lic.placeholder_view = Some(lv);
+
+            // Foreground depth placeholder: 1x1 depth at 1.0 = no coverage.
+            // Depth16Unorm is the only depth format write_texture accepts,
+            // and it binds to texture_depth_2d like any other depth format.
+            let (_ft, fv) = make_placeholder(
+                device,
+                queue,
+                "foreground_depth_placeholder",
+                crate::gpu::TextureFormat::Depth16Unorm,
+                &[0xFFu8, 0xFF],
+                2,
+            );
+            self.post.foreground_placeholder_view = Some(fv);
         }
 
         // --- SSAO noise (one-time) ---
@@ -567,6 +588,18 @@ impl DeviceResources {
                         visibility: crate::gpu::ShaderStages::FRAGMENT,
                         ty: crate::gpu::BindingType::Texture {
                             sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 8: foreground depth (coverage mask). Placeholder
+                    // when the foreground pass did not run.
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Depth,
                             view_dimension: crate::gpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
@@ -1226,6 +1259,18 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 4: foreground depth (coverage mask). Placeholder
+                // when the foreground pass did not run.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let dof_shader = crate::resources::builders::wgsl_module(
@@ -1471,6 +1516,66 @@ impl DeviceResources {
             );
             self.post.depth_blit_bgl = Some(bgl);
             self.post.depth_blit_pipeline = Some(pipeline);
+        }
+
+        // --- Foreground depth stamp pipeline (lazily created once) ---
+        // Writes near depth into the output depth buffer where the foreground
+        // pass drew, so post-tone-map passes are occluded by foreground items.
+        if self.post.foreground_stamp_bgl.is_none() {
+            let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("foreground_stamp_bgl"),
+                entries: &[crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
+            });
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "foreground_stamp_shader",
+                crate::resources::builders::wgsl_source!("foreground_depth_stamp"),
+            );
+            let layout = crate::resources::builders::pipeline_layout(
+                device,
+                "foreground_stamp_layout",
+                &[&bgl],
+            );
+            let pipeline = crate::resources::builders::render_pipeline(
+                device,
+                crate::resources::builders::RenderPipelineDesc {
+                    label: "foreground_stamp_pipeline",
+                    layout: &layout,
+                    vertex: crate::gpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(crate::gpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: crate::gpu::PrimitiveState {
+                        topology: crate::gpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        true,
+                        crate::gpu::CompareFunction::Always,
+                    )),
+                    multisample: crate::gpu::MultisampleState::default(),
+                    cache: None,
+                },
+            );
+            self.post.foreground_stamp_bgl = Some(bgl);
+            self.post.foreground_stamp_pipeline = Some(pipeline);
         }
 
         // --- Decal shared resources (D1) ---
@@ -1910,6 +2015,15 @@ impl DeviceResources {
                             .expect("ensure_hdr_shared not called"),
                     ),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 8,
+                    resource: crate::gpu::BindingResource::TextureView(
+                        self.post
+                            .foreground_placeholder_view
+                            .as_ref()
+                            .expect("ensure_hdr_shared not called"),
+                    ),
+                },
             ],
         });
         let bloom_threshold_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2053,6 +2167,15 @@ impl DeviceResources {
                     binding: 3,
                     resource: dof_uniform_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: crate::gpu::BindingResource::TextureView(
+                        self.post
+                            .foreground_placeholder_view
+                            .as_ref()
+                            .expect("ensure_hdr_shared not called"),
+                    ),
+                },
             ],
         });
         // dof_bind_group: same layout as dof_bg but reads dof_view (for tone map input).
@@ -2076,6 +2199,15 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 3,
                     resource: dof_uniform_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: crate::gpu::BindingResource::TextureView(
+                        self.post
+                            .foreground_placeholder_view
+                            .as_ref()
+                            .expect("ensure_hdr_shared not called"),
+                    ),
                 },
             ],
         });
@@ -2507,6 +2639,10 @@ impl DeviceResources {
             oit_reveal_view: None,
             oit_composite_bind_group: None,
             oit_size: [0, 0],
+            foreground_depth_texture: None,
+            foreground_depth_view: None,
+            foreground_depth_only_view: None,
+            foreground_depth_size: [0, 0],
             outline_mask_texture: outline_mask_tex,
             outline_mask_view,
             outline_colour_texture: outline_colour_tex,
@@ -2564,6 +2700,7 @@ impl DeviceResources {
         use_contact_shadows: bool,
         use_lic: bool,
         use_dof: bool,
+        use_foreground: bool,
     ) {
         let bgl = match &self.post.tone_map_bgl {
             Some(b) => b,
@@ -2584,6 +2721,17 @@ impl DeviceResources {
         let cs_placeholder = match &self.post.cs_placeholder_view {
             Some(v) => v,
             None => return,
+        };
+        let foreground_placeholder = match &self.post.foreground_placeholder_view {
+            Some(v) => v,
+            None => return,
+        };
+        let foreground_view = if use_foreground {
+            hdr.foreground_depth_only_view
+                .as_ref()
+                .unwrap_or(foreground_placeholder)
+        } else {
+            foreground_placeholder
         };
 
         let bloom_view = if use_bloom {
@@ -2647,8 +2795,47 @@ impl DeviceResources {
                         self.lic.placeholder_view.as_ref().unwrap_or(cs_placeholder)
                     }),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 8,
+                    resource: crate::gpu::BindingResource::TextureView(foreground_view),
+                },
             ],
         });
+
+        // The DOF gather pass also reads the foreground coverage mask; rebuild
+        // its bind group so the mask view matches this frame.
+        if use_dof {
+            if let Some(dof_bgl) = &self.post.dof_bgl {
+                hdr.dof_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("dof_bg"),
+                    layout: dof_bgl,
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::gpu::BindingResource::TextureView(&hdr.hdr_view),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::gpu::BindingResource::Sampler(sampler),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 2,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                &hdr.hdr_depth_only_view,
+                            ),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 3,
+                            resource: hdr.dof_uniform_buf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 4,
+                            resource: crate::gpu::BindingResource::TextureView(foreground_view),
+                        },
+                    ],
+                });
+            }
+        }
     }
 
     /// Ensure OIT (order-independent transparency) render targets exist for the
@@ -2734,5 +2921,49 @@ impl DeviceResources {
         hdr.oit_reveal_texture = Some(reveal_tex);
         hdr.oit_reveal_view = Some(reveal_view);
         hdr.oit_composite_bind_group = Some(composite_bg);
+    }
+
+    /// Ensure the foreground pass depth target exists for the given
+    /// per-viewport HDR state, creating or resizing it as needed. `w`/`h` are
+    /// the scene target dimensions including any SSAA factor.
+    pub(crate) fn ensure_viewport_foreground_depth(
+        &self,
+        device: &crate::gpu::Device,
+        hdr: &mut ViewportHdrState,
+        w: u32,
+        h: u32,
+    ) {
+        let w = w.max(1);
+        let h = h.max(1);
+        if hdr.foreground_depth_size == [w, h] && hdr.foreground_depth_texture.is_some() {
+            return;
+        }
+        hdr.foreground_depth_size = [w, h];
+
+        let tex = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("foreground_depth_texture"),
+            size: crate::gpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
+                | crate::gpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let depth_only_view = tex.create_view(&crate::gpu::TextureViewDescriptor {
+            label: Some("foreground_depth_only_view"),
+            aspect: crate::gpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        });
+
+        hdr.foreground_depth_texture = Some(tex);
+        hdr.foreground_depth_view = Some(view);
+        hdr.foreground_depth_only_view = Some(depth_only_view);
     }
 }

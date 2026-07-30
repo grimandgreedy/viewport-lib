@@ -220,18 +220,7 @@ fn prepare_empty_scene_no_panic() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: cam.aspect,
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [0.0, 0.0];
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
     frame.viewport.show_grid = false;
@@ -331,17 +320,10 @@ fn render_offscreen_produces_rgba_pixels() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -411,17 +393,10 @@ fn position_override_takes_effect_through_render_path() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -521,17 +496,10 @@ fn occlusion_culling_render_path_runs() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -610,17 +578,10 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     let dim = 2048u32;
     frame.camera.viewport_size = [dim as f32, dim as f32];
@@ -667,17 +628,10 @@ fn occlusion_culling_ldr_path_runs() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -741,17 +695,10 @@ fn lod_culled_per_object_item_is_not_drawn() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -805,17 +752,10 @@ fn gpu_pick_returns_object_id_under_cursor() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -848,17 +788,10 @@ fn gpu_pick_async_begin_poll_returns_hit() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -929,17 +862,10 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -999,17 +925,10 @@ fn gpu_pick_hits_voxel_volume() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1060,17 +979,10 @@ fn gpu_pick_voxel_volume_resolves_voxel() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1127,17 +1039,10 @@ fn gpu_pick_voxel_volume_resolves_voxel() {
 fn scatter_pick_frame() -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1203,17 +1108,10 @@ fn gpu_pick_hits_decal_box() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1246,17 +1144,10 @@ fn gpu_pick_hits_volume_mesh_boundary() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1287,17 +1178,10 @@ fn gpu_pick_object_honors_type_mask() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1347,17 +1231,10 @@ fn gpu_pick_hits_ribbon() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1472,17 +1349,19 @@ fn gpu_pick_hits_showcase_style_voxel_volume() {
     let view = glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z);
     let proj = glam::Mat4::perspective_rh(60_f32.to_radians(), 1.0, 0.1, 100.0);
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view,
-        projection: proj,
-        eye_position: eye.to_array(),
-        forward: (target - eye).normalize().to_array(),
-        orientation: glam::Quat::IDENTITY,
-        near: 0.1,
-        far: 100.0,
-        distance: (eye - target).length(),
-        fov: 60_f32.to_radians(),
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::default();
+        rc.view = view;
+        rc.projection = proj;
+        rc.eye_position = eye.to_array();
+        rc.forward = (target - eye).normalize().to_array();
+        rc.orientation = glam::Quat::IDENTITY;
+        rc.near = 0.1;
+        rc.far = 100.0;
+        rc.distance = (eye - target).length();
+        rc.fov = 60_f32.to_radians();
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1522,17 +1401,10 @@ fn gpu_pick_hits_glyph_set() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1565,17 +1437,10 @@ fn gpu_pick_hits_sprite_set() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1606,17 +1471,10 @@ fn gpu_pick_hits_polyline() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -1646,17 +1504,10 @@ fn gpu_pick_hits_polyline() {
 fn sub_object_pick_frame() -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -2507,17 +2358,10 @@ impl ItemTypePlugin for MockPickPlugin {
 fn plugin_pick_frame() -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
@@ -3361,18 +3205,7 @@ fn debug_vis_toggle_rebuilds_lit_pipelines() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: cam.aspect,
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
@@ -3427,18 +3260,7 @@ fn two_bind_group_device_renders_without_validation_errors() {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: cam.aspect,
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -3542,18 +3364,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: cam.aspect,
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -3675,18 +3486,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: cam.aspect,
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -3751,18 +3551,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: cam.aspect,
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -3848,18 +3637,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
 
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: cam.aspect,
-    };
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
@@ -3976,17 +3754,10 @@ fn quad_mesh() -> MeshData {
 fn tonemap_frame(size: u32, background: [f32; 4]) -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
-    frame.camera.render_camera = RenderCamera {
-        view: cam.view_matrix(),
-        projection: cam.proj_matrix(),
-        eye_position: cam.eye_position().to_array(),
-        forward: [0.0, 0.0, -1.0],
-        orientation: cam.orientation,
-        near: cam.effective_znear(),
-        far: cam.zfar,
-        distance: cam.distance,
-        fov: cam.fov_y,
-        aspect: 1.0,
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
     };
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
@@ -4116,5 +3887,395 @@ fn bloom_glows_into_empty_background() {
     assert!(
         max_halo > 25,
         "bloom did not glow into the empty background (max background brightening {max_halo})"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Foreground pass
+// ---------------------------------------------------------------------------
+
+/// Frame with the default orbit camera, a 64x64 viewport, and no chrome.
+fn foreground_frame() -> FrameData {
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame
+}
+
+fn centre_pixel(img: &[u8]) -> [u8; 4] {
+    let i = ((32 * 64) + 32) * 4;
+    [img[i], img[i + 1], img[i + 2], img[i + 3]]
+}
+
+fn coloured_item(mesh_id: MeshId, colour: [f32; 3], model: glam::Mat4) -> SceneRenderItem {
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = Material::default();
+    item.material.base_colour = colour;
+    item.model = model.to_cols_array_2d();
+    item
+}
+
+/// A foreground item draws over world geometry that would fully occlude it:
+/// the world box encloses the foreground box, so without the cleared-depth
+/// pass the foreground box could never be visible.
+#[test]
+fn foreground_item_draws_over_occluding_geometry() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = foreground_frame();
+    let occluder = coloured_item(
+        mesh_id,
+        [0.1, 0.1, 0.9],
+        glam::Mat4::from_scale(glam::Vec3::splat(3.0)),
+    );
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![occluder].into());
+    let without_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    frame.scene.foreground_items.push(fg);
+    let with_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    assert_ne!(
+        centre_pixel(&without_fg),
+        centre_pixel(&with_fg),
+        "foreground item enclosed by world geometry must still be visible"
+    );
+    let c = centre_pixel(&with_fg);
+    assert!(
+        c[0] > c[2],
+        "centre pixel should show the red foreground item, got {c:?}"
+    );
+}
+
+/// The override projection's small near plane keeps close-held geometry from
+/// being clipped; without the override the same item is cut by the scene near
+/// plane and contributes nothing.
+#[test]
+fn foreground_override_projection_avoids_near_clip() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = foreground_frame();
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    let empty = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // A small box held 0.05 world units in front of the eye: inside the
+    // scene near plane (0.1 for the default camera).
+    let eye = glam::Vec3::from(frame.camera.render_camera.eye_position);
+    let fwd = glam::Vec3::from(frame.camera.render_camera.forward);
+    let model = glam::Mat4::from_translation(eye + fwd * 0.05)
+        * glam::Mat4::from_scale(glam::Vec3::splat(0.02));
+    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], model);
+    frame.scene.foreground_items.push(fg);
+
+    let scene_near = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(
+        empty, scene_near,
+        "item inside the scene near plane must be clipped without an override"
+    );
+
+    frame.effects.foreground = Some(viewport_lib::ForegroundPass {
+        projection: Some(viewport_lib::ForegroundProjection {
+            fov_y: 65_f32.to_radians(),
+            near: 0.005,
+            far: None,
+        }),
+    });
+    let overridden = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        empty, overridden,
+        "the override near plane must make the close-held item visible"
+    );
+}
+
+/// Foreground items survive the screen-space post effects: with SSAO, bloom,
+/// and DOF all enabled the foreground item must still reach the output (DOF
+/// redirects the tone-map input, and the coverage mask keeps the item sharp
+/// and un-darkened).
+#[test]
+fn foreground_item_survives_post_effects() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = foreground_frame();
+    frame.effects.post_process.ssao = true;
+    frame.effects.post_process.bloom = true;
+    frame.effects.post_process.dof_enabled = true;
+    let occluder = coloured_item(
+        mesh_id,
+        [0.1, 0.1, 0.9],
+        glam::Mat4::from_scale(glam::Vec3::splat(3.0)),
+    );
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![occluder].into());
+    let without_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    frame.scene.foreground_items.push(fg);
+    let with_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    assert_ne!(
+        centre_pixel(&without_fg),
+        centre_pixel(&with_fg),
+        "foreground item must survive SSAO + bloom + DOF"
+    );
+    let c = centre_pixel(&with_fg);
+    assert!(
+        c[0] > c[2],
+        "centre pixel should stay red under post effects, got {c:?}"
+    );
+}
+
+/// The LDR path (post-processing disabled) draws foreground items through its
+/// own pass.
+#[test]
+fn foreground_item_visible_on_ldr_path() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = foreground_frame();
+    frame.effects.post_process.enabled = false;
+    let occluder = coloured_item(
+        mesh_id,
+        [0.1, 0.1, 0.9],
+        glam::Mat4::from_scale(glam::Vec3::splat(3.0)),
+    );
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![occluder].into());
+    let without_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    frame.scene.foreground_items.push(fg);
+    let with_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    assert_ne!(
+        centre_pixel(&without_fg),
+        centre_pixel(&with_fg),
+        "LDR path must draw foreground items"
+    );
+}
+
+/// Scene clip planes never slice foreground items: the pass binds a
+/// clip-disabled group 0.
+#[test]
+fn foreground_item_ignores_scene_clip_planes() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    // A plane that clips away everything (keeps only z >= 100).
+    let mut clip = viewport_lib::ClipObject::default();
+    clip.shape = viewport_lib::ClipShape::Plane {
+        normal: [0.0, 0.0, 1.0],
+        distance: -100.0,
+        cap_colour: None,
+        display_center: None,
+    };
+    clip.colour = None;
+    clip.edge_colour = None;
+
+    let mut frame = foreground_frame();
+    frame.effects.clip_objects.push(clip);
+    let world = coloured_item(
+        mesh_id,
+        [0.1, 0.1, 0.9],
+        glam::Mat4::from_scale(glam::Vec3::splat(3.0)),
+    );
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![world].into());
+    let clipped_world = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    let empty = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(
+        clipped_world, empty,
+        "sanity: the clip plane must remove the world geometry entirely"
+    );
+
+    let fg = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    frame.scene.foreground_items.push(fg);
+    let with_fg = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_ne!(
+        empty, with_fg,
+        "foreground item must not be sliced by the scene clip plane"
+    );
+}
+
+/// Foreground transparency is sorted alpha blending inside the pass: a
+/// blended foreground item over an opaque foreground item changes the result.
+#[test]
+fn foreground_transparency_blends_over_opaque_foreground() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = foreground_frame();
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    let red = coloured_item(mesh_id, [0.9, 0.1, 0.1], glam::Mat4::IDENTITY);
+    frame.scene.foreground_items.push(red.clone());
+    let opaque_only = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let mut glass = coloured_item(
+        mesh_id,
+        [0.1, 0.1, 0.9],
+        glam::Mat4::from_scale(glam::Vec3::splat(1.5)),
+    );
+    glass.settings.opacity = 0.4;
+    frame.scene.foreground_items.push(glass);
+    let blended = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    assert_ne!(
+        centre_pixel(&opaque_only),
+        centre_pixel(&blended),
+        "transparent foreground item must blend over the opaque one"
+    );
+}
+
+/// An item-type plugin with `draws_foreground` draws into the foreground pass
+/// through a pipeline built by `build_foreground_pipeline`.
+#[test]
+fn plugin_paint_foreground_draws_into_pass() {
+    struct FgCollection {
+        settings: ItemSettings,
+    }
+    impl PluginItemCollection for FgCollection {
+        fn len(&self) -> usize {
+            1
+        }
+        fn item_settings(&self, _index: usize) -> &ItemSettings {
+            &self.settings
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    struct FgPlugin {
+        pipeline: wgpu::RenderPipeline,
+    }
+    impl ItemTypePlugin for FgPlugin {
+        fn type_name(&self) -> &'static str {
+            "fg_test"
+        }
+        fn draws_foreground(&self) -> bool {
+            true
+        }
+        fn paint_foreground<'a>(
+            &'a self,
+            pass: &mut wgpu::RenderPass<'a>,
+            _ctx: &viewport_lib::plugin_api::PaintContext<'a>,
+            _items: &'a dyn PluginItemCollection,
+        ) {
+            pass.set_pipeline(&self.pipeline);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    const FG_WGSL: &str = r#"
+@vertex
+fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+    var verts = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -3.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(3.0, 1.0),
+    );
+    return vec4<f32>(verts[vi], 0.5, 1.0);
+}
+
+@fragment
+fn fs() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 2.0, 0.0, 1.0);
+}
+"#;
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fg_test_shader"),
+        source: wgpu::ShaderSource::Wgsl(FG_WGSL.into()),
+    });
+    let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
+        Some("fg_test_pipeline"),
+        &shader,
+        "vs",
+        "fs",
+        &[],
+    );
+    opts.primitive.cull_mode = None;
+    let pipeline = renderer
+        .resources()
+        .build_foreground_pipeline(&device, &opts);
+    renderer.with_item_type_plugin(&device, Box::new(FgPlugin { pipeline }));
+
+    let mut frame = foreground_frame();
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
+    let without = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    frame.scene.submit_plugin_items(
+        "fg_test",
+        FgCollection {
+            settings: ItemSettings::default(),
+        },
+    );
+    let with_plugin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    assert_ne!(
+        without, with_plugin,
+        "plugin foreground draw must be visible"
+    );
+    let green = |img: &[u8]| -> i64 { img.chunks(4).map(|p| p[1] as i64).sum::<i64>() };
+    assert!(
+        green(&with_plugin) > green(&without),
+        "plugin's green fullscreen triangle should raise green"
     );
 }

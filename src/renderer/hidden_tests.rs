@@ -291,3 +291,24 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         );
     }
 }
+
+/// A frame with no foreground items must not allocate the foreground depth
+/// target: non-users of the pass pay nothing.
+#[test]
+fn foreground_depth_not_allocated_without_items() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping foreground_depth_not_allocated_without_items: no GPU adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let fd = empty_frame();
+    let _ = renderer.render_offscreen(&device, &queue, &fd, 256, 256);
+    let slot = &renderer.viewport_slots[0];
+    assert!(
+        slot.hdr
+            .as_ref()
+            .is_some_and(|hdr| hdr.foreground_depth_texture.is_none()),
+        "foreground depth target must stay unallocated with no foreground items"
+    );
+    assert!(slot.foreground_objects.is_empty());
+}

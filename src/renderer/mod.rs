@@ -45,18 +45,18 @@ pub use self::types::{
     AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape,
     ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity,
     DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, EffectsFrame,
-    EmitterConfig, EnvironmentMap, FilterMode, ForceField, FrameData, GaussianSplatData,
-    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType, GpuImplicitItem,
-    GpuMarchingCubesJob, GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode,
-    ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay,
-    LightKind, LightSource, LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem,
-    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
-    OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayImageItem, OverlayPolylineItem, OverlayRectItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack, PickId, PointCloudItem,
-    PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
-    PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem, RibbonRefItem,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
+    EmitterConfig, EnvironmentMap, FilterMode, ForceField, ForegroundPass, ForegroundProjection,
+    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem,
+    GlyphType, GpuImplicitItem, GpuMarchingCubesJob, GpuParticleSystemItem, GradientStop,
+    GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame, LabelAnchor,
+    LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LineJoin,
+    LoadingBarAnchor, LoadingBarItem, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice,
+    OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
+    OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem, OverlayShape,
+    OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack,
+    PickId, PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap,
+    PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem,
+    RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
     ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
     ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
     SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem,
@@ -104,6 +104,22 @@ pub(crate) struct ViewportSlot {
     /// Camera bind group (group 0) referencing this slot's per-viewport buffers
     /// plus shared scene-global resources.
     pub camera_bind_group: crate::gpu::BindGroup,
+    /// Camera uniform for the foreground pass: the scene view with the
+    /// foreground projection (the scene projection, or the override from
+    /// `EffectsFrame::foreground`). Written in prepare when foreground work
+    /// exists.
+    pub foreground_camera_buf: crate::gpu::Buffer,
+    /// Zeroed clip uniforms (`count == 0`) so foreground items are never
+    /// sliced by scene section planes.
+    pub foreground_clip_planes_buf: crate::gpu::Buffer,
+    pub foreground_clip_volume_buf: crate::gpu::Buffer,
+    /// Group-0 bind group for the foreground pass: same layout and shared
+    /// bindings as `camera_bind_group`, but with `foreground_camera_buf` at
+    /// binding 0 and the disabled clip buffers at bindings 4/6.
+    pub foreground_camera_bind_group: crate::gpu::BindGroup,
+    /// Per-item draw resources for this viewport's foreground items,
+    /// index-aligned with `SceneFrame::foreground_items`.
+    pub foreground_objects: Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
     /// Grid bind group (group 0 for grid pipeline) referencing this slot's grid buffer.
     pub grid_bind_group: crate::gpu::BindGroup,
     /// Per-viewport HDR post-process render targets.
@@ -561,6 +577,10 @@ pub struct ViewportRenderer {
     /// with the immutable viewport-slot borrows live during pass encoding (and
     /// to keep `ViewportRenderer: Sync`).
     ts_written_mask: std::sync::atomic::AtomicU32,
+    /// One-shot latch for the paint_to foreground warning: a host-owned
+    /// render pass cannot host the cleared-depth foreground pass, so
+    /// submitted foreground items are reported once instead of every frame.
+    foreground_paint_to_warned: std::sync::atomic::AtomicBool,
     /// Snapshot of the written mask for the queries currently resolved into the
     /// staging buffer, carried alongside the delayed readback so the reader
     /// knows which slots are valid.
@@ -800,6 +820,7 @@ impl ViewportRenderer {
             ts_map_inflight: false,
             ts_map_status: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             ts_written_mask: std::sync::atomic::AtomicU32::new(0),
+            foreground_paint_to_warned: std::sync::atomic::AtomicBool::new(false),
             ts_pending_mask: 0,
             degradation_tier: 0,
             degradation_shadows_skipped: false,
@@ -1358,6 +1379,52 @@ impl ViewportRenderer {
                     .get(*name)
                     .is_some_and(|items| !items.is_empty())
             })
+    }
+
+    /// `true` when the foreground pass has work this frame: submitted
+    /// foreground items, or a registered foreground-drawing plugin with a
+    /// non-empty collection.
+    pub(crate) fn foreground_active(&self, frame: &FrameData) -> bool {
+        !frame.scene.foreground_items.is_empty()
+            || self.item_type_plugins.iter().any(|(name, plugin)| {
+                plugin.draws_foreground()
+                    && frame
+                        .scene
+                        .plugin_items
+                        .get(*name)
+                        .is_some_and(|items| !items.is_empty())
+            })
+    }
+
+    /// Walk registered plugins and invoke `paint_foreground` for each
+    /// foreground-drawing plugin whose collection is on `frame.scene`.
+    ///
+    /// Called from inside the foreground pass after the built-in item
+    /// draws. `camera` carries the foreground projection so plugin-side
+    /// math agrees with the bound group-0 camera.
+    pub(crate) fn dispatch_plugin_paint_foreground<'rp>(
+        &'rp self,
+        pass: &mut crate::gpu::RenderPass<'rp>,
+        frame: &'rp FrameData,
+        camera: &'rp RenderCamera,
+    ) {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        let ctx = crate::plugin_api::PaintContext {
+            camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if !plugin.draws_foreground() {
+                continue;
+            }
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                plugin.paint_foreground(pass, &ctx, items.as_ref());
+            }
+        }
     }
 
     /// Walk registered plugins and invoke `render_pick` for each one whose
@@ -2011,6 +2078,15 @@ impl ViewportRenderer {
                 dbg_buf,
                 "per_viewport_camera_bg",
             );
+            slot.foreground_camera_bind_group = self.resources.create_camera_bind_group(
+                device,
+                &slot.foreground_camera_buf,
+                &slot.foreground_clip_planes_buf,
+                &slot.shadow_info_buf,
+                &slot.foreground_clip_volume_buf,
+                dbg_buf,
+                "per_viewport_foreground_camera_bg",
+            );
         }
     }
 
@@ -2071,6 +2147,36 @@ impl ViewportRenderer {
                 &clip_volume_buf,
                 &self.resources.debug_frag_sentinel_buf,
                 "per_viewport_camera_bg",
+            );
+
+            // Foreground pass group 0: own camera uniform, clip disabled
+            // (zeroed uniforms mean count == 0 for both planes and volumes).
+            let foreground_camera_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("vp_foreground_camera_buf"),
+                size: std::mem::size_of::<CameraUniform>() as u64,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let foreground_clip_planes_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("vp_foreground_clip_planes_buf"),
+                size: std::mem::size_of::<ClipPlanesUniform>() as u64,
+                usage: crate::gpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+            let foreground_clip_volume_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("vp_foreground_clip_volume_buf"),
+                size: std::mem::size_of::<ClipVolumesUniform>() as u64,
+                usage: crate::gpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+            let foreground_camera_bind_group = self.resources.create_camera_bind_group(
+                device,
+                &foreground_camera_buf,
+                &foreground_clip_planes_buf,
+                &shadow_info_buf,
+                &foreground_clip_volume_buf,
+                &self.resources.debug_frag_sentinel_buf,
+                "per_viewport_foreground_camera_bg",
             );
 
             let grid_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2153,6 +2259,11 @@ impl ViewportRenderer {
                 shadow_info_buf,
                 grid_buf,
                 camera_bind_group,
+                foreground_camera_buf,
+                foreground_clip_planes_buf,
+                foreground_clip_volume_buf,
+                foreground_camera_bind_group,
+                foreground_objects: Vec::new(),
                 grid_bind_group,
                 hdr: None,
                 cull: crate::resources::ViewportCullState::new(),

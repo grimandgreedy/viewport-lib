@@ -92,6 +92,16 @@ pub(crate) struct ViewportHdrState {
     pub oit_composite_bind_group: Option<crate::gpu::BindGroup>,
     pub oit_size: [u32; 2],
 
+    // --- Foreground pass depth (lazily allocated when foreground items are present) ---
+    /// Cleared-depth target for the foreground pass, sized to the scene target
+    /// (including SSAA). Also sampled by DOF / tone map / the output depth
+    /// stamp as a coverage mask (depth < 1.0 = foreground pixel).
+    pub foreground_depth_texture: Option<crate::gpu::Texture>,
+    pub foreground_depth_view: Option<crate::gpu::TextureView>,
+    /// Depth-aspect-only view of `foreground_depth_texture` for sampling.
+    pub foreground_depth_only_view: Option<crate::gpu::TextureView>,
+    pub foreground_depth_size: [u32; 2],
+
     // --- Outline offscreen (used by the outline prepare pass) ---
     /// R8Unorm mask: selected objects rendered as white on black.
     pub outline_mask_texture: crate::gpu::Texture,

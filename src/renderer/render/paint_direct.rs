@@ -10,6 +10,21 @@ impl ViewportRenderer {
         render_pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &FrameData,
     ) {
+        // The foreground pass needs its own cleared depth attachment, which a
+        // host-owned render pass cannot provide (attachments are fixed at
+        // begin_render_pass). Warn once instead of silently drawing nothing.
+        if !frame.scene.foreground_items.is_empty()
+            && !self
+                .foreground_paint_to_warned
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::warn!(
+                "foreground_items are not drawn by paint()/paint_viewport(): the foreground \
+                 pass needs its own cleared depth attachment, which a host-owned render pass \
+                 cannot provide. Use the HDR path (post-processing enabled) or an \
+                 owned-encoder render path."
+            );
+        }
         let vp_idx = frame.camera.viewport_index;
         let camera_bg = self.viewport_camera_bind_group(vp_idx);
         let grid_bg = self.viewport_grid_bind_group(vp_idx);

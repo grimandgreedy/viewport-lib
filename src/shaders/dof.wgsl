@@ -20,13 +20,18 @@ struct DofUniform {
     // Viewport dimensions, used to convert pixel offsets to UV offsets.
     viewport_width:  f32,
     viewport_height: f32,
-    _pad: f32,
+    // Non-zero when the foreground pass ran this frame.
+    foreground_enabled: f32,
 }
 
 @group(0) @binding(0) var hdr_texture: texture_2d<f32>;
 @group(0) @binding(1) var hdr_sampler: sampler;
 @group(0) @binding(2) var depth_tex:   texture_depth_2d;
 @group(0) @binding(3) var<uniform> params: DofUniform;
+// Foreground pass coverage mask: depth < 1.0 where foreground geometry was
+// drawn. Covered pixels pass through unblurred; their scene depth belongs to
+// whatever the foreground drew over, not to what the pixel shows.
+@group(0) @binding(4) var foreground_depth: texture_depth_2d;
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -66,6 +71,20 @@ fn vogel_disc(index: u32, count: u32, rotation: f32) -> vec2<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
     let depth = textureLoad(depth_tex, pixel, 0);
+
+    // Foreground-covered pixels stay sharp: the scene depth under them does
+    // not describe what is visible there.
+    if params.foreground_enabled != 0.0 {
+        let fg_dims = textureDimensions(foreground_depth);
+        let fg_coord = clamp(
+            vec2<u32>(in.uv * vec2<f32>(fg_dims)),
+            vec2<u32>(0u),
+            fg_dims - vec2<u32>(1u),
+        );
+        if textureLoad(foreground_depth, fg_coord, 0) < 1.0 {
+            return textureSample(hdr_texture, hdr_sampler, in.uv);
+        }
+    }
 
     // Background or sky: copy HDR directly without blurring.
     if depth >= 0.9999 {

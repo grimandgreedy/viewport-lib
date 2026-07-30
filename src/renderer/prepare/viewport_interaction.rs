@@ -114,6 +114,22 @@ impl ViewportRenderer {
             // Write to the per-viewport slot buffer.
             if let Some(slot) = self.viewport_slots.get(frame.camera.viewport_index) {
                 queue.write_buffer(&slot.camera_buf, 0, bytemuck::cast_slice(&[camera_uniform]));
+
+                // Foreground pass camera: scene view with the (optional)
+                // override projection. Only written when foreground work
+                // exists this frame.
+                if !frame.scene.foreground_items.is_empty() || !frame.scene.plugin_items.is_empty()
+                {
+                    let fg_camera = frame
+                        .camera
+                        .render_camera
+                        .foreground_camera(frame.effects.foreground.as_ref());
+                    queue.write_buffer(
+                        &slot.foreground_camera_buf,
+                        0,
+                        bytemuck::cast_slice(&[fg_camera.camera_uniform()]),
+                    );
+                }
             }
 
             // Upload grid uniform (full-screen analytical shader : no vertex buffers needed).

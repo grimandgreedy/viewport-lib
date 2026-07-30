@@ -3,8 +3,8 @@
 //! See [`crate::plugin_api`] for the published types these methods return.
 
 use crate::plugin_api::{
-    MaskTargetDesc, OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
-    SharedBindings,
+    ForegroundTargetDesc, MaskTargetDesc, OitTargetDesc, OpaqueTargetDesc, PickTargetDesc,
+    ShadowTargetDesc, SharedBindings,
     target_desc::{OIT_ACCUM_BLEND, OIT_REVEAL_BLEND},
 };
 use crate::resources::DeviceResources;
@@ -52,6 +52,15 @@ impl DeviceResources {
             color_format: HDR_COLOR_FORMAT,
             depth_format: SCENE_DEPTH_FORMAT,
             sample_count: self.sample_count,
+        }
+    }
+
+    /// Render-target descriptor for the foreground pass.
+    pub fn foreground_target_desc(&self) -> ForegroundTargetDesc {
+        ForegroundTargetDesc {
+            color_format: HDR_COLOR_FORMAT,
+            depth_format: SCENE_DEPTH_FORMAT,
+            sample_count: 1,
         }
     }
 
@@ -187,6 +196,56 @@ impl DeviceResources {
     ) -> crate::gpu::RenderPipeline {
         let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
         let desc = self.opaque_target_desc();
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: opts.shader,
+                    entry_point: Some(opts.vs_entry),
+                    buffers: opts.vertex_layouts,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format: desc.color_format,
+                        blend: opts.color_blend,
+                        write_mask: crate::gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::depth_stencil(
+                    desc.depth_format,
+                    opts.depth_write,
+                    opts.depth_compare,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        )
+    }
+
+    /// Build a pipeline that draws into the foreground pass.
+    ///
+    /// Same shape as [`build_opaque_pipeline`](Self::build_opaque_pipeline)
+    /// (group 0 = shared bindings, then `extra_bind_group_layouts`), but
+    /// single-sampled: the foreground pass runs after the SSAA resolve. The
+    /// bound group-0 camera carries the foreground projection and disabled
+    /// clip planes; depth is tested against the pass's own cleared target.
+    pub fn build_foreground_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
+        let desc = self.foreground_target_desc();
         crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {

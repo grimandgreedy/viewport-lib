@@ -17,9 +17,14 @@ pub(crate) struct ToneMapUniform {
     pub(crate) far_plane: f32,
     pub(crate) lic_enabled: u32,
     pub(crate) lic_strength: f32,
+    /// Non-zero when the foreground pass ran this frame. Gates the
+    /// foreground-coverage test that skips SSAO/contact-shadow/EDL/LIC on
+    /// pixels covered by foreground geometry.
+    pub(crate) foreground_enabled: u32,
+    pub(crate) _pad: [u32; 3],
 }
 
-const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 64);
+const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 80);
 
 /// Bloom pass uniform (16 bytes).
 #[repr(C)]
@@ -53,7 +58,9 @@ pub(crate) struct DofUniform {
     pub(crate) far_plane: f32,
     pub(crate) viewport_width: f32,
     pub(crate) viewport_height: f32,
-    pub(crate) _pad: f32,
+    /// Non-zero when the foreground pass ran this frame. Pixels covered by
+    /// foreground geometry pass through unblurred.
+    pub(crate) foreground_enabled: f32,
 }
 
 /// Shadow atlas uniform (416 bytes, bound at group 0 binding 5).

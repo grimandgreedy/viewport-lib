@@ -4,8 +4,9 @@
 //! This module publishes the pieces a plugin needs to build pipelines that
 //! drop into the lib's existing render passes. A plugin reuses:
 //!
-//! - Target descriptors ([`OpaqueTargetDesc`], [`OitTargetDesc`],
-//!   [`MaskTargetDesc`], [`PickTargetDesc`], [`ShadowTargetDesc`]) describe
+//! - Target descriptors ([`OpaqueTargetDesc`], [`ForegroundTargetDesc`],
+//!   [`OitTargetDesc`], [`MaskTargetDesc`], [`PickTargetDesc`],
+//!   [`ShadowTargetDesc`]) describe
 //!   the render-target formats, blend states, and depth-stencil state each
 //!   lib pass expects. Pipelines built against these are compatible with the
 //!   corresponding pass.
@@ -102,8 +103,8 @@ pub use item_type::{
     PluginItemCollection, ShadowCastContext,
 };
 pub use target_desc::{
-    MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND, OitTargetDesc, OpaqueTargetDesc,
-    PickTargetDesc, ShadowTargetDesc,
+    ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND, OitTargetDesc,
+    OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
 };
 
 /// Group-0 bind layout shared by every scene pipeline.

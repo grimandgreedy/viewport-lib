@@ -2,6 +2,141 @@
 
 use super::*;
 
+/// Assemble the per-item `ObjectUniform` for a scene item: the model
+/// transform, material and feature flags the mesh shaders read at group 1
+/// binding 0. Shared by the per-object scene prepare and the foreground
+/// item prepare.
+pub(super) fn build_object_uniform(
+    resources: &DeviceResources,
+    item: &SceneRenderItem,
+    wireframe_mode: bool,
+) -> ObjectUniform {
+    let m = &item.material;
+    // Compute scalar attribute range.
+    let (has_attr, s_min, s_max) = if let Some(attr_ref) = &item.active_attribute {
+        let range = item
+            .scalar_range
+            .or_else(|| {
+                resources
+                    .mesh_store
+                    .get(item.mesh_id)
+                    .and_then(|mesh| mesh.attribute_ranges.get(&attr_ref.name).copied())
+            })
+            .unwrap_or((0.0, 1.0));
+        (1u32, range.0, range.1)
+    } else {
+        (0u32, 0.0, 1.0)
+    };
+    let cm = common_material(item);
+    ObjectUniform {
+        model: cm.model,
+        colour: cm.colour,
+        selected: cm.selected,
+        wireframe: if wireframe_mode || item.settings.wireframe {
+            1
+        } else {
+            0
+        },
+        ambient: cm.ambient,
+        diffuse: cm.diffuse,
+        specular: cm.specular,
+        shininess: cm.shininess,
+        has_texture: cm.has_texture,
+        use_pbr: cm.use_pbr,
+        metallic: cm.metallic,
+        roughness: cm.roughness,
+        has_normal_map: cm.has_normal_map,
+        has_ao_map: cm.has_ao_map,
+        has_attribute: has_attr,
+        scalar_min: s_min,
+        scalar_max: s_max,
+        receive_shadows: cm.receive_shadows,
+        nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
+        use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
+        use_matcap: if m.matcap_id().is_some() { 1 } else { 0 },
+        matcap_blendable: m
+            .matcap_id()
+            .map_or(0, |id| if id.blendable { 1 } else { 0 }),
+        unlit: cm.unlit,
+        use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
+            a.kind == crate::resources::AttributeKind::FaceColour
+        })),
+        uv_vis_mode: m.param_vis.map_or(0, |pv| pv.mode as u32),
+        uv_vis_scale: m.param_vis.map_or(8.0, |pv| pv.scale),
+        backface_policy: match m.backface_policy {
+            crate::scene::material::BackfacePolicy::Cull => 0,
+            crate::scene::material::BackfacePolicy::Identical => 1,
+            crate::scene::material::BackfacePolicy::DifferentColour(_) => 2,
+            crate::scene::material::BackfacePolicy::Tint(_) => 3,
+            crate::scene::material::BackfacePolicy::Pattern(cfg) => 4 + cfg.pattern as u32,
+        },
+        backface_colour: match m.backface_policy {
+            crate::scene::material::BackfacePolicy::DifferentColour(c) => [c[0], c[1], c[2], 1.0],
+            crate::scene::material::BackfacePolicy::Tint(factor) => [factor, 0.0, 0.0, 1.0],
+            crate::scene::material::BackfacePolicy::Pattern(cfg) => {
+                let world_extent = resources
+                    .mesh_store
+                    .get(item.mesh_id)
+                    .map(|mesh| {
+                        mesh.aabb
+                            .transformed(&glam::Mat4::from_cols_array_2d(&item.model))
+                            .longest_side()
+                    })
+                    .unwrap_or(1.0)
+                    .max(1e-6);
+                let world_scale = cfg.scale / world_extent;
+                [cfg.colour[0], cfg.colour[1], cfg.colour[2], world_scale]
+            }
+            _ => [0.0; 4],
+        },
+        has_warp: if item.warp_attribute.is_some() { 1 } else { 0 },
+        warp_scale: item.warp_scale,
+        has_position_override: {
+            let mesh = resources.mesh_store.get(item.mesh_id);
+            if mesh.map_or(false, |m| m.position_override_buffer.is_some()) {
+                1
+            } else {
+                0
+            }
+        },
+        has_normal_override: {
+            let mesh = resources.mesh_store.get(item.mesh_id);
+            if mesh.map_or(false, |m| m.normal_override_buffer.is_some()) {
+                1
+            } else {
+                0
+            }
+        },
+        emissive: m.emissive,
+        use_flat: cm.use_flat,
+        alpha_mode: match m.alpha_mode {
+            crate::scene::material::AlphaMode::Opaque => 0,
+            crate::scene::material::AlphaMode::Mask(_) => 1,
+            crate::scene::material::AlphaMode::Blend => 2,
+        },
+        alpha_cutoff: match m.alpha_mode {
+            crate::scene::material::AlphaMode::Mask(c) => c,
+            _ => 0.5,
+        },
+        has_metallic_roughness_tex: if m.metallic_roughness_texture_id.is_some() {
+            1
+        } else {
+            0
+        },
+        has_emissive_tex: if m.emissive_texture_id.is_some() {
+            1
+        } else {
+            0
+        },
+        uv_transform: cm.uv_transform,
+        deform_flags: resources.deform.flag_bits(item.mesh_id),
+        normal_strength: cm.normal_strength,
+        ao_range: cm.ao_range,
+        metallic_range: m.metallic_range,
+        roughness_range: m.roughness_range,
+    }
+}
+
 impl ViewportRenderer {
     /// Non-instanced (per-object) mesh draw preparation: compute the per-item
     /// material/feature flags, write one `ObjectUniform` per scene item, and build
@@ -104,135 +239,8 @@ impl ViewportRenderer {
                     );
                     continue;
                 };
-                let m = &item.material;
-                // Compute scalar attribute range.
-                let (has_attr, s_min, s_max) = if let Some(attr_ref) = &item.active_attribute {
-                    let range =
-                        item.scalar_range
-                            .or_else(|| {
-                                resources.mesh_store.get(item.mesh_id).and_then(|mesh| {
-                                    mesh.attribute_ranges.get(&attr_ref.name).copied()
-                                })
-                            })
-                            .unwrap_or((0.0, 1.0));
-                    (1u32, range.0, range.1)
-                } else {
-                    (0u32, 0.0, 1.0)
-                };
-                let cm = common_material(item);
-                let obj_uniform = ObjectUniform {
-                    model: cm.model,
-                    colour: cm.colour,
-                    selected: cm.selected,
-                    wireframe: if frame.viewport.wireframe_mode || item.settings.wireframe {
-                        1
-                    } else {
-                        0
-                    },
-                    ambient: cm.ambient,
-                    diffuse: cm.diffuse,
-                    specular: cm.specular,
-                    shininess: cm.shininess,
-                    has_texture: cm.has_texture,
-                    use_pbr: cm.use_pbr,
-                    metallic: cm.metallic,
-                    roughness: cm.roughness,
-                    has_normal_map: cm.has_normal_map,
-                    has_ao_map: cm.has_ao_map,
-                    has_attribute: has_attr,
-                    scalar_min: s_min,
-                    scalar_max: s_max,
-                    receive_shadows: cm.receive_shadows,
-                    nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
-                    use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
-                    use_matcap: if m.matcap_id().is_some() { 1 } else { 0 },
-                    matcap_blendable: m
-                        .matcap_id()
-                        .map_or(0, |id| if id.blendable { 1 } else { 0 }),
-                    unlit: cm.unlit,
-                    use_face_colour: u32::from(item.active_attribute.as_ref().map_or(false, |a| {
-                        a.kind == crate::resources::AttributeKind::FaceColour
-                    })),
-                    uv_vis_mode: m.param_vis.map_or(0, |pv| pv.mode as u32),
-                    uv_vis_scale: m.param_vis.map_or(8.0, |pv| pv.scale),
-                    backface_policy: match m.backface_policy {
-                        crate::scene::material::BackfacePolicy::Cull => 0,
-                        crate::scene::material::BackfacePolicy::Identical => 1,
-                        crate::scene::material::BackfacePolicy::DifferentColour(_) => 2,
-                        crate::scene::material::BackfacePolicy::Tint(_) => 3,
-                        crate::scene::material::BackfacePolicy::Pattern(cfg) => {
-                            4 + cfg.pattern as u32
-                        }
-                    },
-                    backface_colour: match m.backface_policy {
-                        crate::scene::material::BackfacePolicy::DifferentColour(c) => {
-                            [c[0], c[1], c[2], 1.0]
-                        }
-                        crate::scene::material::BackfacePolicy::Tint(factor) => {
-                            [factor, 0.0, 0.0, 1.0]
-                        }
-                        crate::scene::material::BackfacePolicy::Pattern(cfg) => {
-                            let world_extent = resources
-                                .mesh_store
-                                .get(item.mesh_id)
-                                .map(|mesh| {
-                                    mesh.aabb
-                                        .transformed(&glam::Mat4::from_cols_array_2d(&item.model))
-                                        .longest_side()
-                                })
-                                .unwrap_or(1.0)
-                                .max(1e-6);
-                            let world_scale = cfg.scale / world_extent;
-                            [cfg.colour[0], cfg.colour[1], cfg.colour[2], world_scale]
-                        }
-                        _ => [0.0; 4],
-                    },
-                    has_warp: if item.warp_attribute.is_some() { 1 } else { 0 },
-                    warp_scale: item.warp_scale,
-                    has_position_override: {
-                        let mesh = resources.mesh_store.get(item.mesh_id);
-                        if mesh.map_or(false, |m| m.position_override_buffer.is_some()) {
-                            1
-                        } else {
-                            0
-                        }
-                    },
-                    has_normal_override: {
-                        let mesh = resources.mesh_store.get(item.mesh_id);
-                        if mesh.map_or(false, |m| m.normal_override_buffer.is_some()) {
-                            1
-                        } else {
-                            0
-                        }
-                    },
-                    emissive: m.emissive,
-                    use_flat: cm.use_flat,
-                    alpha_mode: match m.alpha_mode {
-                        crate::scene::material::AlphaMode::Opaque => 0,
-                        crate::scene::material::AlphaMode::Mask(_) => 1,
-                        crate::scene::material::AlphaMode::Blend => 2,
-                    },
-                    alpha_cutoff: match m.alpha_mode {
-                        crate::scene::material::AlphaMode::Mask(c) => c,
-                        _ => 0.5,
-                    },
-                    has_metallic_roughness_tex: if m.metallic_roughness_texture_id.is_some() {
-                        1
-                    } else {
-                        0
-                    },
-                    has_emissive_tex: if m.emissive_texture_id.is_some() {
-                        1
-                    } else {
-                        0
-                    },
-                    uv_transform: cm.uv_transform,
-                    deform_flags: resources.deform.flag_bits(item.mesh_id),
-                    normal_strength: cm.normal_strength,
-                    ao_range: cm.ao_range,
-                    metallic_range: m.metallic_range,
-                    roughness_range: m.roughness_range,
-                };
+                let obj_uniform =
+                    build_object_uniform(resources, item, frame.viewport.wireframe_mode);
 
                 // Collect per-item uniform for wireframe per-item bind groups.
                 if collect_wf_uniforms && !item.settings.hidden {
@@ -605,6 +613,95 @@ impl ViewportRenderer {
         }
 
         bind_groups_built
+    }
+
+    /// Write the per-item uniforms and build the group-1 bind groups for one
+    /// viewport's foreground items.
+    ///
+    /// Foreground items live outside the shared [`PerObjectState`] cache: the
+    /// list is small and per-viewport, and running the `(pick_id, occurrence)`
+    /// keyed cache over a second list would collide with the scene items'
+    /// entries. `entries` is index-aligned with `items`; an entry whose mesh
+    /// is missing keeps `bind_group: None` and the draw path skips it.
+    pub(super) fn prepare_foreground_objects(
+        resources: &mut DeviceResources,
+        entries: &mut Vec<crate::renderer::per_object_state::ForegroundObjectEntry>,
+        items: &[SceneRenderItem],
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
+        entries.truncate(items.len());
+        let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
+        for (idx, item) in items.iter().enumerate() {
+            if entries.len() <= idx {
+                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some("foreground_object_uniform"),
+                    size: uniform_size,
+                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                entries.push(crate::renderer::per_object_state::ForegroundObjectEntry {
+                    uniform_buf: buf,
+                    bind_group: None,
+                    cache_key: 0,
+                    last_uniform: None,
+                });
+            }
+            if resources.mesh_store.get(item.mesh_id).is_none() {
+                tracing::warn!(
+                    mesh_index = item.mesh_id.index(),
+                    "foreground item mesh_index invalid, skipping"
+                );
+                entries[idx].bind_group = None;
+                continue;
+            }
+
+            resources.update_mesh_texture_bind_group(
+                device,
+                item.mesh_id,
+                item.material.texture_id,
+                item.material.normal_map_id,
+                item.material.ao_map_id,
+                item.colourmap_id,
+                item.active_attribute.as_ref().map(|a| a.name.as_str()),
+                item.material.matcap_id(),
+                item.warp_attribute.as_deref(),
+                item.material.metallic_roughness_texture_id,
+                item.material.emissive_texture_id,
+            );
+
+            let obj_uniform = build_object_uniform(resources, item, false);
+            let entry = &mut entries[idx];
+            let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
+                bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)
+            });
+            if uniform_changed {
+                queue.write_buffer(&entry.uniform_buf, 0, bytemuck::cast_slice(&[obj_uniform]));
+                entry.last_uniform = Some(obj_uniform);
+                resources.frame_upload_bytes += uniform_size;
+            }
+
+            let prev_key = entry.bind_group.as_ref().map(|_| entry.cache_key);
+            let built = resources.build_per_item_object_bind_group(
+                device,
+                item.mesh_id,
+                &entry.uniform_buf,
+                item.material.texture_id,
+                item.material.normal_map_id,
+                item.material.ao_map_id,
+                item.colourmap_id,
+                item.active_attribute.as_ref().map(|a| a.name.as_str()),
+                item.material.matcap_id(),
+                item.warp_attribute.as_deref(),
+                item.material.metallic_roughness_texture_id,
+                item.material.emissive_texture_id,
+                prev_key,
+            );
+            if let Some((bg, key)) = built {
+                entry.bind_group = Some(bg);
+                entry.cache_key = key;
+            }
+        }
     }
 
     /// Rebuild or drop the cached per-object render bundle for this frame.

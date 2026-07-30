@@ -19,6 +19,22 @@ pub struct OpaqueTargetDesc {
     pub sample_count: u32,
 }
 
+/// Targets used by the foreground pass.
+///
+/// The foreground pass loads the scene colour after the SSAA resolve and
+/// draws against its own cleared depth target, so foreground plugin items
+/// composite over the finished world. Single-sampled.
+#[derive(Clone, Copy, Debug)]
+pub struct ForegroundTargetDesc {
+    /// Colour target format. `Rgba16Float` (the HDR scene buffer).
+    pub color_format: crate::gpu::TextureFormat,
+    /// Depth-stencil format of the pass's own cleared depth target.
+    /// `Depth24PlusStencil8`, matching the scene depth format.
+    pub depth_format: crate::gpu::TextureFormat,
+    /// Sample count. The foreground pass runs after the SSAA resolve, so 1.
+    pub sample_count: u32,
+}
+
 /// Targets used by the order-independent transparency (OIT) pass.
 ///
 /// Weighted-blended OIT writes to two MRT attachments: an additive accum

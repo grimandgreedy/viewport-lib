@@ -859,6 +859,13 @@ impl ViewportRenderer {
 
         self.prepare_clip_uniforms(queue, frame, viewport_fx);
         self.prepare_interaction_state(device, queue, frame, viewport_fx);
+        Self::prepare_foreground_objects(
+            &mut self.resources,
+            &mut self.viewport_slots[vp_idx].foreground_objects,
+            &frame.scene.foreground_items,
+            device,
+            queue,
+        );
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 

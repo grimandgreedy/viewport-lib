@@ -257,6 +257,129 @@ impl ViewportRenderer {
         }
         // -- End of scene render pass (dropped above). ---
 
+        // Foreground pass: draw foreground items over the finished scene
+        // against a freshly cleared own depth target, into the same colour
+        // target the scene pass used. LDR has no post chain, so no coverage
+        // mask is needed here. Note the scene pass draws 2D overlays inline
+        // (above), so on the LDR path foreground items paint over them.
+        // Item-type plugins are not dispatched on the LDR path (their
+        // foreground pipelines target the HDR formats), so only the item
+        // list gates this pass.
+        if !frame.scene.foreground_items.is_empty() {
+            let (fw, fh) = if use_dyn_res {
+                let dr = self.viewport_slots[vp_idx].dyn_res.as_ref().unwrap();
+                (dr.scaled_size[0], dr.scaled_size[1])
+            } else {
+                (w.max(1), h.max(1))
+            };
+            {
+                let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
+                self.resources
+                    .ensure_viewport_foreground_depth(device, hdr, fw, fh);
+            }
+
+            let resources = &self.resources;
+            let slot = &self.viewport_slots[vp_idx];
+            let slot_hdr = slot.hdr.as_ref().unwrap();
+            let scene_colour_view: &crate::gpu::TextureView = if use_dyn_res {
+                &slot.dyn_res.as_ref().unwrap().colour_view
+            } else if needs_blur {
+                &self.backdrop_blur_state.as_ref().unwrap().intermediate_view
+            } else {
+                output_view
+            };
+            if let Some(fg_depth_view) = slot_hdr.foreground_depth_view.as_ref() {
+                let fg_camera = frame
+                    .camera
+                    .render_camera
+                    .foreground_camera(frame.effects.foreground.as_ref());
+                let eye = glam::Vec3::from(fg_camera.eye_position);
+                let dist_from_eye = |item: &SceneRenderItem| -> f32 {
+                    let pos = glam::Vec3::new(item.model[3][0], item.model[3][1], item.model[3][2]);
+                    (pos - eye).length()
+                };
+                let items = &frame.scene.foreground_items;
+                let mut opaque: Vec<(usize, &SceneRenderItem)> = Vec::new();
+                let mut transparent: Vec<(usize, &SceneRenderItem)> = Vec::new();
+                for (idx, item) in items.iter().enumerate() {
+                    if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
+                        continue;
+                    }
+                    if item.settings.opacity < 1.0 || item.material.is_blend() {
+                        transparent.push((idx, item));
+                    } else {
+                        opaque.push((idx, item));
+                    }
+                }
+                opaque.sort_by(|a, b| {
+                    dist_from_eye(a.1)
+                        .partial_cmp(&dist_from_eye(b.1))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                transparent.sort_by(|a, b| {
+                    dist_from_eye(b.1)
+                        .partial_cmp(&dist_from_eye(a.1))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                let mut render_pass =
+                    encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                        #[cfg(feature = "wgpu29")]
+                        multiview_mask: None,
+                        label: Some("ldr_foreground_pass"),
+                        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                            view: scene_colour_view,
+                            resolve_target: None,
+                            ops: crate::gpu::Operations {
+                                load: crate::gpu::LoadOp::Load,
+                                store: crate::gpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: Some(
+                            crate::gpu::RenderPassDepthStencilAttachment {
+                                view: fg_depth_view,
+                                depth_ops: Some(crate::gpu::Operations {
+                                    load: crate::gpu::LoadOp::Clear(1.0),
+                                    store: crate::gpu::StoreOp::Discard,
+                                }),
+                                stencil_ops: Some(crate::gpu::Operations {
+                                    load: crate::gpu::LoadOp::Clear(0),
+                                    store: crate::gpu::StoreOp::Discard,
+                                }),
+                            },
+                        ),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                render_pass.set_bind_group(0, &slot.foreground_camera_bind_group, &[]);
+
+                for (idx, item) in opaque.iter().chain(transparent.iter()) {
+                    let solid_pl = if item.material.is_two_sided() {
+                        &resources.solid_two_sided_pipeline
+                    } else {
+                        &resources.solid_pipeline
+                    };
+                    let obj_bg = slot
+                        .foreground_objects
+                        .get(*idx)
+                        .and_then(|e| e.bind_group.as_ref());
+                    super::hdr_path::draw_mesh_item(
+                        resources,
+                        &self.compute_filter_results,
+                        &mut render_pass,
+                        item,
+                        obj_bg,
+                        false,
+                        false,
+                        solid_pl,
+                        &resources.transparent_pipeline,
+                        &resources.wireframe_pipeline,
+                    );
+                }
+            }
+        }
+
         // Copy the scene depth just written into this viewport's HiZ prev-depth
         // target so next frame's occlusion cull can reproject it. Mirrors the HDR
         // path's `hdr_store_hiz_depth`; without it, occlusion culling is a silent

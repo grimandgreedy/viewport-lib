@@ -59,6 +59,21 @@ impl RenderCamera {
         self.projection * self.view
     }
 
+    /// The camera the foreground pass renders with: this camera's view
+    /// transform, with the projection replaced by the pass override when one
+    /// is set. With no override (or no pass config) the scene camera is used
+    /// unchanged.
+    pub(crate) fn foreground_camera(&self, pass: Option<&ForegroundPass>) -> RenderCamera {
+        let mut cam = self.clone();
+        if let Some(p) = pass.and_then(|p| p.projection.as_ref()) {
+            cam.fov = p.fov_y;
+            cam.near = p.near.max(1e-4);
+            cam.far = p.far.unwrap_or(self.far).max(cam.near * 2.0);
+            cam.projection = glam::Mat4::perspective_rh(cam.fov, self.aspect, cam.near, cam.far);
+        }
+        cam
+    }
+
     /// Build a `RenderCamera` from an app-side [`Camera`](crate::camera::Camera).
     ///
     /// This is the intended conversion path: resolve the orbit camera to a
@@ -323,6 +338,17 @@ pub struct SceneFrame {
     /// chains these with the frame-data lights before building the GPU uniform;
     /// consumers that use only `EffectsFrame::lighting` leave this empty.
     pub lights: Vec<LightSource>,
+    /// Items drawn by the foreground pass, on top of the finished scene.
+    ///
+    /// Foreground items render after the world, against a freshly cleared
+    /// depth buffer, so they are neither occluded by scene geometry nor clip
+    /// into it. They skip instancing, shadow casting, frustum culling,
+    /// picking, and selection outlines. Skinning, deformers, and materials
+    /// work as for normal surface items. Configure the pass (optional
+    /// override projection) via `EffectsFrame::foreground`.
+    ///
+    /// Empty by default; an empty list adds no pass and no allocations.
+    pub foreground_items: Vec<SceneRenderItem>,
     /// Plugin item collections, keyed by
     /// [`ItemTypePlugin::type_name`](crate::plugin_api::ItemTypePlugin::type_name).
     ///
@@ -370,6 +396,7 @@ impl Default for SceneFrame {
             decals: Vec::new(),
             scatter_volumes: Vec::new(),
             lights: Vec::new(),
+            foreground_items: Vec::new(),
             plugin_items: std::collections::HashMap::new(),
         }
     }
@@ -781,6 +808,49 @@ impl Default for ScatterSettings {
     }
 }
 
+/// Configuration for the foreground pass.
+///
+/// The foreground pass draws `SceneFrame::foreground_items` (and any
+/// item-type plugin implementing `paint_foreground`) over the finished
+/// scene, against a cleared depth buffer. Setting this to `Some` is only
+/// needed to override the projection; the pass itself runs whenever
+/// foreground items are submitted.
+///
+/// Notes:
+/// - Foreground items are never sliced by scene clip planes.
+/// - Transparent foreground items use sorted back-to-front alpha blending,
+///   not the OIT pass.
+/// - The pass runs in the HDR path and in the owned-encoder LDR path. It is
+///   not available through `paint_to` style host-owned render passes, where
+///   a cleared depth attachment cannot exist; submitting foreground items
+///   there logs a warning once and draws nothing.
+/// - In the LDR path, 2D overlays are drawn inside the scene pass, so
+///   foreground items paint over them. The HDR path keeps overlays on top.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ForegroundPass {
+    /// Projection override for the pass. `None` reuses the scene projection
+    /// (always-on-top gizmos, x-ray parts, HUD props). `Some` replaces the
+    /// projection while keeping the scene view transform: a first-person
+    /// item gets its own field of view and a near plane small enough for
+    /// close-held geometry without changing world depth precision.
+    pub projection: Option<ForegroundProjection>,
+}
+
+/// Override projection for the foreground pass.
+///
+/// Shares the main camera's view transform; only the projection differs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ForegroundProjection {
+    /// Vertical field of view in radians.
+    pub fov_y: f32,
+    /// Near clip plane distance.
+    pub near: f32,
+    /// Far clip plane distance. `None` uses the scene camera's far plane.
+    pub far: Option<f32>,
+}
+
 /// Global rendering effects and modifiers for one frame.
 ///
 /// Groups lighting, clipping, post-processing, compute filtering, and clip
@@ -799,6 +869,10 @@ pub struct EffectsFrame {
     pub cap_fill_enabled: bool,
     /// Post-processing settings. Default: enabled (HDR pipeline active, all effects off).
     pub post_process: PostProcessSettings,
+    /// Foreground pass configuration (projection override). Default: None.
+    /// The pass itself is driven by `SceneFrame::foreground_items`; this only
+    /// carries pass-wide settings.
+    pub foreground: Option<ForegroundPass>,
     /// GPU compute filter items dispatched before the render pass.
     pub compute_filter_items: Vec<ComputeFilterItem>,
     /// Optional environment map for IBL and skybox. Default: None.
@@ -821,6 +895,7 @@ impl Default for EffectsFrame {
             clip_objects: Vec::new(),
             cap_fill_enabled: true,
             post_process: PostProcessSettings::default(),
+            foreground: None,
             compute_filter_items: Vec::new(),
             environment: None,
             ground_plane: GroundPlane::default(),
@@ -869,6 +944,8 @@ pub struct ViewportEffects<'a> {
     pub cap_fill_enabled: bool,
     /// Optional post-processing settings (tone mapping, bloom, SSAO).
     pub post_process: &'a PostProcessSettings,
+    /// Foreground pass configuration (projection override).
+    pub foreground: &'a Option<ForegroundPass>,
     /// Ground plane configuration for this viewport.
     pub ground_plane: &'a GroundPlane,
     /// Show the shadow depth atlas as a corner overlay.
@@ -900,6 +977,7 @@ impl EffectsFrame {
                 clip_objects: &self.clip_objects,
                 cap_fill_enabled: self.cap_fill_enabled,
                 post_process: &self.post_process,
+                foreground: &self.foreground,
                 ground_plane: &self.ground_plane,
                 show_shadow_atlas: self.show_shadow_atlas,
                 atlas_viewer_corner: self.atlas_viewer_corner,

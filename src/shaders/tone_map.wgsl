@@ -15,6 +15,10 @@ struct ToneMapUniform {
     far_plane:               f32,
     lic_enabled:             u32,
     lic_strength:            f32,
+    foreground_enabled:      u32,
+    _pad0:                   u32,
+    _pad1:                   u32,
+    _pad2:                   u32,
 }
 
 @group(0) @binding(0) var hdr_texture:  texture_2d<f32>;
@@ -25,6 +29,11 @@ struct ToneMapUniform {
 @group(0) @binding(5) var cs_texture:    texture_2d<f32>;
 @group(0) @binding(6) var depth_texture: texture_depth_2d;
 @group(0) @binding(7) var lic_texture:   texture_2d<f32>;
+// Foreground pass coverage mask: depth < 1.0 where foreground geometry was
+// drawn. The screen-space terms below (AO, contact shadows, EDL, LIC) are
+// computed from scene depth, which is unrelated to what a covered pixel
+// shows, so they are skipped there.
+@group(0) @binding(8) var foreground_depth: texture_depth_2d;
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -90,7 +99,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // colour is composited under them after tone mapping, below. The buffer is
     // cleared with alpha=0 and transparent draws raise alpha, so alpha ~ 0 means
     // nothing was drawn here and this is a pure background pixel.
-    let is_background = depth >= 0.999999;
+    var covered = false;
+    if params.foreground_enabled != 0u {
+        let fg_dims = textureDimensions(foreground_depth);
+        let fg_coord = vec2<i32>(vec2<u32>(depth_uv * vec2<f32>(fg_dims)));
+        covered = textureLoad(foreground_depth, fg_coord, 0) < 1.0;
+    }
+    let is_background = depth >= 0.999999 && !covered;
     let hdr = textureSample(hdr_texture, hdr_sampler, in.uv);
 
     // Bloom spreads (via blur) beyond the pixels that produced it, so it must
@@ -114,7 +129,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // both avoids modulating transparent particles / bloom by stale values in
     // non-geometry regions and keeps the bloom-over-background path independent of
     // those textures' clear values.
-    if !is_background {
+    if !is_background && !covered {
         // Multiply by AO before tone mapping.
         if params.ssao_enabled != 0u {
             let ao = textureSample(ao_texture, hdr_sampler, in.uv).r;
@@ -132,7 +147,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Depth is linearized (z_eye / far) before the log comparison so that the
     // log differences are large enough to produce a visible effect regardless
     // of the near/far plane ratio.
-    if params.edl_enabled != 0u {
+    if params.edl_enabled != 0u && !covered {
         let n = params.near_plane;
         let f = params.far_plane;
         // Linear depth in [near/far, 1]: z_eye/far = n / (f - d*(f-n))
@@ -166,7 +181,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no change).
     // A surface effect, so it only applies where geometry was shaded.
-    if !is_background && params.lic_enabled != 0u {
+    if !is_background && !covered && params.lic_enabled != 0u {
         let lic_val = textureSample(lic_texture, hdr_sampler, in.uv).r;
         let lic_factor = 1.0 + params.lic_strength * (lic_val * 2.0 - 1.0);
         colour = colour * max(0.0, lic_factor);
