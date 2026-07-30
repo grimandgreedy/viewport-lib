@@ -72,6 +72,7 @@ mod showcase_51_async_uploads;
 mod showcase_52_lod;
 mod showcase_53_vertex_colours;
 mod showcase_54_custom_shading;
+mod showcase_55_foreground_pass;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -233,6 +234,7 @@ fn main() -> eframe::Result {
                 lod_state: showcase_52_lod::LodState::default(),
                 vcol_state: showcase_53_vertex_colours::VertexColourState::default(),
                 cs_state: showcase_54_custom_shading::CustomShadingState::default(),
+                fg_state: showcase_55_foreground_pass::ForegroundState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -301,6 +303,7 @@ enum ShowcaseMode {
     Lod,
     VertexColours,
     CustomShading,
+    Foreground,
 }
 
 impl ShowcaseMode {
@@ -360,6 +363,7 @@ impl ShowcaseMode {
             Self::Lod => "52: Level of Detail",
             Self::VertexColours => "53: Vertex Colours & Painting",
             Self::CustomShading => "54: Custom Shading Plugins",
+            Self::Foreground => "55: Foreground Composite Pass",
         }
     }
 }
@@ -546,6 +550,7 @@ pub(crate) struct App {
 
     // --- Showcase 54 ---
     pub(crate) cs_state: showcase_54_custom_shading::CustomShadingState,
+    pub(crate) fg_state: showcase_55_foreground_pass::ForegroundState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -749,6 +754,7 @@ impl eframe::App for App {
                     ShowcaseMode::Lod,
                     ShowcaseMode::VertexColours,
                     ShowcaseMode::CustomShading,
+                    ShowcaseMode::Foreground,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1058,6 +1064,13 @@ impl eframe::App for App {
                         }
                         ctx.request_repaint();
                     }
+                }
+
+                // ----- Foreground fly-around + focus rack (Showcase 55) -----
+                if self.mode == ShowcaseMode::Foreground {
+                    let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
+                    showcase_55_foreground_pass::update_foreground(self, dt);
+                    ctx.request_repaint();
                 }
 
                 // ----- ManipulationController update (Showcase 4 only) -----
@@ -1607,7 +1620,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 54] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 55] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1662,6 +1675,7 @@ impl App {
             ShowcaseMode::Lod,
             ShowcaseMode::VertexColours,
             ShowcaseMode::CustomShading,
+            ShowcaseMode::Foreground,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1800,6 +1814,7 @@ impl App {
             ShowcaseMode::Lod => !self.lod_state.built,
             ShowcaseMode::VertexColours => !self.vcol_state.built,
             ShowcaseMode::CustomShading => !self.cs_state.built,
+            ShowcaseMode::Foreground => !self.fg_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2340,6 +2355,9 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Foreground => {
+                self.build_foreground_scene(renderer);
+            }
             _ => {}
         }
     }
@@ -2452,6 +2470,7 @@ impl App {
             ShowcaseMode::CustomShading => {
                 showcase_54_custom_shading::controls_custom_shading(self, ui)
             }
+            ShowcaseMode::Foreground => showcase_55_foreground_pass::controls_foreground(self, ui),
         }
     }
 }
@@ -3344,6 +3363,11 @@ impl App {
                     0,
                 )
             }
+
+            ShowcaseMode::Foreground => {
+                let items = showcase_55_foreground_pass::foreground_scene_items(self);
+                (items, Some(BG_COLOUR), App::foreground_lighting(), 0, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3686,6 +3710,9 @@ impl App {
                 if self.perf_state.occlusion_culling {
                     fd.effects.post_process.enabled = true;
                 }
+            }
+            ShowcaseMode::Foreground => {
+                showcase_55_foreground_pass::configure_frame(self, &mut fd);
             }
             _ => {}
         }
