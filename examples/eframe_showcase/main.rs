@@ -3580,6 +3580,7 @@ impl App {
             }
         }
 
+
         // Curve network quantities (Showcase 28) : submitted every frame.
         if self.mode == ShowcaseMode::CurveNetworkQuantities {
             showcase_28_curve_network_quantities::submit_cnq_items(self, &mut fd);

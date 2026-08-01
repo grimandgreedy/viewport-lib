@@ -1,20 +1,26 @@
-//! Showcase 50: GPU Wave (compute-plugin override path).
+//! Showcase 50: GPU Wave (compute plugins + same-device buffer binding).
 //!
-//! Demonstrates a `GpuPlugin` driving a mesh through `set_position_override_buffer`.
-//! A `WavePlugin` (defined in `examples/plugins/wave_plugin.rs`) runs a compute
-//! shader each frame to produce displaced positions for a plane mesh. The
-//! standard lit mesh pipeline renders those positions with no CPU readback.
+//! Demonstrates `GpuPlugin`s driving the renderer straight from GPU buffers,
+//! the way a GPU physics engine keeps its state in pooled allocations:
 //!
-//! End-to-end data flow:
-//!   1. Build a flat plane mesh on the CPU and upload it via `upload_mesh_data`.
-//!   2. Construct the plugin with the plane's rest-pose positions; it owns a
-//!      compute pipeline and an output storage buffer.
-//!   3. Call `set_position_override_buffer(plane_id, plugin.output_buffer())`
-//!      once at setup. The standard mesh pipeline now reads positions from
-//!      that buffer instead of the vertex buffer's position attribute.
-//!   4. Each frame, call `plugin.pre_prepare(...)` and submit the returned
-//!      command buffer before eframe's paint callback runs. wgpu serialises
-//!      submissions, so the renderer sees the latest displaced positions.
+//!   1. A `WavePlugin` compute pass writes one pooled buffer per frame:
+//!      displaced positions at elements `0..V`, analytic normals at
+//!      `V..2V`. The plane mesh binds each region through
+//!      `set_position_override_buffer_sliced` /
+//!      `set_normal_override_buffer_sliced` once at setup (the normals base
+//!      element is not 256-byte aligned; the window is a shader-side base
+//!      index, not a buffer binding offset).
+//!   2. A `BuoyPlugin` compute pass reads the wave pool (chained compute, no
+//!      copy) and writes one centre position per buoy. The buoys render as
+//!      an external instance set: `create_external_instance_set` plus an
+//!      `ExternalInstancesItem` whose `instance_count` windows the buffer,
+//!      one sphere drawn per element.
+//!   3. Selecting the surface keeps the outline mask on, showing the
+//!      selection halo tracking the deformed geometry, not the bind pose.
+//!
+//! Each frame the plugins' command buffers are submitted before eframe's
+//! paint callback runs; wgpu serialises submissions, so the renderer sees
+//! the latest data with nothing crossing the CPU.
 
 use crate::App;
 use eframe::egui;
@@ -58,13 +64,18 @@ pub(crate) enum DeformMode {
 pub(crate) struct WaveState {
     pub built: bool,
     pub plane_id: Option<MeshId>,
-    /// Buoy mesh: `BUOY_GRID^2` copies of a small sphere baked into one mesh,
-    /// positions driven by `BuoyPlugin` reading the wave plugin's GPU output.
-    pub buoys_mesh_id: Option<MeshId>,
+    /// External instance set drawing one sphere per buoy centre out of
+    /// `BuoyPlugin`'s output buffer.
+    pub buoy_set: Option<viewport_lib::ExternalInstanceSetId>,
     /// Boxed so the showcase state stays Sized when the plugin is absent.
     pub plugin: Option<Box<WavePlugin>>,
     pub buoy_plugin: Option<Box<BuoyPlugin>>,
     pub show_buoys: bool,
+    /// How many buoys the per-frame item draws (the instance range windows
+    /// the buffer; the buffer itself never changes).
+    pub shown_buoys: u32,
+    /// Draw the plane selected so the outline mask tracks the override.
+    pub select_surface: bool,
     /// Cached rest positions retained for the CPU deformation path so we can
     /// compute displacement without re-uploading the mesh.
     pub rest_positions: Vec<[f32; 3]>,
@@ -98,10 +109,12 @@ impl Default for WaveState {
         Self {
             built: false,
             plane_id: None,
-            buoys_mesh_id: None,
+            buoy_set: None,
             plugin: None,
             buoy_plugin: None,
             show_buoys: true,
+            shown_buoys: (BUOY_GRID * BUOY_GRID) as u32,
+            select_surface: false,
             rest_positions: Vec::new(),
             frame_index: 0,
             last_dt: 1.0 / 60.0,
@@ -153,47 +166,33 @@ impl App {
             self.wave_state.frequency,
         );
 
-        // Initial state matches `DeformMode::Gpu`: overrides bound, plugin
-        // drives positions and normals every frame.
+        // Initial state matches `DeformMode::Gpu`: the pooled overrides are
+        // bound, the plugin drives positions and normals every frame. The
+        // slices window the plugin's single pool buffer; the normals region
+        // starts at element V, which is not 256-byte aligned.
         renderer
             .resources_mut()
-            .set_position_override_buffer(plane_id, plugin.output_buffer())
-            .expect("bind position override");
+            .set_position_override_buffer_sliced(
+                plane_id,
+                plugin.pool_buffer(),
+                plugin.position_slice(),
+            )
+            .expect("bind sliced position override");
         renderer
             .resources_mut()
-            .set_normal_override_buffer(plane_id, plugin.normal_buffer())
-            .expect("bind normal override");
+            .set_normal_override_buffer_sliced(
+                plane_id,
+                plugin.pool_buffer(),
+                plugin.normal_slice(),
+            )
+            .expect("bind sliced normal override");
 
-        // ---- Buoy mesh (chained compute) ---------------------------------
+        // ---- Buoys (chained compute -> external instance set) ------------
         //
-        // One small sphere primitive, replicated `BUOY_GRID^2` times into a
-        // single MeshData. The mesh's vertex *attributes* (position, normal,
-        // colour) are baked once; per-frame the position override buffer
-        // produced by `BuoyPlugin` will replace the position attribute.
-        let base_sphere = viewport_lib::primitives::sphere(BUOY_SPHERE_RADIUS, 12, 8);
-        let verts_per_buoy = base_sphere.positions.len();
+        // The buoy plugin samples the wave pool and writes one centre
+        // position per buoy; an external instance set draws a sphere per
+        // element of that buffer. No baked mesh, no per-vertex buoy data.
         let buoy_count = BUOY_GRID * BUOY_GRID;
-
-        let mut buoys = viewport_lib::MeshData::default();
-        buoys.positions.reserve(verts_per_buoy * buoy_count);
-        buoys.normals.reserve(verts_per_buoy * buoy_count);
-        buoys
-            .indices
-            .reserve(base_sphere.indices.len() * buoy_count);
-        for _ in 0..buoy_count {
-            buoys.positions.extend_from_slice(&base_sphere.positions);
-            buoys.normals.extend_from_slice(&base_sphere.normals);
-        }
-        for b in 0..buoy_count {
-            let offset = (b * verts_per_buoy) as u32;
-            for &i in &base_sphere.indices {
-                buoys.indices.push(i + offset);
-            }
-        }
-        let buoys_mesh_id = renderer
-            .resources_mut()
-            .upload_mesh_data(&self.device, &buoys)
-            .expect("upload buoys mesh");
 
         // Anchor each buoy on a regular grid inside the wave's extent.
         let mut buoy_anchors: Vec<f32> = Vec::with_capacity(buoy_count * 2);
@@ -208,30 +207,36 @@ impl App {
             }
         }
 
-        // Sphere local positions, flat layout (3 floats per vertex), matching
-        // the buoy compute's `sphere_local` binding.
-        let mut sphere_local_flat: Vec<f32> = Vec::with_capacity(verts_per_buoy * 3);
-        for p in &base_sphere.positions {
-            sphere_local_flat.extend_from_slice(p);
-        }
-
         let buoy_plugin = BuoyPlugin::new(
             &self.device,
             &self.queue,
-            plugin.output_buffer(), // SHARED handle: chained-compute input.
+            plugin.pool_buffer(), // SHARED handle: chained-compute input.
             dim,
             WAVE_HALF_EXTENT,
             &buoy_anchors,
-            &sphere_local_flat,
             WATERLINE_OFFSET,
         );
-        renderer
+
+        let buoy_sphere_id = renderer
             .resources_mut()
-            .set_position_override_buffer(buoys_mesh_id, buoy_plugin.output_buffer())
-            .expect("bind buoy position override");
+            .upload_mesh_data(
+                &self.device,
+                &viewport_lib::primitives::sphere(BUOY_SPHERE_RADIUS, 12, 8),
+            )
+            .expect("upload buoy sphere mesh");
+        let buoy_set = renderer
+            .resources_mut()
+            .create_external_instance_set(
+                &self.device,
+                &viewport_lib::ExternalInstanceSetConfig::new(
+                    buoy_sphere_id,
+                    buoy_plugin.output_buffer(),
+                ),
+            )
+            .expect("create buoy instance set");
 
         self.wave_state.plane_id = Some(plane_id);
-        self.wave_state.buoys_mesh_id = Some(buoys_mesh_id);
+        self.wave_state.buoy_set = Some(buoy_set);
         self.wave_state.plugin = Some(Box::new(plugin));
         self.wave_state.buoy_plugin = Some(Box::new(buoy_plugin));
         self.wave_state.rest_positions = rest_positions;
@@ -267,21 +272,11 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
         m.backface_policy = viewport_lib::BackfacePolicy::Identical;
         m
     };
+    item.settings.selected = app.wave_state.select_surface;
 
-    let mut items = vec![item];
-
-    // Buoys (only meaningful when the wave is GPU-driven, because the
-    // BuoyPlugin samples the wave plugin's GPU output buffer).
-    if app.wave_state.show_buoys
-        && app.wave_state.mode == DeformMode::Gpu
-        && let Some(buoys_id) = app.wave_state.buoys_mesh_id
-    {
-        let mut buoy_item = SceneRenderItem::default();
-        buoy_item.mesh_id = buoys_id;
-        buoy_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
-        buoy_item.material = Material::pbr([0.95, 0.6, 0.15], 0.4, 0.5);
-        items.push(buoy_item);
-    }
+    // The buoys are not scene items: they render as an external instance set
+    // submitted per frame in `submit_wave_items`.
+    let items = vec![item];
 
     // `direction` is the vector toward the light source. Z-up, light shines
     // down from a high-pitch position. Two opposing rim lights so wave crests
@@ -318,7 +313,7 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
 
 pub(crate) fn submit_wave_items(
     app: &mut App,
-    _fd: &mut viewport_lib::FrameData,
+    fd: &mut viewport_lib::FrameData,
     renderer: &mut ViewportRenderer,
 ) {
     let dt = if app.wave_state.paused {
@@ -327,6 +322,26 @@ pub(crate) fn submit_wave_items(
         app.wave_state.last_dt.max(1.0 / 240.0)
     };
     app.wave_state.time += dt;
+
+    // Buoys draw as an external instance set: one sphere per element of the
+    // buoy plugin's centre buffer, the item's instance count windowing it.
+    // GPU mode only; in CPU mode the wave pool the buoy compute samples is
+    // no longer being written.
+    if app.wave_state.show_buoys
+        && app.wave_state.mode == DeformMode::Gpu
+        && let Some(set) = app.wave_state.buoy_set
+    {
+        let mut item = viewport_lib::ExternalInstancesItem::new(
+            set,
+            app.wave_state.shown_buoys.min((BUOY_GRID * BUOY_GRID) as u32),
+        );
+        item.colour = [0.95, 0.6, 0.15, 1.0];
+        fd.scene.external_instances.push(item);
+    }
+
+    // Keep the outline pass on while the surface is selected so the halo
+    // visibly tracks the override-driven geometry.
+    fd.interaction.outline_selected = app.wave_state.select_surface;
 
     // Apply any pending mode switch before timing the work below; rebinding /
     // clearing the override happens at most once per switch and is cheap.
@@ -359,8 +374,16 @@ fn sync_mode_to_renderer(app: &mut App, renderer: &mut ViewportRenderer) {
     let resources = renderer.resources_mut();
     if want_bound {
         if let Some(plugin) = app.wave_state.plugin.as_deref() {
-            let _ = resources.set_position_override_buffer(plane_id, plugin.output_buffer());
-            let _ = resources.set_normal_override_buffer(plane_id, plugin.normal_buffer());
+            let _ = resources.set_position_override_buffer_sliced(
+                plane_id,
+                plugin.pool_buffer(),
+                plugin.position_slice(),
+            );
+            let _ = resources.set_normal_override_buffer_sliced(
+                plane_id,
+                plugin.pool_buffer(),
+                plugin.normal_slice(),
+            );
         }
     } else {
         let _ = resources.clear_position_override(plane_id);
@@ -441,13 +464,15 @@ fn run_cpu_path(app: &mut App, renderer: &mut ViewportRenderer) {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn controls_wave(app: &mut App, ui: &mut egui::Ui) {
-    ui.label("GPU compute plugins, stacked");
+    ui.label("GPU compute plugins + same-device buffer binding");
     ui.separator();
     ui.label(
-        "Two plugins running compute shaders each frame. The first deforms a\n\
-         water plane. The second reads the first plugin's output and uses it\n\
-         to float a grid of buoys on the wave. Everything stays on the GPU:\n\
-         the buoys never touch the CPU to know where the water is.",
+        "Two plugins running compute shaders each frame. The first writes a\n\
+         pooled buffer (wave positions, then analytic normals) that the\n\
+         plane reads through sliced overrides. The second reads that pool\n\
+         and writes one centre per buoy; the buoys render as an external\n\
+         instance set off its buffer. Everything stays on the GPU: the\n\
+         buoys never touch the CPU to know where the water is.",
     );
     ui.separator();
 
@@ -500,14 +525,26 @@ pub(crate) fn controls_wave(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.label("Stacked plugin");
     ui.checkbox(&mut app.wave_state.show_buoys, "Show floating buoys");
+    ui.add(
+        egui::Slider::new(
+            &mut app.wave_state.shown_buoys,
+            0..=(BUOY_GRID * BUOY_GRID) as u32,
+        )
+        .text("buoys drawn"),
+    );
     ui.label(format!(
         "{} buoys driven by a second compute plugin that samples the wave\n\
-         plugin's output buffer. Plugin ordering decides who runs first;\n\
-         the renderer sees the final positions of both meshes ready to draw.\n\
-         Hidden in CPU mode because the wave's GPU buffer is no longer live.",
+         plugin's pool. They draw as an external instance set: the slider\n\
+         changes only the item's instance count (the draw range into the\n\
+         buffer), nothing is re-uploaded. Hidden in CPU mode because the\n\
+         wave's GPU buffer is no longer live.",
         BUOY_GRID * BUOY_GRID,
     ));
 
     ui.separator();
+    ui.checkbox(
+        &mut app.wave_state.select_surface,
+        "Select surface (outline follows the wave)",
+    );
     ui.checkbox(&mut app.wave_state.paused, "Pause animation");
 }

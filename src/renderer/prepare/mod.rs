@@ -360,6 +360,8 @@ impl ViewportRenderer {
             frame,
             sink,
         );
+        self.external_instances_gpu_data =
+            resources.upload_external_instances(device, queue, &frame.scene.external_instances);
         let (inst_resolved, inst_switches, inst_culled, inst_reduced) = Self::upload_mesh_instances(
             resources,
             &mut self.mesh_instance_gpu_data,

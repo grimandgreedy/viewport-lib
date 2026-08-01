@@ -49,6 +49,46 @@ pub enum ViewportError {
         override_vertices: usize,
     },
 
+    /// A consumer-owned buffer handed to the renderer was created without a
+    /// usage flag the binding requires (for example `STORAGE` for an
+    /// external instance positions buffer, or `COPY_SRC` for an external
+    /// marching-cubes scalar source).
+    #[error("external buffer is missing the {missing} usage flag")]
+    ExternalBufferUsageMissing {
+        /// Name of the missing `wgpu::BufferUsages` flag.
+        missing: &'static str,
+    },
+
+    /// An external marching-cubes scalar source does not cover the volume:
+    /// the offset is not 4-byte aligned, or the buffer holds fewer bytes past
+    /// the offset than the volume's `nx * ny * nz` `f32` nodes need.
+    #[error(
+        "external scalar source needs {needed_bytes} bytes but the buffer has {available_bytes} past offset {offset_bytes}"
+    )]
+    McScalarSourceMismatch {
+        /// Bytes the volume's scalar field occupies (`nx * ny * nz * 4`).
+        needed_bytes: u64,
+        /// Bytes available in the buffer from `offset_bytes` to its end.
+        available_bytes: u64,
+        /// The requested byte offset into the buffer.
+        offset_bytes: u64,
+    },
+
+    /// A sliced override binding does not fit inside the supplied buffer:
+    /// `base_element + element_count` vec3 elements (12 bytes each) exceed
+    /// the buffer's size.
+    #[error(
+        "override slice [{base_element}..{base_element}+{element_count}) exceeds the buffer's {buffer_elements} vec3 elements"
+    )]
+    OverrideSliceOutOfRange {
+        /// First vec3 element of the requested window.
+        base_element: u32,
+        /// Number of vec3 elements in the requested window.
+        element_count: u32,
+        /// How many whole vec3 elements the buffer holds.
+        buffer_elements: u64,
+    },
+
     /// A handle does not resolve to a live resource: its slot was freed, reused
     /// at a newer generation, or its index is out of range for the store.
     #[error("handle {index} does not resolve to a live resource (store holds {count})")]

@@ -1421,7 +1421,11 @@ impl DeviceResources {
 /// - ao_range:                   [f32;2]  =  8 bytes  offset 280
 /// - metallic_range:             [f32;2]  =  8 bytes  offset 288
 /// - roughness_range:            [f32;2]  =  8 bytes  offset 296
-/// Total: 304 bytes
+/// - position_override_base:     u32      =  4 bytes  offset 304
+/// - position_override_len:      u32      =  4 bytes  offset 308
+/// - normal_override_base:       u32      =  4 bytes  offset 312
+/// - normal_override_len:        u32      =  4 bytes  offset 316
+/// Total: 320 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
@@ -1491,9 +1495,20 @@ pub(crate) struct ObjectUniform {
     /// Min/max remap applied to the roughness sample (G channel of the MR
     /// texture). Identity `[0, 1]`. Mirrors `Material::roughness_range`.
     pub(crate) roughness_range: [f32; 2], //   8 bytes, offset 296
+    /// First vec3 element read from the position override buffer (binding 13).
+    /// Slices one mesh's window out of a shared pool buffer; 0 when unsliced.
+    pub(crate) position_override_base: u32, //   4 bytes, offset 304
+    /// Number of vec3 elements readable from `position_override_base`.
+    /// `u32::MAX` means unsliced (the whole buffer, bounds-checked by
+    /// `arrayLength` in the shader as before).
+    pub(crate) position_override_len: u32, //   4 bytes, offset 308
+    /// Same as `position_override_base` for the normal override (binding 14).
+    pub(crate) normal_override_base: u32, //   4 bytes, offset 312
+    /// Same as `position_override_len` for the normal override.
+    pub(crate) normal_override_len: u32, //   4 bytes, offset 316
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 304);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 320);
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
 /// Layout: 176 bytes.

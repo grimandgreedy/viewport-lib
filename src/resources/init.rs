@@ -1986,12 +1986,32 @@ impl DeviceResources {
         // Outline & x-ray pipelines
         // ------------------------------------------------------------------
 
-        // Bind group layout for OutlineUniform (group 1).
-        let outline_bgl = crate::resources::builders::uniform_bgl(
-            device,
-            "outline_bgl",
-            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
-        );
+        // Bind group layout for OutlineUniform (group 1). Binding 1 is the
+        // per-vertex position-override storage buffer read by
+        // `outline_mask.wgsl` so the selection halo follows geometry driven
+        // through `set_position_override_buffer`; every other pipeline on
+        // this layout ignores it (a layout may carry bindings a shader does
+        // not use), but every bind group created from the layout must fill it
+        // (the fallback override buffer when the item has no override).
+        let outline_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("outline_bgl"),
+            entries: &[
+                crate::resources::builders::uniform_entry(
+                    0,
+                    crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+                ),
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
 
         let xray_shader = crate::resources::builders::wgsl_module(
             device,
@@ -2459,6 +2479,8 @@ impl DeviceResources {
             mc: crate::resources::volume::gpu_marching_cubes::McResources::default(),
 
             particle: crate::resources::gpu::gpu_particles::ParticleResources::default(),
+            external_instances:
+                crate::resources::gpu::external_instances::ExternalInstancesResources::default(),
             screen_image: crate::resources::types::ScreenImageResources::default(),
             sub_highlight: crate::resources::types::SubHighlightResources::default(),
             overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources::default(),

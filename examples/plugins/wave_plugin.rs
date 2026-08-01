@@ -1,11 +1,18 @@
 //! GPU wave-displacement plugin built on `viewport_lib::runtime::GpuPlugin`.
 //!
-//! Owns a compute pipeline and an output storage buffer of per-vertex
-//! positions. Each frame, `pre_prepare` writes the latest time uniform and
-//! dispatches one workgroup per 64 vertices to produce displaced positions.
-//! The output buffer is meant to be passed to
-//! `DeviceResources::set_position_override_buffer` once at setup; the
-//! standard mesh pipeline then reads it every frame with no rebind needed.
+//! Owns a compute pipeline and one pooled output storage buffer holding two
+//! regions: per-vertex displaced positions at elements `0..V`, and their
+//! analytic normals at `V..2V`. Each frame, `pre_prepare` writes the latest
+//! time uniform and dispatches one workgroup per 64 vertices.
+//!
+//! The pool is meant to be bound once at setup through
+//! `DeviceResources::set_position_override_buffer_sliced` and
+//! `set_normal_override_buffer_sliced` with the windows from
+//! [`WavePlugin::position_slice`] / [`WavePlugin::normal_slice`]; the
+//! standard mesh pipeline then reads both regions every frame with no
+//! rebind. The normals base element (`V`) is generally not 256-byte
+//! aligned, which is fine: the slice is a shader-side base index, not a
+//! buffer binding offset.
 //!
 //! This is example code shared across showcases. Treat it as a reference
 //! `GpuPlugin` implementation rather than production cloth/water code.
@@ -26,10 +33,10 @@ struct WaveUniforms {
 /// GPU compute plugin that animates per-vertex Z displacement.
 ///
 /// The plugin uploads the mesh's rest-pose positions to an immutable storage
-/// buffer at construction and writes deformed positions into an output buffer
-/// each frame. The output buffer handle is exposed via
-/// [`WavePlugin::output_buffer`] for the consumer to clone and hand to
-/// `set_position_override_buffer`.
+/// buffer at construction and writes deformed positions and normals into one
+/// pooled output buffer each frame. The pool handle is exposed via
+/// [`WavePlugin::pool_buffer`] with region windows from
+/// [`WavePlugin::position_slice`] / [`WavePlugin::normal_slice`].
 pub struct WavePlugin {
     vertex_count: u32,
     amplitude: f32,
@@ -39,10 +46,8 @@ pub struct WavePlugin {
     uniform_buf: wgpu::Buffer,
     /// Rest-pose positions, written once at construction.
     rest_buf: wgpu::Buffer,
-    /// Output positions consumed by the renderer via `set_position_override_buffer`.
-    out_buf: wgpu::Buffer,
-    /// Output analytic normals consumed by the renderer via `set_normal_override_buffer`.
-    out_normals_buf: wgpu::Buffer,
+    /// Pooled output: positions at elements `0..V`, normals at `V..2V`.
+    pool_buf: wgpu::Buffer,
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
 }
@@ -72,28 +77,25 @@ impl WavePlugin {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("wave_out_positions"),
-            size: (rest_positions.len() * std::mem::size_of::<f32>()) as u64,
+        let pool_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("wave_pool"),
+            size: (rest_positions.len() * 2 * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // Seed the output with the rest positions so the first frame (which
-        // runs before `pre_prepare`) renders the undeformed mesh.
-        queue.write_buffer(&out_buf, 0, bytemuck::cast_slice(rest_positions));
-
-        let out_normals_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("wave_out_normals"),
-            size: (rest_positions.len() * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        // Seed flat upward normals so the first frame is shaded correctly.
+        // Seed the pool so the first frame (which runs before `pre_prepare`)
+        // renders the undeformed, correctly shaded mesh: rest positions in the
+        // position region, flat upward normals in the normal region.
+        queue.write_buffer(&pool_buf, 0, bytemuck::cast_slice(rest_positions));
         let mut seed_normals = vec![0.0_f32; rest_positions.len()];
         for i in (0..seed_normals.len()).step_by(3) {
             seed_normals[i + 2] = 1.0;
         }
-        queue.write_buffer(&out_normals_buf, 0, bytemuck::cast_slice(&seed_normals));
+        queue.write_buffer(
+            &pool_buf,
+            (rest_positions.len() * std::mem::size_of::<f32>()) as u64,
+            bytemuck::cast_slice(&seed_normals),
+        );
 
         let uniforms = WaveUniforms {
             time: 0.0,
@@ -140,16 +142,6 @@ impl WavePlugin {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
             ],
         });
 
@@ -186,11 +178,7 @@ impl WavePlugin {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: out_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: out_normals_buf.as_entire_binding(),
+                    resource: pool_buf.as_entire_binding(),
                 },
             ],
         });
@@ -202,25 +190,33 @@ impl WavePlugin {
             elapsed: 0.0,
             uniform_buf,
             rest_buf,
-            out_buf,
-            out_normals_buf,
+            pool_buf,
             pipeline,
             bind_group,
         }
     }
 
-    /// Clone-able handle to the output position buffer. Pass to
-    /// `DeviceResources::set_position_override_buffer` once at setup; the
-    /// renderer re-reads it every frame without further rebinds.
-    pub fn output_buffer(&self) -> wgpu::Buffer {
-        self.out_buf.clone()
+    /// Clone-able handle to the pooled output buffer (positions region then
+    /// normals region). Bind the windows from
+    /// [`position_slice`](Self::position_slice) /
+    /// [`normal_slice`](Self::normal_slice) once at setup; the renderer
+    /// re-reads the pool every frame without further rebinds.
+    pub fn pool_buffer(&self) -> wgpu::Buffer {
+        self.pool_buf.clone()
     }
 
-    /// Clone-able handle to the analytic-normal output buffer. Pass to
-    /// `DeviceResources::set_normal_override_buffer` to get correctly
-    /// shaded illumination on the displaced surface.
-    pub fn normal_buffer(&self) -> wgpu::Buffer {
-        self.out_normals_buf.clone()
+    /// Window of the pool holding the displaced positions, for
+    /// `set_position_override_buffer_sliced`.
+    pub fn position_slice(&self) -> viewport_lib::OverrideBufferSlice {
+        viewport_lib::OverrideBufferSlice::new(0, self.vertex_count)
+    }
+
+    /// Window of the pool holding the analytic normals, for
+    /// `set_normal_override_buffer_sliced`. The base element is the vertex
+    /// count, which is generally not 256-byte aligned; the slice needs no
+    /// alignment.
+    pub fn normal_slice(&self) -> viewport_lib::OverrideBufferSlice {
+        viewport_lib::OverrideBufferSlice::new(self.vertex_count, self.vertex_count)
     }
 
     /// Live-tunable amplitude. Wired to a UI slider in the showcase.

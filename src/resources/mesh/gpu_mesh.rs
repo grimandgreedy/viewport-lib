@@ -64,9 +64,16 @@ pub struct GpuMesh {
     /// `GpuPlugin`'s compute output. Mutually exclusive per frame with
     /// `write_mesh_positions_normals`; the two paths race if both are used.
     pub position_override_buffer: Option<crate::gpu::Buffer>,
+    /// Element window read from `position_override_buffer` when it holds more
+    /// than this mesh (a pooled buffer shared by several meshes). `None`
+    /// means the buffer is read from element 0, the pre-slicing behaviour.
+    /// Set via `DeviceResources::set_position_override_buffer_sliced`.
+    pub(crate) position_override_slice: Option<super::OverrideBufferSlice>,
     /// Optional per-vertex normal override buffer. Same contract as
     /// `position_override_buffer` but bound at group 1 binding 14.
     pub normal_override_buffer: Option<crate::gpu::Buffer>,
+    /// Same idea as `position_override_slice` for the normal override.
+    pub(crate) normal_override_slice: Option<super::OverrideBufferSlice>,
     /// Optional per-vertex `vec4<f32>` extension-attribute buffer, uploaded
     /// from `MeshData::extension_attributes` and bound at group 1 binding 15
     /// (the 16-byte zero fallback when `None`). Read by material-plugin

@@ -1,6 +1,7 @@
 mod common;
 mod compute_filter;
 mod decal;
+mod external_instances;
 mod gaussian_splat;
 mod glyph;
 mod gpu_implicit;
@@ -20,6 +21,7 @@ mod volume_mesh;
 pub use self::common::*;
 pub use self::compute_filter::*;
 pub use self::decal::*;
+pub use self::external_instances::*;
 pub use self::gaussian_splat::*;
 pub use self::glyph::*;
 pub use self::gpu_implicit::*;

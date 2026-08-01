@@ -951,6 +951,12 @@ pub struct DeviceResources {
     /// Particle compute/draw pipelines, their layouts, and the live systems.
     pub(crate) particle: crate::resources::gpu::gpu_particles::ParticleResources,
 
+    // --- External instance sets ---
+    /// Consumer-buffer instanced mesh drawing (positions produced by the
+    /// consumer's own GPU compute on the shared device).
+    pub(crate) external_instances:
+        crate::resources::gpu::external_instances::ExternalInstancesResources,
+
     // --- Screen-space image overlays (lazily created) ---
     /// Screen-space image pipelines (plain + depth-composite) and rect outline mask.
     pub(crate) screen_image: ScreenImageResources,

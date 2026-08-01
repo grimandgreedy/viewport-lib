@@ -612,20 +612,29 @@ impl DeviceResources {
 /// Per-object outline uniform for the two-pass stencil outline effect.
 ///
 /// Layout (112 bytes):
-/// - model:        [[f32;4];4] = 64 bytes
-/// - colour:         [f32;4]   = 16 bytes  (outline RGBA)
-/// - pixel_offset:  f32       =  4 bytes  (outline ring width in pixels)
-/// - _pad:          [f32;3]   = 12 bytes
-/// - deform_flags:  u32       =  4 bytes  (bit i set when deformer slot i is active for this draw)
-/// - _deform_pad:   [u32;3]   = 12 bytes
+/// - model:                    [[f32;4];4] = 64 bytes
+/// - colour:                     [f32;4]   = 16 bytes  (outline RGBA)
+/// - pixel_offset:              f32       =  4 bytes  (outline ring width in pixels)
+/// - has_position_override:     u32       =  4 bytes  (1 = read binding 1 instead of the vertex attribute)
+/// - position_override_base:    u32       =  4 bytes  (first vec3 element of the window)
+/// - position_override_len:     u32       =  4 bytes  (element count; u32::MAX = whole buffer)
+/// - deform_flags:              u32       =  4 bytes  (bit i set when deformer slot i is active for this draw)
+/// - _deform_pad:               [u32;3]   = 12 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OutlineUniform {
-    pub(crate) model: [[f32; 4]; 4],  //  64 bytes
-    pub(crate) colour: [f32; 4],      //  16 bytes
-    pub(crate) pixel_offset: f32,     //   4 bytes
-    pub(crate) _pad: [f32; 3],        //  12 bytes
-    pub(crate) deform_flags: u32,     //   4 bytes
+    pub(crate) model: [[f32; 4]; 4], //  64 bytes
+    pub(crate) colour: [f32; 4],     //  16 bytes
+    pub(crate) pixel_offset: f32,    //   4 bytes
+    /// 1 when the outlined mesh has a position override bound; the mask
+    /// vertex shader then reads binding 1 so the halo tracks the driven
+    /// geometry instead of the bind pose.
+    pub(crate) has_position_override: u32, //   4 bytes
+    /// Mirror of `ObjectUniform::position_override_base` for the mask pass.
+    pub(crate) position_override_base: u32, //   4 bytes
+    /// Mirror of `ObjectUniform::position_override_len`.
+    pub(crate) position_override_len: u32, //   4 bytes
+    pub(crate) deform_flags: u32,    //   4 bytes
     pub(crate) _deform_pad: [u32; 3], //  12 bytes
 }
 

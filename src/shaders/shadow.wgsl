@@ -21,6 +21,17 @@ struct Object {
     has_normal_override: u32,              // offset 220
     _pad3: array<vec4<u32>, 3>,            // offsets 224..272
     deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
+    // Individual u32 pads across 276..304: a uniform-space array would need a
+    // 16-byte element stride and 28 bytes is not a multiple of 16.
+    _pad4a: u32,                           // offset 276
+    _pad4b: u32,                           // offset 280
+    _pad4c: u32,                           // offset 284
+    _pad4d: u32,                           // offset 288
+    _pad4e: u32,                           // offset 292
+    _pad4f: u32,                           // offset 296
+    _pad4g: u32,                           // offset 300
+    position_override_base: u32,           // offset 304 : first vec3 element read from binding 13 (pool slicing)
+    position_override_len: u32,            // offset 308 : element count of the window; 0xffffffff = whole buffer
 };
 
 @group(0) @binding(0) var<uniform> light: Light;
@@ -46,8 +57,8 @@ fn vs_main(
     // Override replaces the vertex-buffer position outright, matching the main
     // mesh pass; deformers layer on top.
     var local_pos = position;
-    if object.has_position_override != 0u {
-        let pi = vertex_index * 3u;
+    if object.has_position_override != 0u && vertex_index < object.position_override_len {
+        let pi = (object.position_override_base + vertex_index) * 3u;
         let plen = arrayLength(&position_override_buffer);
         if pi + 2u < plen {
             local_pos = vec3<f32>(

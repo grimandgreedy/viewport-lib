@@ -6,6 +6,38 @@ use crate::resources::*;
 /// per-slice overhead.
 const MESH_CHUNK_BYTES: usize = 4 << 20;
 
+/// Bytes per override-buffer element: one tightly packed `vec3<f32>`.
+const OVERRIDE_ELEMENT_BYTES: u64 = 12;
+
+/// Element window into a position/normal override buffer, for meshes that
+/// read out of a pooled buffer shared with other meshes.
+///
+/// Units are vec3 elements (12 bytes each), not bytes: `base_element` is the
+/// first element this mesh reads and `element_count` how many are readable
+/// from there. Because the window is applied by the shader rather than a
+/// buffer binding offset, `base_element` needs no alignment.
+///
+/// Used with `set_position_override_buffer_sliced` and
+/// `set_normal_override_buffer_sliced`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct OverrideBufferSlice {
+    /// Index of the first vec3 element this mesh reads.
+    pub base_element: u32,
+    /// Number of vec3 elements readable starting at `base_element`.
+    pub element_count: u32,
+}
+
+impl OverrideBufferSlice {
+    /// Window of `element_count` vec3 elements starting at `base_element`.
+    pub fn new(base_element: u32, element_count: u32) -> Self {
+        Self {
+            base_element,
+            element_count,
+        }
+    }
+}
+
 /// CPU-prepared vertex stream and ancillary buffers needed to finish a mesh
 /// upload on the main thread.
 ///
@@ -713,11 +745,59 @@ impl DeviceResources {
                     count: store_len,
                 })?;
         mesh.position_override_buffer = Some(buffer);
+        mesh.position_override_slice = None;
         // Bump only the gen counter; don't touch `last_tex_key.9` here. The
         // bind-group rebuild path reads `position_override_gen` into the new
         // key and compares against `last_tex_key`; the mismatch is what
         // triggers the rebuild that actually swaps the fallback binding for
         // this buffer.
+        mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Like [`set_position_override_buffer`](Self::set_position_override_buffer)
+    /// but reads a window of `buffer` instead of the whole thing, so several
+    /// meshes can share one pooled buffer (for example a physics solver that
+    /// keeps every body's particles in a single allocation).
+    ///
+    /// `slice` is in vec3 elements, 12 bytes each: the mesh's vertex `i` reads
+    /// elements `slice.base_element + i`. There is no alignment requirement on
+    /// `base_element`; the window is applied by the shader, not by a buffer
+    /// binding offset. Vertices at or past `slice.element_count` fall back to
+    /// the vertex buffer's position attribute.
+    ///
+    /// If the pool grows and the consumer reallocates it (a new
+    /// `wgpu::Buffer` identity), call this again with the new buffer; the
+    /// renderer rebinds on the next frame. Holding the old handle just renders
+    /// the last data written to the old allocation.
+    ///
+    /// All items drawing this `mesh_id` read the same window: the slice is
+    /// per-mesh state, not per-item.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `mesh_id` is not registered, or
+    /// [`ViewportError::OverrideSliceOutOfRange`](crate::error::ViewportError::OverrideSliceOutOfRange)
+    /// if the slice does not fit in `buffer`.
+    pub fn set_position_override_buffer_sliced(
+        &mut self,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        buffer: crate::gpu::Buffer,
+        slice: OverrideBufferSlice,
+    ) -> crate::error::ViewportResult<()> {
+        Self::validate_override_slice(&buffer, slice)?;
+        let store_len = self.mesh_store.len();
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
+        mesh.position_override_buffer = Some(buffer);
+        mesh.position_override_slice = Some(slice);
+        // See `set_position_override_buffer` for why only the gen moves.
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
         Ok(())
     }
@@ -743,9 +823,58 @@ impl DeviceResources {
                     count: store_len,
                 })?;
         mesh.normal_override_buffer = Some(buffer);
+        mesh.normal_override_slice = None;
         // See `set_position_override_buffer` for why this only bumps the gen
         // counter and not `last_tex_key.10`.
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Sliced variant of [`set_normal_override_buffer`](Self::set_normal_override_buffer);
+    /// see [`set_position_override_buffer_sliced`](Self::set_position_override_buffer_sliced)
+    /// for the windowing contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `mesh_id` is not registered, or
+    /// [`ViewportError::OverrideSliceOutOfRange`](crate::error::ViewportError::OverrideSliceOutOfRange)
+    /// if the slice does not fit in `buffer`.
+    pub fn set_normal_override_buffer_sliced(
+        &mut self,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        buffer: crate::gpu::Buffer,
+        slice: OverrideBufferSlice,
+    ) -> crate::error::ViewportResult<()> {
+        Self::validate_override_slice(&buffer, slice)?;
+        let store_len = self.mesh_store.len();
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
+        mesh.normal_override_buffer = Some(buffer);
+        mesh.normal_override_slice = Some(slice);
+        mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Shared slice-fits-in-buffer check for the sliced override setters.
+    fn validate_override_slice(
+        buffer: &crate::gpu::Buffer,
+        slice: OverrideBufferSlice,
+    ) -> crate::error::ViewportResult<()> {
+        let needed =
+            (slice.base_element as u64 + slice.element_count as u64) * OVERRIDE_ELEMENT_BYTES;
+        if needed > buffer.size() {
+            return Err(crate::error::ViewportError::OverrideSliceOutOfRange {
+                base_element: slice.base_element,
+                element_count: slice.element_count,
+                buffer_elements: buffer.size() / OVERRIDE_ELEMENT_BYTES,
+            });
+        }
         Ok(())
     }
 
@@ -770,6 +899,7 @@ impl DeviceResources {
                     count: store_len,
                 })?;
         mesh.position_override_buffer = None;
+        mesh.position_override_slice = None;
         mesh.position_override_gen = mesh.position_override_gen.wrapping_add(1);
         Ok(())
     }
@@ -793,6 +923,7 @@ impl DeviceResources {
                     count: store_len,
                 })?;
         mesh.normal_override_buffer = None;
+        mesh.normal_override_slice = None;
         mesh.normal_override_gen = mesh.normal_override_gen.wrapping_add(1);
         Ok(())
     }
@@ -868,6 +999,11 @@ impl DeviceResources {
     /// When the new vertex and index counts match the existing mesh and no attributes are
     /// present, the existing GPU buffers are reused and data is written in place, avoiding
     /// GPU memory allocation. When topology changes, new buffers are allocated.
+    ///
+    /// A bound position/normal override buffer (and its slice window) survives
+    /// either path. On a topology change the caller is responsible for the
+    /// override still covering the new vertex count; vertices past the
+    /// buffer's or window's end fall back to the vertex-buffer attribute.
     ///
     /// This is the only slot-targeting mesh operation, so it doubles as the
     /// guard against a free racing a queued replace: the `mesh_id` generation is
@@ -1039,6 +1175,20 @@ impl DeviceResources {
             .mesh_store
             .get(mesh_id)
             .map_or(1, |old| old.content_rev + 1);
+        // Carry any bound position/normal override across the rebuild.
+        // `create_mesh_with_normals` bakes the fallback override buffers into
+        // the fresh bind group, so advance the gens past the old mesh's: the
+        // tex-key mismatch on the next prepare rebuilds the bind group with
+        // the carried buffer. Without this the consumer's binding silently
+        // reverts to the fallback (bind pose) on a topology change.
+        if let Some(old) = self.mesh_store.get(mesh_id) {
+            new_mesh.position_override_buffer = old.position_override_buffer.clone();
+            new_mesh.position_override_slice = old.position_override_slice;
+            new_mesh.normal_override_buffer = old.normal_override_buffer.clone();
+            new_mesh.normal_override_slice = old.normal_override_slice;
+            new_mesh.position_override_gen = old.position_override_gen.wrapping_add(1);
+            new_mesh.normal_override_gen = old.normal_override_gen.wrapping_add(1);
+        }
         self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
             + data.indices.len() * std::mem::size_of::<u32>())
             as u64;
@@ -2409,6 +2559,10 @@ impl DeviceResources {
             ao_range: [0.0, 1.0],
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
+            position_override_base: 0,
+            position_override_len: u32::MAX,
+            normal_override_base: 0,
+            normal_override_len: u32::MAX,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2540,6 +2694,10 @@ impl DeviceResources {
             ao_range: [0.0, 1.0],
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
+            position_override_base: 0,
+            position_override_len: u32::MAX,
+            normal_override_base: 0,
+            normal_override_len: u32::MAX,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -2665,7 +2823,9 @@ impl DeviceResources {
             face_colour_buffers: std::collections::HashMap::new(),
             vector_attribute_buffers: std::collections::HashMap::new(),
             position_override_buffer: None,
+            position_override_slice: None,
             normal_override_buffer: None,
+            normal_override_slice: None,
             extension_attr_buffer: None,
             position_override_gen: 0,
             normal_override_gen: 0,
@@ -3300,6 +3460,7 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod override_tests {
+    use super::OverrideBufferSlice;
     use crate::DeviceResources;
     use crate::geometry::primitives;
 
@@ -3393,6 +3554,130 @@ mod override_tests {
             assert!(mesh.normal_override_buffer.is_none());
             assert_eq!(mesh.normal_override_gen, 2);
         }
+    }
+
+    #[test]
+    fn set_position_override_buffer_sliced_roundtrip() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        let vertex_count = plane.positions.len();
+
+        // Pool holding this mesh's window plus 8 extra elements in front.
+        let pool = dummy_override_buffer(&device, vertex_count + 8);
+        let slice = OverrideBufferSlice::new(8, vertex_count as u32);
+        resources
+            .set_position_override_buffer_sliced(mesh_id, pool.clone(), slice)
+            .unwrap();
+        {
+            let mesh = resources.mesh_store.get(mesh_id).unwrap();
+            assert!(mesh.position_override_buffer.is_some());
+            assert_eq!(mesh.position_override_slice, Some(slice));
+            assert_eq!(mesh.position_override_gen, 1);
+        }
+
+        // The unsliced setter resets the window.
+        resources
+            .set_position_override_buffer(mesh_id, pool.clone())
+            .unwrap();
+        {
+            let mesh = resources.mesh_store.get(mesh_id).unwrap();
+            assert_eq!(mesh.position_override_slice, None);
+            assert_eq!(mesh.position_override_gen, 2);
+        }
+
+        // Clearing resets both buffer and window.
+        resources
+            .set_normal_override_buffer_sliced(mesh_id, pool, slice)
+            .unwrap();
+        resources.clear_normal_override(mesh_id).unwrap();
+        {
+            let mesh = resources.mesh_store.get(mesh_id).unwrap();
+            assert!(mesh.normal_override_buffer.is_none());
+            assert_eq!(mesh.normal_override_slice, None);
+        }
+    }
+
+    #[test]
+    fn sliced_override_rejects_out_of_range_slice() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+
+        // 4-element buffer cannot hold a window ending at element 6.
+        let buf = dummy_override_buffer(&device, 4);
+        let err = resources.set_position_override_buffer_sliced(
+            mesh_id,
+            buf,
+            OverrideBufferSlice::new(2, 4),
+        );
+        assert!(matches!(
+            err,
+            Err(crate::error::ViewportError::OverrideSliceOutOfRange {
+                base_element: 2,
+                element_count: 4,
+                buffer_elements: 4,
+            })
+        ));
+        // The failed call must not have bound anything.
+        let mesh = resources.mesh_store.get(mesh_id).unwrap();
+        assert!(mesh.position_override_buffer.is_none());
+        assert_eq!(mesh.position_override_gen, 0);
+    }
+
+    #[test]
+    fn replace_mesh_data_preserves_override_on_topology_change() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let plane = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        let vertex_count = plane.positions.len();
+
+        let pool = dummy_override_buffer(&device, vertex_count + 8);
+        let slice = OverrideBufferSlice::new(3, vertex_count as u32);
+        resources
+            .set_position_override_buffer_sliced(mesh_id, pool, slice)
+            .unwrap();
+        let gen_before = resources
+            .mesh_store
+            .get(mesh_id)
+            .unwrap()
+            .position_override_gen;
+
+        // Different vertex count forces the topology-change (full rebuild)
+        // path instead of the in-place write.
+        let denser = primitives::grid_plane(1.0, 1.0, 3, 3);
+        assert_ne!(denser.positions.len(), vertex_count);
+        resources
+            .replace_mesh_data(&device, &queue, mesh_id, &denser)
+            .unwrap();
+
+        let mesh = resources.mesh_store.get(mesh_id).unwrap();
+        assert!(
+            mesh.position_override_buffer.is_some(),
+            "topology-change replace must carry the override binding, not \
+             revert to the fallback"
+        );
+        assert_eq!(mesh.position_override_slice, Some(slice));
+        assert!(
+            mesh.position_override_gen > gen_before,
+            "gen must advance past the old mesh's so the rebuilt bind group \
+             picks up the carried buffer"
+        );
     }
 
     #[test]

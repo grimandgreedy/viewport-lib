@@ -134,6 +134,26 @@ pub(super) fn build_object_uniform(
         ao_range: cm.ao_range,
         metallic_range: m.metallic_range,
         roughness_range: m.roughness_range,
+        position_override_base: {
+            let mesh = resources.mesh_store.get(item.mesh_id);
+            mesh.and_then(|m| m.position_override_slice)
+                .map_or(0, |s| s.base_element)
+        },
+        position_override_len: {
+            let mesh = resources.mesh_store.get(item.mesh_id);
+            mesh.and_then(|m| m.position_override_slice)
+                .map_or(u32::MAX, |s| s.element_count)
+        },
+        normal_override_base: {
+            let mesh = resources.mesh_store.get(item.mesh_id);
+            mesh.and_then(|m| m.normal_override_slice)
+                .map_or(0, |s| s.base_element)
+        },
+        normal_override_len: {
+            let mesh = resources.mesh_store.get(item.mesh_id);
+            mesh.and_then(|m| m.normal_override_slice)
+                .map_or(u32::MAX, |s| s.element_count)
+        },
     }
 }
 
@@ -295,6 +315,10 @@ impl ViewportRenderer {
                         ao_range: [0.0, 1.0],
                         metallic_range: [0.0, 1.0],
                         roughness_range: [0.0, 1.0],
+                        position_override_base: 0,
+                        position_override_len: u32::MAX,
+                        normal_override_base: 0,
+                        normal_override_len: u32::MAX,
                     };
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         queue.write_buffer(

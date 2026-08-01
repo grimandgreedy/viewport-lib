@@ -314,11 +314,18 @@ impl ViewportRenderer {
                 if item.settings.hidden || !item.settings.selected {
                     continue;
                 }
+                // Mirror the mesh's position-override binding so the mask
+                // rasterises the driven geometry, not the bind pose.
+                let mesh = resources.mesh_store.get(item.mesh_id);
+                let override_buf = mesh.and_then(|m| m.position_override_buffer.as_ref());
+                let override_slice = mesh.and_then(|m| m.position_override_slice);
                 let uniform = OutlineUniform {
                     model: item.model,
                     colour: [0.0; 4], // unused by mask shader
                     pixel_offset: 0.0,
-                    _pad: [0.0; 3],
+                    has_position_override: if override_buf.is_some() { 1 } else { 0 },
+                    position_override_base: override_slice.map_or(0, |s| s.base_element),
+                    position_override_len: override_slice.map_or(u32::MAX, |s| s.element_count),
                     deform_flags: resources.deform.flag_bits(item.mesh_id),
                     _deform_pad: [0; 3],
                 };
@@ -332,10 +339,18 @@ impl ViewportRenderer {
                 let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: override_buf
+                                .unwrap_or(&resources.content.fallback_position_override_buf)
+                                .as_entire_binding(),
+                        },
+                    ],
                 });
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
@@ -357,7 +372,9 @@ impl ViewportRenderer {
                     model: item.model,
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
-                    _pad: [0.0; 3],
+                    has_position_override: 0,
+                    position_override_base: 0,
+                    position_override_len: u32::MAX,
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
@@ -371,10 +388,19 @@ impl ViewportRenderer {
                 let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: resources
+                                .content
+                                .fallback_position_override_buf
+                                .as_entire_binding(),
+                        },
+                    ],
                 });
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.boundary_mesh_id,
@@ -393,7 +419,9 @@ impl ViewportRenderer {
                     model: item.model,
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
-                    _pad: [0.0; 3],
+                    has_position_override: 0,
+                    position_override_base: 0,
+                    position_override_len: u32::MAX,
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
@@ -407,10 +435,19 @@ impl ViewportRenderer {
                 let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: resources
+                                .content
+                                .fallback_position_override_buf
+                                .as_entire_binding(),
+                        },
+                    ],
                 });
                 outline_object_buffers.push(OutlineObjectBuffers {
                     mesh_id: item.mesh_id,
@@ -508,10 +545,19 @@ impl ViewportRenderer {
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("splat_outline_bg"),
                         layout: &resources.outline.bind_group_layout,
-                        entries: &[crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buf.as_entire_binding(),
-                        }],
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: uniform_buf.as_entire_binding(),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: resources
+                                    .content
+                                    .fallback_position_override_buf
+                                    .as_entire_binding(),
+                            },
+                        ],
                     });
 
                     let n = gpu_set.cpu_positions.len();
@@ -610,10 +656,19 @@ impl ViewportRenderer {
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("splat_sel_outline_bg"),
                         layout: &resources.outline.bind_group_layout,
-                        entries: &[crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buf.as_entire_binding(),
-                        }],
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: uniform_buf.as_entire_binding(),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: resources
+                                    .content
+                                    .fallback_position_override_buf
+                                    .as_entire_binding(),
+                            },
+                        ],
                     });
                     let position_buf =
                         device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
@@ -667,10 +722,20 @@ impl ViewportRenderer {
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pc_outline_bg"),
                         layout: &self.resources.outline.bind_group_layout,
-                        entries: &[crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buf.as_entire_binding(),
-                        }],
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: uniform_buf.as_entire_binding(),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: self
+                                    .resources
+                                    .content
+                                    .fallback_position_override_buf
+                                    .as_entire_binding(),
+                            },
+                        ],
                     });
                     let n = item.positions.len();
                     let size_data: Vec<f32> = vec![pixel_radius; n];
@@ -722,10 +787,20 @@ impl ViewportRenderer {
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("pc_sel_outline_bg"),
                         layout: &self.resources.outline.bind_group_layout,
-                        entries: &[crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buf.as_entire_binding(),
-                        }],
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: uniform_buf.as_entire_binding(),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: self
+                                    .resources
+                                    .content
+                                    .fallback_position_override_buf
+                                    .as_entire_binding(),
+                            },
+                        ],
                     });
                     let position_buf =
                         device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
@@ -832,7 +907,9 @@ impl ViewportRenderer {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
                     colour: [1.0, 1.0, 1.0, 1.0],
                     pixel_offset: 0.0,
-                    _pad: [0.0; 3],
+                    has_position_override: 0,
+                    position_override_base: 0,
+                    position_override_len: u32::MAX,
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
@@ -844,10 +921,20 @@ impl ViewportRenderer {
                 let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("curve_outline_mask_bg"),
                     layout: &self.resources.outline.bind_group_layout,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self
+                                .resources
+                                .content
+                                .fallback_position_override_buf
+                                .as_entire_binding(),
+                        },
+                    ],
                 });
                 CurveMeshOutlineItem {
                     index,
@@ -976,7 +1063,9 @@ impl ViewportRenderer {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
-                    _pad: [0.0; 3],
+                    has_position_override: 0,
+                    position_override_base: 0,
+                    position_override_len: u32::MAX,
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
@@ -990,10 +1079,19 @@ impl ViewportRenderer {
                 let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("outline_mask_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: resources
+                                .content
+                                .fallback_position_override_buf
+                                .as_entire_binding(),
+                        },
+                    ],
                 });
                 raw_geom_outline_buffers.push(crate::resources::RawGeomOutlineBuffers {
                     vertex_buf,
@@ -1106,7 +1204,9 @@ impl ViewportRenderer {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
                     colour: [0.0; 4],
                     pixel_offset: 0.0,
-                    _pad: [0.0; 3],
+                    has_position_override: 0,
+                    position_override_base: 0,
+                    position_override_len: u32::MAX,
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
@@ -1120,10 +1220,20 @@ impl ViewportRenderer {
                 let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("mc_outline_bg"),
                     layout: &self.resources.outline.bind_group_layout,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self
+                                .resources
+                                .content
+                                .fallback_position_override_buf
+                                .as_entire_binding(),
+                        },
+                    ],
                 });
                 mc_outline_data.push(
                     crate::resources::volume::gpu_marching_cubes::McOutlineItem {
@@ -1151,7 +1261,9 @@ impl ViewportRenderer {
                     model: item.model,
                     colour: frame.interaction.xray_colour,
                     pixel_offset: 0.0,
-                    _pad: [0.0; 3],
+                    has_position_override: 0,
+                    position_override_base: 0,
+                    position_override_len: u32::MAX,
                     deform_flags: 0,
                     _deform_pad: [0; 3],
                 };
@@ -1165,10 +1277,19 @@ impl ViewportRenderer {
                 let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("xray_object_bg"),
                     layout: &resources.outline.bind_group_layout,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    }],
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buf.as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: resources
+                                .content
+                                .fallback_position_override_buf
+                                .as_entire_binding(),
+                        },
+                    ],
                 });
                 xray_object_buffers.push((item.mesh_id, buf, bg));
             }

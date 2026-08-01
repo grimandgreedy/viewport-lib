@@ -28,6 +28,7 @@ pub mod upload_jobs;
 pub mod volume;
 
 pub use self::gpu::compute_filter::ComputeFilterResult;
+pub use self::gpu::external_instances::{ExternalInstanceSetConfig, ExternalInstanceSetId};
 pub use self::gpu::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 pub use self::handle::ContentHandle;
 pub use self::material::texture_store::TextureId;
@@ -35,6 +36,7 @@ pub use self::material::textures::{CompressedTextureDesc, supports_texture_forma
 pub use self::memory::vram_budget;
 use self::mesh::geometry::{build_glyph_arrow, build_glyph_sphere, build_unit_cube};
 pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
+pub use self::mesh::meshes::OverrideBufferSlice;
 pub use self::mesh::meshes::lerp_attributes;
 pub use self::mesh_sidecar::deform::{
     DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, deform_slot_params_byte_offset,

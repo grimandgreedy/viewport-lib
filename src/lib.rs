@@ -235,17 +235,17 @@ pub use renderer::{
     AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, CellSelectionInfo, ClipObject,
     ClipShape, ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode,
     DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
-    EffectsFrame, EmitterConfig, EnvironmentMap, FilterMode, ForceField, ForegroundPass,
-    ForegroundProjection, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem,
-    GlyphItem, GlyphSetRefItem, GlyphType, GpuContext, GpuParticleSystemItem, GpuPickHit,
-    GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, InteractionFrame,
-    LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingSettings,
-    LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem, OverlayShape,
-    OverlayShapeItem, OverlayTextureId, OwnedPath, ParticleMeshAlign, PassPath, PassView,
-    PathTrack, PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult, PointCloudItem,
-    PointCloudRefItem, PointRenderMode, PolylineCap, PolylineItem, PolylineRefItem,
+    EffectsFrame, EmitterConfig, EnvironmentMap, ExternalInstancesItem, FilterMode, ForceField,
+    ForegroundPass, ForegroundProjection, FrameData, GaussianSplatData, GaussianSplatId,
+    GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType, GpuContext, GpuParticleSystemItem,
+    GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
+    InteractionFrame, LabelAnchor, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
+    LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, MeshInstanceItem,
+    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing,
+    OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem,
+    OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath, ParticleMeshAlign, PassPath,
+    PassView, PathTrack, PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult,
+    PointCloudItem, PointCloudRefItem, PointRenderMode, PolylineCap, PolylineItem, PolylineRefItem,
     PolylineSelectionInfo, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem,
     RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
     ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
@@ -271,6 +271,7 @@ pub use resources::ViewportGpuResources;
 pub use resources::material::colourmap_data::{
     export_paraview_xml_colourmap, lerp_colourmap_lut, parse_paraview_xml_colourmap,
 };
+pub use resources::mesh::OverrideBufferSlice;
 pub use resources::mesh::lod::{
     LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size,
 };
@@ -294,8 +295,9 @@ pub use resources::{
     DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
 };
 pub use resources::{
-    GlyphSetId, GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender, PointCloudId,
-    PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
+    ExternalInstanceSetConfig, ExternalInstanceSetId, GlyphSetId, GpuParticleSystemConfig,
+    GpuParticleSystemId, ParticleRender, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId,
+    SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
 };
 pub use resources::{
     MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,

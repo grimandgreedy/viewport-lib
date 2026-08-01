@@ -10,3 +10,5 @@ pub(crate) mod mesh_pipelines;
 /// Slotted GPU mesh storage with free-list removal.
 pub mod mesh_store;
 pub(crate) mod meshes;
+
+pub use meshes::OverrideBufferSlice;

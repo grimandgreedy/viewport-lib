@@ -69,6 +69,10 @@ crate::resources::handle::slot_handle! {
 /// edge interpolation produces no seams.
 pub(crate) struct McSlabGpuData {
     pub scalar_buf: crate::gpu::Buffer, // f32 per slab node; STORAGE | COPY_DST
+    /// Byte offset of this slab's first scalar in the full linear volume
+    /// (x-fastest node order). Used to source the slab's range out of an
+    /// external scalar buffer with one `copy_buffer_to_buffer` per slab.
+    pub scalar_byte_offset: u64,
     pub counts_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
     pub case_idx_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
     pub offsets_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
@@ -89,11 +93,25 @@ pub(crate) struct McSlabGpuData {
 /// regardless of volume size. The single-slab path is equivalent to the old layout.
 pub(crate) struct McVolumeGpuData {
     pub slabs: Vec<McSlabGpuData>,
+    /// Full-volume scalar dims `[nx, ny, nz]`, kept for validating an
+    /// external scalar source against the volume's node count.
+    pub dims: [u32; 3],
+    /// When `Some`, the slab scalar buffers are refreshed from this
+    /// consumer-owned buffer before every MC dispatch, so the isosurface
+    /// tracks the buffer's contents with no CPU upload.
+    pub external_scalar: Option<McExternalScalarSource>,
     /// False after `free_mc_volume` is called; the emptied slot is reused lazily.
     pub alive: bool,
     /// Bumped each time the slot is freed, so a handle issued for an earlier
     /// occupant no longer resolves once the slot is reused.
     pub generation: u32,
+}
+
+/// A consumer-owned buffer feeding a volume's scalar field.
+pub(crate) struct McExternalScalarSource {
+    pub buffer: crate::gpu::Buffer,
+    /// Byte offset of the volume's first scalar inside `buffer`.
+    pub offset_bytes: u64,
 }
 
 impl McVolumeGpuData {
@@ -526,6 +544,89 @@ impl DeviceResources {
         }
         Some(vol)
     }
+
+    /// Feed the volume's scalar field from a consumer-owned same-device buffer.
+    ///
+    /// The buffer holds one `f32` per volume node in x-fastest order
+    /// (`index = x + y * nx + z * nx * ny`), matching `VolumeData::data`,
+    /// starting at `offset_bytes`. While the source is set, the renderer
+    /// copies the field into its internal slab buffers (GPU to GPU, one copy
+    /// per slab) before every marching-cubes dispatch, so the isosurface
+    /// tracks whatever the consumer's compute passes last wrote with no CPU
+    /// upload. This is also the path for animating a density field.
+    ///
+    /// The buffer needs `COPY_SRC` usage. `offset_bytes` must be a multiple
+    /// of 4. The renderer keeps a clone of the buffer handle; if the
+    /// consumer reallocates it, call this again with the new buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `id` does not resolve to a live volume,
+    /// [`ViewportError::ExternalBufferUsageMissing`](crate::error::ViewportError::ExternalBufferUsageMissing)
+    /// if the buffer lacks `COPY_SRC`, or
+    /// [`ViewportError::McScalarSourceMismatch`](crate::error::ViewportError::McScalarSourceMismatch)
+    /// if the offset is misaligned or the volume's scalars do not fit in the
+    /// buffer past `offset_bytes`.
+    pub fn set_mc_scalar_source_buffer(
+        &mut self,
+        id: McVolumeId,
+        buffer: crate::gpu::Buffer,
+        offset_bytes: u64,
+    ) -> crate::ViewportResult<()> {
+        if !buffer.usage().contains(crate::gpu::BufferUsages::COPY_SRC) {
+            return Err(crate::ViewportError::ExternalBufferUsageMissing {
+                missing: "COPY_SRC",
+            });
+        }
+        let store_len = self.mc.volumes.len();
+        let vol = self
+            .mc
+            .volumes
+            .get_mut(id.index as usize)
+            .filter(|v| v.generation == id.generation && v.alive)
+            .ok_or(crate::ViewportError::StaleHandle {
+                index: id.index as usize,
+                count: store_len,
+            })?;
+        let [nx, ny, nz] = vol.dims;
+        let needed_bytes = nx as u64 * ny as u64 * nz as u64 * 4;
+        let available_bytes = buffer.size().saturating_sub(offset_bytes);
+        if offset_bytes % 4 != 0 || needed_bytes > available_bytes {
+            return Err(crate::ViewportError::McScalarSourceMismatch {
+                needed_bytes,
+                available_bytes,
+                offset_bytes,
+            });
+        }
+        vol.external_scalar = Some(McExternalScalarSource {
+            buffer,
+            offset_bytes,
+        });
+        Ok(())
+    }
+
+    /// Detach the external scalar source. The slab buffers keep whatever was
+    /// last copied in, so the isosurface freezes at the final field.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `id` does not resolve to a live volume.
+    pub fn clear_mc_scalar_source(&mut self, id: McVolumeId) -> crate::ViewportResult<()> {
+        let store_len = self.mc.volumes.len();
+        let vol = self
+            .mc
+            .volumes
+            .get_mut(id.index as usize)
+            .filter(|v| v.generation == id.generation && v.alive)
+            .ok_or(crate::ViewportError::StaleHandle {
+                index: id.index as usize,
+                count: store_len,
+            })?;
+        vol.external_scalar = None;
+        Ok(())
+    }
 }
 
 /// CPU + GPU-buffer work for an MC volume upload, factored out so the same
@@ -647,6 +748,7 @@ pub(crate) fn build_mc_volume_gpu_data(
 
             slabs.push(McSlabGpuData {
                 scalar_buf,
+                scalar_byte_offset: scalar_start as u64 * 4,
                 counts_buf,
                 case_idx_buf,
                 offsets_buf,
@@ -662,10 +764,12 @@ pub(crate) fn build_mc_volume_gpu_data(
             });
         }
 
-        let _ = queue; // retained for potential future use (e.g. scalar updates)
+        let _ = queue;
 
         Ok(McVolumeGpuData {
             slabs,
+            dims: vol.dims,
+            external_scalar: None,
             alive: true,
             generation: 0,
         })
@@ -861,6 +965,33 @@ impl DeviceResources {
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("mc_compute_encoder"),
         });
+
+        // Refresh slab scalars from external sources before any compute.
+        // Once per unique volume, even when several jobs reference it. The
+        // copies sit in the same encoder ahead of the compute passes, so
+        // queue-submission order is the only synchronisation needed against
+        // the consumer's earlier compute submissions.
+        let mut scalar_copied: Vec<u32> = Vec::new();
+        for job in jobs {
+            if scalar_copied.contains(&job.volume_id.index) {
+                continue;
+            }
+            let Some(vol) = self.mc_volume(job.volume_id) else {
+                continue;
+            };
+            if let Some(src) = &vol.external_scalar {
+                for slab in &vol.slabs {
+                    encoder.copy_buffer_to_buffer(
+                        &src.buffer,
+                        src.offset_bytes + slab.scalar_byte_offset,
+                        &slab.scalar_buf,
+                        0,
+                        slab.scalar_buf.size(),
+                    );
+                }
+                scalar_copied.push(job.volume_id.index);
+            }
+        }
 
         for job in jobs {
             let Some(vol) = self.mc_volume(job.volume_id) else {
@@ -1248,6 +1379,100 @@ mod residency_tests {
             resources.mc_volume(id1).is_none(),
             "the stale handle must not alias the volume now occupying its slot"
         );
+    }
+
+    fn scalar_buffer(
+        device: &crate::gpu::Device,
+        bytes: u64,
+        usage: crate::gpu::BufferUsages,
+    ) -> crate::gpu::Buffer {
+        device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("test_scalar_src"),
+            size: bytes,
+            usage,
+            mapped_at_creation: false,
+        })
+    }
+
+    #[test]
+    fn mc_scalar_source_set_clear_roundtrip() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources
+            .upload_volume_for_mc(&device, &queue, &sample_volume())
+            .unwrap();
+
+        // 4x4x4 volume = 64 nodes = 256 bytes; source sits at offset 64.
+        let buf = scalar_buffer(
+            &device,
+            256 + 64,
+            crate::gpu::BufferUsages::COPY_SRC | crate::gpu::BufferUsages::COPY_DST,
+        );
+        resources.set_mc_scalar_source_buffer(id, buf, 64).unwrap();
+        {
+            let vol = resources.mc_volume(id).unwrap();
+            let src = vol.external_scalar.as_ref().unwrap();
+            assert_eq!(src.offset_bytes, 64);
+        }
+
+        resources.clear_mc_scalar_source(id).unwrap();
+        assert!(resources.mc_volume(id).unwrap().external_scalar.is_none());
+    }
+
+    #[test]
+    fn mc_scalar_source_rejects_bad_inputs() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources
+            .upload_volume_for_mc(&device, &queue, &sample_volume())
+            .unwrap();
+
+        // Too small: 64 nodes need 256 bytes.
+        let small = scalar_buffer(&device, 128, crate::gpu::BufferUsages::COPY_SRC);
+        assert!(matches!(
+            resources.set_mc_scalar_source_buffer(id, small, 0),
+            Err(crate::ViewportError::McScalarSourceMismatch {
+                needed_bytes: 256,
+                available_bytes: 128,
+                ..
+            })
+        ));
+
+        // Misaligned offset.
+        let buf = scalar_buffer(&device, 512, crate::gpu::BufferUsages::COPY_SRC);
+        assert!(matches!(
+            resources.set_mc_scalar_source_buffer(id, buf, 2),
+            Err(crate::ViewportError::McScalarSourceMismatch { .. })
+        ));
+
+        // Missing COPY_SRC usage.
+        let storage_only = scalar_buffer(&device, 256, crate::gpu::BufferUsages::STORAGE);
+        assert!(matches!(
+            resources.set_mc_scalar_source_buffer(id, storage_only, 0),
+            Err(crate::ViewportError::ExternalBufferUsageMissing {
+                missing: "COPY_SRC"
+            })
+        ));
+
+        // Stale handle after free.
+        resources.free_mc_volume(id);
+        let buf = scalar_buffer(&device, 256, crate::gpu::BufferUsages::COPY_SRC);
+        assert!(matches!(
+            resources.set_mc_scalar_source_buffer(id, buf, 0),
+            Err(crate::ViewportError::StaleHandle { .. })
+        ));
+        assert!(matches!(
+            resources.clear_mc_scalar_source(id),
+            Err(crate::ViewportError::StaleHandle { .. })
+        ));
     }
 
     #[test]

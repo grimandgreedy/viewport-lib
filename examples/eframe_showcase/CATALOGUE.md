@@ -590,15 +590,15 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 ---
 
-## 50. GPU Wave (compute plugin)  (`showcase_50_gpu_wave.rs`, 514 lines)
+## 50. GPU Wave (compute plugins + buffer binding)  (`showcase_50_gpu_wave.rs`, ~560 lines)
 
-**Demos:** `WavePlugin` runs a compute shader each frame to displace a high-res plane mesh via `set_position_override_buffer` + `set_normal_override_buffer` with no CPU round-trip. A second `BuoyPlugin` reads the wave plugin's output buffer and writes positions for a 16-buoy mesh (chained compute). Radio switches to a CPU writeback path that does the same math and re-uploads via `write_mesh_positions_normals`; smoothed update-ms readout makes the cost gap visible. Grid dim tunable (50–900) with a deferred Rebuild button.
+**Demos:** Rendering straight out of consumer-owned same-device GPU buffers. `WavePlugin` runs a compute shader each frame that writes one pooled buffer: displaced positions at elements `0..V`, analytic normals at `V..2V`; the plane binds each region through `set_position_override_buffer_sliced` / `set_normal_override_buffer_sliced` (the normals base element `V` is not 256-byte aligned, proving the window is a shader-side base index rather than a buffer binding offset). A second `BuoyPlugin` reads the wave pool (chained compute, shared buffer handle) and writes one centre position per buoy; the 16 buoys render as an external instance set (`create_external_instance_set` + an `ExternalInstancesItem`), one sphere per element, with the buoys-drawn slider changing only the item's instance count. Selecting the surface keeps the outline mask on, showing the halo tracking the override-driven geometry instead of the flat bind pose. Radio switches to a CPU writeback path that does the same math and re-uploads via `write_mesh_positions_normals`; smoothed update-ms readout makes the cost gap visible. Grid dim tunable (50-900) with a deferred Rebuild button.
 
-**Uses:** `runtime::GpuPlugin`, `GpuFrameContext`, `set_position_override_buffer`, `set_normal_override_buffer`, `clear_*_override`, `write_mesh_positions_normals`.
+**Uses:** `runtime::GpuPlugin`, `GpuFrameContext`, `set_position_override_buffer_sliced`, `set_normal_override_buffer_sliced`, `OverrideBufferSlice`, `clear_*_override`, `create_external_instance_set`, `ExternalInstanceSetConfig`, `ExternalInstancesItem`, `SceneFrame::external_instances`, `write_mesh_positions_normals`.
 
-**Sidebar:** Mode radio (GPU plugin / CPU writeback) with explanatory text; ms + vert count readout; staged grid-dim slider with Rebuild; show-buoys checkbox; pause checkbox.
+**Sidebar:** Mode radio (GPU plugin / CPU writeback) with explanatory text; ms + vert count readout; staged grid-dim slider with Rebuild; show-buoys checkbox and buoys-drawn slider; select-surface toggle (outline follows the wave); pause checkbox.
 
-**Drift:** Header mentions only the wave plugin; the chained second BuoyPlugin and the CPU/GPU A/B mode are not described.
+**Drift:** None.
 
 ---
 
@@ -645,5 +645,17 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 **Uses:** `MaterialPlugin`, `register_material_plugin`, `create_material_plugin_variant`, `material_plugin_params_handle`, `Material::shading_plugin`, `MaterialPluginId`, `MeshData::extension_attributes`, `upload_texture`, `primitives::sphere`.
 
 **Sidebar:** Toon A bands/ambient/tint; toon B bands/tint; rim colour and power; detail tiling/strength/mask blend; parallax height scale and tiling; dissolve threshold. All live through `MaterialPluginParamsHandle::write`.
+
+**Drift:** None.
+
+---
+
+## 55. Foreground Composite Pass  (`showcase_55_foreground_pass.rs`, ~385 lines)
+
+**Demos:** The foreground pass, the lib feature (not the plugin surface). The camera flies a looping `CameraTrack` around a scatter of pillars and spheres while depth of field racks focus across them; three cubes stay pinned in front of the camera the whole time, submitted through `SceneFrame::foreground_items` as ordinary `SceneRenderItem`s with camera-relative model matrices. Because the pass clears depth before drawing them, the cubes are never occluded by scene geometry as the camera sweeps past; because the foreground depth is a coverage mask into the DoF pass, the cubes stay sharp while the background blurs. The projection-override toggle swaps between the cubes' own FOV/near (`ForegroundProjection`) and reusing the scene projection; the unlit toggle flips the cubes between scene-lit and the world-independent look, showing that lighting is the item's material choice, not a pass setting. Requires the HDR pipeline, so `post_process.enabled` is forced on (also needed for DoF).
+
+**Uses:** `SceneFrame::foreground_items`, `EffectsFrame::foreground`, `ForegroundPass`, `ForegroundProjection`, `PostProcessSettings` (DoF), `CameraTrack`, `interpolate_camera`, `SceneRenderItem`, `Material`, `primitives::sphere`.
+
+**Sidebar:** Play/pause fly-around and restart; DoF enable, auto-rack focus, focal distance/range/max-blur; projection override with FOV and near sliders; unlit foreground toggle; cube spin speed.
 
 **Drift:** None.

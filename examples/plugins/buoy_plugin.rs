@@ -1,15 +1,17 @@
-//! GPU buoy plugin: reads the wave plugin's position buffer (GPU-side) and
-//! drives a set of small spheres that ride on the wave surface.
+//! GPU buoy plugin: reads the wave plugin's pooled output buffer (GPU-side)
+//! and drives a set of small spheres that ride on the wave surface.
 //!
 //! Chained-compute demo:
-//!   - Wave plugin produces a GPU position buffer for the surface mesh.
+//!   - Wave plugin produces a pooled GPU buffer whose front region holds the
+//!     surface mesh's displaced positions.
 //!   - This plugin takes that buffer at construction (shared `wgpu::Buffer`
 //!     handle, no copy) and runs a second compute pass that samples the wave
-//!     height at each buoy's (x, y) anchor.
-//!   - The output is bound via `set_position_override_buffer` to a separate
-//!     "buoys" mesh, so the standard mesh pipeline renders the spheres at
-//!     positions that depend on the wave's GPU state, with zero CPU work
-//!     between the two stages.
+//!     height at each buoy's (x, y) anchor, writing one centre position per
+//!     buoy into its own small output buffer.
+//!   - The output renders through an external instance set
+//!     (`create_external_instance_set` + an `ExternalInstancesItem`): one
+//!     sphere mesh drawn once per buoy, positions read straight from this
+//!     plugin's buffer, with zero CPU work between the stages.
 //!
 //! Priority is `gpu_phase::PRE_PREPARE + 100`, which guarantees this runs in
 //! the same `runtime.pre_prepare(...)` pass *after* the wave plugin (lower
@@ -24,27 +26,26 @@ use wgpu::util::DeviceExt;
 struct Uniforms {
     grid_dim: u32,
     buoy_count: u32,
-    verts_per_buoy: u32,
     _pad0: u32,
+    _pad1: u32,
     world_half_extent: f32,
     waterline_offset: f32,
-    _pad1: [f32; 2],
+    _pad2: [f32; 2],
 }
 
-/// Reads the wave's GPU position buffer; writes per-vertex positions for a
-/// baked-instances "buoys" mesh whose layout is `buoy_count` copies of one
-/// small sphere.
+/// Reads the wave's GPU position region; writes one centre position per buoy
+/// for an external instance set to draw.
 pub struct BuoyPlugin {
-    total_vertex_count: u32,
+    buoy_count: u32,
     uniforms_dirty: bool,
     uniforms: Uniforms,
     uniform_buf: wgpu::Buffer,
-    /// Output position buffer consumed by the renderer via `set_position_override_buffer`.
+    /// Output centre positions, one tightly packed vec3 per buoy. Consumed by
+    /// the renderer through `create_external_instance_set`.
     out_buf: wgpu::Buffer,
     /// Persistent handles kept alive for the bind group.
     _wave_buf: wgpu::Buffer,
     _anchors_buf: wgpu::Buffer,
-    _sphere_local_buf: wgpu::Buffer,
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
 }
@@ -52,46 +53,38 @@ pub struct BuoyPlugin {
 impl BuoyPlugin {
     /// Build the plugin.
     ///
-    /// - `wave_output_buf`: the wave plugin's per-vertex position buffer (a
-    ///   shared handle; both plugins read from it without copying).
+    /// - `wave_pool_buf`: the wave plugin's pooled output buffer (a shared
+    ///   handle; both plugins read from it without copying). The positions
+    ///   region sits at the front, which is all this plugin samples.
     /// - `grid_dim`: the wave mesh's grid dimension (cols == rows).
     /// - `world_half_extent`: half of the wave plane's side length (e.g. 4.0
     ///   for an 8x8 plane).
     /// - `buoy_anchors`: flat `[x, y, x, y, ...]` world positions for each buoy.
-    /// - `sphere_local_positions`: per-vertex local positions of one sphere
-    ///   mesh, flat `[x, y, z, ...]`. Replicated implicitly for every buoy.
     /// - `waterline_offset`: vertical lift applied to every buoy so its sphere
     ///   sits above (not embedded in) the surface.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        wave_output_buf: wgpu::Buffer,
+        wave_pool_buf: wgpu::Buffer,
         grid_dim: u32,
         world_half_extent: f32,
         buoy_anchors: &[f32],
-        sphere_local_positions: &[f32],
         waterline_offset: f32,
     ) -> Self {
         assert!(
             buoy_anchors.len() % 2 == 0,
             "buoy_anchors must hold 2 floats per buoy (x, y)"
         );
-        assert!(
-            sphere_local_positions.len() % 3 == 0,
-            "sphere_local_positions must hold 3 floats per vertex"
-        );
         let buoy_count = (buoy_anchors.len() / 2) as u32;
-        let verts_per_buoy = (sphere_local_positions.len() / 3) as u32;
-        let total_vertex_count = buoy_count * verts_per_buoy;
 
         let uniforms = Uniforms {
             grid_dim,
             buoy_count,
-            verts_per_buoy,
             _pad0: 0,
+            _pad1: 0,
             world_half_extent,
             waterline_offset,
-            _pad1: [0.0; 2],
+            _pad2: [0.0; 2],
         };
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("buoy_uniforms"),
@@ -105,34 +98,19 @@ impl BuoyPlugin {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        let sphere_local_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("buoy_sphere_local"),
-            contents: bytemuck::cast_slice(sphere_local_positions),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
         let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("buoy_out_positions"),
-            size: (total_vertex_count as u64) * 3 * std::mem::size_of::<f32>() as u64,
+            size: (buoy_count as u64) * 3 * std::mem::size_of::<f32>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // Seed with a guess so the first frame before `pre_prepare` runs shows
-        // something rather than 0. We place each buoy at its anchor (x, y, 0)
-        // with the local sphere offset added.
-        let mut seed = vec![0.0_f32; (total_vertex_count as usize) * 3];
+        // Seed with each buoy at its anchor so the first frame before
+        // `pre_prepare` runs shows something rather than 0.
+        let mut seed = vec![0.0_f32; (buoy_count as usize) * 3];
         for b in 0..buoy_count as usize {
-            let ax = buoy_anchors[b * 2];
-            let ay = buoy_anchors[b * 2 + 1];
-            for v in 0..verts_per_buoy as usize {
-                let lx = sphere_local_positions[v * 3];
-                let ly = sphere_local_positions[v * 3 + 1];
-                let lz = sphere_local_positions[v * 3 + 2];
-                let gi = (b * verts_per_buoy as usize + v) * 3;
-                seed[gi] = ax + lx;
-                seed[gi + 1] = ay + ly;
-                seed[gi + 2] = lz + waterline_offset;
-            }
+            seed[b * 3] = buoy_anchors[b * 2];
+            seed[b * 3 + 1] = buoy_anchors[b * 2 + 1];
+            seed[b * 3 + 2] = waterline_offset;
         }
         queue.write_buffer(&out_buf, 0, bytemuck::cast_slice(&seed));
 
@@ -173,16 +151,6 @@ impl BuoyPlugin {
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
@@ -221,7 +189,7 @@ impl BuoyPlugin {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wave_output_buf.as_entire_binding(),
+                    resource: wave_pool_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -229,31 +197,26 @@ impl BuoyPlugin {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: sphere_local_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
                     resource: out_buf.as_entire_binding(),
                 },
             ],
         });
 
         Self {
-            total_vertex_count,
+            buoy_count,
             uniforms_dirty: false,
             uniforms,
             uniform_buf,
             out_buf,
-            _wave_buf: wave_output_buf,
+            _wave_buf: wave_pool_buf,
             _anchors_buf: anchors_buf,
-            _sphere_local_buf: sphere_local_buf,
             pipeline,
             bind_group,
         }
     }
 
-    /// Clone-able handle to the buoy mesh's per-vertex position output. Pass
-    /// to `DeviceResources::set_position_override_buffer` once at setup.
+    /// Clone-able handle to the per-buoy centre position buffer. Pass to
+    /// `DeviceResources::create_external_instance_set` once at setup.
     pub fn output_buffer(&self) -> wgpu::Buffer {
         self.out_buf.clone()
     }
@@ -295,7 +258,7 @@ impl GpuPlugin for BuoyPlugin {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            let workgroups = (self.total_vertex_count + 63) / 64;
+            let workgroups = (self.buoy_count + 63) / 64;
             pass.dispatch_workgroups(workgroups.max(1), 1, 1);
         }
         vec![encoder.finish()]

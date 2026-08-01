@@ -60,7 +60,8 @@ struct ShadowAtlas {
     atlas_rects: array<vec4<f32>, 8>,     // 128 bytes
 };
 
-// Per-object uniform : 256 bytes.
+// Per-object uniform. Layout mirrors the renderer's `ObjectUniform`
+// (320 bytes); keep the field offsets in sync with its doc table.
 struct Object {
     model: mat4x4<f32>,
     colour: vec4<f32>,
@@ -106,6 +107,10 @@ struct Object {
     ao_range: vec2<f32>,                   // offset 280 : (min, max) remap of AO map R sample
     metallic_range: vec2<f32>,             // offset 288 : (min, max) remap of MR texture B channel
     roughness_range: vec2<f32>,            // offset 296 : (min, max) remap of MR texture G channel
+    position_override_base: u32,           // offset 304 : first vec3 element read from binding 13 (pool slicing)
+    position_override_len: u32,            // offset 308 : element count of the window; 0xffffffff = whole buffer
+    normal_override_base: u32,             // offset 312 : same for binding 14
+    normal_override_len: u32,              // offset 316
 };
 
 struct ClipVolumeEntry {
@@ -204,8 +209,10 @@ fn vs_main(in: VertexIn) -> VertexOut {
     // storage buffer, replace `in.position` outright; warp is then layered on top
     // additively. Same idea for normals further down.
     var local_pos = in.position;
-    if object.has_position_override != 0u {
-        let pi = in.vertex_index * 3u;
+    if object.has_position_override != 0u && in.vertex_index < object.position_override_len {
+        // base/len slice a window out of a pooled buffer; base = 0 and
+        // len = 0xffffffff reproduce the whole-buffer behaviour.
+        let pi = (object.position_override_base + in.vertex_index) * 3u;
         let plen = arrayLength(&position_override_buffer);
         if pi + 2u < plen {
             local_pos = vec3<f32>(
@@ -223,8 +230,8 @@ fn vs_main(in: VertexIn) -> VertexOut {
         }
     }
     var local_normal = in.normal;
-    if object.has_normal_override != 0u {
-        let ni = in.vertex_index * 3u;
+    if object.has_normal_override != 0u && in.vertex_index < object.normal_override_len {
+        let ni = (object.normal_override_base + in.vertex_index) * 3u;
         let nlen = arrayLength(&normal_override_buffer);
         if ni + 2u < nlen {
             local_normal = vec3<f32>(

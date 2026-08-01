@@ -453,6 +453,7 @@ impl ViewportRenderer {
 
         self.hdr_scene_pass(&ctx, &mut encoder);
         self.hdr_store_hiz_depth(&ctx, &mut encoder);
+        self.hdr_external_instances(&ctx, &mut encoder);
         self.hdr_sprite_passes(&ctx, &mut encoder);
         self.hdr_ssaa_refraction(&ctx, &mut encoder);
         self.hdr_decals(&ctx, &mut encoder);
@@ -1199,6 +1200,83 @@ impl ViewportRenderer {
         let h = depth_tex.height();
         slot.cull
             .store_hiz_prev_depth(ctx.device, encoder, depth_view, w, h, view_proj);
+    }
+
+    /// Draw this frame's external instance sets: opaque depth-tested meshes
+    /// instanced off consumer-owned positions buffers. Runs right after the
+    /// opaque scene pass so the instances occlude and are occluded like
+    /// ordinary opaque geometry; transparents composite over them later.
+    fn hdr_external_instances(
+        &mut self,
+        ctx: &HdrFrameCtx,
+        encoder: &mut crate::gpu::CommandEncoder,
+    ) {
+        let vp_idx = ctx.vp_idx;
+        let ssaa_factor = ctx.ssaa_factor;
+        if self.external_instances_gpu_data.is_empty() {
+            return;
+        }
+        let Some(pipeline) = self.resources.external_instances.pipeline.as_ref() else {
+            return;
+        };
+        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+        let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
+
+        let use_ssaa = ssaa_factor > 1
+            && slot_hdr.ssaa_colour_view.is_some()
+            && slot_hdr.ssaa_depth_view.is_some();
+        let colour_view = if use_ssaa {
+            slot_hdr.ssaa_colour_view.as_ref().unwrap()
+        } else {
+            &slot_hdr.hdr_view
+        };
+        let depth_view = if use_ssaa {
+            slot_hdr.ssaa_depth_view.as_ref().unwrap()
+        } else {
+            &slot_hdr.hdr_depth_view
+        };
+
+        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+            #[cfg(feature = "wgpu29")]
+            multiview_mask: None,
+            label: Some("external_instances_pass"),
+            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                view: colour_view,
+                resolve_target: None,
+                ops: crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Load,
+                    store: crate::gpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Load,
+                    store: crate::gpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(pipeline.for_format(true));
+        pass.set_bind_group(0, camera_bg, &[]);
+        for gd in &self.external_instances_gpu_data {
+            let Some(mesh) = self.resources.mesh_store.get(gd.mesh_id) else {
+                continue;
+            };
+            pass.set_bind_group(1, &gd.bind_group, &[]);
+            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            pass.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+            // The instance range is the buffer window: `instance_index` in
+            // the shader starts at `first_instance` for direct draws.
+            pass.draw_indexed(
+                0..mesh.index_count,
+                0,
+                gd.first_instance..gd.first_instance + gd.instance_count,
+            );
+        }
     }
 
     fn hdr_sprite_passes(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {

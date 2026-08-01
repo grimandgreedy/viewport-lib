@@ -1,5 +1,55 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+#### Same-device external GPU buffer binding
+
+Three ways to render straight out of a `wgpu::Buffer` a consumer produced on
+the renderer's own device (a GPU physics solver, compute skinning, any
+GPU-resident producer), with no CPU round-trip. Synchronisation in all three
+is queue-submission order: submit the compute that writes the buffer before
+the frame renders.
+
+- **Sliced position/normal overrides.** `set_position_override_buffer_sliced`
+  and `set_normal_override_buffer_sliced` bind a window of a pooled buffer as
+  a mesh's per-vertex source: `OverrideBufferSlice { base_element,
+  element_count }` is in 12-byte vec3 elements with no alignment requirement
+  (the window is a shader-side base index, not a buffer binding offset), so a
+  solver keeping every body's particles in one allocation can point each mesh
+  at its own range. The existing unsliced setters are unchanged and remain
+  the whole-buffer case.
+- **External instance sets.** `create_external_instance_set` registers a
+  consumer-owned buffer of packed `[x, y, z]` `f32` positions; an
+  `ExternalInstancesItem` on `SceneFrame::external_instances` then draws a
+  mesh once per element, with `first_instance`/`instance_count` windowing the
+  buffer through the draw call's instance range. Opaque, depth-tested,
+  HDR-path only, no shadows/picking/culling (matching the GPU particle mesh
+  route). `set_external_instance_set_buffer` re-points a set after the
+  consumer reallocates its pool.
+- **External marching-cubes scalar source.** `set_mc_scalar_source_buffer`
+  feeds a GPU-MC volume's scalar field from a consumer buffer (f32 per node,
+  x-fastest, `COPY_SRC` usage): the renderer copies it into its slab buffers
+  before every dispatch, so the isosurface tracks the buffer each frame.
+  This is also the first path for animating a density field without
+  re-uploading the volume.
+
+Limitations, documented on the APIs: CPU-derived state (cull AABBs, the
+picking BVH) does not follow GPU overrides, and all items sharing a `MeshId`
+share that mesh's slice window. The GPU Wave showcase drives sliced
+position/normal overrides out of one pooled compute-written buffer and
+renders its buoys through an external instance set.
+
+### Fixes
+
+- `replace_mesh_data` with a topology change no longer drops a bound
+  position/normal override: the binding (and its slice window) carries over
+  to the rebuilt mesh and rebinds on the next frame.
+- The selection outline mask now reads position-override buffers (including
+  sliced ones), so the halo tracks geometry driven through
+  `set_position_override_buffer` instead of outlining the bind pose.
+
 ## [0.20.0]
 
 A release in two halves: custom fragment shading and many-light performance. Materials can now select runtime-registered WGSL shading hooks, so custom BRDFs, toon looks, shader-graph-style surface authoring, and per-vertex-driven effects no longer require forking the mesh shaders; a consumer that registers no plugin renders byte-identically. On the performance side, the release focuses on scenes with many lights. A game-scale test scene (3251 instances, 251 point lights) went from 2.3 to 10.5 fps facing its densest area, and from 30 to 79 fps looking away, on an RTX 3080. GPU frame timing also now measures the whole frame instead of just the main pass. Upgrade notes are in `docs/migration-guides/v0.20.0-render-performance.md`.
