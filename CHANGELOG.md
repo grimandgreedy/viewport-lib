@@ -4,6 +4,31 @@
 
 ### Features
 
+#### Sub-object GPU picking for item-type plugins
+
+Plugin items can now resolve faces, vertices, and edges through the GPU pick
+pass, not just the whole object:
+
+- `shared_wgsl::SHARED_PICK_PRIM_WGSL` is a pick fragment helper whose
+  primitive channel carries `@builtin(primitive_index)` (the rasterised
+  triangle index) instead of `0`. Needs `PRIMITIVE_INDEX_FEATURE`; prepend
+  `shared_wgsl::PICK_PRIM_ENABLE_WGSL` to the module source for wgpu-leg
+  portability.
+- `ItemTypePlugin::resolve_sub_object` (default `None`) maps a read-back
+  `(pick_id, primitive_index)` plus the hit's reconstructed world position to
+  a `SubObjectRef`, so face lookup and vertex/edge snapping run against the
+  plugin's own topology. Correct for GPU-deformed geometry: the position
+  comes from the pick pass's depth channel, and topology does not deform.
+- The pick router now draws plugin items whenever the mask asks for OBJECT,
+  FACE, VERTEX, EDGE, or CELL (previously OBJECT only). This also means
+  plugin geometry occludes in sub-object-only queries instead of letting
+  items behind it be picked through it.
+- `PickPassContext` gained a `mask` field so `render_pick` can select a
+  pipeline variant per query or skip levels its items do not answer.
+
+Cursor, rect, and snap queries all consult the hook. Plugins that change
+nothing keep today's object-level behaviour.
+
 #### Same-device external GPU buffer binding
 
 Three ways to render straight out of a `wgpu::Buffer` a consumer produced on
@@ -43,6 +68,11 @@ renders its buoys through an external instance set.
 
 ### Fixes
 
+- On the wgpu 29 leg, the built-in pick shaders that read
+  `@builtin(primitive_index)` (`pick_id` rewrite, `pick_vertex`, `pick_edge`,
+  `pick_node`) now prepend the `enable primitive_index;` directive naga 29
+  requires, so GPU sub-object picking works there instead of failing shader
+  validation on devices with the feature.
 - `replace_mesh_data` with a topology change no longer drops a bound
   position/normal override: the binding (and its slice window) carries over
   to the rebuilt mesh and rebinds on the next frame.

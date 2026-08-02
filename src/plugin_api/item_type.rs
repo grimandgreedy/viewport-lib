@@ -185,6 +185,10 @@ pub struct PickPassContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter.
     pub frame_index: u64,
+    /// The query's pick mask: which item types and sub-object levels the
+    /// caller asked for. A plugin can pick a pipeline variant per level, or
+    /// skip its draws when the mask holds nothing its items answer.
+    pub mask: crate::renderer::PickMask,
 }
 
 /// A new scene item category supplied by a plugin.
@@ -433,11 +437,52 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// value, which reads back as no hit). This is the GPU counterpart to
     /// [`pick`](Self::pick); a plugin implements whichever fits, or both.
     /// Default no-op: plugins relying on the CPU path leave this empty.
+    ///
+    /// For sub-object picking (face / vertex / edge on the drawn geometry),
+    /// use the primitive-index fragment helper
+    /// ([`SHARED_PICK_PRIM_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_PRIM_WGSL))
+    /// instead of `viewport_pick_fs` when the device has
+    /// [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE), and
+    /// implement [`resolve_sub_object`](Self::resolve_sub_object) to map the
+    /// read-back triangle index to the item's own sub-object ids.
     fn render_pick<'a>(
         &'a self,
         _pass: &mut crate::gpu::RenderPass<'a>,
         _ctx: &PickPassContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {
+    }
+
+    /// Refine a GPU pick hit on one of this plugin's items to a sub-object.
+    ///
+    /// Called on read-back when a pick with a sub-object level in its mask
+    /// (`FACE`, `VERTEX`, `EDGE`, ...) landed on an item this plugin drew via
+    /// [`render_pick`](Self::render_pick). `primitive_index` is the value the
+    /// plugin's pick fragment wrote into the primitive channel : the
+    /// rasterised triangle index when the pipeline uses
+    /// [`SHARED_PICK_PRIM_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_PRIM_WGSL)'s
+    /// `viewport_pick_prim_fs`. `world_pos` is the hit's world position,
+    /// reconstructed from the pick pass's depth channel, for snapping to the
+    /// nearest vertex or edge of the hit triangle. `mask` is the query's full
+    /// pick mask; answer the highest-priority level in it that the item type
+    /// supports.
+    ///
+    /// The plugin owns its geometry, so only it can map a triangle index to a
+    /// face / vertex / edge id. Return `None` for levels the item type does
+    /// not answer; the hit then stays object-level. Default: `None` (all
+    /// plugin picking stays object-level, as before this hook existed).
+    ///
+    /// Only called when the device has
+    /// [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE);
+    /// without it the primitive channel is all zeros and no refinement runs,
+    /// matching the built-in surface fallback.
+    fn resolve_sub_object(
+        &self,
+        _pick_id: PickId,
+        _primitive_index: u32,
+        _world_pos: glam::Vec3,
+        _mask: crate::renderer::PickMask,
+    ) -> Option<crate::renderer::SubObjectRef> {
+        None
     }
 }

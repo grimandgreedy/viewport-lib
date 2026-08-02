@@ -39,7 +39,7 @@ pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, project
 pub use self::mesh::meshes::OverrideBufferSlice;
 pub use self::mesh::meshes::lerp_attributes;
 pub use self::mesh_sidecar::deform::{
-    DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, deform_slot_params_byte_offset,
+    DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle, DeformSourceSlice, deform_slot_params_byte_offset,
 };
 pub use self::mesh_sidecar::registry::{
     DEFORM_PARAMS_PER_SLOT_PUB, DEFORM_SLOT_COUNT_PUB, DeformStage, DeformerDesc, DeformerId,

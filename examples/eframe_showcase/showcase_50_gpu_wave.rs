@@ -333,7 +333,9 @@ pub(crate) fn submit_wave_items(
     {
         let mut item = viewport_lib::ExternalInstancesItem::new(
             set,
-            app.wave_state.shown_buoys.min((BUOY_GRID * BUOY_GRID) as u32),
+            app.wave_state
+                .shown_buoys
+                .min((BUOY_GRID * BUOY_GRID) as u32),
         );
         item.colour = [0.95, 0.6, 0.15, 1.0];
         fd.scene.external_instances.push(item);

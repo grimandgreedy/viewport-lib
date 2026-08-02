@@ -1483,7 +1483,11 @@ impl DeviceResources {
                     "fn fs_main(in: VertexOut, @builtin(primitive_index) prim_index: u32) -> FragOut {",
                 )
                 .replace("out.primitive_id = 0u;", "out.primitive_id = prim_index;");
-            crate::resources::builders::wgsl_module(device, "pick_id_shader", src)
+            crate::resources::builders::wgsl_module(
+                device,
+                "pick_id_shader",
+                crate::resources::builders::with_primitive_index_enable(&src),
+            )
         } else {
             crate::resources::builders::wgsl_module(device, "pick_id_shader", base_src)
         };
@@ -1613,7 +1617,9 @@ impl DeviceResources {
         let shader = crate::resources::builders::wgsl_module(
             device,
             "pick_vertex_shader",
-            crate::resources::builders::wgsl_source!("pick_vertex"),
+            crate::resources::builders::with_primitive_index_enable(
+                crate::resources::builders::wgsl_source!("pick_vertex"),
+            ),
         );
 
         let pick_vertex_layout = crate::gpu::VertexBufferLayout {
@@ -1715,7 +1721,9 @@ impl DeviceResources {
         let shader = crate::resources::builders::wgsl_module(
             device,
             "pick_edge_shader",
-            crate::resources::builders::wgsl_source!("pick_edge"),
+            crate::resources::builders::with_primitive_index_enable(
+                crate::resources::builders::wgsl_source!("pick_edge"),
+            ),
         );
 
         let pick_vertex_layout = crate::gpu::VertexBufferLayout {
@@ -1828,7 +1836,9 @@ impl DeviceResources {
         let shader = crate::resources::builders::wgsl_module(
             device,
             "pick_node_shader",
-            crate::resources::builders::wgsl_source!("pick_node"),
+            crate::resources::builders::with_primitive_index_enable(
+                crate::resources::builders::wgsl_source!("pick_node"),
+            ),
         );
 
         let pick_vertex_layout = crate::gpu::VertexBufferLayout {

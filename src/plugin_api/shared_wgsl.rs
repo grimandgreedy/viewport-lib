@@ -705,8 +705,9 @@ pub const SHARED_PICK_WGSL: &str = r#"
 // your pipeline's vertex shader for the matching declaration.
 //
 // The pass targets: @location(0) R32Uint object id, @location(1) R32Uint
-// sub-object index (0 here, until a pipeline resolves sub-objects), and
-// @location(2) R32Float depth (the framebuffer z, so the renderer can
+// sub-object index (0 here; use viewport_pick_prim_fs from
+// SHARED_PICK_PRIM_WGSL to write the triangle index for sub-object picking),
+// and @location(2) R32Float depth (the framebuffer z, so the renderer can
 // reconstruct world position on read-back). A pipeline built with
 // build_pick_pipeline must write all three, which this helper does.
 
@@ -724,6 +725,72 @@ fn viewport_pick_fs(
     var out: ViewportPickOut;
     out.object_id = pick_id;
     out.primitive_id = 0u;
+    out.depth = frag_pos.z;
+    return out;
+}
+"#;
+
+/// Module directive required by [`SHARED_PICK_PRIM_WGSL`], per wgpu leg.
+///
+/// naga 29 only accepts `@builtin(primitive_index)` in a module that starts
+/// with `enable primitive_index;`; naga 27 rejects the directive. Prepend this
+/// constant at the very top of the shader source (before any declaration, so
+/// ahead of the vertex stage too) and it resolves to the right text for the
+/// active leg.
+#[cfg(all(feature = "wgpu27", not(feature = "wgpu29")))]
+pub const PICK_PRIM_ENABLE_WGSL: &str = "";
+/// Module directive required by [`SHARED_PICK_PRIM_WGSL`], per wgpu leg.
+///
+/// naga 29 only accepts `@builtin(primitive_index)` in a module that starts
+/// with `enable primitive_index;`; naga 27 rejects the directive. Prepend this
+/// constant at the very top of the shader source (before any declaration, so
+/// ahead of the vertex stage too) and it resolves to the right text for the
+/// active leg.
+#[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
+pub const PICK_PRIM_ENABLE_WGSL: &str = "enable primitive_index;\n";
+
+/// Fragment helper for the pick-id pass that reports the hit triangle.
+///
+/// Same contract as [`SHARED_PICK_WGSL`]'s `viewport_pick_fs`, except the
+/// primitive channel carries `@builtin(primitive_index)` : the index of the
+/// rasterised triangle within the draw call : instead of `0u`. With this, a
+/// hit on the item can be refined to a sub-object: the renderer hands the
+/// read-back index to the plugin's
+/// [`resolve_sub_object`](crate::plugin_api::ItemTypePlugin::resolve_sub_object).
+///
+/// Requirements:
+/// - The device must have
+///   [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE); a
+///   module using the builtin fails validation without it. Check
+///   `device.features()` at `init_gpu` and fall back to `viewport_pick_fs`
+///   (picking then stays object-level, matching the built-in surfaces).
+/// - The module source must start with [`PICK_PRIM_ENABLE_WGSL`], before any
+///   other code:
+///   `format!("{PICK_PRIM_ENABLE_WGSL}{MY_VS}{SHARED_PICK_PRIM_WGSL}")`.
+pub const SHARED_PICK_PRIM_WGSL: &str = r#"
+// @viewport-wgsl-version: 1
+// Pick-id fragment helper for the three-target pick pass, primitive-index
+// variant. The vertex stage must provide a flat-interpolated pick_id at
+// @location(0) of the fragment input, exactly as for viewport_pick_fs.
+//
+// Targets: @location(0) R32Uint object id, @location(1) R32Uint triangle
+// index from @builtin(primitive_index), @location(2) R32Float depth.
+
+struct ViewportPickPrimOut {
+    @location(0) object_id: u32,
+    @location(1) primitive_id: u32,
+    @location(2) depth: f32,
+};
+
+@fragment
+fn viewport_pick_prim_fs(
+    @builtin(position) frag_pos: vec4<f32>,
+    @builtin(primitive_index) prim_index: u32,
+    @location(0) @interpolate(flat) pick_id: u32,
+) -> ViewportPickPrimOut {
+    var out: ViewportPickPrimOut;
+    out.object_id = pick_id;
+    out.primitive_id = prim_index;
     out.depth = frag_pos.z;
     return out;
 }

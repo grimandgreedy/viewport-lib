@@ -1440,6 +1440,7 @@ impl ViewportRenderer {
         &'rp self,
         pass: &mut crate::gpu::RenderPass<'rp>,
         frame: &'rp FrameData,
+        mask: crate::renderer::picking::PickMask,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
             return;
@@ -1449,6 +1450,7 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            mask,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if let Some(items) = frame.scene.plugin_items.get(*name) {

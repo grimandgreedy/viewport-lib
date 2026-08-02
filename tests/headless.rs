@@ -2846,6 +2846,380 @@ fn gpu_pick_skips_hidden_plugin_item() {
 }
 
 // ---------------------------------------------------------------------------
+// GPU pick: item-type plugin sub-object refinement (resolve_sub_object)
+// ---------------------------------------------------------------------------
+
+/// Vertex stage for the sub-object pick plugin: a screen-covering quad as two
+/// clip-space triangles (0-2 below the y = x diagonal, 3-5 above it), pick id
+/// from a group-1 uniform. Concatenated with `SHARED_PICK_PRIM_WGSL`, whose
+/// `viewport_pick_prim_fs` writes the rasterised triangle index into the
+/// primitive channel.
+const SUB_PICK_VS: &str = r#"
+@group(1) @binding(0) var<uniform> sub_pick_id: vec4<u32>;
+
+struct SubPickVsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) @interpolate(flat) pick_id: u32,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) vi: u32) -> SubPickVsOut {
+    var verts = array<vec2<f32>, 6>(
+        // Triangle 0: below the y = x diagonal.
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        // Triangle 1: above it.
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, 1.0),
+    );
+    var out: SubPickVsOut;
+    out.pos = vec4<f32>(verts[vi], 0.0, 1.0);
+    out.pick_id = sub_pick_id.x;
+    return out;
+}
+"#;
+
+/// Plugin whose pick draw writes real triangle indices and whose
+/// `resolve_sub_object` refines them: FACE maps the triangle index straight to
+/// a face, VERTEX returns the hit triangle's first corner (index * 3) and
+/// records the world position it was handed so tests can check the depth
+/// reconstruction plumbing.
+struct SubPickPlugin {
+    pipeline: Option<wgpu::RenderPipeline>,
+    id_bgl: Option<wgpu::BindGroupLayout>,
+    id_bg: Option<wgpu::BindGroup>,
+    last_world: std::sync::Arc<std::sync::Mutex<Option<glam::Vec3>>>,
+}
+
+impl SubPickPlugin {
+    fn new(last_world: std::sync::Arc<std::sync::Mutex<Option<glam::Vec3>>>) -> Self {
+        Self {
+            pipeline: None,
+            id_bgl: None,
+            id_bg: None,
+            last_world,
+        }
+    }
+}
+
+impl ItemTypePlugin for SubPickPlugin {
+    fn type_name(&self) -> &'static str {
+        "sub_pick"
+    }
+
+    fn init_gpu(&mut self, device: &wgpu::Device, shared: &SharedBindings<'_>) {
+        use viewport_lib::plugin_api::shared_wgsl::{PICK_PRIM_ENABLE_WGSL, SHARED_PICK_PRIM_WGSL};
+
+        if !device
+            .features()
+            .contains(viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE)
+        {
+            return;
+        }
+
+        let id_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sub_pick_id_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let source = format!("{PICK_PRIM_ENABLE_WGSL}{SUB_PICK_VS}\n{SHARED_PICK_PRIM_WGSL}");
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sub_pick_shader"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+
+        let layout = viewport_lib::wgpu::pipeline_layout(
+            &device,
+            "sub_pick_layout",
+            &[shared.group0_layout, &id_bgl],
+        );
+
+        let color = |format| {
+            Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+        };
+        let pipeline = viewport_lib::wgpu::render_pipeline(
+            &device,
+            viewport_lib::wgpu::RenderPipelineDesc {
+                label: "sub_pick_pipeline",
+                layout: &layout,
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("viewport_pick_prim_fs"),
+                    targets: &[
+                        color(PICK_COLOR_FORMAT),
+                        color(PICK_COLOR_FORMAT),
+                        color(PICK_DEPTH_CHANNEL_FORMAT),
+                    ],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(viewport_lib::wgpu::depth_stencil(
+                    SCENE_DEPTH_FORMAT,
+                    true,
+                    wgpu::CompareFunction::LessEqual,
+                )),
+                multisample: wgpu::MultisampleState::default(),
+                cache: None,
+            },
+        );
+
+        self.id_bgl = Some(id_bgl);
+        self.pipeline = Some(pipeline);
+    }
+
+    fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
+        items: &dyn PluginItemCollection,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+            return Vec::new();
+        };
+        let Some(id_bgl) = self.id_bgl.as_ref() else {
+            return Vec::new();
+        };
+        let id = [coll.settings.pick_id.0 as u32, 0, 0, 0];
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sub_pick_id_buf"),
+            size: std::mem::size_of_val(&id) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, bytemuck::cast_slice(&id));
+        self.id_bg = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sub_pick_id_bg"),
+            layout: id_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buf.as_entire_binding(),
+            }],
+        }));
+        Vec::new()
+    }
+
+    fn render_pick<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+        _ctx: &PickPassContext<'a>,
+        items: &'a dyn PluginItemCollection,
+    ) {
+        let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
+            return;
+        };
+        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+            return;
+        };
+        if coll.settings.hidden || coll.settings.pick_id == PickId::NONE {
+            return;
+        }
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(1, id_bg, &[]);
+        pass.draw(0..6, 0..1);
+    }
+
+    fn resolve_sub_object(
+        &self,
+        _pick_id: PickId,
+        primitive_index: u32,
+        world_pos: glam::Vec3,
+        mask: PickMask,
+    ) -> Option<viewport_lib::SubObjectRef> {
+        *self.last_world.lock().unwrap() = Some(world_pos);
+        if mask.intersects(PickMask::VERTEX) {
+            Some(viewport_lib::SubObjectRef::Vertex(primitive_index * 3))
+        } else if mask.intersects(PickMask::FACE) {
+            Some(viewport_lib::SubObjectRef::Face(primitive_index))
+        } else {
+            None
+        }
+    }
+}
+
+fn sub_pick_setup(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pick_id: u64,
+) -> (
+    ViewportRenderer,
+    FrameData,
+    std::sync::Arc<std::sync::Mutex<Option<glam::Vec3>>>,
+) {
+    let last_world = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let mut renderer = ViewportRenderer::new(device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.with_item_type_plugin(device, Box::new(SubPickPlugin::new(last_world.clone())));
+    let mut frame = plugin_pick_frame();
+    frame
+        .scene
+        .submit_plugin_items("sub_pick", MockPickCollection::new(PickId(pick_id)));
+    let _ = renderer.pass().prepare(device, queue, &frame);
+    (renderer, frame, last_world)
+}
+
+#[test]
+fn gpu_pick_plugin_resolves_face_via_hook() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no GPU adapter with primitive-index support");
+        return;
+    };
+    let (mut renderer, frame, _) = sub_pick_setup(&device, &queue, 611);
+
+    // (48, 32) is below the quad's y = x diagonal in NDC: triangle 0.
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(48.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT | PickMask::FACE,
+    );
+    let hit = hit.expect("plugin quad under cursor");
+    assert_eq!(hit.id, 611);
+    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Face(0)));
+
+    // (16, 32) is above the diagonal: triangle 1.
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(16.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT | PickMask::FACE,
+    );
+    assert_eq!(
+        hit.and_then(|h| h.sub_object),
+        Some(viewport_lib::SubObjectRef::Face(1))
+    );
+}
+
+#[test]
+fn gpu_pick_plugin_vertex_hook_gets_world_position() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no GPU adapter with primitive-index support");
+        return;
+    };
+    let (mut renderer, frame, last_world) = sub_pick_setup(&device, &queue, 612);
+
+    let cursor = glam::Vec2::new(48.0, 32.0);
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        cursor,
+        &frame,
+        &device,
+        &queue,
+        PickMask::VERTEX,
+    );
+    assert_eq!(
+        hit.and_then(|h| h.sub_object),
+        Some(viewport_lib::SubObjectRef::Vertex(0)),
+        "triangle 0's first corner via the hook"
+    );
+
+    // The hook's world position is the cursor pixel un-projected at the quad's
+    // clip-space depth (0.0): same reconstruction to_pick_hit performs.
+    let recorded = last_world
+        .lock()
+        .unwrap()
+        .expect("resolve_sub_object was called");
+    let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
+    let ndc = glam::Vec3::new(
+        (cursor.x / 64.0) * 2.0 - 1.0,
+        1.0 - (cursor.y / 64.0) * 2.0,
+        0.0,
+    );
+    let expected = view_proj_inv.project_point3(ndc);
+    assert!(
+        (recorded - expected).length() < 1e-3,
+        "hook world_pos {recorded:?} != reconstructed {expected:?}"
+    );
+}
+
+#[test]
+fn gpu_pick_plugin_without_hook_stays_object_level() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no GPU adapter with primitive-index support");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.with_item_type_plugin(&device, Box::new(MockPickPlugin::new()));
+
+    let mut frame = plugin_pick_frame();
+    frame
+        .scene
+        .submit_plugin_items("mock_pick", MockPickCollection::new(PickId(613)));
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // A sub-object-only mask now draws the plugin (it competes in the depth
+    // test), but without `resolve_sub_object` the hit stays object-level.
+    let hit = renderer.pick_object(
+        PickBackend::Gpu,
+        glam::Vec2::new(32.0, 32.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::FACE,
+    );
+    let hit = hit.expect("plugin drawn under a FACE-only mask");
+    assert_eq!(hit.id, 613);
+    assert_eq!(hit.sub_object, None);
+}
+
+#[test]
+fn gpu_pick_rect_resolves_plugin_faces() {
+    let Some((device, queue)) = headless_device_with_primitive_index() else {
+        eprintln!("skipping: no GPU adapter with primitive-index support");
+        return;
+    };
+    let (mut renderer, frame, _) = sub_pick_setup(&device, &queue, 614);
+
+    let result = renderer.pick_rect_objects(
+        PickBackend::Gpu,
+        glam::Vec2::new(0.0, 0.0),
+        glam::Vec2::new(64.0, 64.0),
+        &frame,
+        &device,
+        &queue,
+        PickMask::OBJECT | PickMask::FACE,
+    );
+    assert!(result.objects.contains(&614));
+    for face in [0u32, 1] {
+        assert!(
+            result
+                .elements
+                .contains(&(614, viewport_lib::SubObjectRef::Face(face))),
+            "rect elements missing Face({face}): {:?}",
+            result.elements
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GPU pick: point clouds and Gaussian splats (G3d), image slices and volume
 // surface slices (G3e)
 // ---------------------------------------------------------------------------

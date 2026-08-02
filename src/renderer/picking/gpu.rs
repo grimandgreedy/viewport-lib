@@ -166,13 +166,24 @@ impl PickItemType {
 /// How to turn a pick's read-back sub-primitive index into a [`SubObjectRef`],
 /// keyed by the hit object's `pick_id`. Built at submit time from the same
 /// collections the pass draws, then consulted on read-back. Types that only
-/// answer object level (decals, scatter volumes, voxel volumes, plugins) are
-/// absent from the map and resolve to no sub-object.
+/// answer object level (decals, scatter volumes, voxel volumes) are absent
+/// from the map and resolve to no sub-object.
 #[derive(Clone, Copy)]
 enum PickSubKind {
-    /// Mesh surface or volume-mesh boundary: `primitive_index` is the triangle,
-    /// refined to face / cell / vertex against the retained CPU pick cache.
+    /// Mesh surface or volume-mesh boundary: `primitive_index` is the triangle.
+    /// FACE is the channel value directly; CELL maps through the retained
+    /// boundary face-to-cell table; VERTEX / EDGE come from pipeline variants
+    /// that write the nearest corner / edge id into the channel per pixel. No
+    /// CPU geometry is consulted.
     Surface,
+    /// Item drawn by a registered
+    /// [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin):
+    /// `primitive_index` is
+    /// whatever the plugin's pick fragment wrote (the triangle index with
+    /// `viewport_pick_prim_fs`). Refined by the named plugin's
+    /// `resolve_sub_object`; a plugin without the hook stays object-level. The
+    /// payload is the plugin's `type_name`, the `item_type_plugins` key.
+    Plugin(&'static str),
     /// Glyph, tensor-glyph, or sprite set: `instance_index` is the instance.
     Instance,
     /// Polyline: `instance_index` is the segment; strip is resolved against the
@@ -1823,15 +1834,19 @@ impl ViewportRenderer {
             }
         }
 
-        // Registered plugins draw their own pick-ids into the pass. Treat them
-        // as object-level: run the pass for them when the mask asks for OBJECT
-        // and a plugin has a non-empty collection this frame. Their draws are not
-        // in `draws`/`glyph_draws`/etc.; they are issued via `dispatch_plugin_pick`.
-        let has_plugin_pick =
-            mask.intersects(PickMask::OBJECT) && self.any_plugin_items_submitted(frame);
+        // Registered plugins draw their own pick-ids into the pass. They answer
+        // the same level set as built-in surfaces (object plus the mesh
+        // sub-object levels, refined through `ItemTypePlugin::resolve_sub_object`
+        // on read-back), so run the pass for them whenever the mask asks for any
+        // of those and a plugin has a non-empty collection this frame. Drawing
+        // them under sub-object-only masks also keeps their geometry in the
+        // depth test, so items behind a plugin item cannot be picked through it.
+        // Their draws are not in `draws`/`glyph_draws`/etc.; they are issued via
+        // `dispatch_plugin_pick`.
+        let has_plugin_pick = mask.intersects(
+            PickMask::OBJECT | PickMask::FACE | PickMask::VERTEX | PickMask::EDGE | PickMask::CELL,
+        ) && self.any_plugin_items_submitted(frame);
 
-        // Registered plugins are object-level: dispatched directly in
-        // `record_pick_pass_draws`, not collected here.
         let kinds = self.build_pick_sub_kinds(frame, scene_items);
         let surface_meta = build_surface_pick_meta(frame);
         let primitive_index_supported = device
@@ -2273,7 +2288,7 @@ impl ViewportRenderer {
         // handing them the pass.
         if draw_set.has_plugin_pick {
             pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
-            self.dispatch_plugin_pick(pick_pass, frame);
+            self.dispatch_plugin_pick(pick_pass, frame, draw_set.mask);
         }
     }
 
@@ -2483,6 +2498,16 @@ impl ViewportRenderer {
             copy_region(&mut encoder, &targets.prim_texture, &s);
             s
         });
+        // Plugin sub-object refinement needs each hit pixel's world position
+        // (vertex / edge snap in `resolve_sub_object`), reconstructed from the
+        // depth channel. Only read it back when a plugin item is in the decode
+        // map; the built-in kinds decode from the primitive channel alone.
+        let has_plugin_kinds = kinds.values().any(|k| matches!(k, PickSubKind::Plugin(_)));
+        let depth_staging = (wants_sub && has_plugin_kinds).then(|| {
+            let s = make_staging("pick_rect_depth_staging");
+            copy_region(&mut encoder, &targets.depth_colour_texture, &s);
+            s
+        });
 
         let submission = queue.submit(std::iter::once(encoder.finish()));
         id_staging
@@ -2490,6 +2515,9 @@ impl ViewportRenderer {
             .map_async(crate::gpu::MapMode::Read, |_| {});
         if let Some(prim) = &prim_staging {
             prim.slice(..).map_async(crate::gpu::MapMode::Read, |_| {});
+        }
+        if let Some(depth) = &depth_staging {
+            depth.slice(..).map_async(crate::gpu::MapMode::Read, |_| {});
         }
         device
             .poll(crate::gpu::PollType::Wait {
@@ -2509,6 +2537,10 @@ impl ViewportRenderer {
             let prim_view = prim_staging
                 .as_ref()
                 .map(|s| s.slice(..).get_mapped_range());
+            let depth_view = depth_staging
+                .as_ref()
+                .map(|s| s.slice(..).get_mapped_range());
+            let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
             for row in 0..rh as usize {
                 let row_start = row * bytes_per_row as usize;
                 for col in 0..rw as usize {
@@ -2532,6 +2564,21 @@ impl ViewportRenderer {
                             prim_data[px_off + 2],
                             prim_data[px_off + 3],
                         ]);
+                        // Pixel world position from the depth channel, for the
+                        // plugin refinement hook.
+                        let world_pos = depth_view.as_ref().map(|depth_data| {
+                            let depth = f32::from_le_bytes([
+                                depth_data[px_off],
+                                depth_data[px_off + 1],
+                                depth_data[px_off + 2],
+                                depth_data[px_off + 3],
+                            ]);
+                            let phys_x = (rx + col as u32) as f32 + 0.5;
+                            let phys_y = (ry + row as u32) as f32 + 0.5;
+                            let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
+                            let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
+                            view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth))
+                        });
                         if let Some(sub) = self.resolve_gpu_sub_object_rect(
                             id as u64,
                             prim,
@@ -2539,6 +2586,7 @@ impl ViewportRenderer {
                             &kinds,
                             &draw_set.surface_meta,
                             primitive_index_supported,
+                            world_pos,
                         ) {
                             if seen_elem.insert((id as u64, sub)) {
                                 elements.push((id as u64, sub));
@@ -2551,6 +2599,9 @@ impl ViewportRenderer {
         id_staging.unmap();
         if let Some(prim) = &prim_staging {
             prim.unmap();
+        }
+        if let Some(depth) = &depth_staging {
+            depth.unmap();
         }
 
         crate::renderer::picking::PickRectResult { objects, elements }
@@ -2739,6 +2790,17 @@ impl ViewportRenderer {
                         prim_data[px_off + 2],
                         prim_data[px_off + 3],
                     ]);
+                    // World position before resolution: the plugin refinement
+                    // hook consumes it for vertex / edge snapping.
+                    let depth = f32::from_le_bytes([
+                        depth_data[px_off],
+                        depth_data[px_off + 1],
+                        depth_data[px_off + 2],
+                        depth_data[px_off + 3],
+                    ]);
+                    let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
+                    let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
+                    let world = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth));
                     let sub = self.resolve_gpu_sub_object_rect(
                         id as u64,
                         prim,
@@ -2746,6 +2808,7 @@ impl ViewportRenderer {
                         &kinds,
                         &draw_set.surface_meta,
                         primitive_index_supported,
+                        Some(world),
                     );
                     let priority = snap_priority(sub);
 
@@ -2756,16 +2819,6 @@ impl ViewportRenderer {
                     if !better {
                         continue;
                     }
-
-                    let depth = f32::from_le_bytes([
-                        depth_data[px_off],
-                        depth_data[px_off + 1],
-                        depth_data[px_off + 2],
-                        depth_data[px_off + 3],
-                    ]);
-                    let ndc_x = 2.0 * phys_x / vp_w as f32 - 1.0;
-                    let ndc_y = 1.0 - 2.0 * phys_y / vp_h as f32;
-                    let world = view_proj_inv.project_point3(glam::Vec3::new(ndc_x, ndc_y, depth));
                     best = Some((priority, dist, id as u64, sub, world));
                 }
             }
@@ -2796,9 +2849,9 @@ impl ViewportRenderer {
     /// pass was submitted, `false` when the cursor is out of bounds or nothing
     /// pickable would draw (in which case `pick_object_poll` reports no hit).
     ///
-    /// `mask` selects item types exactly as
-    /// [`pick_object`](Self::pick_object) does. Object-level only, like the rest
-    /// of the GPU backend.
+    /// `mask` selects item types and sub-object levels exactly as
+    /// [`pick_object`](Self::pick_object) does; the resolved hit carries the
+    /// same `sub_object` the blocking path would produce.
     pub fn pick_object_begin(
         &mut self,
         cursor: glam::Vec2,
@@ -2870,6 +2923,7 @@ impl ViewportRenderer {
             &pending.kinds,
             &pending.surface_meta,
             pending.primitive_index_supported,
+            Some(hit.world_pos),
         );
         hit
     }
@@ -2878,9 +2932,11 @@ impl ViewportRenderer {
     /// per the hit object's type. Object-level types (and any object not in the
     /// decode map) return `None`.
     ///
-    /// The surface and curve paths read `primitive_index`, so they only resolve
-    /// when the device had `SHADER_PRIMITIVE_INDEX`; instanced types and
-    /// polylines read `instance_index`, which needs no device feature.
+    /// The surface, curve, and plugin paths read `primitive_index`, so they
+    /// only resolve when the device had `SHADER_PRIMITIVE_INDEX`; instanced
+    /// types and polylines read `instance_index`, which needs no device
+    /// feature. `world_pos` is the hit's reconstructed world position, consumed
+    /// by the plugin path (vertex/edge snapping in `resolve_sub_object`).
     fn resolve_gpu_sub_object(
         &self,
         object_id: u64,
@@ -2889,6 +2945,7 @@ impl ViewportRenderer {
         kinds: &std::collections::HashMap<u64, PickSubKind>,
         surface_meta: &SurfacePickMeta,
         primitive_index_supported: bool,
+        world_pos: Option<glam::Vec3>,
     ) -> Option<SubObjectRef> {
         match kinds.get(&object_id).copied()? {
             PickSubKind::Instance => {
@@ -2974,7 +3031,39 @@ impl ViewportRenderer {
                 surface_meta,
                 primitive_index_supported,
             ),
+            PickSubKind::Plugin(name) => self.resolve_plugin_sub_object(
+                name,
+                object_id,
+                sub_primitive,
+                mask,
+                primitive_index_supported,
+                world_pos,
+            ),
         }
+    }
+
+    /// Refine a hit on a plugin-drawn item through the owning plugin's
+    /// `resolve_sub_object` hook. Needs `SHADER_PRIMITIVE_INDEX` (without it
+    /// the plugin's pick fragment wrote a constant 0) and the hit's
+    /// reconstructed world position. A plugin without the hook returns `None`
+    /// and the hit stays object-level.
+    fn resolve_plugin_sub_object(
+        &self,
+        name: &'static str,
+        object_id: u64,
+        sub_primitive: u32,
+        mask: PickMask,
+        primitive_index_supported: bool,
+        world_pos: Option<glam::Vec3>,
+    ) -> Option<SubObjectRef> {
+        if !primitive_index_supported {
+            return None;
+        }
+        if !mask.intersects(PickMask::FACE | PickMask::VERTEX | PickMask::EDGE | PickMask::CELL) {
+            return None;
+        }
+        let plugin = self.item_type_plugins.get(name)?;
+        plugin.resolve_sub_object(PickId(object_id), sub_primitive, world_pos?, mask)
     }
 
     /// Decode a read-back `(object_id, sub_primitive)` into a [`SubObjectRef`]
@@ -2987,6 +3076,10 @@ impl ViewportRenderer {
     /// cursor ray because their pipeline variants already wrote the nearest corner /
     /// node index into the channel per pixel. Surface and curve sub-objects need
     /// `SHADER_PRIMITIVE_INDEX` (there is no per-pixel CPU refine for a rect).
+    ///
+    /// `world_pos` is this pixel's world position reconstructed from the depth
+    /// channel; the rect and snap paths supply it when a plugin item is in the
+    /// decode map, and the plugin path forwards it to `resolve_sub_object`.
     fn resolve_gpu_sub_object_rect(
         &self,
         object_id: u64,
@@ -2995,6 +3088,7 @@ impl ViewportRenderer {
         kinds: &std::collections::HashMap<u64, PickSubKind>,
         surface_meta: &SurfacePickMeta,
         primitive_index_supported: bool,
+        world_pos: Option<glam::Vec3>,
     ) -> Option<SubObjectRef> {
         match kinds.get(&object_id).copied()? {
             PickSubKind::Instance => mask
@@ -3077,6 +3171,14 @@ impl ViewportRenderer {
                     None
                 }
             }
+            PickSubKind::Plugin(name) => self.resolve_plugin_sub_object(
+                name,
+                object_id,
+                sub_primitive,
+                mask,
+                primitive_index_supported,
+                world_pos,
+            ),
         }
     }
 
@@ -3142,6 +3244,21 @@ impl ViewportRenderer {
     ) -> std::collections::HashMap<u64, PickSubKind> {
         let mut kinds: std::collections::HashMap<u64, PickSubKind> =
             std::collections::HashMap::new();
+
+        // Registered plugin items. Inserted first so a pick-id collision with a
+        // built-in item resolves to the built-in kind (ids are consumer-assigned
+        // and expected unique; this just makes the overlap deterministic).
+        for (&name, _) in self.item_type_plugins.iter() {
+            let Some(items) = frame.scene.plugin_items.get(name) else {
+                continue;
+            };
+            for i in 0..items.len() {
+                let settings = items.item_settings(i);
+                if !settings.hidden && settings.pick_id != PickId::NONE {
+                    kinds.insert(settings.pick_id.0, PickSubKind::Plugin(name));
+                }
+            }
+        }
 
         // Surfaces and opaque/transparent volume-mesh boundaries.
         for item in scene_items

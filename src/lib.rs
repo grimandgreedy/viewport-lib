@@ -292,7 +292,7 @@ pub use resources::{
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,
     DEFORM_SLOT_COUNT_PUB as DEFORM_SLOT_COUNT, DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle,
-    DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
+    DeformSourceSlice, DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
 };
 pub use resources::{
     ExternalInstanceSetConfig, ExternalInstanceSetId, GlyphSetId, GpuParticleSystemConfig,

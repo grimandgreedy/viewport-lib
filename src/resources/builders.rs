@@ -28,6 +28,19 @@ pub(crate) fn wgsl_module<'a>(
     })
 }
 
+/// Prepend the module directive `@builtin(primitive_index)` needs on the
+/// active wgpu leg: naga 29 requires `enable primitive_index;` before any
+/// declaration, naga 27 rejects the directive. Only for sources compiled on a
+/// device with [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE)
+/// (the directive itself fails validation without the feature).
+pub(crate) fn with_primitive_index_enable(src: &str) -> String {
+    format!(
+        "{}{}",
+        crate::plugin_api::shared_wgsl::PICK_PRIM_ENABLE_WGSL,
+        src
+    )
+}
+
 /// Remove the pixel-inspector debug block (bracketed by `BEGIN_DEBUG_VIS` /
 /// `END_DEBUG_VIS` in debug_vis.wgsl) from a lit shader source unless `keep`
 /// is set.
