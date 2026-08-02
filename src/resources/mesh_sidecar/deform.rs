@@ -103,6 +103,27 @@ impl DeformSlotHandle {
     }
 }
 
+/// A window into a same-device consumer buffer feeding one deform slot. The
+/// renderer copies `len_bytes` from `src_offset_bytes` into the slot's region
+/// of the packed buffer each frame; it never writes the consumer's buffer.
+pub(crate) struct ExternalDeformSource {
+    pub buffer: crate::gpu::Buffer,
+    pub src_offset_bytes: u64,
+    pub len_bytes: u64,
+    pub stride_words: u32,
+}
+
+/// A window into a consumer buffer, addressed in whole per-vertex elements
+/// (`element` = `stride_bytes`). Used by the sliced deform-source setters to
+/// bind one host part's range out of a shared pool.
+#[derive(Copy, Clone, Debug)]
+pub struct DeformSourceSlice {
+    /// First element of the window.
+    pub base_element: u32,
+    /// Number of elements in the window.
+    pub element_count: u32,
+}
+
 /// Per-(mesh, instance) deformation storage. Holds the per-instance packed
 /// slot buffer and its bind group (which also binds the owning mesh's
 /// per-mesh buffer at the same time, so the draw needs only one bind-group
@@ -110,6 +131,12 @@ impl DeformSlotHandle {
 pub(crate) struct InstanceDeform {
     pub slot_data: [Option<Vec<u8>>; DEFORM_SLOT_COUNT],
     pub slot_stride: [u32; DEFORM_SLOT_COUNT],
+    /// External same-device source per slot. Mutually exclusive with
+    /// `slot_data[i]`: a slot is either CPU-uploaded or buffer-backed.
+    pub slot_external: [Option<ExternalDeformSource>; DEFORM_SLOT_COUNT],
+    /// Byte offset of each present slot's data inside `buffer`, set by
+    /// `pack`. Meaningful only for slots with data or an external source.
+    pub slot_offset_words: [u32; DEFORM_SLOT_COUNT],
     pub buffer: crate::gpu::Buffer,
     /// Bytes currently allocated in `buffer`. Used to decide when to realloc
     /// rather than `write_buffer` in place.
@@ -127,6 +154,12 @@ pub(crate) struct MeshDeform {
     /// Per-slot stride in u32 words. `slot_stride[i]` is meaningful only
     /// when `slot_data[i].is_some()`.
     pub slot_stride: [u32; DEFORM_SLOT_COUNT],
+    /// External same-device source per slot. Mutually exclusive with
+    /// `slot_data[i]`: a slot is either CPU-uploaded or buffer-backed.
+    pub slot_external: [Option<ExternalDeformSource>; DEFORM_SLOT_COUNT],
+    /// Byte offset of each present slot's data inside `buffer`, set by
+    /// `pack`. Meaningful only for slots with data or an external source.
+    pub slot_offset_words: [u32; DEFORM_SLOT_COUNT],
     /// Packed buffer: `SLOT_LAYOUT_WORDS * 4` bytes of `(offset, stride)`
     /// header followed by tightly packed slot bytes in slot order.
     pub buffer: crate::gpu::Buffer,
@@ -169,6 +202,10 @@ pub(crate) struct DeformationState {
     pub header_cpu: DeformHeader,
     /// Currently registered deformers, in registration order.
     pub registrations: Vec<StoredDeformer>,
+    /// Number of slots (per-mesh and per-instance, across all meshes) currently
+    /// bound to an external buffer source. Lets the per-frame copy pass skip its
+    /// encoder entirely when nothing is buffer-backed.
+    pub external_source_count: usize,
 }
 
 impl DeformationState {
@@ -260,6 +297,7 @@ impl DeformationState {
             meshes: HashMap::new(),
             header_cpu,
             registrations: Vec::new(),
+            external_source_count: 0,
         }
     }
 
@@ -337,14 +375,30 @@ impl DeformationState {
 
     /// Pack the per-slot data of one mesh into a single u32 stream prefixed
     /// by `(offset, stride)` pairs per slot.
+    ///
+    /// A slot with an external source reserves a zero-filled region of the
+    /// right size; the per-frame copy pass fills it from the consumer buffer.
+    /// External and CPU data are mutually exclusive per slot. Returns the
+    /// packed words and each present slot's offset in words (0 when absent),
+    /// so the copy pass knows where to write.
     fn pack(
         slot_data: &[Option<Vec<u8>>; DEFORM_SLOT_COUNT],
         slot_stride: &[u32; DEFORM_SLOT_COUNT],
-    ) -> Vec<u32> {
+        slot_external: &[Option<ExternalDeformSource>; DEFORM_SLOT_COUNT],
+    ) -> (Vec<u32>, [u32; DEFORM_SLOT_COUNT]) {
         let mut words = vec![0u32; SLOT_LAYOUT_WORDS];
+        let mut offsets = [0u32; DEFORM_SLOT_COUNT];
         for slot in 0..DEFORM_SLOT_COUNT {
-            if let Some(bytes) = &slot_data[slot] {
+            if let Some(src) = &slot_external[slot] {
                 let offset_words = words.len() as u32;
+                offsets[slot] = offset_words;
+                words[slot * 2] = offset_words;
+                words[slot * 2 + 1] = src.stride_words;
+                let extra = (src.len_bytes / 4) as usize;
+                words.resize(words.len() + extra, 0);
+            } else if let Some(bytes) = &slot_data[slot] {
+                let offset_words = words.len() as u32;
+                offsets[slot] = offset_words;
                 words[slot * 2] = offset_words;
                 words[slot * 2 + 1] = slot_stride[slot];
                 let extra = bytes.len() / 4;
@@ -354,7 +408,7 @@ impl DeformationState {
                 }
             }
         }
-        words
+        (words, offsets)
     }
 
     fn make_bind_group(
@@ -396,7 +450,7 @@ impl DeformationState {
             self.meshes.remove(&mesh_id);
             return;
         }
-        let words = Self::pack(&m.slot_data, &m.slot_stride);
+        let (words, offsets) = Self::pack(&m.slot_data, &m.slot_stride, &m.slot_external);
         let new_buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("deform_mesh_data"),
             contents: bytemuck::cast_slice(&words),
@@ -450,6 +504,7 @@ impl DeformationState {
         let m = self.meshes.get_mut(&mesh_id).unwrap();
         m.buffer = new_buffer;
         m.bind_group = new_bg;
+        m.slot_offset_words = offsets;
     }
 
     fn ensure_mesh(&mut self, device: &crate::gpu::Device, mesh_id: MeshId) {
@@ -473,6 +528,8 @@ impl DeformationState {
             MeshDeform {
                 slot_data: Default::default(),
                 slot_stride: [0; DEFORM_SLOT_COUNT],
+                slot_external: Default::default(),
+                slot_offset_words: [0; DEFORM_SLOT_COUNT],
                 buffer,
                 bind_group,
                 flag_bits: 0,
@@ -500,9 +557,14 @@ impl DeformationState {
         );
         self.ensure_mesh(device, mesh_id);
         let entry = self.meshes.get_mut(&mesh_id).unwrap();
+        // CPU data replaces any external source on this slot.
+        let had_external = entry.slot_external[slot].take().is_some();
         entry.slot_data[slot] = Some(data.to_vec());
         entry.slot_stride[slot] = stride_words;
         entry.flag_bits |= 1u32 << slot;
+        if had_external {
+            self.external_source_count -= 1;
+        }
         self.refresh(device, mesh_id);
     }
 
@@ -586,6 +648,8 @@ impl DeformationState {
                 InstanceDeform {
                     slot_data: Default::default(),
                     slot_stride: [0; DEFORM_SLOT_COUNT],
+                    slot_external: Default::default(),
+                    slot_offset_words: [0; DEFORM_SLOT_COUNT],
                     buffer,
                     buffer_capacity: cap,
                     bind_group,
@@ -595,7 +659,7 @@ impl DeformationState {
         }
 
         // Mutate slot bookkeeping.
-        {
+        let had_external = {
             let inst = self
                 .meshes
                 .get_mut(&mesh_id)
@@ -603,13 +667,19 @@ impl DeformationState {
                 .instances
                 .get_mut(&instance_id)
                 .unwrap();
+            // CPU data replaces any external source on this slot.
+            let had_external = inst.slot_external[slot].take().is_some();
             inst.slot_data[slot] = Some(data.to_vec());
             inst.slot_stride[slot] = stride_words;
             inst.flag_bits |= 1u32 << slot;
+            had_external
+        };
+        if had_external {
+            self.external_source_count -= 1;
         }
 
         // Re-pack and decide between in-place write or realloc.
-        let (packed_words, packed_bytes_len) = {
+        let (packed_words, packed_offsets, packed_bytes_len) = {
             let inst = self
                 .meshes
                 .get(&mesh_id)
@@ -617,9 +687,9 @@ impl DeformationState {
                 .instances
                 .get(&instance_id)
                 .unwrap();
-            let w = Self::pack(&inst.slot_data, &inst.slot_stride);
+            let (w, offsets) = Self::pack(&inst.slot_data, &inst.slot_stride, &inst.slot_external);
             let len = (w.len() * 4) as u64;
-            (w, len)
+            (w, offsets, len)
         };
 
         let needs_realloc = {
@@ -667,6 +737,15 @@ impl DeformationState {
             queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&packed_words));
         }
 
+        // Record the fresh packed offsets for the per-frame copy pass.
+        self.meshes
+            .get_mut(&mesh_id)
+            .unwrap()
+            .instances
+            .get_mut(&instance_id)
+            .unwrap()
+            .slot_offset_words = packed_offsets;
+
         // Recompute the union and refresh flag bits.
         let m = self.meshes.get_mut(&mesh_id).unwrap();
         Self::recompute_instance_union(m);
@@ -701,12 +780,14 @@ impl DeformationState {
         if drop_instance {
             m.instances.remove(&instance_id);
         } else {
-            let (packed_words, packed_bytes_len) = {
+            let (packed_words, packed_offsets, packed_bytes_len) = {
                 let inst = m.instances.get(&instance_id).unwrap();
-                let w = Self::pack(&inst.slot_data, &inst.slot_stride);
+                let (w, offsets) =
+                    Self::pack(&inst.slot_data, &inst.slot_stride, &inst.slot_external);
                 let len = (w.len() * 4) as u64;
-                (w, len)
+                (w, offsets, len)
             };
+            m.instances.get_mut(&instance_id).unwrap().slot_offset_words = packed_offsets;
             let inst = m.instances.get(&instance_id).unwrap();
             if packed_bytes_len > inst.buffer_capacity {
                 let new_buffer =
@@ -749,6 +830,321 @@ impl DeformationState {
             .map(|i| i.slot_data[slot].is_some())
             .unwrap_or(false)
     }
+
+    /// Bind a per-mesh slot to an external same-device buffer window. The slot
+    /// reserves a region in the packed buffer that the per-frame copy pass
+    /// fills from `src`. Replaces any CPU data previously attached to the slot.
+    pub fn set_slot_external(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: MeshId,
+        slot: usize,
+        src: ExternalDeformSource,
+    ) {
+        self.ensure_mesh(device, mesh_id);
+        let entry = self.meshes.get_mut(&mesh_id).unwrap();
+        let had_external = entry.slot_external[slot].is_some();
+        let had_cpu = entry.slot_data[slot].take().is_some();
+        entry.slot_stride[slot] = src.stride_words;
+        entry.slot_external[slot] = Some(src);
+        entry.flag_bits |= 1u32 << slot;
+        if !had_external {
+            self.external_source_count += 1;
+        }
+        let _ = had_cpu;
+        self.refresh(device, mesh_id);
+    }
+
+    /// Detach a per-mesh slot's external source. Returns `true` if a source was
+    /// removed. Leaves any other slots (CPU or external) intact.
+    pub fn clear_slot_external(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: MeshId,
+        slot: usize,
+    ) -> bool {
+        let Some(m) = self.meshes.get_mut(&mesh_id) else {
+            return false;
+        };
+        if m.slot_external[slot].take().is_none() {
+            return false;
+        }
+        m.slot_stride[slot] = 0;
+        m.flag_bits &= !(1u32 << slot);
+        self.external_source_count -= 1;
+        self.refresh(device, mesh_id);
+        true
+    }
+
+    /// True when a per-mesh slot is bound to an external source.
+    pub fn has_slot_external(&self, mesh_id: MeshId, slot: usize) -> bool {
+        self.meshes
+            .get(&mesh_id)
+            .map(|m| m.slot_external[slot].is_some())
+            .unwrap_or(false)
+    }
+
+    /// Bind a per-instance slot to an external same-device buffer window.
+    /// Replaces any CPU data previously attached to that instance slot.
+    pub fn set_slot_instance_external(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+        src: ExternalDeformSource,
+    ) {
+        self.ensure_mesh(device, mesh_id);
+        // Create the instance entry with a minimal buffer if it does not exist.
+        let needs_insert = !self
+            .meshes
+            .get(&mesh_id)
+            .unwrap()
+            .instances
+            .contains_key(&instance_id);
+        if needs_insert {
+            let init_words = vec![0u32; SLOT_LAYOUT_WORDS];
+            let buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                label: Some("deform_mesh_instance_data_init"),
+                contents: bytemuck::cast_slice(&init_words),
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            });
+            let mesh_buf_clone = self.meshes.get(&mesh_id).unwrap().buffer.clone();
+            let bind_group =
+                self.make_bind_group(device, "deform_mesh_instance_bg", &mesh_buf_clone, &buffer);
+            let m = self.meshes.get_mut(&mesh_id).unwrap();
+            let cap = (init_words.len() * 4) as u64;
+            m.instances.insert(
+                instance_id,
+                InstanceDeform {
+                    slot_data: Default::default(),
+                    slot_stride: [0; DEFORM_SLOT_COUNT],
+                    slot_external: Default::default(),
+                    slot_offset_words: [0; DEFORM_SLOT_COUNT],
+                    buffer,
+                    buffer_capacity: cap,
+                    bind_group,
+                    flag_bits: 0,
+                },
+            );
+        }
+
+        // Swap the slot over to the external source.
+        let had_external = {
+            let inst = self
+                .meshes
+                .get_mut(&mesh_id)
+                .unwrap()
+                .instances
+                .get_mut(&instance_id)
+                .unwrap();
+            let had_external = inst.slot_external[slot].is_some();
+            inst.slot_data[slot] = None;
+            inst.slot_stride[slot] = src.stride_words;
+            inst.slot_external[slot] = Some(src);
+            inst.flag_bits |= 1u32 << slot;
+            had_external
+        };
+        if !had_external {
+            self.external_source_count += 1;
+        }
+
+        // Re-pack, reserving the external slot's region, and realloc or write.
+        let (packed_words, packed_offsets, packed_bytes_len) = {
+            let inst = self
+                .meshes
+                .get(&mesh_id)
+                .unwrap()
+                .instances
+                .get(&instance_id)
+                .unwrap();
+            let (w, offsets) = Self::pack(&inst.slot_data, &inst.slot_stride, &inst.slot_external);
+            let len = (w.len() * 4) as u64;
+            (w, offsets, len)
+        };
+
+        let needs_realloc = {
+            let inst = self
+                .meshes
+                .get(&mesh_id)
+                .unwrap()
+                .instances
+                .get(&instance_id)
+                .unwrap();
+            packed_bytes_len > inst.buffer_capacity
+        };
+
+        if needs_realloc {
+            let new_buffer = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                label: Some("deform_mesh_instance_data"),
+                contents: bytemuck::cast_slice(&packed_words),
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            });
+            let mesh_buf_clone = self.meshes.get(&mesh_id).unwrap().buffer.clone();
+            let bg = self.make_bind_group(
+                device,
+                "deform_mesh_instance_bg",
+                &mesh_buf_clone,
+                &new_buffer,
+            );
+            let inst = self
+                .meshes
+                .get_mut(&mesh_id)
+                .unwrap()
+                .instances
+                .get_mut(&instance_id)
+                .unwrap();
+            inst.buffer = new_buffer;
+            inst.buffer_capacity = packed_bytes_len;
+            inst.bind_group = bg;
+        } else {
+            let inst = self
+                .meshes
+                .get(&mesh_id)
+                .unwrap()
+                .instances
+                .get(&instance_id)
+                .unwrap();
+            queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&packed_words));
+        }
+
+        self.meshes
+            .get_mut(&mesh_id)
+            .unwrap()
+            .instances
+            .get_mut(&instance_id)
+            .unwrap()
+            .slot_offset_words = packed_offsets;
+
+        let m = self.meshes.get_mut(&mesh_id).unwrap();
+        Self::recompute_instance_union(m);
+    }
+
+    /// Detach a per-instance slot's external source. Returns `true` if a source
+    /// was removed.
+    pub fn clear_slot_instance_external(
+        &mut self,
+        _device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+    ) -> bool {
+        let Some(m) = self.meshes.get_mut(&mesh_id) else {
+            return false;
+        };
+        let Some(inst) = m.instances.get_mut(&instance_id) else {
+            return false;
+        };
+        if inst.slot_external[slot].take().is_none() {
+            return false;
+        }
+        inst.slot_stride[slot] = 0;
+        inst.flag_bits &= !(1u32 << slot);
+        self.external_source_count -= 1;
+        let drop_instance = inst.flag_bits == 0;
+        if drop_instance {
+            m.instances.remove(&instance_id);
+        } else {
+            let (packed_words, packed_offsets) = {
+                let inst = m.instances.get(&instance_id).unwrap();
+                Self::pack(&inst.slot_data, &inst.slot_stride, &inst.slot_external)
+            };
+            m.instances.get_mut(&instance_id).unwrap().slot_offset_words = packed_offsets;
+            let inst = m.instances.get(&instance_id).unwrap();
+            queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&packed_words));
+        }
+        let m = self.meshes.get_mut(&mesh_id).unwrap();
+        Self::recompute_instance_union(m);
+        if m.flag_bits == 0 && m.instance_flag_bits_union == 0 {
+            self.meshes.remove(&mesh_id);
+        }
+        true
+    }
+
+    /// True when a per-instance slot is bound to an external source.
+    pub fn has_slot_instance_external(
+        &self,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+    ) -> bool {
+        self.meshes
+            .get(&mesh_id)
+            .and_then(|m| m.instances.get(&instance_id))
+            .map(|i| i.slot_external[slot].is_some())
+            .unwrap_or(false)
+    }
+
+    /// Record a `copy_buffer_to_buffer` for every external slot (per-mesh and
+    /// per-instance) into its region of the packed buffer. Runs each frame
+    /// before the mesh render pass; queue-submission order is the only
+    /// synchronisation against the consumer's earlier compute submissions.
+    pub fn record_deform_copies(&self, encoder: &mut crate::gpu::CommandEncoder) {
+        for m in self.meshes.values() {
+            for slot in 0..DEFORM_SLOT_COUNT {
+                if let Some(src) = &m.slot_external[slot] {
+                    encoder.copy_buffer_to_buffer(
+                        &src.buffer,
+                        src.src_offset_bytes,
+                        &m.buffer,
+                        m.slot_offset_words[slot] as u64 * 4,
+                        src.len_bytes,
+                    );
+                }
+            }
+            for inst in m.instances.values() {
+                for slot in 0..DEFORM_SLOT_COUNT {
+                    if let Some(src) = &inst.slot_external[slot] {
+                        encoder.copy_buffer_to_buffer(
+                            &src.buffer,
+                            src.src_offset_bytes,
+                            &inst.buffer,
+                            inst.slot_offset_words[slot] as u64 * 4,
+                            src.len_bytes,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Validate an external deform source window and build the stored descriptor.
+/// `stride_bytes` must be a positive multiple of 4; the window
+/// `[offset_bytes, offset_bytes + len_bytes)` must fit inside `buffer`, which
+/// must carry `COPY_SRC`.
+fn build_external_source(
+    buffer: &crate::gpu::Buffer,
+    stride_bytes: u32,
+    offset_bytes: u64,
+    len_bytes: u64,
+) -> ViewportResult<ExternalDeformSource> {
+    if !buffer.usage().contains(crate::gpu::BufferUsages::COPY_SRC) {
+        return Err(crate::error::ViewportError::ExternalBufferUsageMissing {
+            missing: "COPY_SRC",
+        });
+    }
+    let available = buffer.size().saturating_sub(offset_bytes);
+    if stride_bytes < 4
+        || stride_bytes % 4 != 0
+        || len_bytes == 0
+        || len_bytes % stride_bytes as u64 != 0
+        || len_bytes > available
+    {
+        return Err(crate::error::ViewportError::DeformSourceMismatch {
+            needed_bytes: len_bytes,
+            available_bytes: available,
+            offset_bytes,
+        });
+    }
+    Ok(ExternalDeformSource {
+        buffer: buffer.clone(),
+        src_offset_bytes: offset_bytes,
+        len_bytes,
+        stride_words: stride_bytes / 4,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -878,6 +1274,192 @@ impl DeviceResources {
     /// data attached at the given slot.
     pub fn has_deform_slot_instance(&self, mesh_id: MeshId, instance_id: u32, slot: usize) -> bool {
         self.deform.has_slot_instance(mesh_id, instance_id, slot)
+    }
+
+    /// Bind a per-mesh deform slot to a consumer-owned, same-device
+    /// `wgpu::Buffer` instead of a CPU upload. The renderer copies the whole
+    /// buffer into the slot's region of the packed deform buffer once per
+    /// frame (in `prepare`), so a GPU-resident producer can feed the deformer
+    /// stack without a CPU round-trip. This is the deform-slot analogue of
+    /// [`set_mc_scalar_source_buffer`](Self::set_mc_scalar_source_buffer): it
+    /// copies, it does not bind a new buffer into the shader, so the deform
+    /// shader path is unchanged for every other consumer.
+    ///
+    /// The slot reads the copied data exactly as an attached slot does
+    /// (`deform_read_f32(slot, vertex_index, component)`), so `buffer` must
+    /// hold the same tightly-packed, `stride_bytes`-stride, render-vertex-
+    /// ordered layout the CPU upload produces. The whole buffer is copied;
+    /// use [`set_deform_slot_source_buffer_sliced`](Self::set_deform_slot_source_buffer_sliced)
+    /// to window one part's range out of a shared pool.
+    ///
+    /// Synchronisation is queue-submission order: submit the compute pass that
+    /// writes `buffer` before the frame's render. Calling again with a new
+    /// handle re-points the source; the copy target rebuilds on the next frame.
+    /// Replaces any CPU data previously attached to the slot; mixes freely with
+    /// CPU-uploaded slots on the same mesh.
+    ///
+    /// # Errors
+    ///
+    /// - [`ViewportError::ExternalBufferUsageMissing`] when `buffer` lacks
+    ///   `COPY_SRC`.
+    /// - [`ViewportError::DeformSourceMismatch`] when `stride_bytes` is not a
+    ///   positive multiple of 4, or the buffer is smaller than one stride.
+    ///
+    /// [`ViewportError::ExternalBufferUsageMissing`]: crate::error::ViewportError::ExternalBufferUsageMissing
+    /// [`ViewportError::DeformSourceMismatch`]: crate::error::ViewportError::DeformSourceMismatch
+    pub fn set_deform_slot_source_buffer(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: MeshId,
+        slot: usize,
+        buffer: crate::gpu::Buffer,
+        stride_bytes: u32,
+    ) -> ViewportResult<()> {
+        let len_bytes = buffer.size();
+        let src = build_external_source(&buffer, stride_bytes, 0, len_bytes)?;
+        self.deform.set_slot_external(device, mesh_id, slot, src);
+        Ok(())
+    }
+
+    /// As [`set_deform_slot_source_buffer`](Self::set_deform_slot_source_buffer),
+    /// but copies only `slice.element_count` elements starting at
+    /// `slice.base_element` (element = `stride_bytes`). Addresses one host
+    /// part's window out of a shared pool without any storage-offset alignment
+    /// constraint: the window is a copy source offset, not a bind offset.
+    ///
+    /// # Errors
+    ///
+    /// In addition to the errors of the whole-buffer setter,
+    /// [`ViewportError::DeformSourceMismatch`] when the requested window runs
+    /// past the end of `buffer`.
+    ///
+    /// [`ViewportError::DeformSourceMismatch`]: crate::error::ViewportError::DeformSourceMismatch
+    pub fn set_deform_slot_source_buffer_sliced(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: MeshId,
+        slot: usize,
+        buffer: crate::gpu::Buffer,
+        stride_bytes: u32,
+        slice: DeformSourceSlice,
+    ) -> ViewportResult<()> {
+        let offset = slice.base_element as u64 * stride_bytes as u64;
+        let len = slice.element_count as u64 * stride_bytes as u64;
+        let src = build_external_source(&buffer, stride_bytes, offset, len)?;
+        self.deform.set_slot_external(device, mesh_id, slot, src);
+        Ok(())
+    }
+
+    /// Detach a per-mesh deform slot's external buffer source. Returns `true`
+    /// if a source was removed. Other slots on the mesh are untouched.
+    pub fn clear_deform_slot_source(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: MeshId,
+        slot: usize,
+    ) -> bool {
+        self.deform.clear_slot_external(device, mesh_id, slot)
+    }
+
+    /// True when a per-mesh slot is bound to an external buffer source.
+    pub fn has_deform_slot_source(&self, mesh_id: MeshId, slot: usize) -> bool {
+        self.deform.has_slot_external(mesh_id, slot)
+    }
+
+    /// Per-instance analogue of
+    /// [`set_deform_slot_source_buffer`](Self::set_deform_slot_source_buffer):
+    /// binds one instance's slot to a same-device buffer. The drawn item must
+    /// select this instance (`deform_instance`) to read it, exactly as
+    /// [`attach_deform_slot_instance`](Self::attach_deform_slot_instance)
+    /// requires.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`set_deform_slot_source_buffer`](Self::set_deform_slot_source_buffer).
+    pub fn set_deform_slot_instance_source_buffer(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+        buffer: crate::gpu::Buffer,
+        stride_bytes: u32,
+    ) -> ViewportResult<()> {
+        let len_bytes = buffer.size();
+        let src = build_external_source(&buffer, stride_bytes, 0, len_bytes)?;
+        self.deform
+            .set_slot_instance_external(device, queue, mesh_id, instance_id, slot, src);
+        Ok(())
+    }
+
+    /// Sliced per-instance analogue of
+    /// [`set_deform_slot_source_buffer_sliced`](Self::set_deform_slot_source_buffer_sliced).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`set_deform_slot_source_buffer_sliced`](Self::set_deform_slot_source_buffer_sliced).
+    pub fn set_deform_slot_instance_source_buffer_sliced(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+        buffer: crate::gpu::Buffer,
+        stride_bytes: u32,
+        slice: DeformSourceSlice,
+    ) -> ViewportResult<()> {
+        let offset = slice.base_element as u64 * stride_bytes as u64;
+        let len = slice.element_count as u64 * stride_bytes as u64;
+        let src = build_external_source(&buffer, stride_bytes, offset, len)?;
+        self.deform
+            .set_slot_instance_external(device, queue, mesh_id, instance_id, slot, src);
+        Ok(())
+    }
+
+    /// Detach a per-instance deform slot's external buffer source. Returns
+    /// `true` if a source was removed.
+    pub fn clear_deform_slot_instance_source(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+    ) -> bool {
+        self.deform
+            .clear_slot_instance_external(device, queue, mesh_id, instance_id, slot)
+    }
+
+    /// True when a per-instance slot is bound to an external buffer source.
+    pub fn has_deform_slot_instance_source(
+        &self,
+        mesh_id: MeshId,
+        instance_id: u32,
+        slot: usize,
+    ) -> bool {
+        self.deform
+            .has_slot_instance_external(mesh_id, instance_id, slot)
+    }
+
+    /// Copy every external deform slot (per-mesh and per-instance) from its
+    /// consumer buffer into the packed deform buffer. Called once per frame in
+    /// `prepare`, before the mesh render pass. Cheap no-op when no slot is
+    /// buffer-backed.
+    pub(crate) fn run_deform_slot_copies(
+        &self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
+        if self.deform.external_source_count == 0 {
+            return;
+        }
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("deform_slot_copy_encoder"),
+        });
+        self.deform.record_deform_copies(&mut encoder);
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
     /// Register a deformer against the mesh shader family.
@@ -1400,7 +1982,10 @@ mod tests {
         data[2] = Some(vec![10, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 0, 40, 0, 0, 0]);
         stride[2] = 2;
 
-        let words = DeformationState::pack(&data, &stride);
+        let external: [Option<ExternalDeformSource>; DEFORM_SLOT_COUNT] = Default::default();
+        let (words, offsets) = DeformationState::pack(&data, &stride, &external);
+        assert_eq!(offsets[0], SLOT_LAYOUT_WORDS as u32);
+        assert_eq!(offsets[2], (SLOT_LAYOUT_WORDS + 3) as u32);
         // Layout prefix holds an (offset, stride) pair per slot.
         assert_eq!(words[0], SLOT_LAYOUT_WORDS as u32); // slot 0 offset
         assert_eq!(words[1], 1); // slot 0 stride
@@ -1612,5 +2197,220 @@ mod tests {
             crate::error::ViewportError::DeformShaderInvalid { .. }
         ));
         assert_eq!(resources.registered_deformer_count(), baseline + 1);
+    }
+
+    fn copy_src_buffer(device: &crate::gpu::Device, size: u64) -> crate::gpu::Buffer {
+        device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("deform_src_test"),
+            size,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        })
+    }
+
+    #[test]
+    fn pack_reserves_and_locates_external_slot_region() {
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let data: [Option<Vec<u8>>; DEFORM_SLOT_COUNT] = Default::default();
+        let mut stride = [0u32; DEFORM_SLOT_COUNT];
+        let mut external: [Option<ExternalDeformSource>; DEFORM_SLOT_COUNT] = Default::default();
+        // Slot 1: external, 4 vertices, stride 12 bytes (vec3<f32>) = 48 bytes.
+        stride[1] = 3;
+        external[1] = Some(ExternalDeformSource {
+            buffer: copy_src_buffer(&device, 48),
+            src_offset_bytes: 0,
+            len_bytes: 48,
+            stride_words: 3,
+        });
+
+        let (words, offsets) = DeformationState::pack(&data, &stride, &external);
+        // Header records the reserved region for slot 1.
+        assert_eq!(words[2], SLOT_LAYOUT_WORDS as u32);
+        assert_eq!(words[3], 3);
+        assert_eq!(offsets[1], SLOT_LAYOUT_WORDS as u32);
+        // Region is reserved (zero-filled) with room for 12 u32s.
+        assert_eq!(words.len(), SLOT_LAYOUT_WORDS + 12);
+        assert!(words[SLOT_LAYOUT_WORDS..].iter().all(|&w| w == 0));
+    }
+
+    #[test]
+    fn set_and_clear_slot_external_roundtrip() {
+        let Some((device, queue)) = headless() else {
+            return;
+        };
+        let mut s = DeformationState::new(&device);
+        let mesh = MeshId::new(101, 0);
+        let src = ExternalDeformSource {
+            buffer: copy_src_buffer(&device, 48),
+            src_offset_bytes: 0,
+            len_bytes: 48,
+            stride_words: 3,
+        };
+        s.set_slot_external(&device, mesh, 2, src);
+        assert!(s.has_slot_external(mesh, 2));
+        assert_eq!(s.flag_bits(mesh), 0b0100);
+        assert_eq!(s.external_source_count, 1);
+        assert_eq!(
+            s.meshes[&mesh].slot_offset_words[2],
+            SLOT_LAYOUT_WORDS as u32
+        );
+
+        // The per-frame copy pass records a copy without panicking.
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("deform_copy_test"),
+        });
+        s.record_deform_copies(&mut encoder);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        assert!(s.clear_slot_external(&device, mesh, 2));
+        assert!(!s.has_slot_external(mesh, 2));
+        assert_eq!(s.external_source_count, 0);
+        assert!(!s.meshes.contains_key(&mesh));
+        assert!(!s.clear_slot_external(&device, mesh, 2));
+    }
+
+    #[test]
+    fn cpu_and_external_slots_coexist_on_one_mesh() {
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let mut s = DeformationState::new(&device);
+        let mesh = MeshId::new(102, 0);
+        // Slot 0: CPU-uploaded. Slot 1: external.
+        s.attach_slot(&device, mesh, 0, 1, &[0u8; 16]);
+        let src = ExternalDeformSource {
+            buffer: copy_src_buffer(&device, 48),
+            src_offset_bytes: 0,
+            len_bytes: 48,
+            stride_words: 3,
+        };
+        s.set_slot_external(&device, mesh, 1, src);
+        assert_eq!(s.flag_bits(mesh), 0b0011);
+        assert!(s.has_slot(mesh, 0));
+        assert!(s.has_slot_external(mesh, 1));
+        // Distinct, non-overlapping regions.
+        let off0 = s.meshes[&mesh].slot_offset_words[0];
+        let off1 = s.meshes[&mesh].slot_offset_words[1];
+        assert_ne!(off0, off1);
+    }
+
+    #[test]
+    fn attach_cpu_replaces_external_on_same_slot() {
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let mut s = DeformationState::new(&device);
+        let mesh = MeshId::new(103, 0);
+        let src = ExternalDeformSource {
+            buffer: copy_src_buffer(&device, 48),
+            src_offset_bytes: 0,
+            len_bytes: 48,
+            stride_words: 3,
+        };
+        s.set_slot_external(&device, mesh, 0, src);
+        assert_eq!(s.external_source_count, 1);
+        // Attaching CPU data on the same slot drops the external source.
+        s.attach_slot(&device, mesh, 0, 3, &[0u8; 48]);
+        assert!(!s.has_slot_external(mesh, 0));
+        assert!(s.has_slot(mesh, 0));
+        assert_eq!(s.external_source_count, 0);
+    }
+
+    #[test]
+    fn set_and_clear_slot_instance_external_roundtrip() {
+        let Some((device, queue)) = headless() else {
+            return;
+        };
+        let mut s = DeformationState::new(&device);
+        let mesh = MeshId::new(104, 0);
+        let src = ExternalDeformSource {
+            buffer: copy_src_buffer(&device, 48),
+            src_offset_bytes: 0,
+            len_bytes: 48,
+            stride_words: 3,
+        };
+        s.set_slot_instance_external(&device, &queue, mesh, 5, 1, src);
+        assert!(s.has_slot_instance_external(mesh, 5, 1));
+        assert_eq!(s.external_source_count, 1);
+
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("deform_inst_copy_test"),
+        });
+        s.record_deform_copies(&mut encoder);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        assert!(s.clear_slot_instance_external(&device, &queue, mesh, 5, 1));
+        assert!(!s.has_slot_instance_external(mesh, 5, 1));
+        assert_eq!(s.external_source_count, 0);
+    }
+
+    #[test]
+    fn set_deform_slot_source_buffer_rejects_bad_inputs() {
+        use crate::renderer::ViewportRenderer;
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mesh = MeshId::new(105, 0);
+
+        // Missing COPY_SRC.
+        let storage_only = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: None,
+            size: 48,
+            usage: crate::gpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        assert!(matches!(
+            renderer.resources_mut().set_deform_slot_source_buffer(
+                &device,
+                mesh,
+                0,
+                storage_only,
+                12
+            ),
+            Err(crate::error::ViewportError::ExternalBufferUsageMissing { .. })
+        ));
+
+        // Stride not a positive multiple of 4.
+        let buf = copy_src_buffer(&device, 48);
+        assert!(matches!(
+            renderer.resources_mut().set_deform_slot_source_buffer(
+                &device,
+                mesh,
+                0,
+                buf.clone(),
+                2
+            ),
+            Err(crate::error::ViewportError::DeformSourceMismatch { .. })
+        ));
+
+        // Sliced window past the end of the buffer.
+        assert!(matches!(
+            renderer
+                .resources_mut()
+                .set_deform_slot_source_buffer_sliced(
+                    &device,
+                    mesh,
+                    0,
+                    buf,
+                    12,
+                    DeformSourceSlice {
+                        base_element: 2,
+                        element_count: 4,
+                    },
+                ),
+            Err(crate::error::ViewportError::DeformSourceMismatch { .. })
+        ));
+
+        // A valid whole-buffer bind succeeds and reports the source.
+        let good = copy_src_buffer(&device, 48);
+        renderer
+            .resources_mut()
+            .set_deform_slot_source_buffer(&device, mesh, 0, good, 12)
+            .expect("valid source");
+        assert!(renderer.resources().has_deform_slot_source(mesh, 0));
     }
 }

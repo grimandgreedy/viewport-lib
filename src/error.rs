@@ -74,6 +74,21 @@ pub enum ViewportError {
         offset_bytes: u64,
     },
 
+    /// An external deform-slot source does not cover the slot: the offset is
+    /// not 4-byte aligned, or the buffer holds fewer bytes past the offset than
+    /// the requested window needs.
+    #[error(
+        "external deform source needs {needed_bytes} bytes but the buffer has {available_bytes} past offset {offset_bytes}"
+    )]
+    DeformSourceMismatch {
+        /// Bytes the requested slot window occupies.
+        needed_bytes: u64,
+        /// Bytes available in the buffer from `offset_bytes` to its end.
+        available_bytes: u64,
+        /// The requested byte offset into the buffer.
+        offset_bytes: u64,
+    },
+
     /// A sliced override binding does not fit inside the supplied buffer:
     /// `base_element + element_count` vec3 elements (12 bytes each) exceed
     /// the buffer's size.

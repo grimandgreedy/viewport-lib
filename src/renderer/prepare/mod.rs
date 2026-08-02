@@ -396,6 +396,9 @@ impl ViewportRenderer {
             queue,
             frame,
         );
+        // Refresh any deform slots bound to a same-device consumer buffer,
+        // GPU-to-GPU, before the mesh render pass reads them.
+        resources.run_deform_slot_copies(device, queue);
         Self::upload_images(
             resources,
             &mut self.screen_image_gpu_data,
