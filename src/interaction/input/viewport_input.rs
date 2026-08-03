@@ -16,6 +16,10 @@ use super::viewport_binding::{ViewportBinding, ViewportGesture};
 /// Pixels-per-line conversion for scroll delta normalisation.
 const PIXELS_PER_LINE: f32 = 28.0;
 
+/// Maximum pointer displacement (in viewport pixels) between primary press and
+/// release for the gesture to count as a click rather than a drag.
+const CLICK_THRESHOLD_PX: f32 = 5.0;
+
 /// Stateful viewport input accumulator.
 ///
 /// Maintains pointer and button state across frames and resolves raw
@@ -41,6 +45,14 @@ pub struct ViewportInput {
     drag_delta: glam::Vec2,
     wheel_delta: glam::Vec2, // always in pixels
     rotate_gesture: f32,     // accumulated two-finger rotation this frame, radians
+
+    // Per-frame pointer/click state (reset by begin_frame). Unlike `drag_delta`,
+    // `pointer_delta` accumulates every pointer move, not only while a button is held.
+    pointer_delta: glam::Vec2,
+    /// True on the frame the primary (left) button was pressed.
+    left_drag_started: bool,
+    /// True on the frame the primary button was released within the click threshold.
+    left_clicked: bool,
 
     // Per-frame key accumulators (reset by begin_frame)
     keys_pressed: HashSet<KeyCode>,
@@ -76,6 +88,9 @@ impl ViewportInput {
             drag_delta: glam::Vec2::ZERO,
             wheel_delta: glam::Vec2::ZERO,
             rotate_gesture: 0.0,
+            pointer_delta: glam::Vec2::ZERO,
+            left_drag_started: false,
+            left_clicked: false,
             keys_pressed: HashSet::new(),
             typed_chars: Vec::new(),
             pointer_pos: None,
@@ -106,6 +121,9 @@ impl ViewportInput {
         self.drag_delta = glam::Vec2::ZERO;
         self.wheel_delta = glam::Vec2::ZERO;
         self.rotate_gesture = 0.0;
+        self.pointer_delta = glam::Vec2::ZERO;
+        self.left_drag_started = false;
+        self.left_clicked = false;
         self.keys_pressed.clear();
         self.typed_chars.clear();
         // Note: persistent state (button_held, pointer_pos, modifiers, keys_held) is NOT reset.
@@ -120,6 +138,8 @@ impl ViewportInput {
                     if self.button_held.iter().any(|&h| h) {
                         self.drag_delta += position - prev;
                     }
+                    // Pointer delta tracks all movement this frame, button or not.
+                    self.pointer_delta += position - prev;
                 }
                 self.pointer_pos = Some(position);
             }
@@ -129,8 +149,21 @@ impl ViewportInput {
                     ButtonState::Pressed => {
                         self.button_held[idx] = true;
                         self.button_press_pos[idx] = self.pointer_pos;
+                        if button == MouseButton::Left {
+                            self.left_drag_started = true;
+                        }
                     }
                     ButtonState::Released => {
+                        if button == MouseButton::Left {
+                            // Click if the pointer barely moved since the press.
+                            let is_click = self.button_press_pos[idx]
+                                .zip(self.pointer_pos)
+                                .map(|(origin, cur)| (cur - origin).length() < CLICK_THRESHOLD_PX)
+                                .unwrap_or(false);
+                            if is_click {
+                                self.left_clicked = true;
+                            }
+                        }
                         self.button_held[idx] = false;
                         self.button_press_pos[idx] = None;
                     }
@@ -326,6 +359,13 @@ impl ViewportInput {
             },
             actions,
             typed_chars: self.typed_chars.clone(),
+            pointer: super::action_frame::PointerFrame {
+                cursor: self.pointer_pos,
+                delta: self.pointer_delta,
+                clicked: self.left_clicked,
+                drag_started: self.left_drag_started,
+                dragging: self.button_held[button_index(MouseButton::Left)],
+            },
         }
     }
 

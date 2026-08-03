@@ -32,6 +32,27 @@ pub struct NavigationActions {
     pub twist: f32,
 }
 
+/// Pointer and click state resolved for one frame.
+///
+/// Carries the cursor position, the per-frame pointer movement, and click-vs-drag
+/// flags that manipulation and picking need. Filled by
+/// [`super::viewport_input::ViewportInput::resolve`] from state it already tracks,
+/// so consumers no longer hand-roll a click-vs-drag threshold.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PointerFrame {
+    /// Cursor position in viewport-local pixels. `None` when the pointer is outside.
+    pub cursor: Option<glam::Vec2>,
+    /// Pointer movement in viewport pixels accumulated this frame.
+    pub delta: glam::Vec2,
+    /// True on the frame the primary button was released as a click (press and
+    /// release without crossing the drag threshold).
+    pub clicked: bool,
+    /// True on the frame the primary button was pressed (a drag may begin).
+    pub drag_started: bool,
+    /// True while the primary button is held.
+    pub dragging: bool,
+}
+
 /// Per-frame resolved action output.
 ///
 /// Returned by [`crate::camera::controllers::orbit::OrbitCameraController::apply_to_camera`] and
@@ -49,6 +70,8 @@ pub struct ActionFrame {
     /// events (which it should do only while `ManipulationController::is_active()`).
     /// Already filtered to `0-9`, `.`, `-` by the input layer.
     pub typed_chars: Vec<char>,
+    /// Cursor position, pointer delta, and click-vs-drag flags for this frame.
+    pub pointer: PointerFrame,
 }
 
 impl ActionFrame {

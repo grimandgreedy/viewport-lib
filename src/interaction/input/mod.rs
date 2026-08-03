@@ -44,6 +44,8 @@ pub mod preset;
 pub mod viewport_binding;
 /// Stateful viewport input accumulator and resolver.
 pub mod viewport_input;
+/// Native-event translation adapters (feature-gated per framework).
+pub mod adapters;
 
 // Legacy re-exports (compatibility)
 pub use action::Action;
@@ -53,7 +55,7 @@ pub use mode::{InputMode, NavigationMode};
 pub use query::{ActionState, FrameInput};
 
 // New pipeline re-exports
-pub use action_frame::{ActionFrame, NavigationActions, ResolvedActionState};
+pub use action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
 pub use context::ViewportContext;
 pub use event::{ButtonState, ScrollUnits, ViewportEvent};
 pub use preset::{BindingPreset, viewport_all_bindings};

@@ -1,427 +1,67 @@
-//! Minimal viewport-lib example using winit + wgpu.
+//! Minimal viewport-lib example using the built-in winit runner.
 //!
-//! Uses renderer.owned().render() for the full HDR pipeline -- no manual
-//! encoder or depth buffer needed from the caller.
-//!
-//! Navigation:
-//!   Left drag / Middle drag   : orbit
-//!   Right drag                : pan
-//!   Scroll                    : zoom
-//!
-//! Object manipulation (click a primitive to select it):
-//!   G / R / S                 : grab / rotate / scale
-//!   X / Y / Z                 : constrain to axis
-//!   Enter or click            : confirm
-//!   Escape                    : cancel
+//! `ViewportApp` owns the window, the wgpu device, and the event loop, and
+//! drives a `ViewportSession` each frame. Orbit navigation (left/middle drag),
+//! pan (right drag), and zoom (scroll) work with no per-event code here: the
+//! runner translates winit events and drives the camera. Compare the hand-written
+//! event loop in `examples/winit_viewport` for the full-control version.
 
-use std::sync::Arc;
+use std::cell::Cell;
+use std::rc::Rc;
 
-use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, Material, MeshId, OrbitCameraController,
-    PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent,
-    ViewportRenderer, primitives,
-};
-use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::window::{Window, WindowAttributes, WindowId};
-
-#[derive(Default)]
-struct App {
-    state: Option<AppState>,
-}
-
-struct AppState {
-    window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface_config: wgpu::SurfaceConfiguration,
-    renderer: ViewportRenderer,
-    camera: Camera,
-    controller: OrbitCameraController,
-    manip: ManipulationController,
-
-    // Scene state
-    scene_items: Vec<SceneRenderItem>,
-    /// Index of the selected primitive, if any.
-    selected: Option<usize>,
-    /// Snapshot of transforms taken when a manipulation starts.
-    transforms_snapshot: Vec<[[f32; 4]; 4]>,
-
-    // Per-frame cursor tracking (needed for ManipulationContext)
-    cursor_pos: Option<glam::Vec2>,
-    cursor_prev: Option<glam::Vec2>,
-    left_pressed_this_frame: bool,
-    left_held: bool,
-    drag_started_this_frame: bool,
-    clicked_this_frame: bool,
-    /// Approximate pixel threshold for click vs drag detection.
-    press_origin: Option<glam::Vec2>,
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
-            return;
-        }
-
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    WindowAttributes::default()
-                        .with_title("viewport-lib : Minimal")
-                        .with_inner_size(winit::dpi::LogicalSize::new(1280u32, 720u32)),
-                )
-                .expect("window"),
-        );
-
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let surface = instance.create_surface(window.clone()).expect("surface");
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))
-        .expect("adapter");
-        let required_features = ViewportRenderer::recommended_device_features(&adapter);
-        if !required_features.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) {
-            eprintln!("INDIRECT_FIRST_INSTANCE not supported -- GPU culling will be disabled");
-        }
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features,
-            ..Default::default()
-        }))
-        .expect("device");
-
-        let size = window.inner_size();
-        let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(caps.formats[0]);
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        let mut renderer = ViewportRenderer::new(&device, format);
-        let res = renderer.resources_mut();
-
-        let m_sphere = res
-            .upload_mesh_data(&device, &primitives::sphere(0.6, 24, 12))
-            .unwrap();
-        let m_cube = res
-            .upload_mesh_data(&device, &primitives::cube(1.0))
-            .unwrap();
-        let m_torus = res
-            .upload_mesh_data(&device, &primitives::torus(0.5, 0.18, 32, 16))
-            .unwrap();
-
-        let make_item = |mesh_id: MeshId, [x, y, z]: [f32; 3], colour: [f32; 3]| {
-            let mut item = SceneRenderItem::default();
-            item.mesh_id = mesh_id;
-            item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
-            item.material = Material::from_colour(colour);
-            item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
-            item
-        };
-
-        let scene_items = vec![
-            make_item(m_sphere, [-2.5, 0.0, 0.0], [0.9, 0.5, 0.2]),
-            make_item(m_cube, [0.0, 0.0, 0.0], [0.4, 0.6, 0.9]),
-            make_item(m_torus, [2.5, 0.0, 0.0], [0.3, 0.8, 0.4]),
-        ];
-
-        let camera = Camera {
-            distance: 10.0,
-            ..Camera::default()
-        };
-
-        let mut controller = OrbitCameraController::viewport_primitives();
-        controller.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [config.width as f32, config.height as f32],
-        });
-
-        self.state = Some(AppState {
-            window,
-            surface,
-            device,
-            queue,
-            surface_config: config,
-            renderer,
-            camera,
-            controller,
-            manip: ManipulationController::new(),
-            scene_items,
-            selected: None,
-            transforms_snapshot: Vec::new(),
-            cursor_pos: None,
-            cursor_prev: None,
-            left_pressed_this_frame: false,
-            left_held: false,
-            drag_started_this_frame: false,
-            clicked_this_frame: false,
-            press_origin: None,
-        });
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        let Some(state) = self.state.as_mut() else {
-            return;
-        };
-
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-
-            WindowEvent::Resized(sz) => {
-                if sz.width > 0 && sz.height > 0 {
-                    state.surface_config.width = sz.width;
-                    state.surface_config.height = sz.height;
-                    state
-                        .surface
-                        .configure(&state.device, &state.surface_config);
-                    state.window.request_redraw();
-                }
-            }
-
-            WindowEvent::ModifiersChanged(mods) => {
-                let mut m = viewport_lib::Modifiers::default();
-                m.shift = mods.state().shift_key();
-                m.ctrl = mods.state().control_key();
-                m.alt = mods.state().alt_key();
-                state
-                    .controller
-                    .push_event(ViewportEvent::ModifiersChanged(m));
-            }
-
-            WindowEvent::MouseInput {
-                state: btn_state,
-                button,
-                ..
-            } => {
-                let vp_button = match button {
-                    MouseButton::Left => viewport_lib::MouseButton::Left,
-                    MouseButton::Middle => viewport_lib::MouseButton::Middle,
-                    MouseButton::Right => viewport_lib::MouseButton::Right,
-                    _ => return,
-                };
-                let pressed = btn_state == ElementState::Pressed;
-                let vp_state = if pressed {
-                    ButtonState::Pressed
-                } else {
-                    ButtonState::Released
-                };
-
-                state.controller.push_event(ViewportEvent::MouseButton {
-                    button: vp_button,
-                    state: vp_state,
-                });
-
-                if button == MouseButton::Left {
-                    if pressed {
-                        state.left_held = true;
-                        state.press_origin = state.cursor_pos;
-                        state.drag_started_this_frame = true;
-                        state.left_pressed_this_frame = true;
-                    } else {
-                        // Distinguish click from drag by displacement.
-                        let is_click = state
-                            .press_origin
-                            .zip(state.cursor_pos)
-                            .map(|(o, c)| (c - o).length() < 5.0)
-                            .unwrap_or(false);
-                        if is_click {
-                            state.clicked_this_frame = true;
-                        }
-                        state.left_held = false;
-                        state.press_origin = None;
-                    }
-                }
-
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                let pos = glam::Vec2::new(position.x as f32, position.y as f32);
-                state.cursor_prev = state.cursor_pos;
-                state.cursor_pos = Some(pos);
-                state
-                    .controller
-                    .push_event(ViewportEvent::PointerMoved { position: pos });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::CursorLeft { .. } => {
-                state.cursor_pos = None;
-                state.controller.push_event(ViewportEvent::PointerLeft);
-            }
-
-            WindowEvent::Focused(false) => {
-                state.controller.push_event(ViewportEvent::FocusLost);
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
-                    }
-                    MouseScrollDelta::PixelDelta(px) => (
-                        glam::Vec2::new(px.x as f32, px.y as f32),
-                        ScrollUnits::Pixels,
-                    ),
-                };
-                state
-                    .controller
-                    .push_event(ViewportEvent::Wheel { delta: d, units });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::RedrawRequested => {
-                let frame = match state.surface.get_current_texture() {
-                    Ok(f) => f,
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        state
-                            .surface
-                            .configure(&state.device, &state.surface_config);
-                        return;
-                    }
-                    Err(e) => {
-                        eprintln!("surface error: {e:?}");
-                        return;
-                    }
-                };
-
-                let view = frame
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-                let w = state.surface_config.width as f32;
-                let h = state.surface_config.height as f32;
-
-                // Build ManipulationContext for this frame.
-                let selection_center = state.selected.map(|i| {
-                    let col = state.scene_items[i].model[3];
-                    glam::Vec3::new(col[0], col[1], col[2])
-                });
-                let pointer_delta = state
-                    .cursor_pos
-                    .zip(state.cursor_prev)
-                    .map(|(c, p)| c - p)
-                    .unwrap_or(glam::Vec2::ZERO);
-
-                let manip_ctx = ManipulationContext {
-                    camera: state.camera.clone(),
-                    viewport_size: glam::Vec2::new(w, h),
-                    cursor_viewport: state.cursor_pos,
-                    pointer_delta,
-                    selection_center,
-                    gizmo: None,
-                    drag_started: state.drag_started_this_frame,
-                    dragging: state.left_held,
-                    clicked: state.clicked_this_frame,
-                };
-
-                // Drive manipulation : suppress orbit while active.
-                let action_frame = if state.manip.is_active() {
-                    let frame = state.controller.resolve();
-                    state.camera.set_aspect_ratio(w, h);
-                    frame
-                } else {
-                    let frame = state.controller.apply_to_camera(&mut state.camera);
-                    state.camera.set_aspect_ratio(w, h);
-                    frame
-                };
-
-                match state.manip.update(&action_frame, manip_ctx) {
-                    ManipResult::Update(delta) => {
-                        if let Some(idx) = state.selected {
-                            let current =
-                                glam::Mat4::from_cols_array_2d(&state.scene_items[idx].model);
-                            let delta_mat = glam::Mat4::from_scale_rotation_translation(
-                                delta.scale,
-                                delta.rotation,
-                                delta.translation,
-                            );
-                            state.scene_items[idx].model = (delta_mat * current).to_cols_array_2d();
-                        }
-                    }
-                    ManipResult::Commit => {}
-                    ManipResult::Cancel | ManipResult::ConstraintChanged => {
-                        for (item, snap) in state
-                            .scene_items
-                            .iter_mut()
-                            .zip(state.transforms_snapshot.iter())
-                        {
-                            item.model = *snap;
-                        }
-                    }
-                    ManipResult::None => {
-                        // Take a fresh snapshot each frame while idle.
-                        state.transforms_snapshot =
-                            state.scene_items.iter().map(|i| i.model).collect();
-                    }
-                    _ => {}
-                }
-
-                // Reset per-frame flags.
-                state.drag_started_this_frame = false;
-                state.clicked_this_frame = false;
-                state.left_pressed_this_frame = false;
-
-                let mut frame_data = FrameData::new(
-                    CameraFrame::from_camera(&state.camera, [w, h]),
-                    SceneFrame::from_surface_items(state.scene_items.clone()),
-                );
-                frame_data.effects.lighting = LightingSettings::default();
-                frame_data.effects.post_process = {
-                    let mut _t = PostProcessSettings::default();
-                    _t.enabled = true;
-                    _t.bloom = true;
-                    _t.bloom_threshold = 1.0;
-                    _t.bloom_intensity = 0.15;
-                    _t
-                };
-
-                // owned().render() runs the full HDR pipeline internally:
-                //   prepare -> shadow pass -> HDR scene -> post-process -> tone map -> output_view
-                let cmd =
-                    state
-                        .renderer
-                        .owned()
-                        .render(&state.device, &state.queue, &view, &frame_data);
-                state.queue.submit(std::iter::once(cmd));
-                frame.present();
-
-                state.controller.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
-            }
-
-            _ => {}
-        }
-    }
-}
+use viewport_lib::{AppConfig, Material, NodeId, ViewportApp, primitives};
 
 fn main() {
-    let event_loop = EventLoop::new().expect("event loop");
-    event_loop.run_app(&mut App::default()).expect("run");
+    // The setup closure and the per-frame closure share the animated node's id.
+    let cube_id: Rc<Cell<Option<NodeId>>> = Rc::new(Cell::new(None));
+    let setup_id = cube_id.clone();
+
+    ViewportApp::new(
+        AppConfig::default()
+            .with_title("viewport-lib : minimal")
+            .with_window_size(1280, 720),
+    )
+    .setup(move |session, device| {
+        // Upload the meshes once, with the device in hand.
+        let sphere = session
+            .resources_mut()
+            .upload_mesh_data(device, &primitives::sphere(0.6, 24, 12))
+            .unwrap();
+        let cube = session
+            .resources_mut()
+            .upload_mesh_data(device, &primitives::cube(1.0))
+            .unwrap();
+        let torus = session
+            .resources_mut()
+            .upload_mesh_data(device, &primitives::torus(0.5, 0.18, 32, 16))
+            .unwrap();
+
+        // Z-up scene: three primitives laid out along X.
+        let scene = session.scene_mut();
+        scene.add(
+            Some(sphere),
+            glam::Mat4::from_translation(glam::Vec3::new(-2.5, 0.0, 0.0)),
+            Material::from_colour([0.9, 0.5, 0.2]),
+        );
+        let cube_node = scene.add(
+            Some(cube),
+            glam::Mat4::IDENTITY,
+            Material::from_colour([0.4, 0.6, 0.9]),
+        );
+        scene.add(
+            Some(torus),
+            glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.0)),
+            Material::from_colour([0.3, 0.8, 0.4]),
+        );
+        setup_id.set(Some(cube_node));
+
+        session.camera_mut().distance = 10.0;
+    })
+    .run(move |ctx| {
+        if let Some(id) = cube_id.get() {
+            // Z-up: spin the cube about the world up axis.
+            let spin = glam::Mat4::from_rotation_z(ctx.time());
+            ctx.scene_mut().set_local_transform(id, spin);
+        }
+    });
 }

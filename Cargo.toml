@@ -56,6 +56,15 @@ bevy = { version = "0.19", optional = true }
 # Model/scene import (glTF, STL, VTK, HDF5, ...). Heavy; only showcase 45 uses it.
 viewport-lib-io = { version = "0.2.0", path = "../viewport-lib-io", optional = true }
 
+# --- Optional host integrations for `session` (consumer-facing, not example-only) ---
+# `winit`/`pollster` power the `app` fullscreen runner and the `from_winit` event
+# adapter; they are also dev-dependencies so the hand-written winit examples build
+# without any feature. `egui`/`egui-wgpu` power the `egui-bridge` (event adapter +
+# CallbackTrait impl); they pair with the wgpu27 leg, matching eframe 0.33.
+winit = { version = "0.30", optional = true }
+pollster = { version = "0.4", optional = true }
+egui = { version = "0.33", optional = true }
+
 # Native handles for the hardware VRAM budget query (`resources::vram_budget`).
 # Versions must match the ones wgpu-hal 27 resolves so the raw types are identical.
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
@@ -77,6 +86,13 @@ wgpu29 = ["dep:wgpu29"]
 # free of `std::future` plumbing for consumers that do not run an async
 # runtime.
 future = []
+# Session host integrations (consumer-facing). `winit-adapter` enables the
+# `from_winit` event translation; `app` adds the fullscreen `ViewportApp` runner
+# (winit window + wgpu bring-up + event loop); `egui-adapter` enables the
+# `from_egui` event translation for hosts embedding a viewport in egui.
+winit-adapter = ["dep:winit"]
+app = ["winit-adapter", "dep:pollster"]
+egui-adapter = ["dep:egui"]
 # Example-only dependency gates (see the optional deps above). Each example's
 # `required-features` names the gate(s) it needs, so `cargo run --example X
 # --features example-*` compiles only that example's framework. Not for
@@ -106,7 +122,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [[example]]
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
-required-features = ["wgpu27", "example-egui"]
+required-features = ["wgpu27", "example-egui", "egui-adapter"]
 
 [[example]]
 name = "eframe-minimal-wgpu29"
@@ -183,7 +199,7 @@ required-features = ["wgpu27"]
 [[example]]
 name = "winit-minimal"
 path = "examples/winit_minimal/main.rs"
-required-features = ["wgpu27"]
+required-features = ["wgpu27", "app"]
 
 [[example]]
 name = "winit-multi-viewport"

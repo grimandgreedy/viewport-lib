@@ -116,6 +116,11 @@ pub mod runtime;
 /// Scene graph, material, traits, and AABB.
 pub mod scene;
 
+/// [`ViewportSession`](session::ViewportSession): a host object that owns the
+/// per-frame wiring (renderer, scene, camera, input) so consumers do not write
+/// it by hand.
+pub mod session;
+
 // ---------------------------------------------------------------------------
 // Module re-exports : preserve old `viewport_lib::foo::Bar` paths.
 // ---------------------------------------------------------------------------
@@ -193,7 +198,7 @@ pub use camera::controllers::{
     wish_xy_from_actions,
 };
 pub use interaction::input::{
-    ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions,
+    ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions, PointerFrame,
     ResolvedActionState, ScrollUnits, ViewportBinding, ViewportContext, ViewportEvent,
     ViewportGesture, ViewportInput, viewport_all_bindings,
 };
@@ -259,6 +264,11 @@ pub use renderer::{
     aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
+
+pub use session::{OrbitSession, ViewportSession};
+
+#[cfg(feature = "app")]
+pub use session::hosts::{AppConfig, FrameCtx, ViewportApp};
 
 pub use quantities::{
     edge_one_form_to_glyphs, face_intrinsic_to_glyphs, polyline_edge_vectors_to_glyphs,
