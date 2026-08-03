@@ -172,15 +172,17 @@ impl ViewportSession {
         self.inject_extras();
     }
 
-    /// While a manipulation session is active, position the transform gizmo at
-    /// the session center and set its mode/axis so the renderer draws it. Idle
-    /// (no session), `gizmo_model` stays `None` and nothing is drawn.
+    /// Draw the transform gizmo whenever something is selected: at rest it sits
+    /// at the selection centroid in translate mode; during a G/R/S session it
+    /// reflects the active kind and constrained axis. Positioned at the live
+    /// centroid so it follows a translating object. Nothing selected ->
+    /// `gizmo_model` stays `None` and no gizmo is drawn.
     fn stamp_gizmo(&mut self) {
-        let Some(state) = self.manip.as_ref().and_then(|m| m.state()) else {
+        let Some(center) = self.selection_center() else {
             return;
         };
         let scale = compute_gizmo_scale(
-            state.center,
+            center,
             self.camera.eye_position(),
             self.camera.fov_y,
             self.viewport_size[1],
@@ -188,13 +190,15 @@ impl ViewportSession {
         self.frame.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(
             glam::Vec3::splat(scale),
             glam::Quat::IDENTITY,
-            state.center,
+            center,
         ));
-        self.frame.interaction.gizmo_mode = match state.kind {
-            ManipulationKind::Move => GizmoMode::Translate,
-            ManipulationKind::Rotate => GizmoMode::Rotate,
-            ManipulationKind::Scale => GizmoMode::Scale,
+        let state = self.manip.as_ref().and_then(|m| m.state());
+        self.frame.interaction.gizmo_mode = match state.as_ref().map(|s| s.kind) {
+            Some(ManipulationKind::Rotate) => GizmoMode::Rotate,
+            Some(ManipulationKind::Scale) => GizmoMode::Scale,
+            Some(ManipulationKind::Move) | None => GizmoMode::Translate,
         };
-        self.frame.interaction.gizmo_hovered = state.axis.unwrap_or(GizmoAxis::None);
+        self.frame.interaction.gizmo_hovered =
+            state.and_then(|s| s.axis).unwrap_or(GizmoAxis::None);
     }
 }

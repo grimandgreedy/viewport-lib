@@ -1,54 +1,24 @@
 //! Objects and manipulation: a handful of primitives you can click to select
-//! and move/rotate/scale, with a camera that toggles between orbit and
-//! first-person on the backtick (`) key.
-//!
-//! This is the whole showcase in one file: it owns both camera controllers, the
-//! selection, and the manipulation-apply logic. The host only feeds it events
-//! and renders the frame it assembles.
+//! and move/rotate/scale. The camera (orbit/fly) is the host's shared rig; this
+//! file only owns the selection and the manipulation-apply logic.
 
 use eframe::egui;
 use glam::{Mat4, Vec3};
-use viewport_lib::{
-    Action, FirstPersonCameraController, ManipResult, Material, NodeId, OrbitCameraController,
-    PickMask, ViewportContext, primitives,
-};
+use viewport_lib::{ManipResult, Material, NodeId, PickMask, primitives};
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
-#[derive(Clone, Copy, PartialEq)]
-enum CameraMode {
-    Orbit,
-    FirstPerson,
-}
-
 pub struct ObjectsShowcase {
-    orbit: OrbitCameraController,
-    fp: FirstPersonCameraController,
-    mode: CameraMode,
-    /// First-person eye position, moved by WASD; the FP controller only looks.
-    eye: Vec3,
-    move_speed: f32,
     selected: Option<NodeId>,
     /// Selected node transform captured while idle, for cancel/constraint restore.
     idle_transform: Option<Mat4>,
-    /// Set by the viewport toggle button; consumed next `update` like a ` press.
-    toggle_requested: bool,
 }
 
 impl ObjectsShowcase {
     pub fn new() -> Self {
         Self {
-            orbit: OrbitCameraController::viewport_all(),
-            fp: FirstPersonCameraController::new(
-                FirstPersonCameraController::DEFAULT_SENSITIVITY,
-                FirstPersonCameraController::DEFAULT_PITCH_CLAMP,
-            ),
-            mode: CameraMode::Orbit,
-            eye: Vec3::ZERO,
-            move_speed: 6.0,
             selected: None,
             idle_transform: None,
-            toggle_requested: false,
         }
     }
 }
@@ -72,7 +42,7 @@ impl Showcase for ObjectsShowcase {
         let torus = ctx
             .session
             .resources_mut()
-            .upload_mesh_data(ctx.device, &primitives::torus(0.6, 0.22, 32, 16))
+            .upload_mesh_data(ctx.device, &primitives::torus(0.6, 0.22, 96, 48))
             .unwrap();
 
         // Z-up: lay a few objects out on the ground plane.
@@ -101,111 +71,38 @@ impl Showcase for ObjectsShowcase {
         vp.grid_cell_size = 1.0;
 
         ctx.session.camera_mut().distance = 12.0;
-        self.mode = CameraMode::Orbit;
         self.selected = None;
         self.idle_transform = None;
     }
 
     fn update(&mut self, ctx: &mut ShowcaseCtx) {
-        // Read everything off the context before borrowing the session mutably.
-        let toggle = ctx.key_pressed(egui::Key::Backtick) || self.toggle_requested;
-        self.toggle_requested = false;
-        // Arrow keys drive first-person movement alongside WASD.
-        let arrow_fwd = ctx.key_down(egui::Key::ArrowUp);
-        let arrow_back = ctx.key_down(egui::Key::ArrowDown);
-        let arrow_left = ctx.key_down(egui::Key::ArrowLeft);
-        let arrow_right = ctx.key_down(egui::Key::ArrowRight);
-        let dt = ctx.dt;
-        let view_ctx = ViewportContext {
-            hovered: ctx.hovered,
-            focused: ctx.focused,
-            viewport_size: ctx.viewport_size,
-        };
-        let session = &mut *ctx.session;
-
-        // Resolve input once so the pointer/action state is available before we
-        // drive the camera (which resolves again, harmlessly).
-        let action = session.resolve().clone();
-
-        // Backtick toggles the camera controller, syncing so the view does not jump.
-        if toggle {
-            self.mode = match self.mode {
-                CameraMode::Orbit => {
-                    self.fp.sync_from_camera(session.camera());
-                    self.eye = session.camera().eye_position();
-                    CameraMode::FirstPerson
-                }
-                CameraMode::FirstPerson => {
-                    // Hand the orbit controller a sane centre ahead of the eye.
-                    let eye = session.camera().eye_position();
-                    let aim = self.fp.aim_dir();
-                    let camera = session.camera_mut();
-                    camera.center = eye + aim * 8.0;
-                    camera.distance = 8.0;
-                    CameraMode::Orbit
-                }
-            };
-        }
-
-        // Click to select (only when not mid-manipulation).
-        if !session.is_manipulating() && action.pointer.clicked {
-            if let Some(cursor) = action.pointer.cursor {
-                match session.pick(cursor, PickMask::OBJECT) {
-                    Some(hit) => {
-                        session.selection_mut().select_one(hit.id);
-                        self.selected = Some(hit.id);
+        // Click to select (only when not mid-manipulation). Scoped so the session
+        // borrow ends before we drive the shared camera.
+        {
+            let session = &mut *ctx.session;
+            let action = session.resolve().clone();
+            if !session.is_manipulating() && action.pointer.clicked {
+                if let Some(cursor) = action.pointer.cursor {
+                    match session.pick(cursor, PickMask::OBJECT) {
+                        Some(hit) => {
+                            session.selection_mut().select_one(hit.id);
+                            self.selected = Some(hit.id);
+                        }
+                        None => {
+                            session.selection_mut().clear();
+                            self.selected = None;
+                        }
                     }
-                    None => {
-                        session.selection_mut().clear();
-                        self.selected = None;
-                    }
+                    self.idle_transform = None;
                 }
-                self.idle_transform = None;
             }
         }
 
-        // Drive the camera and assemble the frame.
-        match self.mode {
-            CameraMode::Orbit => {
-                session.update_orbit(&mut self.orbit);
-            }
-            CameraMode::FirstPerson => {
-                // A manipulation drag owns the pointer; do not also look/move then.
-                if !session.is_manipulating() {
-                    let mut dir = Vec3::ZERO;
-                    if action.is_active(Action::FlyForward) || arrow_fwd {
-                        dir += self.fp.forward_dir();
-                    }
-                    if action.is_active(Action::FlyBackward) || arrow_back {
-                        dir -= self.fp.forward_dir();
-                    }
-                    if action.is_active(Action::FlyRight) || arrow_right {
-                        dir += self.fp.right_dir();
-                    }
-                    if action.is_active(Action::FlyLeft) || arrow_left {
-                        dir -= self.fp.right_dir();
-                    }
-                    if action.is_active(Action::FlyUp) {
-                        dir += Vec3::Z;
-                    }
-                    if action.is_active(Action::FlyDown) {
-                        dir -= Vec3::Z;
-                    }
-                    let speed = if action.is_active(Action::FlySpeedBoost) {
-                        self.move_speed * 3.0
-                    } else {
-                        self.move_speed
-                    };
-                    if dir != Vec3::ZERO {
-                        self.eye += dir.normalize() * speed * dt;
-                    }
-                    self.fp.apply(session.camera_mut(), &action, self.eye);
-                }
-                session.frame(view_ctx);
-            }
-        }
+        // Shared orbit/fly camera drives the view and assembles the frame.
+        ctx.drive_camera();
 
         // Apply the manipulation result to the selected node.
+        let session = &mut *ctx.session;
         match session.last_manip() {
             ManipResult::Update(delta) => {
                 // Rotate and scale pivot around the session center (the object's
@@ -248,7 +145,7 @@ impl Showcase for ObjectsShowcase {
 
     fn description(&self) -> &str {
         "A handful of primitives you can click to select, then grab, rotate, or \
-         scale. The camera toggles between orbit and first-person."
+         scale in place."
     }
 
     fn controls(&mut self, ui: &mut egui::Ui) {
@@ -258,21 +155,5 @@ impl Showcase for ObjectsShowcase {
         ui.label("G / R / S: grab / rotate / scale");
         ui.label("X / Y / Z: constrain to axis");
         ui.label("Enter or click: confirm    Esc: cancel");
-        ui.separator();
-        ui.strong("Camera");
-        ui.label("` or the top-right toggle: orbit <-> fly");
-        ui.label("WASD or arrow keys: move (first person)");
-    }
-
-    fn viewport_overlay(&mut self, ui: &mut egui::Ui) {
-        let active = match self.mode {
-            CameraMode::Orbit => 0,
-            CameraMode::FirstPerson => 1,
-        };
-        // Two modes, so any pick is a toggle; route it through the same request
-        // flag the ` key uses.
-        if crate::ui::segmented(ui, active, &["orbit", "fly"]).is_some() {
-            self.toggle_requested = true;
-        }
     }
 }

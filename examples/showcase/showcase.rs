@@ -5,7 +5,9 @@
 //! self-contained in one file.
 
 use eframe::{egui, wgpu};
-use viewport_lib::ViewportSession;
+use viewport_lib::{ViewportContext, ViewportSession};
+
+use crate::camera::{CameraRig, MoveKeys};
 
 /// Passed to [`Showcase::setup`]: the session plus the device, for uploading
 /// meshes and building the initial scene.
@@ -18,6 +20,9 @@ pub struct SetupCtx<'a> {
 /// here; drive the camera and interaction through `session`.
 pub struct ShowcaseCtx<'a> {
     pub session: &'a mut ViewportSession,
+    /// The shared orbit/fly camera, owned by the host and retained across
+    /// showcases. Drive it with [`drive_camera`](Self::drive_camera).
+    camera: &'a mut CameraRig,
     /// Seconds since the previous frame.
     pub dt: f32,
     /// Whether the viewport rect is hovered / focused this frame.
@@ -32,6 +37,7 @@ pub struct ShowcaseCtx<'a> {
 impl<'a> ShowcaseCtx<'a> {
     pub fn new(
         session: &'a mut ViewportSession,
+        camera: &'a mut CameraRig,
         dt: f32,
         hovered: bool,
         focused: bool,
@@ -41,6 +47,7 @@ impl<'a> ShowcaseCtx<'a> {
     ) -> Self {
         Self {
             session,
+            camera,
             dt,
             hovered,
             focused,
@@ -58,6 +65,27 @@ impl<'a> ShowcaseCtx<'a> {
     /// True while `key` is held down (for continuous movement input).
     pub fn key_down(&self, key: egui::Key) -> bool {
         self.keys_down.contains(&key)
+    }
+
+    /// Run the shared orbit/fly camera and assemble the frame. Call this once per
+    /// `update`, after any click-selection and before applying manipulation, so
+    /// the frame is assembled from the moved camera. Handles the backtick toggle
+    /// and WASD/arrow movement internally.
+    pub fn drive_camera(&mut self) {
+        let toggle = self.key_pressed(egui::Key::Backtick);
+        let move_keys = MoveKeys {
+            forward: self.key_down(egui::Key::ArrowUp),
+            back: self.key_down(egui::Key::ArrowDown),
+            left: self.key_down(egui::Key::ArrowLeft),
+            right: self.key_down(egui::Key::ArrowRight),
+        };
+        let view_ctx = ViewportContext {
+            hovered: self.hovered,
+            focused: self.focused,
+            viewport_size: self.viewport_size,
+        };
+        self.camera
+            .drive(&mut *self.session, self.dt, view_ctx, toggle, move_keys);
     }
 }
 
@@ -82,12 +110,9 @@ pub trait Showcase {
         ""
     }
 
-    /// Controls / key bindings, shown in the `?` modal. Default: nothing.
+    /// Showcase-specific controls (e.g. G/R/S manipulation), shown in the `?`
+    /// modal below the general camera controls. Default: nothing.
     fn controls(&mut self, _ui: &mut egui::Ui) {}
-
-    /// Optional controls drawn over the top-right corner of the viewport, e.g. a
-    /// camera-mode toggle. Default: nothing.
-    fn viewport_overlay(&mut self, _ui: &mut egui::Ui) {}
 }
 
 /// Reset the shared session between showcases: drop all scene nodes, clear the

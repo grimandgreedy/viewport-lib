@@ -8,6 +8,7 @@
 //!
 //! Run with: cargo run --example showcase --features "example-egui,egui-adapter"
 
+mod camera;
 mod showcase;
 mod showcases;
 mod ui;
@@ -46,6 +47,7 @@ fn main() -> eframe::Result {
 
             Ok(Box::new(App {
                 session,
+                camera: camera::CameraRig::new(),
                 list,
                 active: 0,
                 target: None,
@@ -65,6 +67,7 @@ struct Target {
 
 struct App {
     session: ViewportSession,
+    camera: camera::CameraRig,
     list: Vec<Box<dyn Showcase>>,
     active: usize,
     target: Option<Target>,
@@ -199,6 +202,7 @@ impl eframe::App for App {
                 {
                     let mut sctx = ShowcaseCtx::new(
                         &mut self.session,
+                        &mut self.camera,
                         dt,
                         response.hovered(),
                         response.hovered(),
@@ -228,12 +232,12 @@ impl eframe::App for App {
                     &description,
                 );
 
-                // Showcase-owned controls (e.g. camera toggle) over the top-right.
-                egui::Area::new(egui::Id::new("showcase_overlay"))
+                // Shared orbit/fly toggle over the top-right.
+                egui::Area::new(egui::Id::new("camera_toggle"))
                     .fixed_pos(rect.right_top() + egui::vec2(-12.0, 12.0))
                     .pivot(egui::Align2::RIGHT_TOP)
                     .show(ui.ctx(), |ui| {
-                        self.list[self.active].viewport_overlay(ui);
+                        self.camera.overlay(ui);
                     });
 
                 // `?` button over the bottom-right opens the controls modal.
@@ -245,7 +249,10 @@ impl eframe::App for App {
                             self.show_controls = true;
                         }
                     });
+                // General camera controls first, then this showcase's own.
                 ui::controls_modal(ui.ctx(), &mut self.show_controls, &title, |ui| {
+                    self.camera.controls(ui);
+                    ui.separator();
                     self.list[self.active].controls(ui);
                 });
 
