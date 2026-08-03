@@ -10,6 +10,7 @@
 
 mod showcase;
 mod showcases;
+mod ui;
 
 use eframe::{egui, wgpu};
 use viewport_lib::input::adapters::from_egui;
@@ -48,6 +49,7 @@ fn main() -> eframe::Result {
                 list,
                 active: 0,
                 target: None,
+                show_controls: false,
             }))
         }),
     )
@@ -66,6 +68,7 @@ struct App {
     list: Vec<Box<dyn Showcase>>,
     active: usize,
     target: Option<Target>,
+    show_controls: bool,
 }
 
 impl eframe::App for App {
@@ -215,14 +218,15 @@ impl eframe::App for App {
                     egui::Color32::WHITE,
                 );
 
-                // Help text over the top-left corner of the viewport.
-                egui::Area::new(egui::Id::new("showcase_help"))
-                    .fixed_pos(rect.left_top() + egui::vec2(12.0, 12.0))
-                    .show(ui.ctx(), |ui| {
-                        egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            self.list[self.active].ui(ui);
-                        });
-                    });
+                // Info box over the top-left: what this showcase is.
+                let title = self.list[self.active].name().to_string();
+                let description = self.list[self.active].description().to_string();
+                ui::info_box(
+                    ui.ctx(),
+                    rect.left_top() + egui::vec2(12.0, 12.0),
+                    &title,
+                    &description,
+                );
 
                 // Showcase-owned controls (e.g. camera toggle) over the top-right.
                 egui::Area::new(egui::Id::new("showcase_overlay"))
@@ -231,6 +235,19 @@ impl eframe::App for App {
                     .show(ui.ctx(), |ui| {
                         self.list[self.active].viewport_overlay(ui);
                     });
+
+                // `?` button over the bottom-right opens the controls modal.
+                egui::Area::new(egui::Id::new("showcase_help_btn"))
+                    .fixed_pos(rect.right_bottom() + egui::vec2(-12.0, -12.0))
+                    .pivot(egui::Align2::RIGHT_BOTTOM)
+                    .show(ui.ctx(), |ui| {
+                        if ui::help_button(ui) {
+                            self.show_controls = true;
+                        }
+                    });
+                ui::controls_modal(ui.ctx(), &mut self.show_controls, &title, |ui| {
+                    self.list[self.active].controls(ui);
+                });
 
                 if response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);

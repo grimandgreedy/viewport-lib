@@ -2,7 +2,10 @@
 
 use super::ViewportSession;
 use crate::interaction::input::ViewportContext;
-use crate::interaction::manipulation::{ManipResult, ManipulationContext};
+use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode, compute_gizmo_scale};
+use crate::interaction::manipulation::{
+    ManipResult, ManipulationContext, ManipulationKind,
+};
 use crate::runtime::RuntimeFrameContext;
 use crate::{
     CameraFrame, FrameData, InteractionFrame, OrbitCameraController, OverlayFrame, SceneFrame,
@@ -164,7 +167,34 @@ impl ViewportSession {
         self.frame.interaction.outline_selected = self.outline_selected;
         self.frame.interaction.outline_colour = self.outline_colour;
         self.frame.interaction.outline_width_px = self.outline_width_px;
+        self.stamp_gizmo();
         self.frame.overlays = OverlayFrame::default();
         self.inject_extras();
+    }
+
+    /// While a manipulation session is active, position the transform gizmo at
+    /// the session center and set its mode/axis so the renderer draws it. Idle
+    /// (no session), `gizmo_model` stays `None` and nothing is drawn.
+    fn stamp_gizmo(&mut self) {
+        let Some(state) = self.manip.as_ref().and_then(|m| m.state()) else {
+            return;
+        };
+        let scale = compute_gizmo_scale(
+            state.center,
+            self.camera.eye_position(),
+            self.camera.fov_y,
+            self.viewport_size[1],
+        );
+        self.frame.interaction.gizmo_model = Some(glam::Mat4::from_scale_rotation_translation(
+            glam::Vec3::splat(scale),
+            glam::Quat::IDENTITY,
+            state.center,
+        ));
+        self.frame.interaction.gizmo_mode = match state.kind {
+            ManipulationKind::Move => GizmoMode::Translate,
+            ManipulationKind::Rotate => GizmoMode::Rotate,
+            ManipulationKind::Scale => GizmoMode::Scale,
+        };
+        self.frame.interaction.gizmo_hovered = state.axis.unwrap_or(GizmoAxis::None);
     }
 }

@@ -76,8 +76,14 @@ pub trait Showcase {
     /// the frame right after.
     fn update(&mut self, ctx: &mut ShowcaseCtx);
 
-    /// Optional controls / help text, shown as an overlay on the viewport.
-    fn ui(&mut self, _ui: &mut egui::Ui) {}
+    /// One or two sentences on what this showcase demonstrates. Shown in the
+    /// info box over the top-left corner of the viewport.
+    fn description(&self) -> &str {
+        ""
+    }
+
+    /// Controls / key bindings, shown in the `?` modal. Default: nothing.
+    fn controls(&mut self, _ui: &mut egui::Ui) {}
 
     /// Optional controls drawn over the top-right corner of the viewport, e.g. a
     /// camera-mode toggle. Default: nothing.

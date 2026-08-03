@@ -95,6 +95,11 @@ impl Showcase for ObjectsShowcase {
         ctx.session
             .set_selection_outline(true, [1.0, 1.0, 1.0, 1.0], 2.0);
 
+        // Show the X-Y plane grid at Z=0 for spatial reference.
+        let vp = ctx.session.viewport_frame_mut();
+        vp.show_grid = true;
+        vp.grid_cell_size = 1.0;
+
         ctx.session.camera_mut().distance = 12.0;
         self.mode = CameraMode::Orbit;
         self.selected = None;
@@ -203,20 +208,27 @@ impl Showcase for ObjectsShowcase {
         // Apply the manipulation result to the selected node.
         match session.last_manip() {
             ManipResult::Update(delta) => {
+                // Rotate and scale pivot around the session center (the object's
+                // own position at session start), not the world origin, so the
+                // object turns and grows in place. Translation just adds.
+                let center = session
+                    .manip_state()
+                    .map(|s| s.center)
+                    .unwrap_or(Vec3::ZERO);
                 if let Some(id) = self.selected {
                     let current = session
                         .scene()
                         .node(id)
                         .map(|n| n.local_transform())
                         .unwrap_or(Mat4::IDENTITY);
-                    let delta_mat = Mat4::from_scale_rotation_translation(
-                        delta.scale,
-                        delta.rotation,
-                        delta.translation,
-                    );
-                    session
-                        .scene_mut()
-                        .set_local_transform(id, delta_mat * current);
+                    let to_pivot = Mat4::from_translation(-center);
+                    let from_pivot = Mat4::from_translation(center);
+                    let rot = Mat4::from_quat(delta.rotation);
+                    let scale = Mat4::from_scale(delta.scale);
+                    let translate = Mat4::from_translation(delta.translation);
+                    let new_transform =
+                        translate * from_pivot * rot * scale * to_pivot * current;
+                    session.scene_mut().set_local_transform(id, new_transform);
                 }
             }
             ManipResult::Cancel | ManipResult::ConstraintChanged => {
@@ -234,26 +246,32 @@ impl Showcase for ObjectsShowcase {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui) {
+    fn description(&self) -> &str {
+        "A handful of primitives you can click to select, then grab, rotate, or \
+         scale. The camera toggles between orbit and first-person."
+    }
+
+    fn controls(&mut self, ui: &mut egui::Ui) {
         ui.label("Click an object to select it.");
+        ui.separator();
+        ui.strong("Manipulate");
         ui.label("G / R / S: grab / rotate / scale");
-        ui.label("X / Y / Z: constrain axis");
+        ui.label("X / Y / Z: constrain to axis");
         ui.label("Enter or click: confirm    Esc: cancel");
         ui.separator();
-        let mode = match self.mode {
-            CameraMode::Orbit => "Orbit",
-            CameraMode::FirstPerson => "First person (WASD / arrows to move)",
-        };
-        ui.label(format!("Camera: {mode}"));
-        ui.label("Press ` or the top-right button to toggle camera");
+        ui.strong("Camera");
+        ui.label("` or the top-right toggle: orbit <-> fly");
+        ui.label("WASD or arrow keys: move (first person)");
     }
 
     fn viewport_overlay(&mut self, ui: &mut egui::Ui) {
-        let next = match self.mode {
-            CameraMode::Orbit => "Switch to first person",
-            CameraMode::FirstPerson => "Switch to orbit",
+        let active = match self.mode {
+            CameraMode::Orbit => 0,
+            CameraMode::FirstPerson => 1,
         };
-        if ui.button(next).clicked() {
+        // Two modes, so any pick is a toggle; route it through the same request
+        // flag the ` key uses.
+        if crate::ui::segmented(ui, active, &["orbit", "fly"]).is_some() {
             self.toggle_requested = true;
         }
     }
