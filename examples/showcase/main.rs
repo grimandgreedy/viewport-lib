@@ -247,6 +247,14 @@ impl eframe::App for App {
                     &description,
                 );
 
+                // Showcase-owned controls over the top-centre (e.g. a mode chip).
+                egui::Area::new(egui::Id::new("showcase_top_overlay"))
+                    .fixed_pos(rect.center_top() + egui::vec2(0.0, 12.0))
+                    .pivot(egui::Align2::CENTER_TOP)
+                    .show(ui.ctx(), |ui| {
+                        self.list[self.active].top_overlay(ui);
+                    });
+
                 // Shared orbit/fly toggle over the top-right.
                 egui::Area::new(egui::Id::new("camera_toggle"))
                     .fixed_pos(rect.right_top() + egui::vec2(-12.0, 12.0))

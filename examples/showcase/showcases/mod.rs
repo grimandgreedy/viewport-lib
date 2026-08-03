@@ -7,6 +7,8 @@
 pub mod objects;
 #[path = "2_overlays.rs"]
 pub mod overlays;
+#[path = "3_materials.rs"]
+pub mod materials;
 
 use crate::showcase::Showcase;
 
@@ -15,5 +17,6 @@ pub fn all() -> Vec<Box<dyn Showcase>> {
     vec![
         Box::new(objects::ObjectsShowcase::new()),
         Box::new(overlays::OverlaysShowcase::new()),
+        Box::new(materials::MaterialsShowcase::new()),
     ]
 }

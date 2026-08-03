@@ -124,6 +124,10 @@ pub trait Showcase {
     /// Live controls (sliders, toggles, pickers) drawn in the right-side panel.
     /// Called before `update` each frame, so `update` sees the new state.
     fn panel(&mut self, _ui: &mut egui::Ui) {}
+
+    /// Optional controls drawn over the top-centre of the viewport, e.g. a mode
+    /// chip. Default: nothing.
+    fn top_overlay(&mut self, _ui: &mut egui::Ui) {}
 }
 
 /// Reset the shared session between showcases: drop all scene nodes, clear the
@@ -134,4 +138,9 @@ pub fn reset_session(session: &mut ViewportSession) {
     session.scene_mut().remove_many(&ids);
     session.selection_mut().clear();
     session.clear_extras();
+    // Persistent viewport chrome (grid, background, wireframe) and clip objects
+    // are retained on the session, so reset them or one showcase's settings leak
+    // into the next. Each showcase re-sets what it needs in `setup`.
+    *session.viewport_frame_mut() = viewport_lib::ViewportFrame::default();
+    session.effects_mut().clip_objects.clear();
 }

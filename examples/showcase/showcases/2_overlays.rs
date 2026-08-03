@@ -117,9 +117,6 @@ impl Showcase for OverlaysShowcase {
             );
         }
 
-        let vp = ctx.session.viewport_frame_mut();
-        vp.show_grid = true;
-        vp.grid_cell_size = 1.0;
         ctx.session.camera_mut().distance = 14.0;
 
         // Overlay textures for the texture-masked and 9-slice shapes.
