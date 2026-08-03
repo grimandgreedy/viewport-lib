@@ -18,6 +18,10 @@ use crate::interaction::input::adapters::from_winit;
 use crate::session::ViewportSession;
 
 /// Window configuration for a [`ViewportApp`].
+///
+/// Non-exhaustive: build with [`AppConfig::default`] and the `with_*` methods so
+/// new options can be added without breaking construction.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     /// Window title.

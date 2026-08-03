@@ -199,6 +199,14 @@ impl ViewportSession {
         self.last_manip
     }
 
+    /// Whether a move/rotate/scale session is currently active. A host driving
+    /// its own camera (first-person, fly) uses this to suppress camera motion
+    /// while a manipulation drag owns the pointer, the way
+    /// [`update_orbit`](Self::update_orbit) suppresses orbit internally.
+    pub fn is_manipulating(&self) -> bool {
+        self.manip.as_ref().is_some_and(|m| m.is_active())
+    }
+
     // ---- camera ---------------------------------------------------------------
 
     /// The current camera.

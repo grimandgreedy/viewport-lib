@@ -38,6 +38,7 @@ pub struct NavigationActions {
 /// flags that manipulation and picking need. Filled by
 /// [`super::viewport_input::ViewportInput::resolve`] from state it already tracks,
 /// so consumers no longer hand-roll a click-vs-drag threshold.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PointerFrame {
     /// Cursor position in viewport-local pixels. `None` when the pointer is outside.
