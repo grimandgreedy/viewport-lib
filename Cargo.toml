@@ -125,6 +125,11 @@ path = "examples/eframe_minimal/main.rs"
 required-features = ["wgpu27", "example-egui", "egui-adapter"]
 
 [[example]]
+name = "showcase"
+path = "examples/showcase/main.rs"
+required-features = ["wgpu27", "example-egui", "egui-adapter"]
+
+[[example]]
 name = "eframe-minimal-wgpu29"
 path = "examples/eframe_minimal_wgpu29/main.rs"
 required-features = ["wgpu29", "example-egui-wgpu29"]
