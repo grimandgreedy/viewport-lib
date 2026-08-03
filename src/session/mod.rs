@@ -66,6 +66,9 @@ pub struct ViewportSession {
 
     /// Viewport size in logical pixels, recorded by [`begin_frame`](Self::begin_frame).
     viewport_size: [f32; 2],
+    /// Physical pixels per logical pixel. Sizes the physical render target and
+    /// keeps overlays/axes crisp on HiDPI. Default 1.0 (physical == logical).
+    pixels_per_point: f32,
 
     // Persistent selection-outline styling, re-stamped onto the interaction
     // sub-frame each assembly (the settings half of `InteractionFrame`).
@@ -99,6 +102,7 @@ impl ViewportSession {
             action: ActionFrame::default(),
             last_manip: ManipResult::None,
             viewport_size: [1.0, 1.0],
+            pixels_per_point: 1.0,
             outline_selected: defaults.outline_selected,
             outline_colour: defaults.outline_colour,
             outline_width_px: defaults.outline_width_px,
@@ -151,6 +155,16 @@ impl ViewportSession {
     /// with a stale size, mismatching the freshly resized swapchain texture).
     pub fn set_viewport_size(&mut self, size: [f32; 2]) {
         self.viewport_size = size;
+    }
+
+    /// Set the physical pixels per logical pixel (e.g. `ui.ctx().pixels_per_point()`).
+    ///
+    /// [`viewport_size`](Self::set_viewport_size) stays in logical units; this
+    /// only sizes the physical render target and keeps overlays and the axes
+    /// indicator crisp on HiDPI displays. The host that renders into an offscreen
+    /// texture must size it `viewport_size * pixels_per_point`. Default 1.0.
+    pub fn set_pixels_per_point(&mut self, pixels_per_point: f32) {
+        self.pixels_per_point = pixels_per_point.max(0.001);
     }
 
     /// Resolve accumulated events into an [`ActionFrame`] and cache it.

@@ -7,16 +7,19 @@ use crate::interaction::input::{
 /// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into a
 /// [`ViewportEvent`], or `None` for events the viewport does not consume.
 ///
-/// Cursor positions are passed through in physical pixels; for a window that
-/// hosts a single full-window viewport that is the viewport-local coordinate.
-/// An embedded winit viewport should offset by the viewport rect origin instead
-/// of using this directly.
-pub fn from_winit(event: &::winit::event::WindowEvent) -> Option<ViewportEvent> {
+/// winit reports cursor positions in physical pixels; `scale_factor`
+/// (`window.scale_factor()`) divides them down to logical points, the space the
+/// viewport's screen-space math and `viewport_size` use. Pass `1.0` to keep
+/// positions in physical pixels. For a window hosting a single full-window
+/// viewport the result is already viewport-local; an embedded winit viewport
+/// should offset by the viewport rect origin as well.
+pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Option<ViewportEvent> {
     use ::winit::event::{MouseScrollDelta, WindowEvent};
 
+    let inv_scale = 1.0 / scale_factor.max(0.001);
     match event {
         WindowEvent::CursorMoved { position, .. } => Some(ViewportEvent::PointerMoved {
-            position: glam::Vec2::new(position.x as f32, position.y as f32),
+            position: glam::Vec2::new(position.x as f32, position.y as f32) * inv_scale,
         }),
         WindowEvent::CursorLeft { .. } => Some(ViewportEvent::PointerLeft),
         WindowEvent::MouseInput { state, button, .. } => Some(ViewportEvent::MouseButton {

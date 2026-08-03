@@ -7,22 +7,17 @@ use crate::interaction::input::{ButtonState, KeyCode, MouseButton, ScrollUnits, 
 ///
 /// `viewport_origin` is the top-left of the viewport rectangle in egui points
 /// (logical coordinates); it is subtracted from pointer positions to make them
-/// viewport-local. `pixels_per_point` then scales the local position into
-/// physical pixels, so a host rendering at physical resolution (the sharp path
-/// on HiDPI) gets pointer coordinates in the same space as its render target.
-/// Pass `1.0` to keep positions in points. Modifier state is not carried on
-/// `ViewportEvent`; push a [`ViewportEvent::ModifiersChanged`] from the frame's
-/// `InputState` separately.
-pub fn from_egui(
-    event: &::egui::Event,
-    viewport_origin: glam::Vec2,
-    pixels_per_point: f32,
-) -> Option<ViewportEvent> {
+/// viewport-local. Coordinates stay in logical points, which is the space the
+/// viewport's screen-space math and `viewport_size` use; HiDPI sharpness comes
+/// from the render-target size and `pixels_per_point`, not from the pointer
+/// coordinates. Modifier state is not carried on `ViewportEvent`; push a
+/// [`ViewportEvent::ModifiersChanged`] from the frame's `InputState` separately.
+pub fn from_egui(event: &::egui::Event, viewport_origin: glam::Vec2) -> Option<ViewportEvent> {
     use ::egui::Event;
 
     match event {
         Event::PointerMoved(pos) => Some(ViewportEvent::PointerMoved {
-            position: (glam::Vec2::new(pos.x, pos.y) - viewport_origin) * pixels_per_point,
+            position: glam::Vec2::new(pos.x, pos.y) - viewport_origin,
         }),
         Event::PointerButton {
             button, pressed, ..

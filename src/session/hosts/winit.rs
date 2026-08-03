@@ -230,10 +230,15 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
         if let Some(setup) = self.setup.take() {
             setup(&mut session, &device);
         }
+        let scale = window.scale_factor() as f32;
+        session.set_pixels_per_point(scale);
         session.begin_frame(ViewportContext {
             hovered: true,
             focused: true,
-            viewport_size: [surface_config.width as f32, surface_config.height as f32],
+            viewport_size: [
+                surface_config.width as f32 / scale,
+                surface_config.height as f32 / scale,
+            ],
         });
 
         self.last_frame = Instant::now();
@@ -268,8 +273,11 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
             }
 
             WindowEvent::RedrawRequested => {
-                let w = state.surface_config.width as f32;
-                let h = state.surface_config.height as f32;
+                // Logical viewport size; pixels_per_point carries the DPI scale so
+                // the surface (physical) is sized correctly and overlays stay crisp.
+                let scale = state.window.scale_factor() as f32;
+                let w = state.surface_config.width as f32 / scale;
+                let h = state.surface_config.height as f32 / scale;
 
                 let now = Instant::now();
                 let dt = (now - self.last_frame).as_secs_f32();
@@ -289,6 +297,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                 // internal depth/HDR targets match the swapchain texture even when
                 // a resize landed since the last begin_frame.
                 state.session.set_viewport_size([w, h]);
+                state.session.set_pixels_per_point(scale);
                 state.session.step_runtime(dt);
                 state.session.update_orbit(&mut self.orbit);
 
@@ -321,7 +330,8 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
             }
 
             other => {
-                if let Some(ev) = from_winit(&other) {
+                let scale = state.window.scale_factor() as f32;
+                if let Some(ev) = from_winit(&other, scale) {
                     state.session.handle_event(ev);
                     state.window.request_redraw();
                 }

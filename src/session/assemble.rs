@@ -121,7 +121,8 @@ impl ViewportSession {
     fn assemble(&mut self) {
         let [w, h] = self.viewport_size;
         self.camera.set_aspect_ratio(w, h);
-        self.frame.camera = CameraFrame::from_camera(&self.camera, self.viewport_size);
+        self.frame.camera = CameraFrame::from_camera(&self.camera, self.viewport_size)
+            .with_pixels_per_point(self.pixels_per_point);
         self.frame.scene = SceneFrame::from_scene(&mut self.scene, &self.selection);
         self.frame.interaction = InteractionFrame::from_selection(&self.selection);
         self.frame.interaction.outline_selected = self.outline_selected;

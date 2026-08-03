@@ -7,10 +7,10 @@
 //! is not used here because it requires the session to live in egui's
 //! `Send + Sync` callback resources, which a session carrying a runtime is not.
 //!
-//! The offscreen texture is sized in physical pixels (`points * pixels_per_point`)
-//! so it stays sharp on HiDPI displays. The session's viewport size and the
-//! pointer coordinates from `from_egui` are kept in that same physical space, so
-//! the render target, camera aspect, and input all agree.
+//! Viewport size and pointer coordinates stay in logical points; the session's
+//! `pixels_per_point` sizes the physical render target and keeps overlays and the
+//! axes indicator crisp on HiDPI. The offscreen texture is therefore allocated at
+//! `points * pixels_per_point` (physical) to match the target the renderer sizes.
 //!
 //! Navigation: left/middle drag orbit, right drag pan, scroll zoom.
 
@@ -141,13 +141,15 @@ impl eframe::App for App {
                 }
                 let target = self.target.as_ref().unwrap();
 
-                // Feed input to the session, in the same physical-pixel space as
-                // the render target.
+                // Screen-space state (viewport size, cursor) stays in logical
+                // points; pixels_per_point sizes the physical render target and
+                // keeps overlays and the axes indicator crisp on HiDPI.
                 self.session.begin_frame(ViewportContext {
                     hovered: response.hovered(),
                     focused: response.has_focus(),
-                    viewport_size: [size[0] as f32, size[1] as f32],
+                    viewport_size: [rect.width(), rect.height()],
                 });
+                self.session.set_pixels_per_point(ppp);
                 let origin = glam::Vec2::new(rect.left(), rect.top());
                 ui.input(|i| {
                     self.session
@@ -157,7 +159,7 @@ impl eframe::App for App {
                             ctrl: i.modifiers.command,
                         }));
                     for event in &i.events {
-                        if let Some(ev) = from_egui(event, origin, ppp) {
+                        if let Some(ev) = from_egui(event, origin) {
                             self.session.handle_event(ev);
                         }
                     }
