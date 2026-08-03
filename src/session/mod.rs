@@ -19,8 +19,11 @@
 //! let any controller drive the camera instead.
 
 mod assemble;
+mod extras;
 mod render;
 mod settings;
+
+pub use extras::ExtraId;
 
 mod orbit;
 pub use orbit::OrbitSession;
@@ -75,6 +78,11 @@ pub struct ViewportSession {
     outline_selected: bool,
     outline_colour: [f32; 4],
     outline_width_px: f32,
+
+    // Retained non-mesh items, re-injected into the scene sub-frame each
+    // assembly so static point clouds/glyphs/volumes/splats are added once.
+    extras: Vec<(ExtraId, extras::SceneExtra)>,
+    next_extra_id: u64,
 }
 
 impl ViewportSession {
@@ -106,6 +114,8 @@ impl ViewportSession {
             outline_selected: defaults.outline_selected,
             outline_colour: defaults.outline_colour,
             outline_width_px: defaults.outline_width_px,
+            extras: Vec::new(),
+            next_extra_id: 0,
         }
     }
 
@@ -254,7 +264,7 @@ impl ViewportSession {
 mod tests {
     use super::*;
     use crate::interaction::input::{ButtonState, MouseButton};
-    use crate::{Material, OrbitCameraController, primitives};
+    use crate::{Material, OrbitCameraController, PointCloudItem, primitives};
 
     fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();
@@ -364,5 +374,38 @@ mod tests {
             "press should mark drag_started"
         );
         assert_eq!(action.pointer.cursor, Some(glam::Vec2::new(40.0, 40.0)));
+    }
+
+    #[test]
+    fn retained_extras_and_injection() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping retained_extras_and_injection: no GPU adapter");
+            return;
+        };
+        let mut session = ViewportSession::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        session.begin_frame(ctx());
+        let mut orbit = OrbitCameraController::viewport_all();
+
+        // A retained extra is re-injected into the scene every frame.
+        let mut pc = PointCloudItem::default();
+        pc.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let id = session.add_point_cloud(pc);
+        let frame = session.update_orbit(&mut orbit);
+        assert_eq!(frame.scene.point_clouds.len(), 1, "retained extra injected");
+
+        // The injection closure runs after assembly, so per-frame items land.
+        let frame = session.update_orbit_with(&mut orbit, |f| {
+            f.scene.point_clouds.push(PointCloudItem::default());
+        });
+        assert_eq!(
+            frame.scene.point_clouds.len(),
+            2,
+            "retained + per-frame injected item"
+        );
+
+        // Removing the retained extra drops it from later frames.
+        assert!(session.remove_extra(id));
+        let frame = session.update_orbit(&mut orbit);
+        assert_eq!(frame.scene.point_clouds.len(), 0, "removed extra gone");
     }
 }

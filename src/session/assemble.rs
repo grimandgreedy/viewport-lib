@@ -41,6 +41,42 @@ impl ViewportSession {
         &self.frame
     }
 
+    /// Like [`update_orbit`](Self::update_orbit), then run `inject` against the
+    /// assembled frame before returning it. This is the ordering-safe way to add
+    /// per-frame overlays and non-mesh items: assembly rebuilds the scene
+    /// sub-frame and clears overlays, so pushing through
+    /// [`frame_data_mut`](Self::frame_data_mut) only lands if it happens after
+    /// the update; this closure runs at that exact point.
+    ///
+    /// ```rust,ignore
+    /// session.update_orbit_with(&mut orbit, |frame| {
+    ///     frame.scene.point_clouds.push(cloud);
+    ///     frame.overlays.labels.push(label);
+    /// });
+    /// ```
+    pub fn update_orbit_with(
+        &mut self,
+        orbit: &mut OrbitCameraController,
+        inject: impl FnOnce(&mut FrameData),
+    ) -> &FrameData {
+        self.update_orbit(orbit);
+        inject(&mut self.frame);
+        &self.frame
+    }
+
+    /// Like [`frame`](Self::frame), then run `inject` against the assembled frame.
+    /// The bring-your-own-camera counterpart of
+    /// [`update_orbit_with`](Self::update_orbit_with).
+    pub fn frame_with(
+        &mut self,
+        ctx: ViewportContext,
+        inject: impl FnOnce(&mut FrameData),
+    ) -> &FrameData {
+        self.frame(ctx);
+        inject(&mut self.frame);
+        &self.frame
+    }
+
     /// Step the attached runtime by `dt` seconds, writing simulated transforms
     /// back into the scene. No-op when no runtime is attached. Call before the
     /// per-frame camera update so assembly reads the stepped scene.
@@ -129,5 +165,6 @@ impl ViewportSession {
         self.frame.interaction.outline_colour = self.outline_colour;
         self.frame.interaction.outline_width_px = self.outline_width_px;
         self.frame.overlays = OverlayFrame::default();
+        self.inject_extras();
     }
 }

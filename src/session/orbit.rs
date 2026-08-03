@@ -30,6 +30,13 @@ impl OrbitSession {
         self.session.update_orbit(&mut self.orbit)
     }
 
+    /// Drive the camera and run `inject` against the assembled frame, the
+    /// ordering-safe way to add per-frame overlays and non-mesh items. See
+    /// [`ViewportSession::update_orbit_with`].
+    pub fn update_with(&mut self, inject: impl FnOnce(&mut FrameData)) -> &FrameData {
+        self.session.update_orbit_with(&mut self.orbit, inject)
+    }
+
     /// The bundled orbit controller, for tuning sensitivity or navigation mode.
     pub fn orbit_mut(&mut self) -> &mut OrbitCameraController {
         &mut self.orbit

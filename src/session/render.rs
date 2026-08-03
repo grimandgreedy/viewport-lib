@@ -9,7 +9,7 @@
 //! caller never chooses a method by path.
 
 use super::ViewportSession;
-use crate::{PickBackend, PickHit, PickMask};
+use crate::{PickBackend, PickHit, PickMask, PickPoll, PickRectResult};
 
 impl ViewportSession {
     /// Render the assembled frame into `view` and return the command buffer for
@@ -63,5 +63,55 @@ impl ViewportSession {
     ) -> Option<PickHit> {
         self.renderer
             .pick_object(PickBackend::Gpu, screen, &self.frame, device, queue, mask)
+    }
+
+    /// Marquee select: every object whose screen footprint intersects the
+    /// rectangle from `min` to `max` (viewport-local pixels), CPU backend.
+    /// Device-free and synchronous, like [`pick`](Self::pick).
+    pub fn pick_rect(&self, min: glam::Vec2, max: glam::Vec2, mask: PickMask) -> PickRectResult {
+        let viewport_size = glam::Vec2::from(self.viewport_size);
+        let view_proj = self.camera.view_proj_matrix();
+        self.renderer
+            .pick_rect(min, max, viewport_size, view_proj, mask)
+    }
+
+    /// Marquee select using the GPU backend, which covers item types the CPU
+    /// rect path cannot. Needs the device and queue for the readback.
+    pub fn pick_rect_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        min: glam::Vec2,
+        max: glam::Vec2,
+        mask: PickMask,
+    ) -> PickRectResult {
+        self.renderer.pick_rect_objects(
+            PickBackend::Gpu,
+            min,
+            max,
+            &self.frame,
+            device,
+            queue,
+            mask,
+        )
+    }
+
+    /// Start a non-blocking GPU pick under `screen`, returning `true` if a pick
+    /// was dispatched. Poll it with [`pick_poll`](Self::pick_poll) on later
+    /// frames so the readback never stalls the frame it was issued on.
+    pub fn pick_begin(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        screen: glam::Vec2,
+        mask: PickMask,
+    ) -> bool {
+        self.renderer
+            .pick_object_begin(screen, &self.frame, device, queue, mask)
+    }
+
+    /// Poll the pick started by [`pick_begin`](Self::pick_begin).
+    pub fn pick_poll(&mut self, device: &crate::gpu::Device) -> PickPoll {
+        self.renderer.pick_object_poll(device)
     }
 }

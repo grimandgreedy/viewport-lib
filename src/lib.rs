@@ -265,7 +265,7 @@ pub use renderer::{
 };
 pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 
-pub use session::{OrbitSession, ViewportSession};
+pub use session::{ExtraId, OrbitSession, ViewportSession};
 
 #[cfg(feature = "app")]
 pub use session::hosts::{AppConfig, FrameCtx, ViewportApp};
