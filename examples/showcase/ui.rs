@@ -35,12 +35,16 @@ pub fn info_box(ctx: &egui::Context, top_left: egui::Pos2, title: &str, body: &s
     });
 }
 
-/// A compact segmented switch, e.g. `orbit | fly`. Returns `Some(index)` if the
-/// user picked a different option this frame.
+/// A compact segmented switch, e.g. `orbit | fly`, on a dark rounded backing so
+/// the unselected option reads as a button rather than bare text over the
+/// viewport. Returns `Some(index)` if the user picked a different option.
 pub fn segmented(ui: &mut egui::Ui, active: usize, options: &[&str]) -> Option<usize> {
     let mut picked = None;
-    egui::Frame::group(ui.style())
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgba_unmultiplied(18, 18, 22, 205))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(20)))
         .inner_margin(egui::Margin::same(3))
+        .corner_radius(egui::CornerRadius::same(5))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             ui.horizontal(|ui| {
@@ -54,11 +58,30 @@ pub fn segmented(ui: &mut egui::Ui, active: usize, options: &[&str]) -> Option<u
     picked
 }
 
-/// A round-ish `?` button. Returns `true` on click.
+/// A circular `?` button on the same dark backing as the toggle, painted by
+/// hand so the glyph is exactly centred. Returns `true` on click.
 pub fn help_button(ui: &mut egui::Ui) -> bool {
-    ui.add(egui::Button::new("?").min_size(egui::vec2(28.0, 28.0)))
-        .on_hover_text("Show controls")
-        .clicked()
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
+    let fill = if resp.hovered() {
+        egui::Color32::from_rgba_unmultiplied(38, 38, 46, 220)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(18, 18, 22, 205)
+    };
+    let painter = ui.painter();
+    painter.circle(
+        rect.center(),
+        14.0,
+        fill,
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(20)),
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "?",
+        egui::FontId::proportional(17.0),
+        egui::Color32::from_gray(230),
+    );
+    resp.on_hover_text("Show controls").clicked()
 }
 
 /// A modal listing the active showcase's controls. `open` is toggled off when

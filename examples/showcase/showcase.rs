@@ -14,6 +14,7 @@ use crate::camera::{CameraRig, MoveKeys};
 pub struct SetupCtx<'a> {
     pub session: &'a mut ViewportSession,
     pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
 }
 
 /// Passed to [`Showcase::update`] each frame. Read timing and raw key presses
@@ -113,6 +114,16 @@ pub trait Showcase {
     /// Showcase-specific controls (e.g. G/R/S manipulation), shown in the `?`
     /// modal below the general camera controls. Default: nothing.
     fn controls(&mut self, _ui: &mut egui::Ui) {}
+
+    /// Whether this showcase draws a live controls panel. When true the host
+    /// shows a right-side panel and calls [`panel`](Self::panel). Default: false.
+    fn has_controls(&self) -> bool {
+        false
+    }
+
+    /// Live controls (sliders, toggles, pickers) drawn in the right-side panel.
+    /// Called before `update` each frame, so `update` sees the new state.
+    fn panel(&mut self, _ui: &mut egui::Ui) {}
 }
 
 /// Reset the shared session between showcases: drop all scene nodes, clear the

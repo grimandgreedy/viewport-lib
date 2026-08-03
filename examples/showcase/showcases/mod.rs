@@ -5,10 +5,15 @@
 
 #[path = "1_objects.rs"]
 pub mod objects;
+#[path = "2_overlays.rs"]
+pub mod overlays;
 
 use crate::showcase::Showcase;
 
 /// Every showcase, in selector order.
 pub fn all() -> Vec<Box<dyn Showcase>> {
-    vec![Box::new(objects::ObjectsShowcase::new())]
+    vec![
+        Box::new(objects::ObjectsShowcase::new()),
+        Box::new(overlays::OverlaysShowcase::new()),
+    ]
 }

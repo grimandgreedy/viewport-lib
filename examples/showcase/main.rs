@@ -42,6 +42,7 @@ fn main() -> eframe::Result {
             let mut setup = SetupCtx {
                 session: &mut session,
                 device: &rs.device,
+                queue: &rs.queue,
             };
             list[0].setup(&mut setup);
 
@@ -115,8 +116,22 @@ impl eframe::App for App {
             let mut setup = SetupCtx {
                 session: &mut self.session,
                 device: &rs.device,
+                queue: &rs.queue,
             };
             self.list[self.active].setup(&mut setup);
+        }
+
+        // Right-side controls panel for showcases that have live controls.
+        if self.list[self.active].has_controls() {
+            egui::SidePanel::right("showcase_controls")
+                .resizable(false)
+                .default_width(240.0)
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        self.list[self.active].panel(ui);
+                    });
+                });
         }
 
         egui::CentralPanel::default()
