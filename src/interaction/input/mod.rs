@@ -34,6 +34,8 @@ pub mod query;
 // New input pipeline modules
 /// Per-frame resolved action output.
 pub mod action_frame;
+/// Native-event translation adapters (feature-gated per framework).
+pub mod adapters;
 /// Per-frame viewport context.
 pub mod context;
 /// Framework-agnostic viewport events.
@@ -44,8 +46,6 @@ pub mod preset;
 pub mod viewport_binding;
 /// Stateful viewport input accumulator and resolver.
 pub mod viewport_input;
-/// Native-event translation adapters (feature-gated per framework).
-pub mod adapters;
 
 // Legacy re-exports (compatibility)
 pub use action::Action;

@@ -391,13 +391,17 @@ impl OverlaysShowcase {
         let mut x = 20.0;
         let y = 260.0;
         out.push(
-            OverlayShapeItem::new(OverlayShape::Rect { corner_radius: cr }, [x, y], [120.0, 70.0])
-                .with_fill(OverlayFill::LinearGradient {
-                    start_colour: [0.05, 0.15, 0.55, 0.9],
-                    end_colour: [0.05, 0.65, 0.65, 0.9],
-                    angle: 0.0,
-                })
-                .with_border([0.3, 0.7, 1.0, 0.8], bw),
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: cr },
+                [x, y],
+                [120.0, 70.0],
+            )
+            .with_fill(OverlayFill::LinearGradient {
+                start_colour: [0.05, 0.15, 0.55, 0.9],
+                end_colour: [0.05, 0.65, 0.65, 0.9],
+                angle: 0.0,
+            })
+            .with_border([0.3, 0.7, 1.0, 0.8], bw),
         );
         x += 136.0;
         out.push(
@@ -420,17 +424,21 @@ impl OverlaysShowcase {
         );
         x += 86.0;
         out.push(
-            OverlayShapeItem::new(OverlayShape::Rect { corner_radius: cr }, [x, y], [120.0, 70.0])
-                .with_fill(OverlayFill::LinearGradientMulti {
-                    stops: vec![
-                        GradientStop::new(0.0, [0.05, 0.05, 0.20, 1.0]),
-                        GradientStop::new(0.4, [0.55, 0.10, 0.45, 1.0]),
-                        GradientStop::new(0.75, [0.95, 0.45, 0.20, 1.0]),
-                        GradientStop::new(1.0, [1.0, 0.95, 0.55, 1.0]),
-                    ],
-                    angle: 0.0,
-                })
-                .with_border([1.0, 0.85, 0.4, 0.8], bw),
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: cr },
+                [x, y],
+                [120.0, 70.0],
+            )
+            .with_fill(OverlayFill::LinearGradientMulti {
+                stops: vec![
+                    GradientStop::new(0.0, [0.05, 0.05, 0.20, 1.0]),
+                    GradientStop::new(0.4, [0.55, 0.10, 0.45, 1.0]),
+                    GradientStop::new(0.75, [0.95, 0.45, 0.20, 1.0]),
+                    GradientStop::new(1.0, [1.0, 0.95, 0.55, 1.0]),
+                ],
+                angle: 0.0,
+            })
+            .with_border([1.0, 0.85, 0.4, 0.8], bw),
         );
         x += 136.0;
         out.push(
@@ -451,10 +459,14 @@ impl OverlaysShowcase {
         let mut x = 20.0;
         let y = 360.0;
         out.push(
-            OverlayShapeItem::new(OverlayShape::Rect { corner_radius: cr }, [x, y], [120.0, 70.0])
-                .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.95]))
-                .with_border([0.5, 0.5, 0.6, 0.8], bw)
-                .with_shadow([0.0, 0.0, 0.0, 0.5], 12.0, [4.0, 4.0]),
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: cr },
+                [x, y],
+                [120.0, 70.0],
+            )
+            .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.95]))
+            .with_border([0.5, 0.5, 0.6, 0.8], bw)
+            .with_shadow([0.0, 0.0, 0.0, 0.5], 12.0, [4.0, 4.0]),
         );
         x += 152.0;
         out.push(
@@ -472,11 +484,15 @@ impl OverlaysShowcase {
         );
         x += 152.0;
         out.push(
-            OverlayShapeItem::new(OverlayShape::Rect { corner_radius: cr }, [x, y], [120.0, 70.0])
-                .with_fill(OverlayFill::Solid([0.22, 0.24, 0.30, 1.0]))
-                .with_border([0.05, 0.07, 0.12, 0.9], 1.0)
-                .with_shadow([0.0, 0.0, 0.0, 0.7], 14.0, [0.0, 4.0])
-                .with_shadow_inset(true),
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: cr },
+                [x, y],
+                [120.0, 70.0],
+            )
+            .with_fill(OverlayFill::Solid([0.22, 0.24, 0.30, 1.0]))
+            .with_border([0.05, 0.07, 0.12, 0.9], 1.0)
+            .with_shadow([0.0, 0.0, 0.0, 0.7], 14.0, [0.0, 4.0])
+            .with_shadow_inset(true),
         );
 
         // Row 4: border modes and animations.
@@ -525,9 +541,11 @@ impl OverlaysShowcase {
         x += 136.0;
         // Multi-channel: a sliding rect via the position track.
         out.push(
-            OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 4.0 }, [x, y + 20.0], [
-                44.0, 28.0,
-            ])
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 4.0 },
+                [x, y + 20.0],
+                [44.0, 28.0],
+            )
             .with_fill(OverlayFill::Solid([0.95, 0.65, 0.25, 0.95]))
             .with_border([1.0, 0.85, 0.4, 0.9], bw)
             .with_animations(OverlayAnimations {
@@ -574,9 +592,13 @@ impl OverlaysShowcase {
         );
         x += 86.0;
         out.push(
-            OverlayShapeItem::new(OverlayShape::RegularPolygon { sides: 6 }, [x, y], [70.0, 70.0])
-                .with_fill(OverlayFill::Solid([0.1, 0.5, 0.9, 0.9]))
-                .with_border([0.3, 0.7, 1.0, 0.9], bw),
+            OverlayShapeItem::new(
+                OverlayShape::RegularPolygon { sides: 6 },
+                [x, y],
+                [70.0, 70.0],
+            )
+            .with_fill(OverlayFill::Solid([0.1, 0.5, 0.9, 0.9]))
+            .with_border([0.3, 0.7, 1.0, 0.9], bw),
         );
         x += 86.0;
         out.push(
@@ -596,25 +618,29 @@ impl OverlaysShowcase {
         let clip = [x, y];
         let clip_size = 70.0;
         out.push(
-            OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 0.0 }, clip, [
-                clip_size * 0.5,
-                clip_size,
-            ])
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 0.0 },
+                clip,
+                [clip_size * 0.5, clip_size],
+            )
             .with_clip_mask(7),
         );
         out.push(
-            OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 0.0 }, clip, [
-                clip_size * 0.5,
-                clip_size,
-            ])
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 0.0 },
+                clip,
+                [clip_size * 0.5, clip_size],
+            )
             .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]))
             .with_border([1.0, 1.0, 1.0, 0.5], 1.0)
             .with_border_mode(BorderMode::Outer),
         );
         out.push(
-            OverlayShapeItem::new(OverlayShape::RegularPolygon { sides: 10 }, clip, [
-                clip_size, clip_size,
-            ])
+            OverlayShapeItem::new(
+                OverlayShape::RegularPolygon { sides: 10 },
+                clip,
+                [clip_size, clip_size],
+            )
             .with_rotation(t * 0.6)
             .with_fill(OverlayFill::Solid([0.9, 0.55, 0.2, 0.95]))
             .with_border([1.0, 0.8, 0.3, 0.9], bw)
@@ -666,9 +692,11 @@ impl OverlaysShowcase {
             // Carl Gauss portrait masked into a rounded rect.
             if let Some(tid) = self.carlgauss_tex {
                 out.push(
-                    OverlayShapeItem::new(OverlayShape::Rect { corner_radius: cr }, [x, y], [
-                        140.0, 90.0,
-                    ])
+                    OverlayShapeItem::new(
+                        OverlayShape::Rect { corner_radius: cr },
+                        [x, y],
+                        [140.0, 90.0],
+                    )
                     .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
                     .with_border([0.8, 0.8, 0.8, 0.9], bw)
                     .with_texture(tid),
@@ -678,17 +706,21 @@ impl OverlaysShowcase {
             // 9-slice A/B: stretched vs corner-preserving.
             if let Some(tid) = self.nine_slice_tex {
                 out.push(
-                    OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 0.0 }, [x, y], [
-                        180.0, 90.0,
-                    ])
+                    OverlayShapeItem::new(
+                        OverlayShape::Rect { corner_radius: 0.0 },
+                        [x, y],
+                        [180.0, 90.0],
+                    )
                     .with_texture(tid)
                     .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0])),
                 );
                 x += 196.0;
                 out.push(
-                    OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 0.0 }, [x, y], [
-                        180.0, 90.0,
-                    ])
+                    OverlayShapeItem::new(
+                        OverlayShape::Rect { corner_radius: 0.0 },
+                        [x, y],
+                        [180.0, 90.0],
+                    )
                     .with_texture(tid)
                     .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
                     .with_nine_slice(NineSlice {
@@ -704,9 +736,13 @@ impl OverlaysShowcase {
         let phase = (self.time * 0.22).fract();
         let p = infinity_bezier_point(phase, FIG8_CX, FIG8_CY);
         out.push(
-            OverlayShapeItem::new(OverlayShape::Circle, [p[0] - 11.0, p[1] - 11.0], [22.0, 22.0])
-                .with_fill(OverlayFill::Solid([0.95, 0.45, 0.85, 1.0]))
-                .with_border([1.0, 0.7, 0.95, 0.9], bw),
+            OverlayShapeItem::new(
+                OverlayShape::Circle,
+                [p[0] - 11.0, p[1] - 11.0],
+                [22.0, 22.0],
+            )
+            .with_fill(OverlayFill::Solid([0.95, 0.45, 0.85, 1.0]))
+            .with_border([1.0, 0.7, 0.95, 0.9], bw),
         );
     }
 
@@ -844,7 +880,9 @@ impl OverlaysShowcase {
                     [
                         hx + 2.1 * 16.0 * s.powi(3),
                         hy - 2.1
-                            * (13.0 * c - 5.0 * (2.0 * a).cos() - 2.0 * (3.0 * a).cos()
+                            * (13.0 * c
+                                - 5.0 * (2.0 * a).cos()
+                                - 2.0 * (3.0 * a).cos()
                                 - (4.0 * a).cos()),
                     ]
                 })

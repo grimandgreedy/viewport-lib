@@ -19,11 +19,11 @@ use viewport_lib::{
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
 #[allow(dead_code)]
-#[path = "../../plugins/toon_plugin.rs"]
-mod toon_plugin;
-#[allow(dead_code)]
 #[path = "../../plugins/surface_detail_plugin.rs"]
 mod surface_detail;
+#[allow(dead_code)]
+#[path = "../../plugins/toon_plugin.rs"]
+mod toon_plugin;
 
 use surface_detail::{DetailLayerPlugin, DissolvePlugin, ParallaxPlugin};
 use toon_plugin::{RimPlugin, ToonPlugin};
@@ -637,12 +637,7 @@ fn gradient_texture() -> (u32, u32, Vec<u8>) {
         for x in 0..size {
             let h = x as f32 / (size - 1) as f32;
             let [r, g, b] = hsv_to_rgb(h, 0.7, 1.0);
-            px.extend_from_slice(&[
-                (r * 255.0) as u8,
-                (g * 255.0) as u8,
-                (b * 255.0) as u8,
-                255,
-            ]);
+            px.extend_from_slice(&[(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]);
         }
     }
     (size, size, px)
@@ -658,12 +653,7 @@ fn wheel_texture() -> (u32, u32, Vec<u8>) {
             let hue = (ny.atan2(nx) / TAU + 0.5).fract();
             let sat = (nx * nx + ny * ny).sqrt().min(1.0);
             let [r, g, b] = hsv_to_rgb(hue, sat, 1.0);
-            px.extend_from_slice(&[
-                (r * 255.0) as u8,
-                (g * 255.0) as u8,
-                (b * 255.0) as u8,
-                255,
-            ]);
+            px.extend_from_slice(&[(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]);
         }
     }
     (size, size, px)

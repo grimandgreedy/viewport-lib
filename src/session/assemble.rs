@@ -3,9 +3,7 @@
 use super::ViewportSession;
 use crate::interaction::input::ViewportContext;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode, compute_gizmo_scale};
-use crate::interaction::manipulation::{
-    ManipResult, ManipulationContext, ManipulationKind,
-};
+use crate::interaction::manipulation::{ManipResult, ManipulationContext, ManipulationKind};
 use crate::runtime::RuntimeFrameContext;
 use crate::{
     CameraFrame, FrameData, InteractionFrame, OrbitCameraController, OverlayFrame, SceneFrame,

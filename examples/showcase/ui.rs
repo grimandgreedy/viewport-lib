@@ -26,13 +26,19 @@ pub fn overlay<R>(
 /// The top-left info box: a title plus a sentence or two on what the showcase
 /// demonstrates.
 pub fn info_box(ctx: &egui::Context, top_left: egui::Pos2, title: &str, body: &str) {
-    overlay(ctx, "showcase_info", top_left, egui::Align2::LEFT_TOP, |ui| {
-        ui.set_max_width(260.0);
-        ui.strong(title);
-        if !body.is_empty() {
-            ui.label(body);
-        }
-    });
+    overlay(
+        ctx,
+        "showcase_info",
+        top_left,
+        egui::Align2::LEFT_TOP,
+        |ui| {
+            ui.set_max_width(260.0);
+            ui.strong(title);
+            if !body.is_empty() {
+                ui.label(body);
+            }
+        },
+    );
 }
 
 /// A compact segmented switch, e.g. `orbit | fly`, on a dark rounded backing so
