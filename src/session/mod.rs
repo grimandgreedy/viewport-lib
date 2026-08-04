@@ -92,6 +92,39 @@ impl ViewportSession {
     /// not keep it. CPU picking is enabled so [`pick`](Self::pick) works after
     /// the first frame.
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
+        // Embedded hosts create the device before the session, so a missing
+        // feature otherwise degrades silently (e.g. mesh sub-object picking).
+        // Warn about the ones the caller could still enable at device creation.
+        fn warn_missing_device_features(device: &crate::gpu::Device) {
+            let have = device.features();
+            let mut missing: Vec<&str> = Vec::new();
+            if !have.contains(crate::gpu::PRIMITIVE_INDEX_FEATURE) {
+                missing.push(
+                    "SHADER_PRIMITIVE_INDEX (mesh face/vertex/edge picking; \
+                     falls back to object-level without it)",
+                );
+            }
+            if !have.contains(crate::gpu::Features::FLOAT32_FILTERABLE) {
+                missing.push("FLOAT32_FILTERABLE (linear filtering of float textures)");
+            }
+            if !have.contains(crate::gpu::Features::TIMESTAMP_QUERY) {
+                missing.push("TIMESTAMP_QUERY (GPU frame timings)");
+            }
+            if !have.contains(crate::gpu::Features::INDIRECT_FIRST_INSTANCE) {
+                missing.push("INDIRECT_FIRST_INSTANCE (GPU-driven culling)");
+            }
+            if !missing.is_empty() {
+                tracing::warn!(
+                    "ViewportSession: device is missing recommended features: {}. If your \
+                     adapter supports them, request \
+                     ViewportRenderer::recommended_device_features(adapter) in your device \
+                     descriptor.",
+                    missing.join("; ")
+                );
+            }
+        }
+        warn_missing_device_features(device);
+
         let mut renderer = ViewportRenderer::new(device, target_format);
         renderer.set_cpu_pick_cache(true);
         let defaults = InteractionFrame::default();

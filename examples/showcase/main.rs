@@ -26,6 +26,29 @@ fn main() -> eframe::Result {
         "viewport-lib : showcase",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
+            depth_buffer: 24,
+            stencil_buffer: 8,
+            // eframe requests no wgpu features by default; the renderer needs a
+            // few (notably SHADER_PRIMITIVE_INDEX, without which mesh face /
+            // vertex / edge picking silently falls back to object-level).
+            wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+                wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                    eframe::egui_wgpu::WgpuSetupCreateNew {
+                        device_descriptor: std::sync::Arc::new(|adapter| wgpu::DeviceDescriptor {
+                            label: Some("viewport-lib showcase device"),
+                            required_features:
+                                viewport_lib::ViewportRenderer::recommended_device_features(adapter),
+                            required_limits: wgpu::Limits {
+                                max_texture_dimension_2d: 8192,
+                                ..wgpu::Limits::default()
+                            },
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         },
         Box::new(|cc| {
@@ -189,8 +212,7 @@ impl eframe::App for App {
 
                 let origin = glam::Vec2::new(rect.left(), rect.top());
                 let mut keys_pressed = Vec::new();
-                let keys_down: Vec<egui::Key> =
-                    ui.input(|i| i.keys_down.iter().copied().collect());
+                let keys_down: Vec<egui::Key> = ui.input(|i| i.keys_down.iter().copied().collect());
                 ui.input(|i| {
                     self.session
                         .handle_event(ViewportEvent::ModifiersChanged(Modifiers {
@@ -218,6 +240,9 @@ impl eframe::App for App {
                     let mut sctx = ShowcaseCtx::new(
                         &mut self.session,
                         &mut self.camera,
+                        &rs.device,
+                        &rs.queue,
+                        ppp,
                         dt,
                         response.hovered(),
                         response.hovered(),

@@ -3,12 +3,14 @@
 //! Files are numbered for ordering (`1_objects.rs`, ...). Module identifiers
 //! cannot start with a digit, so each is attached with `#[path]`.
 
+#[path = "3_materials.rs"]
+pub mod materials;
 #[path = "1_objects.rs"]
 pub mod objects;
 #[path = "2_overlays.rs"]
 pub mod overlays;
-#[path = "3_materials.rs"]
-pub mod materials;
+#[path = "4_picking.rs"]
+pub mod picking;
 
 use crate::showcase::Showcase;
 
@@ -18,5 +20,6 @@ pub fn all() -> Vec<Box<dyn Showcase>> {
         Box::new(objects::ObjectsShowcase::new()),
         Box::new(overlays::OverlaysShowcase::new()),
         Box::new(materials::MaterialsShowcase::new()),
+        Box::new(picking::PickingShowcase::new()),
     ]
 }

@@ -24,6 +24,14 @@ pub struct ShowcaseCtx<'a> {
     /// The shared orbit/fly camera, owned by the host and retained across
     /// showcases. Drive it with [`drive_camera`](Self::drive_camera).
     camera: &'a mut CameraRig,
+    /// wgpu device and queue, for per-frame GPU work (GPU picking, in-place
+    /// mesh/texture updates).
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    /// Physical pixels per logical point. Overlay coordinates are in physical
+    /// render-target pixels, while pick cursors are in logical points, so scale
+    /// by this to draw an overlay that lines up with the cursor.
+    pub pixels_per_point: f32,
     /// Seconds since the previous frame.
     pub dt: f32,
     /// Whether the viewport rect is hovered / focused this frame.
@@ -36,9 +44,13 @@ pub struct ShowcaseCtx<'a> {
 }
 
 impl<'a> ShowcaseCtx<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: &'a mut ViewportSession,
         camera: &'a mut CameraRig,
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        pixels_per_point: f32,
         dt: f32,
         hovered: bool,
         focused: bool,
@@ -49,6 +61,9 @@ impl<'a> ShowcaseCtx<'a> {
         Self {
             session,
             camera,
+            device,
+            queue,
+            pixels_per_point,
             dt,
             hovered,
             focused,
