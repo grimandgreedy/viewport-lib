@@ -1,15 +1,15 @@
 //! The showcase registry. Add a numbered file here and push it in `all()`.
 //!
-//! Files are numbered for ordering (`1_objects.rs`, ...). Module identifiers
+//! Files are numbered for ordering (`01_objects.rs`, ...). Module identifiers
 //! cannot start with a digit, so each is attached with `#[path]`.
 
-#[path = "3_materials.rs"]
+#[path = "03_materials.rs"]
 pub mod materials;
-#[path = "1_objects.rs"]
+#[path = "01_objects.rs"]
 pub mod objects;
-#[path = "2_overlays.rs"]
+#[path = "02_overlays.rs"]
 pub mod overlays;
-#[path = "4_picking.rs"]
+#[path = "04_picking.rs"]
 pub mod picking;
 
 use crate::showcase::Showcase;

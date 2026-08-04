@@ -65,10 +65,12 @@ impl Showcase for ObjectsShowcase {
         ctx.session
             .set_selection_outline(true, [1.0, 1.0, 1.0, 1.0], 2.0);
 
-        // Show the X-Y plane grid at Z=0 for spatial reference.
+        // Show the X-Y plane grid at Z=0 for spatial reference. Leave
+        // grid_cell_size at 0 so the grid uses adaptive spacing: as the camera
+        // zooms out, minor lines fade and the spacing rescales in powers of ten
+        // instead of crowding into a solid plane.
         let vp = ctx.session.viewport_frame_mut();
         vp.show_grid = true;
-        vp.grid_cell_size = 1.0;
 
         ctx.session.camera_mut().distance = 12.0;
         self.selected = None;
@@ -123,8 +125,7 @@ impl Showcase for ObjectsShowcase {
                     let rot = Mat4::from_quat(delta.rotation);
                     let scale = Mat4::from_scale(delta.scale);
                     let translate = Mat4::from_translation(delta.translation);
-                    let new_transform =
-                        translate * from_pivot * rot * scale * to_pivot * current;
+                    let new_transform = translate * from_pivot * rot * scale * to_pivot * current;
                     session.scene_mut().set_local_transform(id, new_transform);
                 }
             }

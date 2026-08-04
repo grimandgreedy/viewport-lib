@@ -360,12 +360,15 @@ impl ViewportRenderer {
                     mask_bind_group: bg,
                 });
             }
-            // Selected volume meshes rendered through projected-tet: use the
-            // boundary surface for the outline mask. Opaque-mode items already
-            // emit their outline via the standard surface submission, so skip
-            // them here to avoid double draws.
+            // Selected volume meshes: rasterise the boundary surface into the
+            // outline mask. This covers both transparent (projected-tet) items,
+            // whose boundary is not in the surface submission, and opaque items
+            // submitted only through `volume_meshes` rather than as a separate
+            // surface item. A host that also submits the opaque boundary as a
+            // surface item draws the mask twice, but the R8 mask is a plain
+            // white silhouette so the second draw is idempotent.
             for item in &frame.scene.volume_meshes {
-                if item.settings.hidden || !item.settings.selected || item.transparency.is_none() {
+                if item.settings.hidden || !item.settings.selected {
                     continue;
                 }
                 let uniform = OutlineUniform {

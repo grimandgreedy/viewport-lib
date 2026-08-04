@@ -317,6 +317,30 @@ impl DeviceResources {
                             }
                         }
                     }
+                    SubObjectRef::Edge(e) => {
+                        // GPU edge picking encodes the id as `face * 3 + local`,
+                        // where local in {0, 1, 2} selects triangle edge
+                        // (v0, v1), (v1, v2), or (v2, v0). Recover the two
+                        // endpoints from the triangle's indices.
+                        if let Some((positions, indices)) = sel.mesh_lookup.get(node_id) {
+                            let n_tri = indices.len() / 3;
+                            let mut face = (*e as usize) / 3;
+                            let local = (*e as usize) % 3;
+                            // parry3d encodes backface hits as face_idx + n_tri.
+                            if face >= n_tri {
+                                face -= n_tri;
+                            }
+                            let base = face * 3;
+                            if base + 2 < indices.len() {
+                                let ia = indices[base + local] as usize;
+                                let ib = indices[base + (local + 1) % 3] as usize;
+                                if ia < positions.len() && ib < positions.len() {
+                                    edge_data.extend_from_slice(&xform(positions[ia]));
+                                    edge_data.extend_from_slice(&xform(positions[ib]));
+                                }
+                            }
+                        }
+                    }
                     SubObjectRef::Voxel(flat) => {
                         if let Some(info) = sel.voxel_lookup.get(node_id) {
                             let [nx, ny, nz] = info.dims;
