@@ -98,6 +98,11 @@ pub struct SceneNode {
     /// from `world_transform` at collect time; the values stored here serve
     /// as the local-space template.
     pub light: Option<LightSource>,
+    /// Where this node's indirect diffuse light comes from. Default:
+    /// [`IndirectLightSource::GlobalIbl`]. Set to
+    /// [`IndirectLightSource::LightProbe`] to sample the uploaded probe field at
+    /// the node's position instead of the global environment.
+    pub indirect_light: crate::renderer::IndirectLightSource,
 }
 
 impl SceneNode {
@@ -406,6 +411,7 @@ impl Scene {
             receives_decals: true,
             lod_group: None,
             light: None,
+            indirect_light: crate::renderer::IndirectLightSource::default(),
         };
         self.nodes.insert(id, node);
         self.roots.push(id);
@@ -658,6 +664,15 @@ impl Scene {
     pub fn set_lod_group(&mut self, id: NodeId, lod_group: Option<crate::resources::LodGroupId>) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.lod_group = lod_group;
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Choose where a node's indirect diffuse light comes from: the global
+    /// environment (default) or the uploaded SH light-probe field.
+    pub fn set_indirect_light(&mut self, id: NodeId, source: crate::renderer::IndirectLightSource) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.indirect_light = source;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -1033,7 +1048,7 @@ impl Scene {
                 receives_decals: node.receives_decals,
                 lic: None,
                 lod_group: node.lod_group,
-                indirect_light: crate::renderer::IndirectLightSource::default(),
+                indirect_light: node.indirect_light,
             });
         }
         // Nodes live in a `HashMap`, whose iteration order is randomised per
@@ -1122,7 +1137,7 @@ impl Scene {
                     receives_decals: node.receives_decals,
                     lic: None,
                     lod_group: node.lod_group,
-                    indirect_light: crate::renderer::IndirectLightSource::default(),
+                    indirect_light: node.indirect_light,
                 });
             }
 
@@ -1181,7 +1196,7 @@ impl Scene {
                     receives_decals: node.receives_decals,
                     lic: None,
                     lod_group: node.lod_group,
-                    indirect_light: crate::renderer::IndirectLightSource::default(),
+                    indirect_light: node.indirect_light,
                 });
             }
 
@@ -1230,6 +1245,7 @@ impl Scene {
             receives_decals: false,
             lod_group: None,
             light: Some(light),
+            indirect_light: crate::renderer::IndirectLightSource::default(),
         };
         self.nodes.insert(id, node);
         self.roots.push(id);
@@ -1491,6 +1507,29 @@ mod tests {
         scene.set_lod_group(id, None);
         let items = scene.collect_render_items(&Selection::new());
         assert_eq!(items[0].lod_group, None);
+    }
+
+    #[test]
+    fn indirect_light_source_round_trips_onto_render_items() {
+        let mut scene = Scene::new();
+        let id = scene.add(
+            Some(MeshId::new(0, 0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
+        // Nodes default to the global environment.
+        let items = scene.collect_render_items(&Selection::new());
+        assert_eq!(
+            items[0].indirect_light,
+            crate::renderer::IndirectLightSource::GlobalIbl
+        );
+
+        scene.set_indirect_light(id, crate::renderer::IndirectLightSource::LightProbe);
+        let items = scene.collect_render_items(&Selection::new());
+        assert_eq!(
+            items[0].indirect_light,
+            crate::renderer::IndirectLightSource::LightProbe
+        );
     }
 
     #[test]
