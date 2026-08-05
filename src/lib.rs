@@ -116,6 +116,11 @@ pub mod runtime;
 /// Scene graph, material, traits, and AABB.
 pub mod scene;
 
+/// Offscreen path tracer for reference images, opt-in via the `raytrace`
+/// feature.
+#[cfg(feature = "raytrace")]
+pub mod raytrace;
+
 /// [`ViewportSession`](session::ViewportSession): a host object that owns the
 /// per-frame wiring (renderer, scene, camera, input) so consumers do not write
 /// it by hand.

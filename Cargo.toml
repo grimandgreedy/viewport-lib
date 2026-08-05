@@ -82,6 +82,10 @@ serde = ["dep:serde", "glam/serde", "bitflags/serde"]
 # 29 crate.
 wgpu27 = ["dep:wgpu"]
 wgpu29 = ["dep:wgpu29"]
+# Offscreen path tracer (src/raytrace/). Off by default, so the default build
+# is unchanged for non-users. Compute only, no hardware ray query; reuses the
+# shared helpers/brdf.wgsl.
+raytrace = []
 # Enables the `JobHandle` future wrapper. Off by default so the crate stays
 # free of `std::future` plumbing for consumers that do not run an async
 # runtime.
