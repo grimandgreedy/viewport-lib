@@ -7,10 +7,9 @@
 //!
 //! All textures are Rgba16Float for HDR correctness.
 //!
-//! NOTE: The IBL shader helpers (`dir_to_equirect_uv`, `sample_ibl_irradiance`,
-//! `ibl_ambient`, etc.) are duplicated in mesh.wgsl, mesh_instanced.wgsl,
-//! mesh_oit.wgsl, and mesh_instanced_oit.wgsl. mesh.wgsl is the canonical copy.
-//! Update all four when changing IBL shader code.
+//! The IBL shader helpers (`dir_to_equirect_uv`, `sample_ibl_irradiance`,
+//! `ibl_ambient`, etc.) live in `src/shaders/ambient.wgsl`, shared by the four
+//! lit mesh shaders via the build-time `// #include` preprocessor.
 
 use rayon::prelude::*;
 use std::f32::consts::PI;
