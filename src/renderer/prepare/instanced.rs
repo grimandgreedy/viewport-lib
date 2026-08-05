@@ -155,6 +155,8 @@ impl ViewportRenderer {
                                 ao_range: cm.ao_range,
                                 alpha_cutoff: cm.alpha_cutoff,
                                 alpha_flag: cm.alpha_flag,
+                                emissive: cm.emissive,
+                                _pad_emissive: 0.0,
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);

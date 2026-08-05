@@ -35,6 +35,8 @@ struct InstanceData {
     ao_range: vec2<f32>,
     alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
     alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
+    emissive: vec3<f32>,                  // unused here; keeps stride matching the mesh instanced buffer
+    _pad_emissive: f32,
 };
 
 @group(0) @binding(0) var<uniform> light: Light;

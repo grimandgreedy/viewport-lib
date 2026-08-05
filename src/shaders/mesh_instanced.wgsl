@@ -70,6 +70,8 @@ struct InstanceData {
     ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
     alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
     alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
+    emissive: vec3<f32>,                  // self-illumination added after lighting
+    _pad_emissive: f32,
 };
 
 struct ClipVolumeEntry {
@@ -595,8 +597,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let dbg_ibl_spec_lum = lit.dbg_ibl_spec_lum;
     let dbg_roughness    = lit.dbg_roughness;
     let dbg_metallic     = lit.dbg_metallic;
-    let dbg_emissive_lum = 0.0;
     var final_rgb = lit.rgb;
+
+    // Emissive term: added after lighting so it can push HDR values above 1.0.
+    // The instanced path has no emissive texture, so the factor is applied flat.
+    let emissive = instances[in.instance_idx].emissive;
+    final_rgb += emissive;
+    let dbg_emissive_lum = dot(emissive, vec3<f32>(0.2126, 0.7152, 0.0722));
 
     // #include "helpers/debug_vis.wgsl"
 

@@ -1520,7 +1520,7 @@ pub(crate) struct ObjectUniform {
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 336);
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
-/// Layout: 176 bytes.
+/// Layout: 192 bytes.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
@@ -1560,10 +1560,15 @@ pub(crate) struct InstanceData {
     /// discarded when `alpha_flag == 1`. Mirrors `ObjectUniform::alpha_cutoff`.
     pub(crate) alpha_cutoff: f32, //   4 bytes, offset 168
     /// 1 = alpha-test (`Mask`) enabled, 0 = no cutout.
-    pub(crate) alpha_flag: u32, //   4 bytes, offset 172 (struct stride to 16B)
+    pub(crate) alpha_flag: u32, //   4 bytes, offset 172
+    /// Self-illumination colour added after lighting; mirrors `Material::emissive`
+    /// (glTF `emissiveFactor`). The instanced path does not sample the emissive
+    /// texture, so emissive-textured materials stay on the per-object path.
+    pub(crate) emissive: [f32; 3], //  12 bytes, offset 176
+    pub(crate) _pad_emissive: f32,   //   4 bytes, offset 188 (struct stride to 16B)
 }
 
-const _: () = assert!(std::mem::size_of::<InstanceData>() == 176);
+const _: () = assert!(std::mem::size_of::<InstanceData>() == 192);
 /// Per-instance GPU data for the object-ID pick pass.
 ///
 /// Stores only the model matrix and a sentinel object ID : none of the material

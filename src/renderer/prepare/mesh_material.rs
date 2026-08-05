@@ -40,6 +40,10 @@ pub(crate) fn is_instanceable(
         && !backface_needs_per_object(item)
         && item.material.matcap_id().is_none()
         && item.material.param_vis.is_none()
+        // The instanced path carries the emissive factor but does not sample the
+        // emissive texture. An emissive-textured material must stay per-object so
+        // the factor is modulated by the texture instead of applied flat.
+        && item.material.emissive_texture_id.is_none()
         && resources.mesh_store.get(item.mesh_id).is_some()
         && !compute_filter_results
             .iter()
@@ -91,6 +95,7 @@ pub(super) struct CommonMaterial {
     pub(super) ao_range: [f32; 2],
     pub(super) alpha_cutoff: f32,
     pub(super) alpha_flag: u32,
+    pub(super) emissive: [f32; 3],
 }
 
 pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
@@ -128,6 +133,7 @@ pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
             crate::scene::material::AlphaMode::Mask(_) => 1,
             _ => 0,
         },
+        emissive: m.emissive,
     }
 }
 
@@ -204,5 +210,45 @@ mod tests {
         item.material.alpha_mode = AlphaMode::Opaque;
         let cm = common_material(&item);
         assert_eq!(cm.alpha_flag, 0);
+    }
+
+    /// The emissive factor rides the shared material mapping so the instanced
+    /// shaders can add it after lighting, matching the per-object path.
+    #[test]
+    fn common_material_carries_emissive() {
+        let mut item = SceneRenderItem::default();
+        item.material.emissive = [1.5, 0.25, 4.0];
+        let cm = common_material(&item);
+        assert_eq!(cm.emissive, [1.5, 0.25, 4.0]);
+    }
+
+    /// The instanced path applies the emissive factor flat and never samples the
+    /// emissive texture, so an emissive-textured material must stay per-object.
+    #[test]
+    fn emissive_textured_is_not_instanceable() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mesh = crate::geometry::primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &mesh).unwrap();
+
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        // A plain emissive factor stays instanceable: the instanced path carries it.
+        item.material.emissive = [2.0, 2.0, 2.0];
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "a plain emissive item should still instance",
+        );
+
+        // An emissive texture forces the per-object path where it is sampled.
+        item.material.emissive_texture_id = Some(crate::resources::TextureId(1));
+        assert!(
+            !is_instanceable(&item, &resources, &[]),
+            "an emissive-textured item must fall back to the per-object path",
+        );
     }
 }
