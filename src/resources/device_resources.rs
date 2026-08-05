@@ -939,6 +939,12 @@ pub struct DeviceResources {
     /// Next free array layer for an extra environment (`upload_environment`).
     /// Starts at 1; layer 0 is reserved for the scene default.
     pub(crate) ibl_env_next_layer: u32,
+    /// Environment-selection zones (binding 19), a packed `EnvZone` array. Always
+    /// allocated at `MAX_ENV_ZONES` capacity; `env_zone_count` bounds the live set.
+    pub(crate) env_zone_buf: crate::gpu::Buffer,
+    /// Number of active environment zones written to `env_zone_buf`. 0 = default
+    /// environment everywhere; the shaders skip the per-fragment zone loop.
+    pub(crate) env_zone_count: u32,
     /// Uploaded BRDF LUT texture (owned).
     #[allow(dead_code)]
     pub(crate) ibl_brdf_lut_texture: Option<crate::gpu::Texture>,
@@ -1411,6 +1417,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 18,
                     resource: self.light_probe_sh_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 19,
+                    resource: self.env_zone_buf.as_entire_binding(),
                 },
             ],
         })

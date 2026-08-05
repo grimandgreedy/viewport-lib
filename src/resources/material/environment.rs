@@ -40,6 +40,81 @@ impl EnvironmentMapId {
     }
 }
 
+/// Maximum number of environment-selection zones uploaded to the GPU at once.
+/// Extra zones past this are dropped (with a log). The per-fragment zone loop
+/// bounds on the active count, so a modest cap keeps the shader loop short.
+pub const MAX_ENV_ZONES: usize = 64;
+
+/// Byte stride of one `EnvZone` in the GPU buffer (matches the WGSL struct).
+pub const ENV_ZONE_STRIDE_BYTES: usize = 32;
+
+/// A world-space box that selects an environment for fragments inside it.
+///
+/// Fragments inside `bounds` are lit by `environment`; fragments within
+/// `fade_distance` of the box cross-fade to whatever else covers them (other
+/// zones, or the default environment where coverage is incomplete). Overlapping
+/// zones blend by influence weight, so there is no hard seam at a boundary. Feed
+/// a set through `ViewportRenderer::set_environment_zones`.
+#[derive(Copy, Clone, Debug)]
+pub struct EnvironmentZone {
+    /// World-space box this zone covers.
+    pub bounds: crate::scene::aabb::Aabb,
+    /// Environment selected inside the box (from `upload_environment`).
+    pub environment: EnvironmentMapId,
+    /// Outer falloff band, in world units, over which influence fades to zero.
+    pub fade_distance: f32,
+}
+
+/// GPU layout of one environment zone (binding 19), matching the WGSL `EnvZone`.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct EnvZoneGpu {
+    center: [f32; 3],
+    layer: u32,
+    half_extents: [f32; 3],
+    fade: f32,
+}
+
+const _: () = assert!(std::mem::size_of::<EnvZoneGpu>() == ENV_ZONE_STRIDE_BYTES);
+
+/// Upload the active environment-selection zones to the GPU buffer (binding 19)
+/// and record the count for the `Lights` uniform. Replaces any previous set;
+/// an empty slice clears zones (every fragment reverts to the default
+/// environment). Zones past [`MAX_ENV_ZONES`] are dropped.
+pub fn set_environment_zones(
+    resources: &mut crate::resources::DeviceResources,
+    queue: &crate::gpu::Queue,
+    zones: &[EnvironmentZone],
+) {
+    let n = zones.len().min(MAX_ENV_ZONES);
+    if zones.len() > MAX_ENV_ZONES {
+        tracing::warn!(
+            requested = zones.len(),
+            max = MAX_ENV_ZONES,
+            "environment zones exceed the cap; extra zones dropped"
+        );
+    }
+    if n > 0 {
+        let gpu: Vec<EnvZoneGpu> = zones[..n]
+            .iter()
+            .map(|z| EnvZoneGpu {
+                center: z.bounds.center().into(),
+                layer: z.environment.0,
+                half_extents: z.bounds.half_extents().into(),
+                fade: z.fade_distance,
+            })
+            .collect();
+        queue.write_buffer(&resources.env_zone_buf, 0, bytemuck::cast_slice(&gpu));
+    }
+    resources.env_zone_count = n as u32;
+}
+
+/// Clear all environment-selection zones. Fragments revert to the default
+/// environment (array layer 0).
+pub fn clear_environment_zones(resources: &mut crate::resources::DeviceResources) {
+    resources.env_zone_count = 0;
+}
+
 // -------------------------------------------------------------------------
 // Public upload API
 // -------------------------------------------------------------------------
@@ -996,5 +1071,45 @@ mod tests {
             err,
             crate::error::ViewportError::TooManyEnvironments { .. }
         ));
+    }
+
+    #[test]
+    fn environment_zones_set_clear_and_cap() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources = make_resources(&device);
+
+        let default_px = make_solid_env(8, 4, [0.5, 0.5, 0.5]);
+        upload_environment_map(&mut resources, &device, &queue, &default_px, 8, 4).unwrap();
+        let env = upload_environment(
+            &mut resources,
+            &device,
+            &queue,
+            &make_solid_env(8, 4, [0.9, 0.1, 0.1]),
+            8,
+            4,
+        )
+        .unwrap();
+
+        let zone = EnvironmentZone {
+            bounds: crate::scene::aabb::Aabb {
+                min: glam::Vec3::splat(-1.0),
+                max: glam::Vec3::splat(1.0),
+            },
+            environment: env,
+            fade_distance: 0.5,
+        };
+        set_environment_zones(&mut resources, &queue, &[zone]);
+        assert_eq!(resources.env_zone_count, 1);
+
+        // Over the cap: the live count clamps to MAX_ENV_ZONES.
+        let many = vec![zone; MAX_ENV_ZONES + 5];
+        set_environment_zones(&mut resources, &queue, &many);
+        assert_eq!(resources.env_zone_count, MAX_ENV_ZONES as u32);
+
+        clear_environment_zones(&mut resources);
+        assert_eq!(resources.env_zone_count, 0);
     }
 }

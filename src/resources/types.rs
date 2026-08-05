@@ -404,8 +404,11 @@ pub struct LightsUniform {
     pub show_skybox: u32, // 4 bytes
     /// Normalized split X position (0..1) for SplitScreen debug mode.
     pub debug_vis_split_x: f32, // 4 bytes
+    /// Number of active environment-selection zones (binding 19). 0 = the single
+    /// default environment (layer 0); the shaders skip the per-fragment zone loop.
+    pub env_zone_count: u32, // 4 bytes
     /// Reserved for future debug uniform fields.
-    pub _pad_dbg: [u32; 3], // 12 bytes
+    pub _pad_dbg: [u32; 2], // 8 bytes
 }
 
 /// Maximum number of lights packed into `light_storage_buf` per frame.

@@ -102,7 +102,7 @@ struct Lights {
     ibl_rotation:         f32,
     show_skybox:          u32,
     debug_vis_split_x:    f32,
-    _pad_dbg_a:           u32,
+    env_zone_count:       u32,
     _pad_dbg_b:           u32,
     _pad_dbg_c:           u32,
 };

@@ -719,7 +719,8 @@ impl ViewportRenderer {
             } else {
                 0.5
             },
-            _pad_dbg: [0u32; 3],
+            env_zone_count: resources.env_zone_count,
+            _pad_dbg: [0u32; 2],
         };
         queue.write_buffer(
             &resources.light_uniform_buf,

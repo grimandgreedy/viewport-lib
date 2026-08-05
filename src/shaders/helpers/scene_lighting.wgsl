@@ -58,9 +58,19 @@ struct Lights {
     ibl_rotation:         f32,
     show_skybox:          u32,
     debug_vis_split_x:    f32,
-    _pad_dbg_a:           u32,
+    env_zone_count:       u32,
     _pad_dbg_b:           u32,
     _pad_dbg_c:           u32,
+};
+
+// One environment-selection zone: a world-space box (center + half_extents) that
+// selects array layer `layer`, with `fade` the outer falloff band. See
+// env_zone_weight / ibl_ambient_zoned in ambient.wgsl.
+struct EnvZone {
+    center:       vec3<f32>,
+    layer:        u32,
+    half_extents: vec3<f32>,
+    fade:         f32,
 };
 
 struct ClusterGrid {
@@ -86,6 +96,9 @@ struct ClusterCell {
 // Per-object light-probe SH: 9 vec4 per light-probe-lit object (rgb in xyz),
 // selected by the object's light_probe_index. See evaluate_sh_probe in ambient.wgsl.
 @group(0) @binding(18) var<storage, read> light_probe_sh:         array<vec4<f32>>;
+// Environment-selection zones (F2). Walked per fragment by ibl_ambient_zoned
+// when lights_uniform.env_zone_count > 0.
+@group(0) @binding(19) var<storage, read> env_zones:             array<EnvZone>;
 
 
 fn cluster_index_for(view_pos: vec3<f32>) -> u32 {

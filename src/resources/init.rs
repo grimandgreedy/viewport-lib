@@ -322,6 +322,18 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 19: environment-selection zones (FRAGMENT, read-only).
+                // Walked per fragment to pick / blend environment array layers.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 19,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -645,6 +657,15 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
+        let env_zone_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("env_zone_buf"),
+            size: (crate::resources::material::environment::MAX_ENV_ZONES
+                * crate::resources::material::environment::ENV_ZONE_STRIDE_BYTES)
+                as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
         let clip_planes_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -928,6 +949,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 18,
                     resource: light_probe_sh_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 19,
+                    resource: env_zone_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2526,6 +2551,8 @@ impl DeviceResources {
             ibl_irradiance_texture: None,
             ibl_prefiltered_texture: None,
             ibl_env_next_layer: 1,
+            env_zone_buf,
+            env_zone_count: 0,
             ibl_brdf_lut_texture: None,
             ibl_skybox_texture: None,
             skybox_pipeline,

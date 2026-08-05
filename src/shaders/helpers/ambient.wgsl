@@ -184,3 +184,117 @@ fn ibl_ambient(
     let dr = max(length(dpdx(R)), length(dpdy(R)));
     return ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr);
 }
+
+// ---------------------------------------------------------------------------
+// Per-layer variants for environment selection (F2). These sample a chosen
+// array layer instead of the default layer 0, and are built on the explicit-LOD
+// (`_grad`) path so they are valid inside the per-fragment zone loop, where a
+// data-dependent weight test makes control flow non-uniform and `dpdx`/`dpdy`
+// are not allowed. The caller supplies the reflection-footprint derivative `dr`
+// once from uniform control flow.
+// ---------------------------------------------------------------------------
+
+/// Sample the irradiance map of environment `layer`.
+fn sample_ibl_irradiance_layer(N: vec3<f32>, rotation: f32, layer: i32) -> vec3<f32> {
+    let uv = dir_to_equirect_uv(N, rotation);
+    return textureSampleLevel(ibl_irradiance, ibl_sampler, uv, layer, 0.0).rgb;
+}
+
+/// Sample the prefiltered specular map of environment `layer`, mip floored by
+/// the caller-supplied screen-space reflection footprint `dr`.
+fn sample_ibl_prefiltered_layer(R: vec3<f32>, roughness: f32, rotation: f32, dr: f32, layer: i32) -> vec3<f32> {
+    let uv = dir_to_equirect_uv(R, rotation);
+    let max_mip = 4.0;
+    let texels = dr * 128.0 / (2.0 * IBL_PI);
+    let footprint_mip = clamp(log2(max(texels, 1.0)), 0.0, max_mip);
+    let mip = max(roughness * max_mip, footprint_mip);
+    return textureSampleLevel(ibl_prefiltered, ibl_sampler, uv, layer, mip).rgb;
+}
+
+/// Full IBL ambient (diffuse irradiance + specular split-sum) for environment
+/// `layer`. Mirrors `ibl_ambient_grad`, sampling the chosen layer.
+fn ibl_ambient_layer_grad(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    base_colour: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    F0: vec3<f32>,
+    ao: f32,
+    intensity: f32,
+    rotation: f32,
+    dr: f32,
+    layer: i32,
+) -> IblContrib {
+    let NdotV = max(dot(N, V), 0.001);
+    let F = F_Schlick_roughness(NdotV, F0, roughness);
+    let kS = F;
+    let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
+
+    let irradiance = sample_ibl_irradiance_layer(N, rotation, layer);
+    let diffuse_ibl = kD * irradiance * base_colour * ao * intensity;
+
+    let R = reflect(-V, N);
+    let prefiltered = sample_ibl_prefiltered_layer(R, roughness, rotation, dr, layer);
+    let brdf = sample_brdf_lut(NdotV, roughness);
+    let specular_ibl = prefiltered * (F * brdf.x + brdf.y) * ao * intensity;
+
+    return IblContrib(diffuse_ibl, specular_ibl);
+}
+
+/// Influence weight of environment zone `z` at world position `p`: 1 inside the
+/// box, smoothly falling to 0 across `z.fade` beyond it. `env_zones` and the
+/// `EnvZone` struct are declared in scene_lighting.wgsl.
+fn env_zone_weight(p: vec3<f32>, z: EnvZone) -> f32 {
+    let d = abs(p - z.center) - z.half_extents;
+    let outside = length(max(d, vec3<f32>(0.0)));
+    return 1.0 - smoothstep(0.0, max(z.fade, 1e-4), outside);
+}
+
+/// Per-fragment environment selection and blend (F2-b). Blends every zone
+/// covering the fragment by influence weight; the leftover weight (where zone
+/// coverage sums below 1) goes to the default environment (layer 0). Weights are
+/// normalized to sum to 1, so overlapping zones cross-fade with no popping.
+/// `count` is `lights_uniform.env_zone_count`; callers gate on `count > 0`.
+fn ibl_ambient_zoned(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    base_colour: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    F0: vec3<f32>,
+    ao: f32,
+    intensity: f32,
+    rotation: f32,
+    dr: f32,
+    world_pos: vec3<f32>,
+    count: u32,
+) -> IblContrib {
+    var diffuse = vec3<f32>(0.0);
+    var specular = vec3<f32>(0.0);
+    var total_w = 0.0;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let z = env_zones[i];
+        let w = env_zone_weight(world_pos, z);
+        if w <= 0.0 {
+            continue;
+        }
+        let c = ibl_ambient_layer_grad(
+            N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr, i32(z.layer),
+        );
+        diffuse = diffuse + c.diffuse * w;
+        specular = specular + c.specular * w;
+        total_w = total_w + w;
+    }
+    let default_w = max(0.0, 1.0 - total_w);
+    if default_w > 0.0 {
+        let c0 = ibl_ambient_layer_grad(
+            N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr, 0,
+        );
+        diffuse = diffuse + c0.diffuse * default_w;
+        specular = specular + c0.specular * default_w;
+        total_w = total_w + default_w;
+    }
+    let inv = 1.0 / max(total_w, 1e-4);
+    return IblContrib(diffuse * inv, specular * inv);
+}

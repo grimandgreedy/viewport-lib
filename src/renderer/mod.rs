@@ -1776,6 +1776,30 @@ impl ViewportRenderer {
         Ok(env)
     }
 
+    /// Set the environment-selection zones. Fragments inside a zone are lit by
+    /// that zone's environment (from [`upload_environment`](Self::upload_environment)),
+    /// blended by influence weight in overlaps; fragments outside every zone use
+    /// the default environment. Replaces any previous set; an empty slice clears
+    /// them. Zones past [`MAX_ENV_ZONES`](crate::resources::material::environment::MAX_ENV_ZONES)
+    /// are dropped.
+    pub fn set_environment_zones(
+        &mut self,
+        queue: &crate::gpu::Queue,
+        zones: &[crate::resources::material::environment::EnvironmentZone],
+    ) {
+        crate::resources::material::environment::set_environment_zones(
+            &mut self.resources,
+            queue,
+            zones,
+        );
+    }
+
+    /// Clear all environment-selection zones; every fragment reverts to the
+    /// default environment.
+    pub fn clear_environment_zones(&mut self) {
+        crate::resources::material::environment::clear_environment_zones(&mut self.resources);
+    }
+
     /// Current state of an in-flight upload job.
     pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
         self.resources.upload_status(id)

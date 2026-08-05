@@ -512,9 +512,17 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // <viewport-shade-slot:ambient>
         var ambient: vec3<f32>;
         if lights_uniform.ibl_enabled != 0u {
-            let ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
-                                  ao_factor, lights_uniform.ibl_intensity,
-                                  lights_uniform.ibl_rotation, refl_dr);
+            var ibl: IblContrib;
+            if lights_uniform.env_zone_count != 0u {
+                ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0,
+                                        ao_factor, lights_uniform.ibl_intensity,
+                                        lights_uniform.ibl_rotation, refl_dr, in.world_pos,
+                                        lights_uniform.env_zone_count);
+            } else {
+                ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
+                                       ao_factor, lights_uniform.ibl_intensity,
+                                       lights_uniform.ibl_rotation, refl_dr);
+            }
             ambient = ibl.diffuse + ibl.specular;
             dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
             dbg_ibl_spec_lum = dot(ibl.specular, lum_weights);
