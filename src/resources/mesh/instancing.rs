@@ -1249,7 +1249,7 @@ impl DeviceResources {
         }
 
         // Per-instance struct must match `InstanceData` in `mesh_instanced.wgsl`
-        // and `resources::types::InstanceData` (176 bytes).
+        // and `resources::types::InstanceData` (208 bytes).
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct GpuInstanceData {
@@ -1277,12 +1277,16 @@ impl DeviceResources {
             alpha_flag: u32,
             emissive: [f32; 3],
             _pad_emissive: f32,
+            has_light_probe: u32,
+            light_probe_index: u32,
+            _pad_lp: [u32; 2],
         }
 
         // Layout matches the WGSL `InstanceData` (and the `InstanceData` Rust
         // struct); both the explicit `MeshInstanceItem` batches built here and
-        // the auto-instanced items feed the same instanced shaders.
-        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 192);
+        // the auto-instanced items feed the same instanced shaders. Explicit
+        // instance batches do not opt into light probes, so the fields stay 0.
+        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 208);
 
         let has_texture = if item
             .texture_id
@@ -1319,6 +1323,9 @@ impl DeviceResources {
                 alpha_flag: 0,
                 emissive: [0.0, 0.0, 0.0],
                 _pad_emissive: 0.0,
+                has_light_probe: 0,
+                light_probe_index: 0,
+                _pad_lp: [0, 0],
             }
         };
         let instances: Vec<GpuInstanceData> = match indices {
@@ -1574,10 +1581,16 @@ pub(crate) struct InstanceData {
     /// (glTF `emissiveFactor`). The instanced path does not sample the emissive
     /// texture, so emissive-textured materials stay on the per-object path.
     pub(crate) emissive: [f32; 3], //  12 bytes, offset 176
-    pub(crate) _pad_emissive: f32,   //   4 bytes, offset 188 (struct stride to 16B)
+    pub(crate) _pad_emissive: f32,   //   4 bytes, offset 188
+    /// 1 = take indirect diffuse from `light_probe_sh` at `light_probe_index`,
+    /// 0 = use the hemisphere/IBL ambient. Mirrors `ObjectUniform::has_light_probe`.
+    pub(crate) has_light_probe: u32, //   4 bytes, offset 192
+    /// Base block index into the shared light-probe SH buffer (group 0 binding 18).
+    pub(crate) light_probe_index: u32, //   4 bytes, offset 196
+    pub(crate) _pad_lp: [u32; 2],    //   8 bytes, offset 200 (struct stride to 16B)
 }
 
-const _: () = assert!(std::mem::size_of::<InstanceData>() == 192);
+const _: () = assert!(std::mem::size_of::<InstanceData>() == 208);
 /// Per-instance GPU data for the object-ID pick pass.
 ///
 /// Stores only the model matrix and a sentinel object ID : none of the material

@@ -72,6 +72,9 @@ struct InstanceData {
     alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
     emissive: vec3<f32>,                  // self-illumination added after lighting
     _pad_emissive: f32,
+    has_light_probe: u32,                 // 1 = sample light_probe_sh for indirect diffuse
+    light_probe_index: u32,               // base block index into light_probe_sh
+    _pad_lp: vec2<u32>,
 };
 
 struct ClipVolumeEntry {
@@ -523,6 +526,14 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
+        // Light-probe instances take their indirect diffuse from the SH field
+        // sampled at the object position, replacing the global-IBL / hemisphere
+        // diffuse above. SH probes carry diffuse only, so IBL specular is not
+        // added here.
+        if inst.has_light_probe != 0u {
+            ambient = evaluate_sh_probe(inst.light_probe_index, N) * base_colour * ao_factor;
+            dbg_ambient_lum = dot(ambient, lum_weights);
+        }
         // </viewport-shade-slot:ambient>
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
         // <viewport-shade-slot:recolor>
@@ -559,7 +570,10 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
         let direct_rgb = base_colour * total_colour_contrib;
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
-        let hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        if inst.has_light_probe != 0u {
+            hemi_rgb = evaluate_sh_probe(inst.light_probe_index, N) * base_colour * ao_factor;
+        }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
         let lit_rgb = hemi_rgb + direct_rgb;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));

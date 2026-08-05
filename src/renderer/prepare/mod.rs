@@ -318,12 +318,17 @@ impl ViewportRenderer {
             .iter()
             .map(|item| is_instanceable(item, resources, &self.compute_filter_results))
             .collect();
+        // Blend each light-probe-lit item's SH into the shared buffer once, so
+        // the per-object and instanced paths that draw those items index the
+        // same block. No probes uploaded -> all None and nothing written.
+        let probe_indices = per_object::prepare_light_probe_sh(resources, scene_items, queue);
         let per_object_bind_groups_built = Self::prepare_per_object(
             resources,
             &mut self.mesh_uniforms,
             self.instancing.use_instancing,
             scene_items,
             &instanceable,
+            &probe_indices,
             self.frame_counter,
             device,
             queue,
@@ -338,6 +343,7 @@ impl ViewportRenderer {
                 &mut self.instancing,
                 &instanceable,
                 scene_items,
+                &probe_indices,
                 device,
                 queue,
                 frame,

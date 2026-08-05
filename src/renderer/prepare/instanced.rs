@@ -12,6 +12,7 @@ impl ViewportRenderer {
         instancing: &mut InstancingState,
         instanceable: &[bool],
         scene_items: &[SceneRenderItem],
+        probe_indices: &[Option<u32>],
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
@@ -45,14 +46,16 @@ impl ViewportRenderer {
 
         if !cache_valid {
             // Cache miss : rebuild batches and upload instance data.
-            let mut sorted_items: Vec<&SceneRenderItem> = scene_items
+            // Each entry keeps its original scene-item index alongside the item
+            // reference so the light-probe SH block (keyed by that index) can be
+            // recovered after sorting reorders the list.
+            let mut sorted_items: Vec<(usize, &SceneRenderItem)> = scene_items
                 .iter()
                 .enumerate()
                 .filter(|(idx, _)| instanceable[*idx])
-                .map(|(_, item)| item)
                 .collect();
 
-            sorted_items.sort_unstable_by(|a, b| {
+            sorted_items.sort_unstable_by(|(_, a), (_, b)| {
                 // Batch grouping key (must match the batch-split condition).
                 // two_sided is part of the key because the two pipelines differ
                 // in cull mode, so a batch must not mix one- and two-sided items.
@@ -107,8 +110,8 @@ impl ViewportRenderer {
                 for i in 1..=sorted_items.len() {
                     let at_end = i == sorted_items.len();
                     let key_changed = !at_end && {
-                        let a = sorted_items[batch_start];
-                        let b = sorted_items[i];
+                        let a = sorted_items[batch_start].1;
+                        let b = sorted_items[i].1;
                         a.mesh_id != b.mesh_id
                             || a.material.texture_id != b.material.texture_id
                             || a.material.normal_map_id != b.material.normal_map_id
@@ -118,7 +121,7 @@ impl ViewportRenderer {
 
                     if at_end || key_changed {
                         let batch_items = &sorted_items[batch_start..i];
-                        let rep = batch_items[0];
+                        let rep = batch_items[0].1;
                         let instance_offset = all_instances.len() as u32;
                         let is_transparent = rep.settings.opacity < 1.0;
 
@@ -130,8 +133,11 @@ impl ViewportRenderer {
                         let batch_mesh = resources.mesh_store.get(rep.mesh_id);
                         let mesh_index_count = batch_mesh.map(|m| m.index_count).unwrap_or(0);
 
-                        for item in batch_items {
+                        for (orig_idx, item) in batch_items {
                             let cm = common_material(item);
+                            // Recover this item's light-probe SH block (assigned
+                            // in the shared prepass, keyed by scene-item index).
+                            let probe = probe_indices[*orig_idx];
                             all_instances.push(InstanceData {
                                 model: cm.model,
                                 colour: cm.colour,
@@ -157,6 +163,9 @@ impl ViewportRenderer {
                                 alpha_flag: cm.alpha_flag,
                                 emissive: cm.emissive,
                                 _pad_emissive: 0.0,
+                                has_light_probe: probe.map_or(0, |_| 1),
+                                light_probe_index: probe.unwrap_or(0),
+                                _pad_lp: [0, 0],
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -200,7 +209,7 @@ impl ViewportRenderer {
                             // in the batch key); the mask discard only fires on
                             // textured instances.
                             has_alpha_mask: rep.material.texture_id.is_some()
-                                && batch_items.iter().any(|it| {
+                                && batch_items.iter().any(|(_, it)| {
                                     matches!(
                                         it.material.alpha_mode,
                                         crate::scene::material::AlphaMode::Mask(_)

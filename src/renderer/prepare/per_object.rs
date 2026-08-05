@@ -161,16 +161,63 @@ pub(super) fn build_object_uniform(
     }
 }
 
+/// Light-probe SH prepass, shared by the per-object and instanced draw paths.
+///
+/// For each item that opts into a light probe (`indirect_light == LightProbe`),
+/// blend the nearby probes' SH at the object position and pack it into the
+/// shared SH buffer (group 0 binding 18). The returned vector maps this frame's
+/// scene-item index to that object's SH block index; both paths read it so an
+/// item's `light_probe_index` is identical whichever path draws it. Returns all
+/// `None` (and writes nothing) when no probes are uploaded, so it costs nothing
+/// for consumers that never call `set_light_probes`.
+pub(super) fn prepare_light_probe_sh(
+    resources: &DeviceResources,
+    scene_items: &[SceneRenderItem],
+    queue: &crate::gpu::Queue,
+) -> Vec<Option<u32>> {
+    let mut indices = vec![None; scene_items.len()];
+    if let Some(probes) = resources.light_probes.as_ref() {
+        if !probes.is_empty() {
+            let mut sh_gpu: Vec<[f32; 4]> = Vec::new();
+            let mut count = 0u32;
+            for (idx, item) in scene_items.iter().enumerate() {
+                if item.indirect_light != crate::renderer::IndirectLightSource::LightProbe {
+                    continue;
+                }
+                if count as usize >= crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS {
+                    break;
+                }
+                let center = [item.model[3][0], item.model[3][1], item.model[3][2]];
+                sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
+                indices[idx] = Some(count);
+                count += 1;
+            }
+            if !sh_gpu.is_empty() {
+                queue.write_buffer(
+                    &resources.light_probe_sh_buf,
+                    0,
+                    bytemuck::cast_slice(&sh_gpu),
+                );
+            }
+        }
+    }
+    indices
+}
+
 impl ViewportRenderer {
     /// Non-instanced (per-object) mesh draw preparation: compute the per-item
     /// material/feature flags, write one `ObjectUniform` per scene item, and build
     /// or reuse the per-item bind groups (plus the wireframe-mode uniform pool).
+    ///
+    /// `probe_indices` is index-aligned with `scene_items` and maps each item to
+    /// its light-probe SH block (see [`prepare_light_probe_sh`]).
     pub(super) fn prepare_per_object(
         resources: &mut DeviceResources,
         mesh_uniforms: &mut PerObjectState,
         use_instancing: bool,
         scene_items: &[SceneRenderItem],
         instanceable: &[bool],
+        probe_indices: &[Option<u32>],
         frame_index: u64,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
@@ -180,41 +227,6 @@ impl ViewportRenderer {
         // in FrameStats so a cache that is silently missing is visible.
         let mut bind_groups_built = 0u32;
 
-        // Light-probe SH prepass: for each object that opts into the probe field,
-        // blend the nearby probes' SH at the object's position and pack it into
-        // the shared per-object SH buffer (group 0 binding 18). `probe_indices`
-        // maps this frame's item index to that object's SH block, consumed by
-        // `build_object_uniform`. Costs nothing when no probes are uploaded.
-        let probe_indices: Vec<Option<u32>> = {
-            let mut indices = vec![None; scene_items.len()];
-            if let Some(probes) = resources.light_probes.as_ref() {
-                if !probes.is_empty() {
-                    let mut sh_gpu: Vec<[f32; 4]> = Vec::new();
-                    let mut count = 0u32;
-                    for (idx, item) in scene_items.iter().enumerate() {
-                        if item.indirect_light != crate::renderer::IndirectLightSource::LightProbe {
-                            continue;
-                        }
-                        if count as usize >= crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
-                        {
-                            break;
-                        }
-                        let center = [item.model[3][0], item.model[3][1], item.model[3][2]];
-                        sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
-                        indices[idx] = Some(count);
-                        count += 1;
-                    }
-                    if !sh_gpu.is_empty() {
-                        queue.write_buffer(
-                            &resources.light_probe_sh_buf,
-                            0,
-                            bytemuck::cast_slice(&sh_gpu),
-                        );
-                    }
-                }
-            }
-            indices
-        };
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
