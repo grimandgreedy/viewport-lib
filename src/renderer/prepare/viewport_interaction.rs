@@ -104,7 +104,13 @@ impl ViewportRenderer {
             }
 
             // Upload camera uniform to per-viewport slot buffer.
-            let camera_uniform = frame.camera.render_camera.camera_uniform();
+            let mut camera_uniform = frame.camera.render_camera.camera_uniform();
+            // On the HDR path the lit term may exceed 1.0; bound it at f16 max
+            // so the Rgba16Float target stays finite. The LDR path keeps the
+            // historical [0, 1] clamp.
+            if frame.effects.post_process.enabled {
+                camera_uniform.lit_clamp = 65504.0;
+            }
             // Write to shared buffer for legacy single-viewport callers.
             queue.write_buffer(
                 &resources.camera_uniform_buf,
@@ -124,10 +130,12 @@ impl ViewportRenderer {
                         .camera
                         .render_camera
                         .foreground_camera(frame.effects.foreground.as_ref());
+                    let mut fg_uniform = fg_camera.camera_uniform();
+                    fg_uniform.lit_clamp = camera_uniform.lit_clamp;
                     queue.write_buffer(
                         &slot.foreground_camera_buf,
                         0,
-                        bytemuck::cast_slice(&[fg_camera.camera_uniform()]),
+                        bytemuck::cast_slice(&[fg_uniform]),
                     );
                 }
             }

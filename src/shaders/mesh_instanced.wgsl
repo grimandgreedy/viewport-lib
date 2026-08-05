@@ -11,7 +11,10 @@
 struct Camera {
     view_proj: mat4x4<f32>,
     eye_pos: vec3<f32>,
-    _pad: f32,
+    // Upper bound on the lit (pre-emissive) colour: 1.0 on the LDR path,
+    // F16_MAX on the HDR path so lit output can exceed 1.0 into the
+    // Rgba16Float target ahead of tone mapping.
+    lit_clamp: f32,
     forward: vec3<f32>,
     _pad1: f32,
     inv_view_proj: mat4x4<f32>,
@@ -566,7 +569,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // </viewport-shade-slot:ambient>
-        final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
         // <viewport-shade-slot:recolor>
         // </viewport-shade-slot:recolor>
         // BEGIN_PBR_STRIP
@@ -604,7 +607,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         let hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
         let lit_rgb = hemi_rgb + direct_rgb;
-        final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
         // END_PBR_STRIP
     }
 

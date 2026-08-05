@@ -278,8 +278,14 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     /// Camera eye position in world space (used for specular lighting).
     pub eye_pos: [f32; 3],
-    /// Padding to align `eye_pos` to 16 bytes.
-    pub _pad: f32,
+    /// Upper bound applied to the lit (pre-emissive) mesh colour.
+    ///
+    /// 1.0 on the LDR path, so lit output stays normalised as before. On the
+    /// HDR path this is F16_MAX, letting bright direct light and ambient stay
+    /// above 1.0 into the Rgba16Float target so the tone mapper receives real
+    /// HDR (emissive was already unclamped on both paths). Occupies what was
+    /// alignment padding, so the struct layout is unchanged.
+    pub lit_clamp: f32,
     /// Camera forward direction in world space (used for view-depth tests).
     pub forward: [f32; 3],
     /// Padding to align `forward` to 16 bytes.

@@ -421,13 +421,13 @@ fn position_override_takes_effect_through_render_path() {
     // ---- Render 1: no override. The red plane should be visible. ----
     let baseline = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    // The lit red plane tone-maps to roughly [241, 34, 34]; the Khronos
-    // Neutral curve lifts the dark channels a little, so the green/blue
-    // bounds sit above that rather than near zero.
+    // The lit red plane tone-maps to roughly [246, 60, 60]: with the lit
+    // clamp open on the HDR path, the Khronos Neutral curve desaturates the
+    // above-1.0 highlight, lifting the green/blue channels.
     let count_red = |pixels: &[u8]| -> usize {
         pixels
             .chunks_exact(4)
-            .filter(|rgba| rgba[0] > 100 && rgba[1] < 60 && rgba[2] < 60)
+            .filter(|rgba| rgba[0] > 150 && rgba[1] < 100 && rgba[2] < 100)
             .count()
     };
     let baseline_red = count_red(&baseline);
@@ -854,7 +854,7 @@ fn position_override_slice_reads_correct_pool_window() {
     let count_red = |pixels: &[u8]| -> usize {
         pixels
             .chunks_exact(4)
-            .filter(|rgba| rgba[0] > 100 && rgba[1] < 60 && rgba[2] < 60)
+            .filter(|rgba| rgba[0] > 150 && rgba[1] < 100 && rgba[2] < 100)
             .count()
     };
 
@@ -5070,5 +5070,65 @@ fn fs() -> @location(0) vec4<f32> {
     assert!(
         green(&with_plugin) > green(&without),
         "plugin's green fullscreen triangle should raise green"
+    );
+}
+
+/// The lit clamp policy: on the HDR path the lit (pre-emissive) term may
+/// exceed 1.0 into the Rgba16Float target, so raising a light's intensity far
+/// past the point where the old [0, 1] clamp saturated must still change the
+/// tone-mapped output. On the LDR path the historical [0, 1] clamp holds, so
+/// the same intensity change above saturation produces identical pixels.
+#[test]
+fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    // Ambient-only lighting: the hemisphere term is uniform per face, so a
+    // large intensity saturates every lit pixel and the comparison is not
+    // polluted by grazing-angle pixels that sit below the clamp.
+    let mut render_at = |intensity: f32, hdr: bool, renderer: &mut ViewportRenderer| {
+        frame.effects.post_process.enabled = hdr;
+        frame.effects.lighting.lights = Vec::new();
+        frame.effects.lighting.hemisphere_intensity = intensity;
+        renderer.render_offscreen(&device, &queue, &frame, 64, 64)
+    };
+
+    // Both intensities are far past the old saturation point for every lit
+    // pixel, so under a [0, 1] clamp they render identically.
+    let hdr_lo = render_at(50.0, true, &mut renderer);
+    let hdr_hi = render_at(500.0, true, &mut renderer);
+    assert_ne!(
+        hdr_lo, hdr_hi,
+        "HDR path: lit output must respond to intensity above 1.0 (clamp should not saturate before tone mapping)"
+    );
+
+    let ldr_lo = render_at(50.0, false, &mut renderer);
+    let ldr_hi = render_at(500.0, false, &mut renderer);
+    assert_eq!(
+        ldr_lo, ldr_hi,
+        "LDR path: the [0, 1] lit clamp must hold (byte-identical output above saturation)"
     );
 }

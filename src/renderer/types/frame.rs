@@ -46,7 +46,8 @@ impl RenderCamera {
         CameraUniform {
             view_proj: vp.to_cols_array_2d(),
             eye_pos: self.eye_position,
-            _pad: 0.0,
+            // LDR default; the per-viewport upload raises this on the HDR path.
+            lit_clamp: 1.0,
             forward: self.forward,
             _pad1: 0.0,
             inv_view_proj: vp.inverse().to_cols_array_2d(),
