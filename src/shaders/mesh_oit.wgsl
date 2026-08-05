@@ -95,6 +95,10 @@ struct Object {
     ao_range: vec2<f32>,                   // offset 280 : (min, max) remap of AO map R sample
     metallic_range: vec2<f32>,             // offset 288 : (min, max) remap of MR texture B channel
     roughness_range: vec2<f32>,            // offset 296 : (min, max) remap of MR texture G channel
+    _pad_overrides: vec4<u32>,             // offset 304 : position/normal override slots (unused here)
+    has_light_probe: u32,                  // offset 320 : 1 = sample light_probe_sh for indirect diffuse
+    light_probe_index: u32,                // offset 324 : base block index into light_probe_sh
+    _pad_lp: vec2<u32>,                    // offset 328 : align to 336
 };
 
 struct ClipVolumeEntry {
@@ -640,6 +644,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
+        // Light-probe objects take their indirect diffuse from the SH field.
+        if object.has_light_probe != 0u {
+            ambient = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
+            dbg_ambient_lum = dot(ambient, lum_weights);
+        }
         // </viewport-shade-slot:ambient>
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
         // <viewport-shade-slot:recolor>
@@ -665,7 +674,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
         let direct_rgb = base_colour * total_colour_contrib;
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
-        let hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        // Light-probe objects take their indirect diffuse from the SH field.
+        if object.has_light_probe != 0u {
+            hemi_rgb = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
+        }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
         let lit_rgb = hemi_rgb + direct_rgb;
         final_rgb = clamp(lit_rgb * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));

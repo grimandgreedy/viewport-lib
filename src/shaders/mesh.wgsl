@@ -865,7 +865,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
 
         let direct_rgb = base_colour * total_colour_contrib;
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
-        let hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
+        // Light-probe objects take their indirect diffuse from the SH field.
+        if object.has_light_probe != 0u {
+            hemi_rgb = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
+        }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
 
         let lit_rgb = hemi_rgb + direct_rgb;
