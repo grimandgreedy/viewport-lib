@@ -16,6 +16,7 @@ use per_object_state::PerObjectState;
 mod shadow_state;
 use shadow_state::ShadowState;
 mod paths;
+pub use capture::CapturedHdr;
 pub use paths::{OwnedPath, PassPath, PassView};
 mod gpu_context;
 pub use gpu_context::GpuContext;
@@ -27,6 +28,7 @@ pub use picking::{
 };
 mod point_shadow_pool;
 mod prepare;
+mod capture;
 mod render;
 mod submit;
 pub use submit::SubmitSink;

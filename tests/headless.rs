@@ -11,10 +11,10 @@ use viewport_lib::wgpu;
 
 use viewport_lib::{
     Aabb, BackfacePolicy, Camera, DecalItem, GaussianSplatData, GaussianSplatItem, GlyphItem,
-    GlyphType, ImageAnchor, ImageSliceItem, ItemSettings, Material, MeshId, OverrideBufferSlice,
-    PickBackend, PickId, PickMask, PickPoll, PointCloudItem, PolylineItem, RibbonItem,
-    ScatterVolume, ScatterVolumeItem, Scene, ScreenImageItem, Selection, ShDegree, SliceAxis,
-    SpriteItem, SpriteSizeMode, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
+    GlyphType, ImageAnchor, ImageSliceItem, ItemSettings, LightKind, LightSource, Material, MeshId,
+    OverrideBufferSlice, PickBackend, PickId, PickMask, PickPoll, PointCloudItem, PolylineItem,
+    RibbonItem, ScatterVolume, ScatterVolumeItem, Scene, ScreenImageItem, Selection, ShDegree,
+    SliceAxis, SpriteItem, SpriteSizeMode, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
@@ -345,6 +345,139 @@ fn render_offscreen_produces_rgba_pixels() {
     // At least some pixels should be non-zero (the mesh or background).
     let has_nonzero = pixels.iter().any(|&b| b != 0);
     assert!(has_nonzero, "offscreen render produced all-zero image");
+}
+
+/// `capture_hdr` must return linear radiance with the full HDR range intact:
+/// a value above 1.0 in the scene has to survive to the CPU, where the
+/// tone-mapped LDR path would have clamped it. A box with emissive `[5,5,5]`
+/// (emissive is added after the pre-tonemap clamp) is a guaranteed > 1.0 signal
+/// independent of the lighting model, so the captured pixels must exceed 1.0.
+#[test]
+fn capture_hdr_preserves_values_above_one() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // A very bright directional light on a plain white box. This exercises the
+    // *lit* path specifically (not emissive, which is added past the clamp), so
+    // the assertion below only holds if the capture actually raised the shader's
+    // lit_clamp to the f16 max on the HDR path. A camera-facing light keeps the
+    // visible face lit.
+    let mut light = LightSource::default();
+    light.kind = LightKind::Directional {
+        direction: [0.0, 0.0, 1.0],
+    };
+    light.intensity = 20.0;
+    frame.effects.lighting.lights = vec![light];
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.material.base_colour = [1.0, 1.0, 1.0];
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    // Snapshot the fields capture_hdr overrides, to prove they are restored.
+    let orig_viewport_size = frame.camera.viewport_size;
+    let orig_pp_enabled = frame.effects.post_process.enabled;
+
+    let mut face_cam = RenderCamera::from_camera(&cam);
+    face_cam.aspect = 1.0;
+    let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
+
+    assert_eq!(captured.width, 64);
+    assert_eq!(captured.height, 64);
+    assert_eq!(captured.rgba.len(), 64 * 64 * 4);
+
+    let max_channel = captured
+        .rgba
+        .iter()
+        .copied()
+        .fold(0.0f32, |acc, v| acc.max(v));
+    assert!(
+        max_channel > 1.5,
+        "captured lit radiance was clamped: max channel {max_channel} (expected > 1.5; lit_clamp not lifted?)"
+    );
+
+    // The override snapshot must be restored: the caller's frame is unchanged.
+    assert_eq!(frame.camera.viewport_size, orig_viewport_size);
+    assert_eq!(frame.effects.post_process.enabled, orig_pp_enabled);
+}
+
+/// `capture_equirect` must resolve the six faces into a panorama whose
+/// direction mapping matches the shader consumer: a bright emissive box placed
+/// along +X, viewed from the origin, has to land near the equirect centre
+/// (u=0.5 -> phi=0 -> +X, v=0.5 -> theta=0 -> equator). A flipped axis in the
+/// resolve would put the brightest texel somewhere else, so this pins the
+/// convention end to end. It also confirms the 2:1 aspect and that HDR survives
+/// the resolve.
+#[test]
+fn capture_equirect_maps_direction_like_the_shader() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = FrameData::default();
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    // Place the box along +X so it fills only the +X face from the origin.
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
+    item.material.emissive = [8.0, 8.0, 8.0];
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let eq_h = 64u32;
+    let captured =
+        renderer.capture_equirect(&device, &queue, &mut frame, [0.0, 0.0, 0.0], 128, eq_h);
+
+    assert_eq!(captured.width, eq_h * 2);
+    assert_eq!(captured.height, eq_h);
+    assert_eq!(
+        captured.rgba.len(),
+        (captured.width * captured.height * 4) as usize
+    );
+
+    // Find the brightest texel (by luminance-ish sum) and its normalised UV.
+    let (mut best_i, mut best_lum) = (0usize, f32::NEG_INFINITY);
+    for i in 0..(captured.width * captured.height) as usize {
+        let o = i * 4;
+        let lum = captured.rgba[o] + captured.rgba[o + 1] + captured.rgba[o + 2];
+        if lum > best_lum {
+            best_lum = lum;
+            best_i = i;
+        }
+    }
+    let px = (best_i as u32 % captured.width) as f32;
+    let py = (best_i as u32 / captured.width) as f32;
+    let u = (px + 0.5) / captured.width as f32;
+    let v = (py + 0.5) / captured.height as f32;
+
+    assert!(
+        best_lum > 1.0,
+        "HDR emissive did not survive the resolve: {best_lum}"
+    );
+    assert!(
+        (0.42..=0.58).contains(&u) && (0.42..=0.58).contains(&v),
+        "+X emissive box resolved to uv ({u:.3}, {v:.3}), expected near (0.5, 0.5)"
+    );
 }
 
 /// Regression test for the silent-skip bug where a `set_position_override_buffer`
