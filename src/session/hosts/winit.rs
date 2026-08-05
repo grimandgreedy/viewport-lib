@@ -72,8 +72,11 @@ pub struct FrameCtx<'a> {
     pub dt: f32,
     /// Seconds since the app started.
     pub time: f32,
+    device: &'a crate::gpu::Device,
+    queue: &'a crate::gpu::Queue,
     overlays: OverlayFrame,
     injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
+    request_exit: bool,
 }
 
 impl FrameCtx<'_> {
@@ -85,6 +88,38 @@ impl FrameCtx<'_> {
     /// Seconds since the app started.
     pub fn time(&self) -> f32 {
         self.time
+    }
+
+    /// The wgpu device the runner created.
+    ///
+    /// For per-frame work that needs the device: GPU picking
+    /// ([`pick_gpu`](ViewportSession::pick_gpu),
+    /// [`pick_rect_gpu`](ViewportSession::pick_rect_gpu),
+    /// [`pick_begin`](ViewportSession::pick_begin)) or a mesh upload through
+    /// [`resources_mut`](ViewportSession::resources_mut). Those methods also take
+    /// `&mut self` on the session, which the callback reaches by deref, so borrow
+    /// the handle first (a wgpu `Device` is a cheap `Arc`-backed clone):
+    ///
+    /// ```rust,ignore
+    /// let device = ctx.device().clone();
+    /// let queue = ctx.queue().clone();
+    /// if let Some(hit) = ctx.pick_gpu(&device, &queue, cursor, PickMask::ALL) {
+    ///     // ...
+    /// }
+    /// ```
+    pub fn device(&self) -> &crate::gpu::Device {
+        self.device
+    }
+
+    /// The wgpu queue the runner created. See [`device`](Self::device).
+    pub fn queue(&self) -> &crate::gpu::Queue {
+        self.queue
+    }
+
+    /// Ask the runner to close the window and end the event loop after this
+    /// frame. The current frame still renders; the loop exits before the next.
+    pub fn request_exit(&mut self) {
+        self.request_exit = true;
     }
 
     /// Overlays to draw this frame: shapes, labels, polylines, and images.
@@ -319,16 +354,29 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                 self.last_frame = now;
                 let time = (now - self.start).as_secs_f32();
 
+                // Resolve accumulated input before the callback so a callback
+                // reading action_frame() (for click-to-pick and the like) sees
+                // this frame's input, not the previous frame's. update_orbit
+                // resolves again below, but resolve() is side-effect-free and the
+                // camera is only applied once, so the repeat is free.
+                state.session.resolve();
+
                 let mut ctx = FrameCtx {
                     session: &mut state.session,
                     dt,
                     time,
+                    device: &state.device,
+                    queue: &state.queue,
                     overlays: OverlayFrame::default(),
                     injects: Vec::new(),
+                    request_exit: false,
                 };
                 (self.callback)(&mut ctx);
                 let FrameCtx {
-                    overlays, injects, ..
+                    overlays,
+                    injects,
+                    request_exit,
+                    ..
                 } = ctx;
 
                 // Sync to the live surface size before assembly so the renderer's
@@ -367,6 +415,11 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                 let cmd = state.session.render(&state.device, &state.queue, &view);
                 state.queue.submit(std::iter::once(cmd));
                 frame.present();
+
+                if request_exit {
+                    event_loop.exit();
+                    return;
+                }
 
                 state.session.begin_frame(ViewportContext {
                     hovered: true,

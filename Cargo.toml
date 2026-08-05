@@ -207,6 +207,11 @@ path = "examples/winit_minimal/main.rs"
 required-features = ["wgpu27", "app"]
 
 [[example]]
+name = "winit-basic-interaction"
+path = "examples/winit_basic_interaction/main.rs"
+required-features = ["wgpu27", "app"]
+
+[[example]]
 name = "winit-multi-viewport"
 path = "examples/winit_multi_viewport/main.rs"
 required-features = ["wgpu27"]
