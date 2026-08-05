@@ -65,8 +65,8 @@ fn main() {
         let raw = fs::read_to_string(&src_path)
             .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", src_path.display(), e));
         let raw_noop = raw.replace(
-            "// #include \"deform.wgsl\"",
-            "// #include \"deform_noop.wgsl\"",
+            "// #include \"helpers/deform.wgsl\"",
+            "// #include \"helpers/deform_noop.wgsl\"",
         );
         let preprocessed = resolve_includes(&raw_noop, &shaders_dir, name);
         let preprocessed = if is_ios {

@@ -65,7 +65,7 @@ struct NodePair {
 @group(1) @binding(0) var<storage, read> pick_instances: array<PickInstance>;
 @group(2) @binding(0) var<storage, read> tri_nodes: array<NodePair>;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 struct VertexIn {
     @location(0) position: vec3<f32>,

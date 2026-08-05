@@ -59,7 +59,7 @@ struct PickInstance {
 @group(2) @binding(0) var<storage, read> mesh_floats: array<f32>;
 @group(2) @binding(1) var<storage, read> mesh_indices: array<u32>;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 struct VertexIn {
     @location(0) position: vec3<f32>,

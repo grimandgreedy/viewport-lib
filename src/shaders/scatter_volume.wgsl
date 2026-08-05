@@ -24,7 +24,7 @@ struct Camera {
 };
 
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 
 struct ClipPlanes {
     planes:          array<vec4<f32>, 6>,

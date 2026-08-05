@@ -8,8 +8,8 @@
 //! All textures are Rgba16Float for HDR correctness.
 //!
 //! The IBL shader helpers (`dir_to_equirect_uv`, `sample_ibl_irradiance`,
-//! `ibl_ambient`, etc.) live in `src/shaders/ambient.wgsl`, shared by the four
-//! lit mesh shaders via the build-time `// #include` preprocessor.
+//! `ibl_ambient`, etc.) live in `src/shaders/helpers/ambient.wgsl`, shared by
+//! the four lit mesh shaders via the build-time `// #include` preprocessor.
 
 use rayon::prelude::*;
 use std::f32::consts::PI;

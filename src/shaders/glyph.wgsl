@@ -14,7 +14,7 @@
 // Each instance is oriented so the glyph local +Y axis aligns with the direction vector.
 // Scale = global_scale * (optional magnitude scaling).
 
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 // Colour = LUT(scalar) or LUT(magnitude) depending on has_scalars.
 
 struct Camera {
@@ -92,7 +92,7 @@ struct ClipVolumeUB {
 @group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 @group(1) @binding(0) var<uniform>       glyph_uniform: GlyphUniform;
 @group(1) @binding(1) var               lut_texture:   texture_2d<f32>;

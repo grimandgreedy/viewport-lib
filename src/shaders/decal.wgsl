@@ -24,7 +24,7 @@ struct Camera {
 // Scene lights, shared with the opaque pass (same group 0 layout). Used so the
 // decal is lit by the real scene light direction rather than the camera view
 // direction, which made decals brighten and darken as the camera moved.
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 @group(0) @binding(3) var<uniform> lights_uniform: Lights;
 
 // Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).

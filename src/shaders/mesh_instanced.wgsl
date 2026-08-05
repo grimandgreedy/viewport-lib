@@ -21,13 +21,13 @@ struct Camera {
 };
 
 // Shared light struct definitions and `lights_storage` binding 13 of group 0.
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 
 // Frozen fragment-shading hook structs (ShadingSurface, LightSample).
-// #include "shade.wgsl"
+// #include "helpers/shade.wgsl"
 
 // Per-vertex deformation hook contract.
-// #include "deform.wgsl"
+// #include "helpers/deform.wgsl"
 
 struct ClipPlanes {
     planes: array<vec4<f32>, 6>,
@@ -111,7 +111,7 @@ struct ClipVolumeUB {
 @group(0) @binding(11) var ibl_skybox: texture_2d<f32>;
 @group(0) @binding(12) var<storage, read_write> debug_frag_buf: array<vec4<f32>>;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 @group(1) @binding(0) var<storage, read> instances:          array<InstanceData>;
 @group(1) @binding(1) var                obj_texture:        texture_2d<f32>;
 @group(1) @binding(2) var                obj_sampler:        sampler;
@@ -219,7 +219,7 @@ fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>) -> f32 {
     );
 }
 
-// #include "csm.wgsl"
+// #include "helpers/csm.wgsl"
 
 // ---------------------------------------------------------------------------
 // PBR BRDF helpers (Cook-Torrance) : mirrors mesh.wgsl
@@ -247,7 +247,7 @@ fn F_Schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
 }
 
 // Shared ambient / IBL helpers (equirect sampling, split-sum ambient).
-// #include "ambient.wgsl"
+// #include "helpers/ambient.wgsl"
 
 fn pbr_light_contrib(
     N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, radiance: vec3<f32>,
@@ -598,7 +598,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let dbg_emissive_lum = 0.0;
     var final_rgb = lit.rgb;
 
-    // #include "debug_vis.wgsl"
+    // #include "helpers/debug_vis.wgsl"
 
     return vec4<f32>(final_rgb, surface.alpha);
 }

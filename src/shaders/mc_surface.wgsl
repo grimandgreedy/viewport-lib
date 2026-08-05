@@ -15,7 +15,7 @@
 // but keeps an inline per-light loop because it adds a Blinn-Phong specular term
 // that the shared helper does not cover.
 
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 
 // ---------------------------------------------------------------------------
 // Group 0: camera + lights

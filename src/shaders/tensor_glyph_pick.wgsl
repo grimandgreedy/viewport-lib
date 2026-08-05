@@ -80,7 +80,7 @@ struct TensorInstance {
 @group(0) @binding(0) var<uniform>       camera:      Camera;
 @group(0) @binding(6) var<uniform>       clip_volume: ClipVolumeUB;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 @group(1) @binding(0) var<uniform>       tg_uniform:  TensorGlyphUniform;
 @group(1) @binding(3) var<uniform>       pick:        PickId;

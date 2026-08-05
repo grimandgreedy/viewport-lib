@@ -68,7 +68,7 @@ struct PickId {
 
 @group(2) @binding(0) var<uniform> pick: PickId;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 // Matches the standard mesh Vertex layout; only position is read here.
 struct VertexIn {

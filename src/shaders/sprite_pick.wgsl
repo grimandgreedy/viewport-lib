@@ -94,7 +94,7 @@ struct PickId {
 
 @group(2) @binding(0) var<uniform>       pick: PickId;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 struct VertexIn {
     @location(0)             position:       vec3<f32>,

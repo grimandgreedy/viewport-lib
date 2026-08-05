@@ -17,7 +17,7 @@
 //          backs the binding when no normal map is supplied; `NormalMap` mode
 //          falls back to the spherical normal in that case.
 
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 
 struct Camera {
     view_proj:     mat4x4<f32>,
@@ -120,7 +120,7 @@ struct SpriteInstance {
 @group(3) @binding(0) var normal_map_tex:  texture_2d<f32>;
 @group(3) @binding(1) var normal_map_samp: sampler;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 struct VertexIn {
     @location(0)             position:       vec3<f32>,

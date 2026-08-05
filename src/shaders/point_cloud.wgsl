@@ -80,7 +80,7 @@ struct ClipVolumeUB {
 @group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 @group(1) @binding(0) var<uniform>            pc_uniform:           PointCloudUniform;
 @group(1) @binding(1) var                     lut_texture:          texture_2d<f32>;

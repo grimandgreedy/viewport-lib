@@ -109,7 +109,7 @@ struct SpriteInstance {
 @group(2) @binding(0) var scene_depth_tex: texture_depth_2d;
 @group(2) @binding(1) var scene_depth_samp: sampler;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 struct VertexIn {
     @location(0)             position:       vec3<f32>,

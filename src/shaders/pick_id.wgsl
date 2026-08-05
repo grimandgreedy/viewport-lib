@@ -54,7 +54,7 @@ struct PickInstance {
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 @group(1) @binding(0) var<storage, read> pick_instances: array<PickInstance>;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 struct VertexIn {
     @location(0) position: vec3<f32>,

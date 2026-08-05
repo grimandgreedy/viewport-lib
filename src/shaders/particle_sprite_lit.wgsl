@@ -5,7 +5,7 @@
 // fragment stage adds a spherical (or flat/normal-mapped) per-fragment
 // normal and runs the scene lighting integrand from `scene_lighting.wgsl`.
 
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 
 struct Camera {
     view_proj:     mat4x4<f32>,

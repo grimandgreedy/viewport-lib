@@ -7,7 +7,7 @@
 // Group 2: Per-instance storage buffer (TensorInstance: pre-computed model matrix,
 //          normal matrix, scalar).
 
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 //
 // Vertex input: the glyph sphere base mesh (position vec3, normal vec3 : full Vertex layout).
 //
@@ -97,7 +97,7 @@ struct TensorInstance {
 @group(0) @binding(4) var<uniform>       clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform>       clip_volume: ClipVolumeUB;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 @group(1) @binding(0) var<uniform>       tg_uniform:  TensorGlyphUniform;
 @group(1) @binding(1) var               lut_texture:  texture_2d<f32>;

@@ -75,7 +75,7 @@ struct ClipVolumeUB {
 @group(0) @binding(4) var<uniform> clip_planes_ub: ClipPlanes;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 @group(1) @binding(0) var<uniform> volume: VolumeUniform;
 @group(1) @binding(1) var volume_tex: texture_3d<f32>;

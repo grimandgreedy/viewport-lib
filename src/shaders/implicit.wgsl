@@ -13,7 +13,7 @@
 // Vertex stage : full-screen quad (two triangles, no vertex buffer).
 // Fragment stage : reconstruct world-space ray -> sphere-march -> shade -> write depth.
 
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 
 // ---------------------------------------------------------------------------
 // Group 0 : camera + lights

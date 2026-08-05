@@ -8,7 +8,7 @@
 // Group 0: Camera uniform (view-projection, eye position) + Lights + ClipPlanes + ClipVolume.
 // Group 1: StreamtubeUniform : colour (vec4) + radius (f32, unused here : mesh already scaled).
 
-// #include "scene_lighting.wgsl"
+// #include "helpers/scene_lighting.wgsl"
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -67,7 +67,7 @@ struct ClipVolumeUB {
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
 @group(1) @binding(0) var<uniform> tube:        StreamtubeUniform;
 
-// #include "clip_volume_test.wgsl"
+// #include "helpers/clip_volume_test.wgsl"
 
 struct VertexIn {
     // Vertex layout (64-byte stride): position, normal, colour, uv, tangent.

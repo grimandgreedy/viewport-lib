@@ -47,7 +47,7 @@ struct Object {
 @group(1) @binding(13) var<storage, read> position_override_buffer: array<f32>;
 
 // Per-vertex deformation hook contract.
-// #include "deform.wgsl"
+// #include "helpers/deform.wgsl"
 
 @vertex
 fn vs_main(

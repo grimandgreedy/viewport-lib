@@ -27,7 +27,7 @@ struct Object {
 @group(1) @binding(0) var<uniform> object: Object;
 
 // Per-vertex deformation hook contract.
-// #include "deform.wgsl"
+// #include "helpers/deform.wgsl"
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
