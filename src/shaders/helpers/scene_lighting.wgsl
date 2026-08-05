@@ -67,14 +67,21 @@ struct Lights {
 // selects array layer `layer`, with `fade` the outer falloff band. `parallax`
 // is 1 for a local reflection probe (box-project the reflection against this box)
 // and 0 for a distant environment. See env_zone_weight / ibl_ambient_zoned in
-// ambient.wgsl. `_pad_probe` reserves room for a future separate proxy box.
+// ambient.wgsl.
+//
+// 48 bytes, matching `EnvZoneGpu` in environment.rs. The trailing pad is three
+// SCALAR u32s, not a vec3<u32>: a vec3 has 16-byte alignment, which would round
+// the struct up to 64 and break the array stride against the 48-byte Rust upload.
+// The pad reserves room for a future separate parallax proxy box.
 struct EnvZone {
-    center:       vec3<f32>,
-    layer:        u32,
-    half_extents: vec3<f32>,
-    fade:         f32,
-    parallax:     u32,
-    _pad_probe:   vec3<u32>,
+    center:       vec3<f32>,   // offset 0
+    layer:        u32,         // offset 12
+    half_extents: vec3<f32>,   // offset 16
+    fade:         f32,         // offset 28
+    parallax:     u32,         // offset 32
+    _pad_a:       u32,         // offset 36
+    _pad_b:       u32,         // offset 40
+    _pad_c:       u32,         // offset 44 (struct size 48)
 };
 
 struct ClusterGrid {

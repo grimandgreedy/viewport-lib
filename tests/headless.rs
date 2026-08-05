@@ -640,6 +640,112 @@ fn capture_reflection_probe_bakes_a_parallax_zone() {
     assert_eq!(pixels.len(), 64 * 64 * 4);
 }
 
+/// A solid-colour equirect panorama (RGBA f32).
+fn solid_env(rgb: [f32; 3], w: u32, h: u32) -> Vec<f32> {
+    let mut v = Vec::with_capacity((w * h * 4) as usize);
+    for _ in 0..(w * h) {
+        v.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 1.0]);
+    }
+    v
+}
+
+/// Regression guard for the `EnvZone` GPU-struct stride: the WGSL struct must be
+/// 48 bytes to match the Rust upload. A `vec3<u32>` pad (align 16) rounds it up
+/// to 64 and reads every zone after the first at the wrong offset, so only the
+/// first zone lights. Here the green environment is the SECOND zone, so it only
+/// reaches the sphere when the stride is correct.
+#[test]
+fn environment_zones_select_the_second_zone() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Default (layer 0) black, plus red (layer 1) and green (layer 2).
+    renderer
+        .upload_environment_map(&device, &queue, &solid_env([0.0, 0.0, 0.0], 8, 4), 8, 4)
+        .unwrap();
+    let red = renderer
+        .upload_environment(&device, &queue, &solid_env([1.0, 0.0, 0.0], 8, 4), 8, 4)
+        .unwrap();
+    let green = renderer
+        .upload_environment(&device, &queue, &solid_env([0.0, 1.0, 0.0], 8, 4), 8, 4)
+        .unwrap();
+
+    // Red zone far away (no coverage); green zone around the origin. Green is the
+    // second entry, so a stride mismatch reads it wrong and the sphere loses it.
+    let far = viewport_lib::Aabb {
+        min: glam::Vec3::splat(-31.0),
+        max: glam::Vec3::splat(-29.0),
+    };
+    let here = viewport_lib::Aabb {
+        min: glam::Vec3::splat(-3.0),
+        max: glam::Vec3::splat(3.0),
+    };
+    renderer.set_environment_zones(
+        &queue,
+        &[
+            viewport_lib::EnvironmentZone {
+                bounds: far,
+                environment: red,
+                fade_distance: 0.5,
+                parallax: false,
+            },
+            viewport_lib::EnvironmentZone {
+                bounds: here,
+                environment: green,
+                fade_distance: 0.5,
+                parallax: false,
+            },
+        ],
+    );
+
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &viewport_lib::primitives::sphere(1.0, 24, 12))
+        .unwrap();
+
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&Camera::default());
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    // Black background so only the sphere's own (environment-lit) pixels count.
+    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0]);
+    // IBL on, no direct or hemisphere light, so the matte sphere shows only the
+    // selected environment's irradiance.
+    frame.effects.environment = Some(viewport_lib::EnvironmentMap {
+        intensity: 1.0,
+        rotation: 0.0,
+        show_skybox: false,
+    });
+    frame.effects.lighting.lights = vec![];
+    frame.effects.lighting.hemisphere_intensity = 0.0;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.material = Material::pbr([1.0, 1.0, 1.0], 0.0, 1.0); // matte white
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let (mut r, mut g) = (0u64, 0u64);
+    for px in pixels.chunks_exact(4) {
+        r += px[0] as u64;
+        g += px[1] as u64;
+    }
+    assert!(
+        g > r * 2 + 1,
+        "sphere in the second (green) zone must read green (g {g}), not the \
+         garbage a stride mismatch produces (r {r})"
+    );
+}
+
 /// Regression test for the silent-skip bug where a `set_position_override_buffer`
 /// binding would render nothing when the item was routed through the instanced
 /// pipeline. `mesh_instanced.wgsl` has no awareness of the override binding,
