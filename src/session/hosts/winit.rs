@@ -12,10 +12,10 @@ use ::winit::event::WindowEvent;
 use ::winit::event_loop::{ActiveEventLoop, EventLoop};
 use ::winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::OrbitCameraController;
 use crate::interaction::input::ViewportContext;
 use crate::interaction::input::adapters::from_winit;
 use crate::session::ViewportSession;
+use crate::{FrameData, OrbitCameraController, OverlayFrame};
 
 /// Window configuration for a [`ViewportApp`].
 ///
@@ -58,12 +58,22 @@ impl AppConfig {
 }
 
 /// What the per-frame callback receives: the session (via deref) plus timing.
+///
+/// The callback runs before the frame is assembled, and assembly clears the
+/// overlay frame, so overlays pushed directly through
+/// [`frame_data_mut`](ViewportSession::frame_data_mut) would be wiped before
+/// render. Use [`overlays_mut`](Self::overlays_mut) (or [`inject`](Self::inject)
+/// for other per-frame, non-mesh items): the runner applies them after assembly
+/// and before render, at the same point the session's `update_orbit_with` seam
+/// runs.
 pub struct FrameCtx<'a> {
     session: &'a mut ViewportSession,
     /// Seconds since the previous frame.
     pub dt: f32,
     /// Seconds since the app started.
     pub time: f32,
+    overlays: OverlayFrame,
+    injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
 }
 
 impl FrameCtx<'_> {
@@ -75,6 +85,27 @@ impl FrameCtx<'_> {
     /// Seconds since the app started.
     pub fn time(&self) -> f32 {
         self.time
+    }
+
+    /// Overlays to draw this frame: shapes, labels, polylines, and images.
+    ///
+    /// Push into the returned frame instead of `frame_data_mut().overlays`. The
+    /// runner installs these after the frame is assembled and before render, so
+    /// they survive the overlay reset that assembly performs. The buffer is
+    /// per-frame: it starts empty each callback, so re-push anything that should
+    /// persist.
+    pub fn overlays_mut(&mut self) -> &mut OverlayFrame {
+        &mut self.overlays
+    }
+
+    /// Queue a closure to run against the assembled [`FrameData`] before render.
+    ///
+    /// This is the general form of [`overlays_mut`](Self::overlays_mut), for
+    /// per-frame non-mesh items that assembly rebuilds (point clouds, glyphs,
+    /// volumes pushed by hand into `frame.scene`). Closures run in the order
+    /// queued, after the buffered overlays are installed.
+    pub fn inject(&mut self, f: impl FnOnce(&mut FrameData) + 'static) {
+        self.injects.push(Box::new(f));
     }
 }
 
@@ -288,14 +319,17 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                 self.last_frame = now;
                 let time = (now - self.start).as_secs_f32();
 
-                {
-                    let mut ctx = FrameCtx {
-                        session: &mut state.session,
-                        dt,
-                        time,
-                    };
-                    (self.callback)(&mut ctx);
-                }
+                let mut ctx = FrameCtx {
+                    session: &mut state.session,
+                    dt,
+                    time,
+                    overlays: OverlayFrame::default(),
+                    injects: Vec::new(),
+                };
+                (self.callback)(&mut ctx);
+                let FrameCtx {
+                    overlays, injects, ..
+                } = ctx;
 
                 // Sync to the live surface size before assembly so the renderer's
                 // internal depth/HDR targets match the swapchain texture even when
@@ -303,7 +337,16 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                 state.session.set_viewport_size([w, h]);
                 state.session.set_pixels_per_point(scale);
                 state.session.step_runtime(dt);
-                state.session.update_orbit(&mut self.orbit);
+                // Assembly clears frame.overlays, so install the callback's
+                // overlays and injects here, against the assembled frame.
+                state
+                    .session
+                    .update_orbit_with(&mut self.orbit, move |frame| {
+                        frame.overlays = overlays;
+                        for inject in injects {
+                            inject(frame);
+                        }
+                    });
 
                 let frame = match state.surface.get_current_texture() {
                     Ok(f) => f,
