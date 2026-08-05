@@ -480,6 +480,48 @@ fn capture_equirect_maps_direction_like_the_shader() {
     );
 }
 
+/// End-to-end light-probe bake: a probe baked next to a bright emissive box on
+/// its +X side must, when its SH is evaluated, read brighter for a +X-facing
+/// normal than a -X-facing one. This exercises the whole LP-g path
+/// (capture_equirect -> project_equirect_to_sh) plus the directional convention.
+#[test]
+fn bake_light_probes_captures_directional_radiance() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = FrameData::default();
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.0)).to_cols_array_2d();
+    item.material.emissive = [6.0, 6.0, 6.0];
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let set = renderer.bake_light_probes(&device, &queue, &mut frame, &[[0.0, 0.0, 0.0]], 96, 64);
+    assert_eq!(set.probes().len(), 1);
+
+    let sh = set.probes()[0].sh;
+    let toward = viewport_lib::resources::evaluate_sh(&sh, [1.0, 0.0, 0.0])[0];
+    let away = viewport_lib::resources::evaluate_sh(&sh, [-1.0, 0.0, 0.0])[0];
+    assert!(
+        toward > away + 0.05,
+        "probe should be brighter toward the +X box: toward {toward}, away {away}"
+    );
+
+    // blend_sh_at at the probe returns its own SH.
+    let blended = set.blend_sh_at([0.0, 0.0, 0.0]);
+    assert!((blended.r[0] - sh.r[0]).abs() < 1e-3);
+}
+
 /// Regression test for the silent-skip bug where a `set_position_override_buffer`
 /// binding would render nothing when the item was routed through the instanced
 /// pipeline. `mesh_instanced.wgsl` has no awareness of the override binding,

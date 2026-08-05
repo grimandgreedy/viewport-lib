@@ -10,6 +10,7 @@ pub mod gpu;
 /// Shared generational handle primitive and the `ContentHandle` interface.
 pub mod handle;
 mod init;
+pub mod light_probes;
 /// Texture, matcap, colourmap, and environment/IBL resources.
 pub mod material;
 /// GPU memory accounting and the hardware VRAM budget query.
@@ -31,6 +32,9 @@ pub use self::gpu::compute_filter::ComputeFilterResult;
 pub use self::gpu::external_instances::{ExternalInstanceSetConfig, ExternalInstanceSetId};
 pub use self::gpu::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 pub use self::handle::ContentHandle;
+pub use self::light_probes::{
+    LightProbe, LightProbeSet, SHCoefficients, evaluate_sh, project_equirect_to_sh,
+};
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::memory::vram_budget;

@@ -232,6 +232,50 @@ impl ViewportRenderer {
         }
     }
 
+    /// Bake SH light probes at the given world positions.
+    ///
+    /// Captures an equirect panorama at each position with
+    /// [`capture_equirect`](Self::capture_equirect) and projects it to order-2
+    /// spherical harmonics, returning a [`LightProbeSet`] ready to sample. This
+    /// is the generation half of the light-probe feature: run it once (at bake
+    /// time, off the render loop) and keep the result to light dynamic objects
+    /// by position.
+    ///
+    /// `face_size` is the per-probe cube-face resolution and `equirect_height`
+    /// the projected panorama height; both trade capture time for angular
+    /// accuracy of the low-frequency SH, so modest values (e.g. 64 / 64) are
+    /// usually enough. `frame` is restored on return.
+    pub fn bake_light_probes(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &mut FrameData,
+        positions: &[[f32; 3]],
+        face_size: u32,
+        equirect_height: u32,
+    ) -> crate::resources::LightProbeSet {
+        let probes = positions
+            .iter()
+            .map(|&position| {
+                let panorama = self.capture_equirect(
+                    device,
+                    queue,
+                    frame,
+                    position,
+                    face_size,
+                    equirect_height,
+                );
+                let sh = crate::resources::project_equirect_to_sh(
+                    &panorama.rgba,
+                    panorama.width,
+                    panorama.height,
+                );
+                crate::resources::LightProbe { position, sh }
+            })
+            .collect();
+        crate::resources::LightProbeSet::new(probes)
+    }
+
     /// Copy an `Rgba16Float` texture to the CPU and decode it to `f32` RGBA,
     /// stripping the 256-byte row padding wgpu requires on the copy.
     fn readback_rgba16f(
