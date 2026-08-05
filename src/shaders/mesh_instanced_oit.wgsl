@@ -109,8 +109,8 @@ struct ClipVolumeUB {
 @group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
 @group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
-@group(0) @binding(7) var ibl_irradiance: texture_2d<f32>;
-@group(0) @binding(8) var ibl_prefiltered: texture_2d<f32>;
+@group(0) @binding(7) var ibl_irradiance: texture_2d_array<f32>;
+@group(0) @binding(8) var ibl_prefiltered: texture_2d_array<f32>;
 @group(0) @binding(9) var ibl_brdf_lut: texture_2d<f32>;
 @group(0) @binding(10) var ibl_sampler: sampler;
 @group(0) @binding(11) var ibl_skybox: texture_2d<f32>;

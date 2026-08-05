@@ -35,6 +35,7 @@ pub use self::handle::ContentHandle;
 pub use self::light_probes::{
     LightProbe, LightProbeSet, SHCoefficients, evaluate_sh, project_equirect_to_sh,
 };
+pub use self::material::environment::EnvironmentMapId;
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::memory::vram_budget;

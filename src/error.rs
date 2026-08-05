@@ -143,6 +143,15 @@ pub enum ViewportError {
         actual: usize,
     },
 
+    /// `upload_environment` was called after the environment set filled its
+    /// fixed layer capacity. The default (layer 0) and up to `max - 1` extra
+    /// environments fit; beyond that, callers must reuse an existing handle.
+    #[error("too many environments: the set holds at most {max} layers")]
+    TooManyEnvironments {
+        /// The fixed environment-array capacity.
+        max: u32,
+    },
+
     /// A compressed-texture upload requested a format the device cannot sample,
     /// or a format that is not block-compressed.
     ///

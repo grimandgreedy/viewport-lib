@@ -14,6 +14,98 @@ use crate::gpu::util::DeviceExt;
 
 const PREFILTER_PARAMS_SIZE: u64 = 16; // 4 floats (1 used, 3 pad) = 16 bytes
 
+/// Number of environment layers the irradiance / prefiltered arrays hold. Layer
+/// 0 is the scene default; extra environments (uploaded via `upload_environment`)
+/// take layers 1.. up to this cap, beyond which they fall back to the default.
+/// Array textures cannot grow a layer in place, so this is fixed at allocation.
+pub(crate) const IBL_ENV_CAPACITY: u32 = 16;
+
+pub(crate) const IBL_IRR_W: u32 = 64;
+pub(crate) const IBL_IRR_H: u32 = 32;
+pub(crate) const IBL_PREFILTER_W: u32 = 128;
+pub(crate) const IBL_PREFILTER_H: u32 = 64;
+pub(crate) const IBL_PREFILTER_MIPS: u32 = 5;
+pub(crate) const IBL_BRDF_SIZE: u32 = 128;
+
+/// Create the two persistent equirect array textures the environment set uses:
+/// irradiance (64x32) and prefiltered specular (128x64, 5 mips), each with
+/// [`IBL_ENV_CAPACITY`] layers. The BRDF LUT and skybox stay single 2D textures
+/// and are not created here.
+///
+/// The GPU IBL path writes each layer with a storage output view, so the arrays
+/// take `STORAGE_BINDING` when compute is supported; the CPU path writes with
+/// `write_texture`, so it takes `COPY_DST` instead. `compute` is
+/// [`compute_supported`] for the device (constant for a device's lifetime).
+pub(crate) fn create_ibl_arrays(
+    device: &crate::gpu::Device,
+    compute: bool,
+) -> (crate::gpu::Texture, crate::gpu::Texture) {
+    let write_usage = if compute {
+        crate::gpu::TextureUsages::STORAGE_BINDING
+    } else {
+        crate::gpu::TextureUsages::COPY_DST
+    };
+    let irradiance = device.create_texture(&crate::gpu::TextureDescriptor {
+        label: Some("ibl_irradiance_array"),
+        size: crate::gpu::Extent3d {
+            width: IBL_IRR_W,
+            height: IBL_IRR_H,
+            depth_or_array_layers: IBL_ENV_CAPACITY,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba16Float,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | write_usage,
+        view_formats: &[],
+    });
+    let prefiltered = device.create_texture(&crate::gpu::TextureDescriptor {
+        label: Some("ibl_prefiltered_array"),
+        size: crate::gpu::Extent3d {
+            width: IBL_PREFILTER_W,
+            height: IBL_PREFILTER_H,
+            depth_or_array_layers: IBL_ENV_CAPACITY,
+        },
+        mip_level_count: IBL_PREFILTER_MIPS,
+        sample_count: 1,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba16Float,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | write_usage,
+        view_formats: &[],
+    });
+    (irradiance, prefiltered)
+}
+
+/// A `2d-array` sampling view over a full IBL array texture, for camera-bind-group
+/// bindings 7 and 8. The shaders sample layer 0 (the default environment) through
+/// the frozen helpers and any layer through the `_layer` variants.
+pub(crate) fn array_binding_view(texture: &crate::gpu::Texture) -> crate::gpu::TextureView {
+    texture.create_view(&crate::gpu::TextureViewDescriptor {
+        label: Some("ibl_array_view"),
+        dimension: Some(crate::gpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
+}
+
+/// A `2d` storage view over a single mip of a single layer of an array texture,
+/// used as the compute write target. The compute BGL declares the output as a
+/// plain `texture_storage_2d`, so a one-layer view presents correctly.
+fn layer_storage_view(
+    texture: &crate::gpu::Texture,
+    layer: u32,
+    mip: u32,
+) -> crate::gpu::TextureView {
+    texture.create_view(&crate::gpu::TextureViewDescriptor {
+        label: Some("ibl_layer_storage_view"),
+        dimension: Some(crate::gpu::TextureViewDimension::D2),
+        base_array_layer: layer,
+        array_layer_count: Some(1),
+        base_mip_level: mip,
+        mip_level_count: Some(1),
+        ..Default::default()
+    })
+}
+
 /// Return whether the device supports the storage-texture features the compute
 /// path requires.
 ///
@@ -246,14 +338,14 @@ fn build_brdf_pipeline(
     )
 }
 
-/// Result of a GPU IBL precomputation.
-pub(crate) struct IblComputeResult {
+/// Result of a GPU IBL bake for one environment layer.
+///
+/// The irradiance and prefiltered specular results are written in place into the
+/// caller's array textures at the target layer, so they are not carried here.
+/// Only the per-environment skybox source and the one-time BRDF LUT are returned.
+pub(crate) struct LayerBakeResult {
     pub skybox_texture: crate::gpu::Texture,
     pub skybox_view: crate::gpu::TextureView,
-    pub irradiance_texture: crate::gpu::Texture,
-    pub irradiance_view: crate::gpu::TextureView,
-    pub prefilter_texture: crate::gpu::Texture,
-    pub prefilter_view: crate::gpu::TextureView,
     /// Generated only if requested (skipped when a cached LUT already exists).
     pub brdf_texture: Option<crate::gpu::Texture>,
     pub brdf_view: Option<crate::gpu::TextureView>,
@@ -262,65 +354,31 @@ pub(crate) struct IblComputeResult {
     pub submission: crate::gpu::SubmissionIndex,
 }
 
-/// Run the full IBL precomputation on the GPU.
+/// Bake one environment into `layer` of the shared irradiance / prefiltered
+/// arrays on the GPU.
 ///
-/// If `compute_brdf` is `false`, the BRDF LUT step is skipped (caller is reusing
-/// a previously-cached LUT).
-pub(crate) fn compute_ibl(
+/// The convolution kernels are unchanged; only the storage output targets a
+/// single array layer instead of a standalone texture. If `compute_brdf` is
+/// `false`, the BRDF LUT step is skipped (the caller reuses a cached LUT).
+pub(crate) fn bake_environment_layer(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
     pixels: &[f32],
     width: u32,
     height: u32,
+    irradiance_array: &crate::gpu::Texture,
+    prefilter_array: &crate::gpu::Texture,
+    layer: u32,
     compute_brdf: bool,
-) -> IblComputeResult {
-    let irr_w = 64u32;
-    let irr_h = 32u32;
-    let prefilter_w = 128u32;
-    let prefilter_h = 64u32;
-    let prefilter_mips = 5u32;
-    let brdf_size = 128u32;
+) -> LayerBakeResult {
+    let prefilter_mips = IBL_PREFILTER_MIPS;
 
     // ----- Source skybox -----
     let skybox_texture = upload_source(device, queue, pixels, width, height);
     let skybox_view = skybox_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
-    // ----- Destination textures (Rgba16Float, STORAGE + TEXTURE binding) -----
-    let irradiance_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-        label: Some("ibl_irradiance"),
-        size: crate::gpu::Extent3d {
-            width: irr_w,
-            height: irr_h,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: crate::gpu::TextureDimension::D2,
-        format: crate::gpu::TextureFormat::Rgba16Float,
-        usage: crate::gpu::TextureUsages::TEXTURE_BINDING
-            | crate::gpu::TextureUsages::STORAGE_BINDING,
-        view_formats: &[],
-    });
-    let irradiance_view =
-        irradiance_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-
-    let prefilter_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-        label: Some("ibl_prefiltered"),
-        size: crate::gpu::Extent3d {
-            width: prefilter_w,
-            height: prefilter_h,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: prefilter_mips,
-        sample_count: 1,
-        dimension: crate::gpu::TextureDimension::D2,
-        format: crate::gpu::TextureFormat::Rgba16Float,
-        usage: crate::gpu::TextureUsages::TEXTURE_BINDING
-            | crate::gpu::TextureUsages::STORAGE_BINDING,
-        view_formats: &[],
-    });
-    let prefilter_view =
-        prefilter_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+    // ----- Destination storage views into the target array layer -----
+    let irradiance_view = layer_storage_view(irradiance_array, layer, 0);
 
     let sampler = make_sampler(device);
     let bgls = make_bgls(device);
@@ -357,13 +415,13 @@ pub(crate) fn compute_ibl(
         });
         pass.set_pipeline(&irradiance_pipeline);
         pass.set_bind_group(0, &bg, &[]);
-        pass.dispatch_workgroups(irr_w.div_ceil(8), irr_h.div_ceil(8), 1);
+        pass.dispatch_workgroups(IBL_IRR_W.div_ceil(8), IBL_IRR_H.div_ceil(8), 1);
     }
 
     // ----- Prefilter dispatches (one per mip) -----
     for mip in 0..prefilter_mips {
-        let mip_w = (prefilter_w >> mip).max(1);
-        let mip_h = (prefilter_h >> mip).max(1);
+        let mip_w = (IBL_PREFILTER_W >> mip).max(1);
+        let mip_h = (IBL_PREFILTER_H >> mip).max(1);
         let roughness = mip as f32 / (prefilter_mips - 1).max(1) as f32;
 
         let params = [roughness, 0.0f32, 0.0, 0.0];
@@ -374,12 +432,7 @@ pub(crate) fn compute_ibl(
         });
         debug_assert_eq!(std::mem::size_of_val(&params) as u64, PREFILTER_PARAMS_SIZE);
 
-        let mip_view = prefilter_texture.create_view(&crate::gpu::TextureViewDescriptor {
-            label: Some("ibl_prefilter_mip_view"),
-            base_mip_level: mip,
-            mip_level_count: Some(1),
-            ..Default::default()
-        });
+        let mip_view = layer_storage_view(prefilter_array, layer, mip);
 
         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("ibl_prefilter_bg"),
@@ -415,6 +468,7 @@ pub(crate) fn compute_ibl(
 
     // ----- BRDF LUT (one-time) -----
     let (brdf_texture, brdf_view) = if compute_brdf {
+        let brdf_size = IBL_BRDF_SIZE;
         let brdf_pipeline = build_brdf_pipeline(device, &bgls.brdf_bgl);
         let brdf_tex = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("ibl_brdf_lut"),
@@ -462,13 +516,9 @@ pub(crate) fn compute_ibl(
     // here. The synchronous `upload_environment_map` wrapper drains the
     // upload-job runner until the matching job reports Ready.
 
-    IblComputeResult {
+    LayerBakeResult {
         skybox_texture,
         skybox_view,
-        irradiance_texture,
-        irradiance_view,
-        prefilter_texture,
-        prefilter_view,
         brdf_texture,
         brdf_view,
         submission,

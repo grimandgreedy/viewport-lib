@@ -174,24 +174,24 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // Binding 7: IBL irradiance equirect texture.
+                // Binding 7: IBL irradiance equirect array (one layer per environment).
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 7,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
                         sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
                 },
-                // Binding 8: IBL prefiltered specular equirect texture.
+                // Binding 8: IBL prefiltered specular equirect array (one layer per environment).
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 8,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
                         sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -789,6 +789,30 @@ impl DeviceResources {
         let ibl_fallback_view =
             ibl_fallback_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
+        // 1x1x1 black `2d-array` fallback for the irradiance / prefiltered array
+        // slots (bindings 7-8), bound until the default environment is uploaded.
+        // Never sampled: the `ibl_enabled` guard is off with no environment.
+        let ibl_fallback_array_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("ibl_fallback_array_black"),
+            size: crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba16Float,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let ibl_fallback_array_view =
+            ibl_fallback_array_texture.create_view(&crate::gpu::TextureViewDescriptor {
+                label: Some("ibl_fallback_array_view"),
+                dimension: Some(crate::gpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+
         // BRDF integration LUT placeholder: a 1x1 black fallback that's swapped for the real
         // 128x128 LUT on the first call to `upload_environment_map`. The LUT is scene-independent
         // (function of roughness x N.V only); idempotent caching inside `upload_environment_map`
@@ -859,11 +883,11 @@ impl DeviceResources {
                 // IBL textures (bindings 7-11) : fallback until environment is uploaded.
                 crate::gpu::BindGroupEntry {
                     binding: 7,
-                    resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_view),
+                    resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_array_view),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 8,
-                    resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_view),
+                    resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_array_view),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 9,
@@ -2495,10 +2519,13 @@ impl DeviceResources {
             ibl_skybox_view: None,
             ibl_fallback_texture,
             ibl_fallback_view,
+            ibl_fallback_array_texture,
+            ibl_fallback_array_view,
             ibl_fallback_brdf_texture,
             ibl_fallback_brdf_view,
             ibl_irradiance_texture: None,
             ibl_prefiltered_texture: None,
+            ibl_env_next_layer: 1,
             ibl_brdf_lut_texture: None,
             ibl_skybox_texture: None,
             skybox_pipeline,

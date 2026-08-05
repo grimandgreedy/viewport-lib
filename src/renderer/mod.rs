@@ -26,9 +26,9 @@ pub use picking::{
     CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickMask, PickPoll, PickRectResult,
     PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo,
 };
+mod capture;
 mod point_shadow_pool;
 mod prepare;
-mod capture;
 mod render;
 mod submit;
 pub use submit::SubmitSink;
@@ -1741,6 +1741,39 @@ impl ViewportRenderer {
         )?;
         self.rebuild_camera_bind_groups(device);
         Ok(())
+    }
+
+    /// Upload an extra environment into the indexed set and return its handle.
+    ///
+    /// Unlike [`upload_environment_map`](Self::upload_environment_map), this does
+    /// not replace the scene default or the skybox: the environment takes its own
+    /// array layer, to be selected per fragment once zone selection lands. Blocks
+    /// until the bake finishes, then rebuilds the camera bind groups.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// if `pixels.len()` does not equal `width * height * 4`, or
+    /// [`ViewportError::TooManyEnvironments`](crate::error::ViewportError::TooManyEnvironments)
+    /// once the environment set is full.
+    pub fn upload_environment(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        pixels: &[f32],
+        width: u32,
+        height: u32,
+    ) -> crate::error::ViewportResult<crate::resources::EnvironmentMapId> {
+        let env = crate::resources::material::environment::upload_environment(
+            &mut self.resources,
+            device,
+            queue,
+            pixels,
+            width,
+            height,
+        )?;
+        self.rebuild_camera_bind_groups(device);
+        Ok(env)
     }
 
     /// Current state of an in-flight upload job.

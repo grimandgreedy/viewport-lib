@@ -63,10 +63,12 @@ fn evaluate_sh_probe(base: u32, n: vec3<f32>) -> vec3<f32> {
     return max(result, vec3<f32>(0.0));
 }
 
-/// Sample the irradiance map (diffuse IBL).
+/// Sample the irradiance map (diffuse IBL) of the default environment (array
+/// layer 0). Frozen plugin-contract signature; the `_layer` variant selects a
+/// non-default environment.
 fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
     let uv = dir_to_equirect_uv(N, rotation);
-    return textureSampleLevel(ibl_irradiance, ibl_sampler, uv, 0.0).rgb;
+    return textureSampleLevel(ibl_irradiance, ibl_sampler, uv, 0i, 0.0).rgb;
 }
 
 /// Sample the prefiltered specular map at a roughness-derived mip level.
@@ -85,7 +87,8 @@ fn sample_ibl_prefiltered_grad(R: vec3<f32>, roughness: f32, rotation: f32, dr: 
     let texels = dr * 128.0 / (2.0 * IBL_PI);
     let footprint_mip = clamp(log2(max(texels, 1.0)), 0.0, max_mip);
     let mip = max(roughness * max_mip, footprint_mip);
-    return textureSampleLevel(ibl_prefiltered, ibl_sampler, uv, mip).rgb;
+    // Default environment (array layer 0). The `_layer` variant selects another.
+    return textureSampleLevel(ibl_prefiltered, ibl_sampler, uv, 0i, mip).rgb;
 }
 
 /// `sample_ibl_prefiltered_grad` with the footprint derivative taken in place.

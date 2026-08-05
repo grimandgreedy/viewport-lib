@@ -16,11 +16,36 @@ use std::f32::consts::PI;
 
 use crate::resources::upload_jobs::{ApplyFn, JobId, JobProduct, ProgressHandle, UploadStatus};
 
+use super::ibl_compute::{
+    IBL_ENV_CAPACITY, IBL_IRR_H, IBL_IRR_W, IBL_PREFILTER_H, IBL_PREFILTER_MIPS, IBL_PREFILTER_W,
+};
+
+/// Handle to one environment in the indexed set.
+///
+/// Layer 0 is the scene default (uploaded via [`upload_environment_map`]); extra
+/// environments from [`upload_environment`] take layers 1.. up to the fixed
+/// [`IBL_ENV_CAPACITY`]. The value is the array-texture layer the environment's
+/// irradiance and prefiltered specular occupy.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EnvironmentMapId(pub(crate) u32);
+
+impl EnvironmentMapId {
+    /// The scene default environment (array layer 0).
+    pub const DEFAULT: Self = Self(0);
+
+    /// The array layer this environment occupies.
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
 // -------------------------------------------------------------------------
 // Public upload API
 // -------------------------------------------------------------------------
 
-/// Upload an equirectangular HDR environment map and precompute IBL textures.
+/// Upload an equirectangular HDR environment map as the scene default and
+/// precompute its IBL textures (array layer 0).
 ///
 /// `pixels` is row-major RGBA f32 (4 floats per pixel), `width`x`height`.
 /// After this call, the camera bind groups must be rebuilt so shaders see
@@ -39,6 +64,36 @@ pub fn upload_environment_map(
 ) -> crate::error::ViewportResult<()> {
     let id =
         begin_upload_environment_map(resources, device, queue, pixels.to_vec(), width, height)?;
+    drain_until_ready(resources, device, queue, id)
+}
+
+/// Upload an extra environment into a new array layer and return its handle.
+///
+/// Unlike [`upload_environment_map`], this does not touch the scene default or
+/// the skybox: the environment lives at its own layer, ready to be selected per
+/// fragment once zone selection lands. Blocks until the upload finishes. Errors
+/// with `TooManyEnvironments` once the fixed [`IBL_ENV_CAPACITY`] is reached.
+pub fn upload_environment(
+    resources: &mut crate::resources::DeviceResources,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    pixels: &[f32],
+    width: u32,
+    height: u32,
+) -> crate::error::ViewportResult<EnvironmentMapId> {
+    let (id, env) =
+        begin_upload_environment(resources, device, queue, pixels.to_vec(), width, height)?;
+    drain_until_ready(resources, device, queue, id)?;
+    Ok(env)
+}
+
+/// Drive the upload-job runner until `id` is `Ready` (or `Failed`).
+fn drain_until_ready(
+    resources: &mut crate::resources::DeviceResources,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    id: JobId,
+) -> crate::error::ViewportResult<()> {
     loop {
         resources.process_uploads(device, queue);
         match resources.upload_status(id) {
@@ -58,7 +113,7 @@ pub fn upload_environment_map(
     }
 }
 
-/// Start an asynchronous environment-map upload.
+/// Start an asynchronous default-environment upload (array layer 0).
 ///
 /// Returns the `JobId` of the submitted upload. The caller is expected to
 /// drive `process_uploads` from the renderer's prepare path each frame; once
@@ -74,6 +129,47 @@ pub fn begin_upload_environment_map(
     width: u32,
     height: u32,
 ) -> crate::error::ViewportResult<JobId> {
+    begin_upload_layer(
+        resources,
+        device,
+        queue,
+        pixels,
+        width,
+        height,
+        EnvironmentMapId::DEFAULT,
+    )
+}
+
+/// Start an asynchronous extra-environment upload into a freshly allocated
+/// layer. See [`upload_environment`]; returns the `JobId` and the new handle.
+pub fn begin_upload_environment(
+    resources: &mut crate::resources::DeviceResources,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    pixels: Vec<f32>,
+    width: u32,
+    height: u32,
+) -> crate::error::ViewportResult<(JobId, EnvironmentMapId)> {
+    let layer =
+        alloc_env_layer(resources).ok_or(crate::error::ViewportError::TooManyEnvironments {
+            max: IBL_ENV_CAPACITY,
+        })?;
+    let env = EnvironmentMapId(layer);
+    let id = begin_upload_layer(resources, device, queue, pixels, width, height, env)?;
+    Ok((id, env))
+}
+
+/// Shared body for the default and extra uploads: validate, ensure the arrays
+/// exist, then submit a bake into `env`'s layer (GPU compute or CPU fallback).
+fn begin_upload_layer(
+    resources: &mut crate::resources::DeviceResources,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    pixels: Vec<f32>,
+    width: u32,
+    height: u32,
+    env: EnvironmentMapId,
+) -> crate::error::ViewportResult<JobId> {
     let expected = (width as usize) * (height as usize) * 4;
     if pixels.len() != expected {
         return Err(crate::error::ViewportError::InvalidTextureData {
@@ -84,47 +180,113 @@ pub fn begin_upload_environment_map(
 
     let compute_supported = super::ibl_compute::compute_supported(device);
     let needs_brdf = resources.ibl_brdf_lut_texture.is_none();
+    let (irr_array, pref_array) = ensure_ibl_arrays(resources, device, compute_supported);
+    let is_default = env == EnvironmentMapId::DEFAULT;
+    let layer = env.0;
 
     let mut runner = resources.jobs.lock().expect("upload job runner poisoned");
     let id = if compute_supported {
         runner.submit_with_gpu(device, queue, move |dev, q, progress| {
             progress.set(0.1);
-            let result =
-                super::ibl_compute::compute_ibl(dev, q, &pixels, width, height, needs_brdf);
+            let result = super::ibl_compute::bake_environment_layer(
+                dev,
+                q,
+                &pixels,
+                width,
+                height,
+                &irr_array,
+                &pref_array,
+                layer,
+                needs_brdf,
+            );
             progress.set(1.0);
             Ok(JobProduct::with_gpu_and_apply(
                 result.submission.clone(),
-                apply_gpu_result(result),
+                apply_layer_bake(result, is_default),
             ))
         })
     } else {
         runner.submit_with_gpu(device, queue, move |dev, q, progress| {
-            run_cpu_path(dev, q, &pixels, width, height, needs_brdf, progress)
+            run_cpu_path(
+                dev,
+                q,
+                &pixels,
+                width,
+                height,
+                needs_brdf,
+                is_default,
+                layer,
+                &irr_array,
+                &pref_array,
+                progress,
+            )
         })
     };
     Ok(id)
 }
 
-fn apply_gpu_result(result: super::ibl_compute::IblComputeResult) -> ApplyFn {
+/// Create the persistent irradiance / prefiltered arrays on first use and return
+/// clonable handles for the worker to bake into. Idempotent: a re-upload of the
+/// default reuses the existing arrays (preserving any extra layers) and re-bakes
+/// layer 0 in place.
+fn ensure_ibl_arrays(
+    resources: &mut crate::resources::DeviceResources,
+    device: &crate::gpu::Device,
+    compute: bool,
+) -> (crate::gpu::Texture, crate::gpu::Texture) {
+    if resources.ibl_irradiance_texture.is_none() {
+        let (irr, pref) = super::ibl_compute::create_ibl_arrays(device, compute);
+        resources.ibl_irradiance_texture = Some(irr);
+        resources.ibl_prefiltered_texture = Some(pref);
+    }
+    (
+        resources.ibl_irradiance_texture.clone().unwrap(),
+        resources.ibl_prefiltered_texture.clone().unwrap(),
+    )
+}
+
+/// Reserve the next free array layer for an extra environment. Layer 0 is the
+/// default, so allocation starts at 1. Returns `None` once the cap is reached.
+fn alloc_env_layer(resources: &mut crate::resources::DeviceResources) -> Option<u32> {
+    let next = resources.ibl_env_next_layer.max(1);
+    if next >= IBL_ENV_CAPACITY {
+        return None;
+    }
+    resources.ibl_env_next_layer = next + 1;
+    Some(next)
+}
+
+/// Install the results of a GPU layer bake. The irradiance and prefiltered
+/// specular are already in the arrays; this installs the shared BRDF LUT (if it
+/// was baked) and, for the default, the skybox and the array sampling views that
+/// gate `ibl_enabled`.
+fn apply_layer_bake(result: super::ibl_compute::LayerBakeResult, is_default: bool) -> ApplyFn {
     Box::new(move |resources: &mut crate::resources::DeviceResources| {
-        resources.ibl_irradiance_view = Some(result.irradiance_view);
-        resources.ibl_prefiltered_view = Some(result.prefilter_view);
-        resources.ibl_skybox_view = Some(result.skybox_view);
-        resources.ibl_irradiance_texture = Some(result.irradiance_texture);
-        resources.ibl_prefiltered_texture = Some(result.prefilter_texture);
-        resources.ibl_skybox_texture = Some(result.skybox_texture);
         if let (Some(brdf_tex), Some(brdf_view)) = (result.brdf_texture, result.brdf_view) {
             resources.ibl_brdf_lut_view = Some(brdf_view);
             resources.ibl_brdf_lut_texture = Some(brdf_tex);
+        }
+        if is_default {
+            resources.ibl_skybox_texture = Some(result.skybox_texture);
+            resources.ibl_skybox_view = Some(result.skybox_view);
+            resources.ibl_irradiance_view = resources
+                .ibl_irradiance_texture
+                .as_ref()
+                .map(super::ibl_compute::array_binding_view);
+            resources.ibl_prefiltered_view = resources
+                .ibl_prefiltered_texture
+                .as_ref()
+                .map(super::ibl_compute::array_binding_view);
         }
     })
 }
 
 /// CPU IBL path executed on a worker thread.
 ///
-/// Builds the irradiance, prefilter, and (optionally) BRDF LUT data on the
-/// CPU, creates GPU textures, queues their writes, and submits a
-/// flush so the runner has a `SubmissionIndex` to gate on.
+/// Builds the irradiance, prefilter, and (optionally) BRDF LUT data on the CPU
+/// and writes it into `env`'s layer of the shared arrays, then submits a flush so
+/// the runner has a `SubmissionIndex` to gate on.
+#[allow(clippy::too_many_arguments)]
 fn run_cpu_path(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
@@ -132,47 +294,58 @@ fn run_cpu_path(
     width: u32,
     height: u32,
     needs_brdf: bool,
+    is_default: bool,
+    layer: u32,
+    irradiance_array: &crate::gpu::Texture,
+    prefilter_array: &crate::gpu::Texture,
     progress: &ProgressHandle,
 ) -> crate::error::ViewportResult<JobProduct> {
     progress.set(0.05);
 
-    // 1. Full-resolution skybox.
-    let skybox_tex = upload_rgba16f(device, queue, pixels, width, height, "ibl_skybox");
-    let skybox_view = skybox_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+    // 1. Full-resolution skybox (default only; extra environments have no sky).
+    let skybox = if is_default {
+        let tex = upload_rgba16f(device, queue, pixels, width, height, "ibl_skybox");
+        let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+        Some((tex, view))
+    } else {
+        None
+    };
 
     progress.set(0.15);
 
-    // 2. Irradiance map.
-    let irr_w = 64u32;
-    let irr_h = 32u32;
-    let irradiance_data = convolve_irradiance(pixels, width, height, irr_w, irr_h);
-    let irr_tex = upload_rgba16f(
-        device,
+    // 2. Irradiance map, written into the target array layer.
+    let irradiance_data = convolve_irradiance(pixels, width, height, IBL_IRR_W, IBL_IRR_H);
+    write_layer_rgba16f(
         queue,
+        irradiance_array,
+        layer,
+        0,
         &irradiance_data,
-        irr_w,
-        irr_h,
-        "ibl_irradiance",
+        IBL_IRR_W,
+        IBL_IRR_H,
     );
-    let irr_view = irr_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
     progress.set(0.55);
 
-    // 3. Prefiltered specular map.
-    let spec_w = 128u32;
-    let spec_h = 64u32;
-    let mip_levels = 5u32;
-    let (_spec_data_mips, spec_tex) = prefilter_specular(
-        device, queue, pixels, width, height, spec_w, spec_h, mip_levels,
+    // 3. Prefiltered specular mips, written into the same array layer.
+    prefilter_specular(
+        queue,
+        pixels,
+        width,
+        height,
+        IBL_PREFILTER_W,
+        IBL_PREFILTER_H,
+        IBL_PREFILTER_MIPS,
+        prefilter_array,
+        layer,
     );
-    let spec_view = spec_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
     progress.set(0.9);
 
     // 4. BRDF integration LUT, only when no cached LUT exists. The LUT is
     // scene-independent so it is generated once and reused across env maps.
     let (brdf_tex, brdf_view) = if needs_brdf {
-        let brdf_size = 128u32;
+        let brdf_size = super::ibl_compute::IBL_BRDF_SIZE;
         let brdf_data = generate_brdf_lut(brdf_size);
         let tex = upload_rgba16f(
             device,
@@ -200,18 +373,63 @@ fn run_cpu_path(
     Ok(JobProduct::with_gpu_and_apply(
         submission,
         Box::new(move |resources: &mut crate::resources::DeviceResources| {
-            resources.ibl_irradiance_view = Some(irr_view);
-            resources.ibl_prefiltered_view = Some(spec_view);
-            resources.ibl_skybox_view = Some(skybox_view);
-            resources.ibl_irradiance_texture = Some(irr_tex);
-            resources.ibl_prefiltered_texture = Some(spec_tex);
-            resources.ibl_skybox_texture = Some(skybox_tex);
             if let (Some(tex), Some(view)) = (brdf_tex, brdf_view) {
                 resources.ibl_brdf_lut_view = Some(view);
                 resources.ibl_brdf_lut_texture = Some(tex);
             }
+            if is_default {
+                if let Some((tex, view)) = skybox {
+                    resources.ibl_skybox_texture = Some(tex);
+                    resources.ibl_skybox_view = Some(view);
+                }
+                resources.ibl_irradiance_view = resources
+                    .ibl_irradiance_texture
+                    .as_ref()
+                    .map(super::ibl_compute::array_binding_view);
+                resources.ibl_prefiltered_view = resources
+                    .ibl_prefiltered_texture
+                    .as_ref()
+                    .map(super::ibl_compute::array_binding_view);
+            }
         }),
     ))
+}
+
+/// Write f32 RGBA pixel data into one mip of one layer of an Rgba16Float array
+/// texture (the CPU path's array-write helper).
+fn write_layer_rgba16f(
+    queue: &crate::gpu::Queue,
+    texture: &crate::gpu::Texture,
+    layer: u32,
+    mip: u32,
+    pixels: &[f32],
+    width: u32,
+    height: u32,
+) {
+    let half_data: Vec<u16> = pixels.iter().map(|&f| f32_to_f16(f)).collect();
+    queue.write_texture(
+        crate::gpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: mip,
+            origin: crate::gpu::Origin3d {
+                x: 0,
+                y: 0,
+                z: layer,
+            },
+            aspect: crate::gpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(&half_data),
+        crate::gpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 8), // 4 x f16 = 8 bytes per pixel
+            rows_per_image: Some(height),
+        },
+        crate::gpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
 }
 
 // -------------------------------------------------------------------------
@@ -365,8 +583,8 @@ fn convolve_irradiance(src: &[f32], src_w: u32, src_h: u32, dst_w: u32, dst_h: u
 // Prefiltered specular (importance-sampled GGX)
 // -------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn prefilter_specular(
-    device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
     src: &[f32],
     src_w: u32,
@@ -374,24 +592,10 @@ fn prefilter_specular(
     base_w: u32,
     base_h: u32,
     mip_levels: u32,
-) -> (Vec<Vec<f32>>, crate::gpu::Texture) {
-    let tex = device.create_texture(&crate::gpu::TextureDescriptor {
-        label: Some("ibl_prefiltered"),
-        size: crate::gpu::Extent3d {
-            width: base_w,
-            height: base_h,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: mip_levels,
-        sample_count: 1,
-        dimension: crate::gpu::TextureDimension::D2,
-        format: crate::gpu::TextureFormat::Rgba16Float,
-        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-
+    dst: &crate::gpu::Texture,
+    layer: u32,
+) {
     let num_samples = 256u32;
-    let mut all_mips = Vec::new();
 
     for mip in 0..mip_levels {
         let mip_w = (base_w >> mip).max(1);
@@ -425,32 +629,9 @@ fn prefilter_specular(
                 }
             });
 
-        // Upload this mip level.
-        let half_data: Vec<u16> = data.iter().map(|&f| f32_to_f16(f)).collect();
-        queue.write_texture(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &tex,
-                mip_level: mip,
-                origin: crate::gpu::Origin3d::ZERO,
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(&half_data),
-            crate::gpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(mip_w * 8),
-                rows_per_image: Some(mip_h),
-            },
-            crate::gpu::Extent3d {
-                width: mip_w,
-                height: mip_h,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        all_mips.push(data);
+        // Write this mip level into the target array layer.
+        write_layer_rgba16f(queue, dst, layer, mip, &data, mip_w, mip_h);
     }
-
-    (all_mips, tex)
 }
 
 fn prefilter_sample(
@@ -769,5 +950,51 @@ mod tests {
         upload_environment_map(&mut resources, &device, &queue, &pixels_b, 8, 4).unwrap();
         assert!(resources.ibl_brdf_lut_texture.is_some());
         assert!(resources.ibl_skybox_view.is_some());
+    }
+
+    #[test]
+    fn extra_environment_takes_the_next_layer() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources = make_resources(&device);
+
+        // The default occupies layer 0.
+        let default_px = make_solid_env(8, 4, [0.5, 0.5, 0.5]);
+        upload_environment_map(&mut resources, &device, &queue, &default_px, 8, 4).unwrap();
+        assert!(resources.ibl_irradiance_view.is_some());
+
+        // An extra environment bakes into layer 1 and does not disturb the
+        // default skybox / array views.
+        let extra_px = make_solid_env(8, 4, [0.9, 0.2, 0.1]);
+        let id = upload_environment(&mut resources, &device, &queue, &extra_px, 8, 4).unwrap();
+        assert_eq!(id.index(), 1);
+        assert_ne!(id, super::EnvironmentMapId::DEFAULT);
+        assert!(resources.ibl_skybox_view.is_some());
+        assert!(resources.all_uploads_complete());
+    }
+
+    #[test]
+    fn environment_set_is_capacity_bounded() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources = make_resources(&device);
+
+        let px = make_solid_env(8, 4, [0.3, 0.3, 0.3]);
+        upload_environment_map(&mut resources, &device, &queue, &px, 8, 4).unwrap();
+
+        // Layers 1..CAP-1 are the extra slots; the next request past the cap errors.
+        for _ in 1..super::IBL_ENV_CAPACITY {
+            upload_environment(&mut resources, &device, &queue, &px, 8, 4).unwrap();
+        }
+        let err = upload_environment(&mut resources, &device, &queue, &px, 8, 4)
+            .expect_err("past-capacity upload should error");
+        assert!(matches!(
+            err,
+            crate::error::ViewportError::TooManyEnvironments { .. }
+        ));
     }
 }

@@ -146,8 +146,8 @@ struct ClipVolumeUB {
 @group(0) @binding(3)  var<uniform> lights:               Lights;
 @group(0) @binding(4)  var<uniform> clip_planes:          ClipPlanes;
 @group(0) @binding(6)  var<uniform> clip_volume:          ClipVolumeUB;
-@group(0) @binding(7)  var          ibl_irradiance_tex:   texture_2d<f32>;
-@group(0) @binding(8)  var          ibl_specular_tex:     texture_2d<f32>;
+@group(0) @binding(7)  var          ibl_irradiance_tex:   texture_2d_array<f32>;
+@group(0) @binding(8)  var          ibl_specular_tex:     texture_2d_array<f32>;
 @group(0) @binding(9)  var          ibl_brdf_lut:         texture_2d<f32>;
 @group(0) @binding(10) var          ibl_sampler:          sampler;
 @group(0) @binding(11) var          skybox_tex:           texture_2d<f32>;
@@ -529,7 +529,7 @@ fn viewport_ibl_ambient(
     let kd = (vec3<f32>(1.0) - f) * (1.0 - metallic);
     let rotation = lights.ibl_rotation;
     let irradiance =
-        textureSampleLevel(ibl_irradiance_tex, ibl_sampler, viewport_dir_to_equirect_uv(n, rotation), 0.0).rgb;
+        textureSampleLevel(ibl_irradiance_tex, ibl_sampler, viewport_dir_to_equirect_uv(n, rotation), 0i, 0.0).rgb;
     let r = reflect(-v, n);
     // Mip floored by the screen-space footprint of r, matching the built-in
     // mesh pipelines: magnified reflections on detailed normals would
@@ -540,6 +540,7 @@ fn viewport_ibl_ambient(
         ibl_specular_tex,
         ibl_sampler,
         viewport_dir_to_equirect_uv(r, rotation),
+        0i,
         max(roughness * 4.0, footprint_mip),
     ).rgb;
     let brdf = textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, roughness), 0.0).rg;
