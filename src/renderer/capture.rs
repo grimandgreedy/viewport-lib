@@ -237,7 +237,8 @@ impl ViewportRenderer {
     /// Objects with [`IndirectLightSource::LightProbe`](crate::IndirectLightSource::LightProbe)
     /// take their indirect diffuse light from this field, blended at the object's
     /// position, instead of the global environment. Replaces any previous set.
-    /// Only opaque, non-instanced meshes sample it.
+    /// Sampled by every lit mesh path: opaque and transparent, per-object and
+    /// instanced.
     pub fn set_light_probes(&mut self, probes: crate::resources::LightProbeSet) {
         self.resources.light_probes = Some(probes);
     }
