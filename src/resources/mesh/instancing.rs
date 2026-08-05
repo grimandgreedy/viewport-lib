@@ -1270,13 +1270,19 @@ impl DeviceResources {
             unlit: u32,
             receive_shadows: u32,
             use_flat: u32,
-            _pad_inst1: u32,
+            normal_strength: f32,
             uv_transform: [f32; 4],
             ao_range: [f32; 2],
-            _pad_ao_range: [f32; 2],
+            alpha_cutoff: f32,
+            alpha_flag: u32,
+            emissive: [f32; 3],
+            _pad_emissive: f32,
         }
 
-        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 176);
+        // Layout matches the WGSL `InstanceData` (and the `InstanceData` Rust
+        // struct); both the explicit `MeshInstanceItem` batches built here and
+        // the auto-instanced items feed the same instanced shaders.
+        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 192);
 
         let has_texture = if item
             .texture_id
@@ -1306,10 +1312,13 @@ impl DeviceResources {
                 unlit: 1,
                 receive_shadows: 0,
                 use_flat: 1,
-                _pad_inst1: 0,
+                normal_strength: 1.0,
                 uv_transform: [0.0, 0.0, 1.0, 1.0],
                 ao_range: [0.0, 1.0],
-                _pad_ao_range: [0.0, 0.0],
+                alpha_cutoff: 0.5,
+                alpha_flag: 0,
+                emissive: [0.0, 0.0, 0.0],
+                _pad_emissive: 0.0,
             }
         };
         let instances: Vec<GpuInstanceData> = match indices {
