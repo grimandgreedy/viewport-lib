@@ -340,7 +340,7 @@ impl ViewportRenderer {
                     threshold: pp.bloom_threshold,
                     intensity: pp.bloom_intensity,
                     horizontal: 0,
-                    _pad: 0,
+                    max_brightness: pp.bloom_max_brightness,
                 };
                 queue.write_buffer(&hdr.bloom_uniform_buf, 0, bytemuck::cast_slice(&[bloom_u]));
             }

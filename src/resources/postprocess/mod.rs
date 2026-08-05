@@ -1838,7 +1838,7 @@ impl DeviceResources {
                     threshold: 0.0,
                     intensity: 0.0,
                     horizontal: 1,
-                    _pad: 0,
+                    max_brightness: 0.0,
                 }]),
             );
             buf
@@ -1857,7 +1857,7 @@ impl DeviceResources {
                     threshold: 0.0,
                     intensity: 0.0,
                     horizontal: 0,
-                    _pad: 0,
+                    max_brightness: 0.0,
                 }]),
             );
             buf

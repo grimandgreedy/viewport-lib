@@ -41,6 +41,12 @@ pub struct PostProcessSettings {
     pub bloom_threshold: f32,
     /// Bloom contribution multiplier. Default: `0.1`.
     pub bloom_intensity: f32,
+    /// Firefly cap for bloom extraction: each pixel's luminance is scaled
+    /// down to at most this value before thresholding, so a single very
+    /// bright HDR texel (a tight specular highlight) cannot bloom into a
+    /// large blob after the blur chain. Default: `4.0`. Set to `f32::MAX`
+    /// to disable the cap.
+    pub bloom_max_brightness: f32,
     /// Enable FXAA (Fast Approximate Anti-Aliasing) fullscreen pass.
     pub fxaa: bool,
     /// Supersampling anti-aliasing factor. 1 = off, 2 = 2x, 4 = 4x.
@@ -93,6 +99,7 @@ impl Default for PostProcessSettings {
             bloom: false,
             bloom_threshold: 1.0,
             bloom_intensity: 0.1,
+            bloom_max_brightness: 4.0,
             fxaa: false,
             ssaa_factor: 1,
             contact_shadows: false,

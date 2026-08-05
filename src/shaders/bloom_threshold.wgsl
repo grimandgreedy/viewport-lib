@@ -1,10 +1,10 @@
 // bloom_threshold.wgsl : extract bright pixels above a luminance threshold.
 
 struct BloomUniform {
-    threshold:  f32,
-    intensity:  f32,
-    horizontal: u32,  // unused in threshold pass; shared struct with blur
-    _pad:       u32,
+    threshold:      f32,
+    intensity:      f32,
+    horizontal:     u32,  // unused in threshold pass; shared struct with blur
+    max_brightness: f32,  // firefly cap; unused in blur passes
 }
 
 @group(0) @binding(0) var input_texture: texture_2d<f32>;
@@ -30,9 +30,17 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let colour = textureSample(input_texture, input_sampler, in.uv).rgb;
+    let colour_raw = textureSample(input_texture, input_sampler, in.uv).rgb;
     // Relative luminance (Rec.709).
-    let lum = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let lum_raw = dot(colour_raw, vec3<f32>(0.2126, 0.7152, 0.0722));
+    // Firefly cap: scale the pixel down so its luminance is at most
+    // max_brightness. The lit path is unclamped HDR on the post-process path,
+    // so a tight specular highlight can be hundreds of times brighter than
+    // the threshold; without the cap one such texel dominates the blur chain
+    // and smears into a large blob.
+    let cap = min(lum_raw, params.max_brightness) / max(lum_raw, 0.001);
+    let colour = colour_raw * cap;
+    let lum = lum_raw * cap;
     // Soft knee: how much the pixel exceeds the threshold.
     let brightness = max(lum - params.threshold, 0.0);
     // Re-colour by the original hue but scaled to the above-threshold portion.

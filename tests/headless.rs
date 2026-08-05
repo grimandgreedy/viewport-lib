@@ -5307,3 +5307,77 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
         "LDR path: the [0, 1] lit clamp must hold (byte-identical output above saturation)"
     );
 }
+
+/// Bloom firefly cap: with the lit path unclamped on the HDR path, a single
+/// very bright texel (tight specular highlight, hot emissive) must not bloom
+/// into a large blob. `bloom_max_brightness` scales each pixel's luminance
+/// down before thresholding; the capped render must produce a strictly
+/// smaller bright area than an uncapped one, and a bounded one in absolute
+/// terms.
+#[test]
+fn bloom_firefly_cap_bounds_blob_size() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // A small quad with an extremely hot emissive term: a deterministic
+    // firefly, independent of specular geometry.
+    let mut mesh = MeshData::default();
+    mesh.positions = vec![
+        [-0.25, -0.25, 0.0],
+        [0.25, -0.25, 0.0],
+        [0.25, 0.25, 0.0],
+        [-0.25, 0.25, 0.0],
+    ];
+    mesh.normals = vec![[0.0, 0.0, 1.0]; 4];
+    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &mesh)
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.post_process.enabled = true;
+    frame.effects.post_process.bloom = true;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    let mut mat = Material::from_colour([1.0, 1.0, 1.0]);
+    mat.emissive = [400.0, 400.0, 400.0];
+    item.material = mat;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let bright_pixels = |img: &[u8]| -> usize {
+        img.chunks_exact(4)
+            .filter(|p| p[0] > 220 && p[1] > 220 && p[2] > 220)
+            .count()
+    };
+
+    frame.effects.post_process.bloom_max_brightness = f32::MAX;
+    let uncapped = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    frame.effects.post_process.bloom_max_brightness = 4.0;
+    let capped = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let (u, c) = (bright_pixels(&uncapped), bright_pixels(&capped));
+    assert!(
+        u > c,
+        "uncapped bloom should spread a hot texel further than capped (uncapped {u} vs capped {c} bright pixels)"
+    );
+    assert!(
+        c < 64 * 64 / 10,
+        "capped bloom blob should stay small; got {c} bright pixels"
+    );
+}

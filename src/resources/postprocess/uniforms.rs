@@ -33,7 +33,9 @@ pub(crate) struct BloomUniform {
     pub(crate) threshold: f32,
     pub(crate) intensity: f32,
     pub(crate) horizontal: u32, // 1=horizontal pass, 0=vertical
-    pub(crate) _pad: u32,
+    /// Firefly cap: luminance ceiling applied per pixel in the threshold
+    /// pass, before thresholding. Unused in the blur passes.
+    pub(crate) max_brightness: f32,
 }
 
 /// SSAO uniform (144 bytes).
