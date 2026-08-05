@@ -6,4 +6,4 @@
 #[cfg(feature = "app")]
 mod winit;
 #[cfg(feature = "app")]
-pub use winit::{AppConfig, FrameCtx, ViewportApp};
+pub use winit::{AppConfig, FrameCtx, RedrawMode, ViewportApp};

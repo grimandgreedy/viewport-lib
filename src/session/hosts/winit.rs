@@ -17,6 +17,21 @@ use crate::interaction::input::adapters::from_winit;
 use crate::session::ViewportSession;
 use crate::{FrameData, OrbitCameraController, OverlayFrame};
 
+/// When the runner asks for the next frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RedrawMode {
+    /// Redraw every frame: a continuous animation loop, paced by the present
+    /// mode. Idle scenes still burn a frame's worth of work each vsync. This is
+    /// the default, and what an animated scene wants.
+    #[default]
+    Continuous,
+    /// Redraw only when there is something new: an input event, a resize, or an
+    /// explicit [`FrameCtx::request_redraw`] from the callback. The loop idles
+    /// between events. A callback that animates must call `request_redraw` each
+    /// frame to keep the loop going.
+    OnDemand,
+}
+
 /// Window configuration for a [`ViewportApp`].
 ///
 /// Non-exhaustive: build with [`AppConfig::default`] and the `with_*` methods so
@@ -30,6 +45,13 @@ pub struct AppConfig {
     pub width: u32,
     /// Initial window height in logical pixels.
     pub height: u32,
+    /// Surface present mode. Default: [`PresentMode::AutoVsync`].
+    ///
+    /// [`PresentMode::AutoVsync`]: crate::gpu::PresentMode::AutoVsync
+    pub present_mode: crate::gpu::PresentMode,
+    /// When the runner schedules the next frame. Default:
+    /// [`RedrawMode::Continuous`].
+    pub redraw_mode: RedrawMode,
 }
 
 impl Default for AppConfig {
@@ -38,6 +60,8 @@ impl Default for AppConfig {
             title: "viewport-lib".to_string(),
             width: 1280,
             height: 720,
+            present_mode: crate::gpu::PresentMode::AutoVsync,
+            redraw_mode: RedrawMode::Continuous,
         }
     }
 }
@@ -53,6 +77,34 @@ impl AppConfig {
     pub fn with_window_size(mut self, width: u32, height: u32) -> Self {
         self.width = width;
         self.height = height;
+        self
+    }
+
+    /// Set the surface present mode directly.
+    pub fn with_present_mode(mut self, present_mode: crate::gpu::PresentMode) -> Self {
+        self.present_mode = present_mode;
+        self
+    }
+
+    /// Vsync on ([`PresentMode::AutoVsync`]) or off
+    /// ([`PresentMode::AutoNoVsync`]). Off renders as fast as the GPU allows and
+    /// may tear; useful for uncapped-frame-rate measurement.
+    ///
+    /// [`PresentMode::AutoVsync`]: crate::gpu::PresentMode::AutoVsync
+    /// [`PresentMode::AutoNoVsync`]: crate::gpu::PresentMode::AutoNoVsync
+    pub fn with_vsync(mut self, vsync: bool) -> Self {
+        self.present_mode = if vsync {
+            crate::gpu::PresentMode::AutoVsync
+        } else {
+            crate::gpu::PresentMode::AutoNoVsync
+        };
+        self
+    }
+
+    /// Set when the runner schedules the next frame. Default:
+    /// [`RedrawMode::Continuous`].
+    pub fn with_redraw_mode(mut self, redraw_mode: RedrawMode) -> Self {
+        self.redraw_mode = redraw_mode;
         self
     }
 }
@@ -77,6 +129,7 @@ pub struct FrameCtx<'a> {
     overlays: OverlayFrame,
     injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
     request_exit: bool,
+    request_redraw: bool,
 }
 
 impl FrameCtx<'_> {
@@ -120,6 +173,16 @@ impl FrameCtx<'_> {
     /// frame. The current frame still renders; the loop exits before the next.
     pub fn request_exit(&mut self) {
         self.request_exit = true;
+    }
+
+    /// Ask the runner to schedule another frame after this one.
+    ///
+    /// Only meaningful under [`RedrawMode::OnDemand`], where the loop otherwise
+    /// idles between events: a callback that animates calls this each frame to
+    /// keep drawing. Under [`RedrawMode::Continuous`] the next frame is already
+    /// scheduled, so this is a no-op.
+    pub fn request_redraw(&mut self) {
+        self.request_redraw = true;
     }
 
     /// Overlays to draw this frame: shapes, labels, polylines, and images.
@@ -227,6 +290,11 @@ struct RunState {
     queue: crate::gpu::Queue,
     surface_config: crate::gpu::SurfaceConfiguration,
     session: ViewportSession,
+    /// Window has keyboard focus. Tracked from `WindowEvent::Focused`.
+    focused: bool,
+    /// Cursor is over the window. Tracked from `CursorEntered`/`CursorLeft`; the
+    /// input resolver gates hover-based gestures on this.
+    hovered: bool,
 }
 
 struct Runner<F> {
@@ -289,7 +357,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
             format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: crate::gpu::PresentMode::AutoVsync,
+            present_mode: self.config.present_mode,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -300,16 +368,23 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
         if let Some(setup) = self.setup.take() {
             setup(&mut session, &device);
         }
+        // Focus/hover start conservative: the window is focused on creation, but
+        // the cursor is only "over" it once a CursorEntered arrives.
+        let focused = true;
+        let hovered = false;
         let scale = window.scale_factor() as f32;
         session.set_pixels_per_point(scale);
         session.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
+            hovered,
+            focused,
             viewport_size: [
                 surface_config.width as f32 / scale,
                 surface_config.height as f32 / scale,
             ],
         });
+
+        // Kick the first frame; under OnDemand nothing else would.
+        window.request_redraw();
 
         self.last_frame = Instant::now();
         self.start = Instant::now();
@@ -320,6 +395,8 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
             queue,
             surface_config,
             session,
+            focused,
+            hovered,
         });
     }
 
@@ -370,12 +447,14 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                     overlays: OverlayFrame::default(),
                     injects: Vec::new(),
                     request_exit: false,
+                    request_redraw: false,
                 };
                 (self.callback)(&mut ctx);
                 let FrameCtx {
                     overlays,
                     injects,
                     request_exit,
+                    request_redraw,
                     ..
                 } = ctx;
 
@@ -422,10 +501,30 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                 }
 
                 state.session.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
+                    hovered: state.hovered,
+                    focused: state.focused,
                     viewport_size: [w, h],
                 });
+                // Continuous keeps the loop spinning; OnDemand only redraws when
+                // the callback asked to (an animating callback calls
+                // request_redraw each frame).
+                if self.config.redraw_mode == RedrawMode::Continuous || request_redraw {
+                    state.window.request_redraw();
+                }
+            }
+
+            WindowEvent::Focused(focused) => {
+                state.focused = focused;
+                state.window.request_redraw();
+            }
+
+            WindowEvent::CursorEntered { .. } => {
+                state.hovered = true;
+                state.window.request_redraw();
+            }
+
+            WindowEvent::CursorLeft { .. } => {
+                state.hovered = false;
                 state.window.request_redraw();
             }
 

@@ -268,7 +268,7 @@ pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 pub use session::{ExtraId, OrbitSession, ViewportSession};
 
 #[cfg(feature = "app")]
-pub use session::hosts::{AppConfig, FrameCtx, ViewportApp};
+pub use session::hosts::{AppConfig, FrameCtx, RedrawMode, ViewportApp};
 
 pub use quantities::{
     edge_one_form_to_glyphs, face_intrinsic_to_glyphs, polyline_edge_vectors_to_glyphs,
