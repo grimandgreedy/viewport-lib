@@ -83,6 +83,9 @@ struct ClusterCell {
 @group(0) @binding(15) var<storage, read> cluster_cells:         array<ClusterCell>;
 @group(0) @binding(16) var<storage, read> cluster_light_indices: array<u32>;
 @group(0) @binding(17) var                point_shadow_cube_tex: texture_depth_cube_array;
+// Per-object light-probe SH: 9 vec4 per light-probe-lit object (rgb in xyz),
+// selected by the object's light_probe_index. See evaluate_sh_probe in ambient.wgsl.
+@group(0) @binding(18) var<storage, read> light_probe_sh:         array<vec4<f32>>;
 
 
 fn cluster_index_for(view_pos: vec3<f32>) -> u32 {

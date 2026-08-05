@@ -1033,6 +1033,7 @@ impl Scene {
                 receives_decals: node.receives_decals,
                 lic: None,
                 lod_group: node.lod_group,
+                indirect_light: crate::renderer::IndirectLightSource::default(),
             });
         }
         // Nodes live in a `HashMap`, whose iteration order is randomised per
@@ -1121,6 +1122,7 @@ impl Scene {
                     receives_decals: node.receives_decals,
                     lic: None,
                     lod_group: node.lod_group,
+                    indirect_light: crate::renderer::IndirectLightSource::default(),
                 });
             }
 
@@ -1179,6 +1181,7 @@ impl Scene {
                     receives_decals: node.receives_decals,
                     lic: None,
                     lod_group: node.lod_group,
+                    indirect_light: crate::renderer::IndirectLightSource::default(),
                 });
             }
 

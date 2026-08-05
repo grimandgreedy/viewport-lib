@@ -11,10 +11,11 @@ use viewport_lib::wgpu;
 
 use viewport_lib::{
     Aabb, BackfacePolicy, Camera, DecalItem, GaussianSplatData, GaussianSplatItem, GlyphItem,
-    GlyphType, ImageAnchor, ImageSliceItem, ItemSettings, LightKind, LightSource, Material, MeshId,
-    OverrideBufferSlice, PickBackend, PickId, PickMask, PickPoll, PointCloudItem, PolylineItem,
-    RibbonItem, ScatterVolume, ScatterVolumeItem, Scene, ScreenImageItem, Selection, ShDegree,
-    SliceAxis, SpriteItem, SpriteSizeMode, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
+    GlyphType, ImageAnchor, ImageSliceItem, IndirectLightSource, ItemSettings, LightKind,
+    LightSource, Material, MeshId, OverrideBufferSlice, PickBackend, PickId, PickMask, PickPoll,
+    PointCloudItem, PolylineItem, RibbonItem, ScatterVolume, ScatterVolumeItem, Scene,
+    ScreenImageItem, Selection, ShDegree, ShadingModel, SliceAxis, SpriteItem, SpriteSizeMode,
+    VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,
@@ -477,6 +478,72 @@ fn capture_equirect_maps_direction_like_the_shader() {
     assert!(
         (0.42..=0.58).contains(&u) && (0.42..=0.58).contains(&v),
         "+X emissive box resolved to uv ({u:.3}, {v:.3}), expected near (0.5, 0.5)"
+    );
+}
+
+/// LP-c consumption: an object marked `IndirectLightSource::LightProbe` must
+/// take its indirect diffuse from the uploaded SH field. A red-only probe with
+/// no direct lights makes a white PBR box render red, where global-IBL /
+/// hemisphere ambient (blue-ish sky) would not. This exercises the whole
+/// consumption path: the per-object SH prepass, the group-0 storage buffer, the
+/// 336-byte ObjectUniform, and `evaluate_sh_probe` in the fragment.
+#[test]
+fn light_probe_object_is_lit_by_the_probe_field() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    // Red-only probe: the DC coefficient r[0] = 1/Y00 makes evaluate_sh return
+    // ~[1,0,0] for every normal.
+    let mut sh = viewport_lib::resources::SHCoefficients::default();
+    sh.r[0] = 1.0 / 0.282095;
+    let probes =
+        viewport_lib::resources::LightProbeSet::new(vec![viewport_lib::resources::LightProbe {
+            position: [0.0, 0.0, 0.0],
+            sh,
+        }]);
+    renderer.set_light_probes(probes);
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    // No direct lights: the object colour is purely its indirect (probe) term.
+    frame.effects.lighting.lights = vec![];
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.material.shading_model = ShadingModel::Pbr;
+    item.material.base_colour = [1.0, 1.0, 1.0];
+    item.indirect_light = IndirectLightSource::LightProbe;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let (w, h) = (64u32, 64u32);
+    let pixels = renderer.render_offscreen(&device, &queue, &frame, w, h);
+
+    // The brightest-red pixel must be strongly red (the probe), not grey/blue.
+    let mut best = (0u8, 0u8, 0u8);
+    for px in pixels.chunks_exact(4) {
+        if px[0] > best.0 {
+            best = (px[0], px[1], px[2]);
+        }
+    }
+    assert!(
+        best.0 as i32 > best.2 as i32 + 40 && best.0 as i32 > best.1 as i32 + 40,
+        "probe-lit object should be red: brightest-red pixel was {best:?}"
     );
 }
 

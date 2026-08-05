@@ -10,6 +10,7 @@ pub(super) fn build_object_uniform(
     resources: &DeviceResources,
     item: &SceneRenderItem,
     wireframe_mode: bool,
+    light_probe_index: Option<u32>,
 ) -> ObjectUniform {
     let m = &item.material;
     // Compute scalar attribute range.
@@ -154,6 +155,9 @@ pub(super) fn build_object_uniform(
             mesh.and_then(|m| m.normal_override_slice)
                 .map_or(u32::MAX, |s| s.element_count)
         },
+        has_light_probe: light_probe_index.map_or(0, |_| 1),
+        light_probe_index: light_probe_index.unwrap_or(0),
+        _pad_lp: [0; 2],
     }
 }
 
@@ -175,6 +179,42 @@ impl ViewportRenderer {
         // Count of per-item bind groups actually (re)built this frame, reported
         // in FrameStats so a cache that is silently missing is visible.
         let mut bind_groups_built = 0u32;
+
+        // Light-probe SH prepass: for each object that opts into the probe field,
+        // blend the nearby probes' SH at the object's position and pack it into
+        // the shared per-object SH buffer (group 0 binding 18). `probe_indices`
+        // maps this frame's item index to that object's SH block, consumed by
+        // `build_object_uniform`. Costs nothing when no probes are uploaded.
+        let probe_indices: Vec<Option<u32>> = {
+            let mut indices = vec![None; scene_items.len()];
+            if let Some(probes) = resources.light_probes.as_ref() {
+                if !probes.is_empty() {
+                    let mut sh_gpu: Vec<[f32; 4]> = Vec::new();
+                    let mut count = 0u32;
+                    for (idx, item) in scene_items.iter().enumerate() {
+                        if item.indirect_light != crate::renderer::IndirectLightSource::LightProbe {
+                            continue;
+                        }
+                        if count as usize >= crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
+                        {
+                            break;
+                        }
+                        let center = [item.model[3][0], item.model[3][1], item.model[3][2]];
+                        sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
+                        indices[idx] = Some(count);
+                        count += 1;
+                    }
+                    if !sh_gpu.is_empty() {
+                        queue.write_buffer(
+                            &resources.light_probe_sh_buf,
+                            0,
+                            bytemuck::cast_slice(&sh_gpu),
+                        );
+                    }
+                }
+            }
+            indices
+        };
         // Collect per-item uniforms when wireframe mode is on so we can give each
         // visible item its own bind group (the mesh's shared object_uniform_buf gets
         // overwritten when multiple items reference the same MeshId).
@@ -259,8 +299,12 @@ impl ViewportRenderer {
                     );
                     continue;
                 };
-                let obj_uniform =
-                    build_object_uniform(resources, item, frame.viewport.wireframe_mode);
+                let obj_uniform = build_object_uniform(
+                    resources,
+                    item,
+                    frame.viewport.wireframe_mode,
+                    probe_indices[item_idx],
+                );
 
                 // Collect per-item uniform for wireframe per-item bind groups.
                 if collect_wf_uniforms && !item.settings.hidden {
@@ -319,6 +363,9 @@ impl ViewportRenderer {
                         position_override_len: u32::MAX,
                         normal_override_base: 0,
                         normal_override_len: u32::MAX,
+                        has_light_probe: 0,
+                        light_probe_index: 0,
+                        _pad_lp: [0; 2],
                     };
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         queue.write_buffer(
@@ -694,7 +741,7 @@ impl ViewportRenderer {
                 item.material.emissive_texture_id,
             );
 
-            let obj_uniform = build_object_uniform(resources, item, false);
+            let obj_uniform = build_object_uniform(resources, item, false, None);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
                 bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)

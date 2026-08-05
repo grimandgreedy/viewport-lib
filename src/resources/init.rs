@@ -308,6 +308,20 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 18: per-object light-probe SH storage buffer
+                // (FRAGMENT, read-only). One 9-vec4 block per light-probe-lit
+                // object; `object.light_probe_index` selects the block, read
+                // only when `object.has_light_probe` is set.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 18,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -623,6 +637,14 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
+        let light_probe_sh_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("light_probe_sh_buf"),
+            size: (crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
+                * crate::resources::light_probes::SH_GPU_STRIDE_BYTES) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
         let clip_planes_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -878,6 +900,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 17,
                     resource: crate::gpu::BindingResource::TextureView(&point_shadow_cube_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 18,
+                    resource: light_probe_sh_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2304,6 +2330,8 @@ impl DeviceResources {
             camera_uniform_buf,
             light_uniform_buf,
             light_storage_buf,
+            light_probes: None,
+            light_probe_sh_buf,
             clustered,
             camera_bind_group,
             camera_bind_group_layout: camera_bgl,

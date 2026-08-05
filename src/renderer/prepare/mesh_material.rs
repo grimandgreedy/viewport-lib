@@ -26,6 +26,9 @@ pub(crate) fn is_instanceable(
 ) -> bool {
     !item.settings.hidden
         && item.active_attribute.is_none()
+        // Light-probe objects carry per-object blended SH in their ObjectUniform,
+        // which the instanced path has no slot for, so they draw per-object.
+        && item.indirect_light != crate::renderer::IndirectLightSource::LightProbe
         // Material-plugin items select a per-item pipeline set and a group-3
         // params bind; the instanced path has neither, so they draw per-object.
         && item.material.shading_plugin.is_none()

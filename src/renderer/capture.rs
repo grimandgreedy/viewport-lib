@@ -232,6 +232,22 @@ impl ViewportRenderer {
         }
     }
 
+    /// Upload an SH light-probe field for dynamic objects to sample.
+    ///
+    /// Objects with [`IndirectLightSource::LightProbe`](crate::IndirectLightSource::LightProbe)
+    /// take their indirect diffuse light from this field, blended at the object's
+    /// position, instead of the global environment. Replaces any previous set.
+    /// Only opaque, non-instanced meshes sample it.
+    pub fn set_light_probes(&mut self, probes: crate::resources::LightProbeSet) {
+        self.resources.light_probes = Some(probes);
+    }
+
+    /// Remove the uploaded light-probe field. Objects revert to global IBL /
+    /// hemisphere ambient.
+    pub fn clear_light_probes(&mut self) {
+        self.resources.light_probes = None;
+    }
+
     /// Bake SH light probes at the given world positions.
     ///
     /// Captures an equirect panorama at each position with

@@ -15,8 +15,9 @@
 //!
 //! The interpolation in [`LightProbeSet::blend_sh_at`] is capped-radius
 //! k-nearest weighting. Barycentric interpolation over a Delaunay
-//! tetrahedralisation is a planned quality upgrade (phase `LP-tet`); it swaps the
-//! body of that one method and changes nothing else here.
+//! tetrahedralisation would give exactly-local blends with no distant-probe
+//! bleed; it lives entirely in that one method, so swapping it in changes
+//! nothing else here.
 
 /// Order-2 real spherical harmonics: 9 coefficients per RGB channel.
 ///
@@ -41,6 +42,25 @@ impl Default for SHCoefficients {
             g: [0.0; 9],
             b: [0.0; 9],
         }
+    }
+}
+
+/// Maximum number of light-probe-lit objects per frame. The per-object SH
+/// storage buffer is sized to this; objects beyond it fall back to global IBL.
+pub const MAX_LIGHT_PROBE_OBJECTS: usize = 4096;
+
+/// GPU size of one object's SH block: 9 coefficients as `vec4<f32>` (rgb in
+/// `xyz`, `w` unused), matching the `light_probe_sh` layout in `mesh.wgsl`.
+pub const SH_GPU_STRIDE_BYTES: usize = 9 * 16;
+
+impl SHCoefficients {
+    /// Pack into 9 `vec4<f32>` (rgb in `xyz`) for upload to `light_probe_sh_buf`.
+    pub fn to_gpu(&self) -> [[f32; 4]; 9] {
+        let mut out = [[0.0f32; 4]; 9];
+        for i in 0..9 {
+            out[i] = [self.r[i], self.g[i], self.b[i], 0.0];
+        }
+        out
     }
 }
 
@@ -82,7 +102,8 @@ impl LightProbeSet {
     /// Capped-radius k-nearest inverse-distance weighting: the nearest
     /// [`K_NEAREST`] probes are weighted by `1 / (distance^2 + eps)` and blended.
     /// A point sitting on a probe returns that probe's SH. An empty set returns
-    /// zero SH. This is the swap point for the barycentric-tet upgrade (LP-tet).
+    /// zero SH. The interpolation is confined to this method, so a barycentric
+    /// tetrahedral lookup can replace it without touching anything else.
     pub fn blend_sh_at(&self, position: [f32; 3]) -> SHCoefficients {
         if self.probes.is_empty() {
             return SHCoefficients::default();

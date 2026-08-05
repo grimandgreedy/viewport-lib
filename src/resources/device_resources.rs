@@ -607,6 +607,12 @@ pub struct DeviceResources {
     /// light list to this cap each frame, ranking surplus lights by
     /// `LightSource::importance * proximity_weight`.
     pub(crate) light_storage_buf: crate::gpu::Buffer,
+    /// Uploaded SH light-probe field, sampled per object at prepare time. `None`
+    /// until `set_light_probes` is called.
+    pub(crate) light_probes: Option<crate::resources::LightProbeSet>,
+    /// Per-object blended SH, one 9-`vec4` block per light-probe-lit object,
+    /// written each frame and read at group 1 binding 16 by `mesh.wgsl`.
+    pub(crate) light_probe_sh_buf: crate::gpu::Buffer,
     /// Clustered-shading state: cluster grid, global light index list, and the
     /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
     /// group expose this state to every lit pipeline.
@@ -1388,6 +1394,10 @@ impl DeviceResources {
                     resource: crate::gpu::BindingResource::TextureView(
                         &self.point_shadow_cube_view,
                     ),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 18,
+                    resource: self.light_probe_sh_buf.as_entire_binding(),
                 },
             ],
         })

@@ -34,6 +34,35 @@ fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
     return vec2<f32>(0.5 + phi / (2.0 * IBL_PI), 0.5 - theta / IBL_PI);
 }
 
+/// Evaluate an object's light-probe SH as diffuse irradiance for normal `n`.
+///
+/// `base` is the object's block index into `light_probe_sh` (group 0 binding 18);
+/// the block is 9 consecutive vec4 (rgb in xyz). Mirrors the CPU
+/// `resources::light_probes::evaluate_sh`: order-2 real SH basis times the
+/// per-band cosine-lobe factors (pre-divided by PI), clamped to non-negative.
+fn evaluate_sh_probe(base: u32, n: vec3<f32>) -> vec3<f32> {
+    let i = base * 9u;
+    let x = n.x;
+    let y = n.y;
+    let z = n.z;
+    var yb: array<f32, 9>;
+    yb[0] = 0.282095;
+    yb[1] = 0.488603 * y;
+    yb[2] = 0.488603 * z;
+    yb[3] = 0.488603 * x;
+    yb[4] = 1.092548 * x * y;
+    yb[5] = 1.092548 * y * z;
+    yb[6] = 0.315392 * (3.0 * z * z - 1.0);
+    yb[7] = 1.092548 * x * z;
+    yb[8] = 0.546274 * (x * x - y * y);
+    let a = array<f32, 9>(1.0, 0.6666667, 0.6666667, 0.6666667, 0.25, 0.25, 0.25, 0.25, 0.25);
+    var result = vec3<f32>(0.0);
+    for (var k = 0u; k < 9u; k = k + 1u) {
+        result = result + light_probe_sh[i + k].rgb * (yb[k] * a[k]);
+    }
+    return max(result, vec3<f32>(0.0));
+}
+
 /// Sample the irradiance map (diffuse IBL).
 fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
     let uv = dir_to_equirect_uv(N, rotation);

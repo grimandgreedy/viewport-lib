@@ -114,6 +114,9 @@ struct Object {
     position_override_len: u32,            // offset 308 : element count of the window; 0xffffffff = whole buffer
     normal_override_base: u32,             // offset 312 : same for binding 14
     normal_override_len: u32,              // offset 316
+    has_light_probe: u32,                  // offset 320 : 1 = sample light_probe_sh for indirect diffuse
+    light_probe_index: u32,                // offset 324 : base block index into light_probe_sh
+    _pad_lp: vec2<u32>,                    // offset 328 : align to 336
 };
 
 struct ClipVolumeEntry {
@@ -807,6 +810,14 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
             let ambient_scale = vec3<f32>(object.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
             ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
+            dbg_ambient_lum = dot(ambient, lum_weights);
+        }
+        // Light-probe objects take their indirect diffuse from the SH field
+        // sampled at the object position, replacing the global-IBL / hemisphere
+        // diffuse above. SH probes carry diffuse only, so IBL specular is not
+        // added here.
+        if object.has_light_probe != 0u {
+            ambient = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // </viewport-shade-slot:ambient>

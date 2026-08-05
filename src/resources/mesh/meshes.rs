@@ -2563,6 +2563,9 @@ impl DeviceResources {
             position_override_len: u32::MAX,
             normal_override_base: 0,
             normal_override_len: u32::MAX,
+            has_light_probe: 0,
+            light_probe_index: 0,
+            _pad_lp: [0; 2],
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2698,6 +2701,9 @@ impl DeviceResources {
             position_override_len: u32::MAX,
             normal_override_base: 0,
             normal_override_len: u32::MAX,
+            has_light_probe: 0,
+            light_probe_index: 0,
+            _pad_lp: [0; 2],
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

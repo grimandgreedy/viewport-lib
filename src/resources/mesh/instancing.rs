@@ -1425,7 +1425,10 @@ impl DeviceResources {
 /// - position_override_len:      u32      =  4 bytes  offset 308
 /// - normal_override_base:       u32      =  4 bytes  offset 312
 /// - normal_override_len:        u32      =  4 bytes  offset 316
-/// Total: 320 bytes
+/// - has_light_probe:            u32      =  4 bytes  offset 320
+/// - light_probe_index:          u32      =  4 bytes  offset 324
+/// - _pad_lp:                    [u32; 2] =  8 bytes  offset 328
+/// Total: 336 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ObjectUniform {
@@ -1506,9 +1509,15 @@ pub(crate) struct ObjectUniform {
     pub(crate) normal_override_base: u32, //   4 bytes, offset 312
     /// Same as `position_override_len` for the normal override.
     pub(crate) normal_override_len: u32, //   4 bytes, offset 316
+    /// 1 when this object samples the light-probe field for indirect diffuse
+    /// (its blended SH lives at `light_probe_index` in `light_probe_sh_buf`).
+    pub(crate) has_light_probe: u32, //   4 bytes, offset 320
+    /// Base index of this object's 9 SH coefficients in `light_probe_sh_buf`.
+    pub(crate) light_probe_index: u32, //   4 bytes, offset 324
+    pub(crate) _pad_lp: [u32; 2],    //   8 bytes, offset 328
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 320);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 336);
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
 /// Layout: 176 bytes.

@@ -96,6 +96,24 @@ pub struct SceneRenderItem {
     /// level is picked fresh each frame. Build a group with
     /// [`DeviceResources::register_lod_group`](crate::DeviceResources::register_lod_group).
     pub lod_group: Option<crate::resources::LodGroupId>,
+    /// Where this object's indirect diffuse light comes from. Default:
+    /// [`IndirectLightSource::GlobalIbl`] (the existing hemisphere / global IBL
+    /// behaviour). Set to [`IndirectLightSource::LightProbe`] to sample the
+    /// uploaded SH light-probe field at the object's position instead.
+    pub indirect_light: IndirectLightSource,
+}
+
+/// Source of an object's indirect diffuse light.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum IndirectLightSource {
+    /// The scene-wide hemisphere ambient or global IBL environment. Default.
+    #[default]
+    GlobalIbl,
+    /// The SH light-probe field, sampled at the object's world position. Has no
+    /// effect until light probes are uploaded and only applies to opaque,
+    /// non-instanced meshes.
+    LightProbe,
 }
 
 impl Default for SceneRenderItem {
@@ -116,6 +134,7 @@ impl Default for SceneRenderItem {
             receives_decals: true,
             lic: None,
             lod_group: None,
+            indirect_light: IndirectLightSource::default(),
         }
     }
 }
