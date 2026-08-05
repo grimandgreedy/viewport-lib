@@ -46,7 +46,7 @@ impl EnvironmentMapId {
 pub const MAX_ENV_ZONES: usize = 64;
 
 /// Byte stride of one `EnvZone` in the GPU buffer (matches the WGSL struct).
-pub const ENV_ZONE_STRIDE_BYTES: usize = 32;
+pub const ENV_ZONE_STRIDE_BYTES: usize = 48;
 
 /// A world-space box that selects an environment for fragments inside it.
 ///
@@ -55,14 +55,21 @@ pub const ENV_ZONE_STRIDE_BYTES: usize = 32;
 /// zones, or the default environment where coverage is incomplete). Overlapping
 /// zones blend by influence weight, so there is no hard seam at a boundary. Feed
 /// a set through `ViewportRenderer::set_environment_zones`.
+///
+/// A distant environment (a region-selected sky) sets `parallax = false`. A local
+/// reflection probe, captured at the box centre, sets `parallax = true` so its
+/// reflection is box-projected against `bounds`;
+/// `ViewportRenderer::capture_reflection_probe` returns one already configured.
 #[derive(Copy, Clone, Debug)]
 pub struct EnvironmentZone {
-    /// World-space box this zone covers.
+    /// World-space box this zone covers (and, for a probe, the parallax proxy).
     pub bounds: crate::scene::aabb::Aabb,
     /// Environment selected inside the box (from `upload_environment`).
     pub environment: EnvironmentMapId,
     /// Outer falloff band, in world units, over which influence fades to zero.
     pub fade_distance: f32,
+    /// Box-project the reflection against `bounds` (a local reflection probe).
+    pub parallax: bool,
 }
 
 /// GPU layout of one environment zone (binding 19), matching the WGSL `EnvZone`.
@@ -73,6 +80,8 @@ struct EnvZoneGpu {
     layer: u32,
     half_extents: [f32; 3],
     fade: f32,
+    parallax: u32,
+    _pad_probe: [u32; 3],
 }
 
 const _: () = assert!(std::mem::size_of::<EnvZoneGpu>() == ENV_ZONE_STRIDE_BYTES);
@@ -102,6 +111,8 @@ pub fn set_environment_zones(
                 layer: z.environment.0,
                 half_extents: z.bounds.half_extents().into(),
                 fade: z.fade_distance,
+                parallax: u32::from(z.parallax),
+                _pad_probe: [0; 3],
             })
             .collect();
         queue.write_buffer(&resources.env_zone_buf, 0, bytemuck::cast_slice(&gpu));
@@ -1100,6 +1111,7 @@ mod tests {
             },
             environment: env,
             fade_distance: 0.5,
+            parallax: true,
         };
         set_environment_zones(&mut resources, &queue, &[zone]);
         assert_eq!(resources.env_zone_count, 1);

@@ -535,7 +535,7 @@ fn viewport_ibl_ambient(
     // mesh pipelines: magnified reflections on detailed normals would
     // otherwise point-sample hot mip-0 texels and read as speckle.
     let dr = max(length(dpdx(r)), length(dpdy(r)));
-    let footprint_mip = clamp(log2(max(dr * 128.0 / (2.0 * 3.14159265), 1.0)), 0.0, 4.0);
+    let footprint_mip = clamp(log2(max(dr * 256.0 / (2.0 * 3.14159265), 1.0)), 0.0, 4.0);
     let prefiltered = textureSampleLevel(
         ibl_specular_tex,
         ibl_sampler,

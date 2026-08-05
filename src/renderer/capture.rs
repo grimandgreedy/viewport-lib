@@ -293,6 +293,86 @@ impl ViewportRenderer {
         crate::resources::LightProbeSet::new(probes)
     }
 
+    /// Bake a reflection probe at the centre of `bounds` and return a
+    /// parallax-enabled [`EnvironmentZone`](crate::resources::EnvironmentZone) for it.
+    ///
+    /// Captures the scene radiance around the box centre with
+    /// [`capture_equirect`](Self::capture_equirect), prefilters it into a fresh
+    /// environment layer, and returns a zone that selects that layer inside
+    /// `bounds` and box-projects reflections against it. Add the zone to the set
+    /// with [`set_environment_zones`](Self::set_environment_zones). Blocks until
+    /// the bake finishes and rebuilds the camera bind groups.
+    ///
+    /// `face_size` is the per-face capture resolution and `equirect_height` the
+    /// projected panorama height; `frame` supplies the scene and is restored on
+    /// return. To bake several probes, prefer
+    /// [`capture_reflection_probes`](Self::capture_reflection_probes), which
+    /// rebuilds the bind groups once instead of per probe.
+    pub fn capture_reflection_probe(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &mut FrameData,
+        bounds: crate::scene::aabb::Aabb,
+        fade_distance: f32,
+        face_size: u32,
+        equirect_height: u32,
+    ) -> crate::error::ViewportResult<crate::resources::EnvironmentZone> {
+        let zones = self.capture_reflection_probes(
+            device,
+            queue,
+            frame,
+            &[(bounds, fade_distance)],
+            face_size,
+            equirect_height,
+        )?;
+        Ok(zones[0])
+    }
+
+    /// Bake several reflection probes in one pass, rebuilding the camera bind
+    /// groups once at the end rather than once per probe.
+    ///
+    /// Each entry is `(bounds, fade_distance)`; the probe is captured at the box
+    /// centre. Returns one parallax-enabled
+    /// [`EnvironmentZone`](crate::resources::EnvironmentZone) per entry, in order,
+    /// ready to hand to [`set_environment_zones`](Self::set_environment_zones).
+    /// Probes are captured under the current scene lighting (the default
+    /// environment), not each other, so this is a single-bounce bake.
+    pub fn capture_reflection_probes(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &mut FrameData,
+        probes: &[(crate::scene::aabb::Aabb, f32)],
+        face_size: u32,
+        equirect_height: u32,
+    ) -> crate::error::ViewportResult<Vec<crate::resources::EnvironmentZone>> {
+        let mut zones = Vec::with_capacity(probes.len());
+        for &(bounds, fade_distance) in probes {
+            let center = bounds.center().to_array();
+            let panorama =
+                self.capture_equirect(device, queue, frame, center, face_size, equirect_height);
+            // Resources-level upload does not rebuild bind groups; we rebuild once
+            // after the whole batch below.
+            let environment = crate::resources::material::environment::upload_environment(
+                &mut self.resources,
+                device,
+                queue,
+                &panorama.rgba,
+                panorama.width,
+                panorama.height,
+            )?;
+            zones.push(crate::resources::EnvironmentZone {
+                bounds,
+                environment,
+                fade_distance,
+                parallax: true,
+            });
+        }
+        self.rebuild_camera_bind_groups(device);
+        Ok(zones)
+    }
+
     /// Copy an `Rgba16Float` texture to the CPU and decode it to `f32` RGBA,
     /// stripping the 256-byte row padding wgpu requires on the copy.
     fn readback_rgba16f(

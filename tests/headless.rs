@@ -589,6 +589,57 @@ fn bake_light_probes_captures_directional_radiance() {
     assert!((blended.r[0] - sh.r[0]).abs() < 1e-3);
 }
 
+/// `capture_reflection_probe` bakes the scene into a fresh environment layer and
+/// returns a parallax-enabled zone; the zone then drives a render through the
+/// per-fragment parallax path without validation errors.
+#[test]
+fn capture_reflection_probe_bakes_a_parallax_zone() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = FrameData::default();
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // A bright emissive box off to +X, so the captured probe has structure.
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)).to_cols_array_2d();
+    item.material.emissive = [5.0, 5.0, 5.0];
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let bounds = viewport_lib::Aabb {
+        min: glam::Vec3::splat(-3.0),
+        max: glam::Vec3::splat(3.0),
+    };
+    let zone = renderer
+        .capture_reflection_probe(&device, &queue, &mut frame, bounds, 1.0, 64, 48)
+        .unwrap();
+
+    assert!(zone.parallax, "a reflection probe is parallax-corrected");
+    assert!(
+        zone.environment.index() >= 1,
+        "the probe takes an extra layer, not the default (0)"
+    );
+
+    // Drive a render with the probe active: exercises the parallax + specular
+    // occlusion path in the mesh shader without wgpu validation errors.
+    renderer.set_environment_zones(&queue, &[zone]);
+    let mut lit = SceneRenderItem::default();
+    lit.mesh_id = mesh_idx;
+    lit.material = viewport_lib::Material::pbr([1.0, 1.0, 1.0], 1.0, 0.15);
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![lit].into());
+    let pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(pixels.len(), 64 * 64 * 4);
+}
+
 /// Regression test for the silent-skip bug where a `set_position_override_buffer`
 /// binding would render nothing when the item was routed through the instanced
 /// pipeline. `mesh_instanced.wgsl` has no awareness of the override binding,

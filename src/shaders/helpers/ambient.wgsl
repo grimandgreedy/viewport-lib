@@ -21,6 +21,10 @@
 //   not change.
 
 const IBL_PI: f32 = 3.14159265;
+/// Width of the prefiltered specular equirect map (must match IBL_PREFILTER_W in
+/// ibl_compute.rs). Used to convert a screen-space reflection footprint into a
+/// texel count for the mip floor.
+const IBL_PREFILTER_WIDTH: f32 = 256.0;
 
 /// Convert a Z-up world-space direction to equirectangular UV, applying optional
 /// Z-axis rotation. The IBL panorama is sampled with its vertical axis aligned
@@ -82,9 +86,9 @@ fn sample_ibl_irradiance(N: vec3<f32>, rotation: f32) -> vec3<f32> {
 fn sample_ibl_prefiltered_grad(R: vec3<f32>, roughness: f32, rotation: f32, dr: f32) -> vec3<f32> {
     let uv = dir_to_equirect_uv(R, rotation);
     let max_mip = 4.0; // 5 mip levels -> max index 4
-    // Texels covered per pixel: |dR| radians mapped onto the 128-texel-wide
-    // equirect prefiltered map (2*PI radians of longitude).
-    let texels = dr * 128.0 / (2.0 * IBL_PI);
+    // Texels covered per pixel: |dR| radians mapped onto the prefiltered map's
+    // width (2*PI radians of longitude).
+    let texels = dr * IBL_PREFILTER_WIDTH / (2.0 * IBL_PI);
     let footprint_mip = clamp(log2(max(texels, 1.0)), 0.0, max_mip);
     let mip = max(roughness * max_mip, footprint_mip);
     // Default environment (array layer 0). The `_layer` variant selects another.
@@ -205,14 +209,38 @@ fn sample_ibl_irradiance_layer(N: vec3<f32>, rotation: f32, layer: i32) -> vec3<
 fn sample_ibl_prefiltered_layer(R: vec3<f32>, roughness: f32, rotation: f32, dr: f32, layer: i32) -> vec3<f32> {
     let uv = dir_to_equirect_uv(R, rotation);
     let max_mip = 4.0;
-    let texels = dr * 128.0 / (2.0 * IBL_PI);
+    let texels = dr * IBL_PREFILTER_WIDTH / (2.0 * IBL_PI);
     let footprint_mip = clamp(log2(max(texels, 1.0)), 0.0, max_mip);
     let mip = max(roughness * max_mip, footprint_mip);
     return textureSampleLevel(ibl_prefiltered, ibl_sampler, uv, layer, mip).rgb;
 }
 
+/// Box-projection parallax correction (Lagarde 2012). Re-aim direction `dir`
+/// from `world_pos` so it samples a local environment captured at `center` with
+/// proxy box `[center - half, center + half]`: intersect the ray with the box
+/// (slab test, furthest positive face) and point from the centre to the hit.
+/// Direct here because this is a forward renderer with world position in hand.
+fn parallax_box(dir: vec3<f32>, world_pos: vec3<f32>, center: vec3<f32>, half: vec3<f32>) -> vec3<f32> {
+    let inv = 1.0 / dir; // dir components near 0 -> inf, dropped by the min below
+    let t1 = (center - half - world_pos) * inv;
+    let t2 = (center + half - world_pos) * inv;
+    let tmax = max(t1, t2);
+    let t = min(min(tmax.x, tmax.y), tmax.z);
+    let hit = world_pos + dir * t;
+    return normalize(hit - center);
+}
+
+/// Roughness-aware specular occlusion from AO and N.V (Frostbite). Keeps a
+/// prefiltered reflection from leaking into cavities; 1.0 (neutral) at ao = 1.
+fn spec_occlusion(n_dot_v: f32, ao: f32, roughness: f32) -> f32 {
+    return clamp(pow(n_dot_v + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
 /// Full IBL ambient (diffuse irradiance + specular split-sum) for environment
-/// `layer`. Mirrors `ibl_ambient_grad`, sampling the chosen layer.
+/// `layer`. Mirrors `ibl_ambient_grad`, sampling the chosen layer, and adds the
+/// reflection-probe extras: when `parallax != 0`, box-projects the reflection
+/// vector and irradiance normal against the proxy box `[center +/- half]`; and a
+/// specular-occlusion term on the specular contribution.
 fn ibl_ambient_layer_grad(
     N: vec3<f32>,
     V: vec3<f32>,
@@ -225,19 +253,33 @@ fn ibl_ambient_layer_grad(
     rotation: f32,
     dr: f32,
     layer: i32,
+    world_pos: vec3<f32>,
+    box_center: vec3<f32>,
+    box_half: vec3<f32>,
+    parallax: u32,
 ) -> IblContrib {
     let NdotV = max(dot(N, V), 0.001);
     let F = F_Schlick_roughness(NdotV, F0, roughness);
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
 
-    let irradiance = sample_ibl_irradiance_layer(N, rotation, layer);
+    // Diffuse IBL. Parallax-correct the sampling normal for a local probe.
+    var Nd = N;
+    if parallax != 0u {
+        Nd = parallax_box(N, world_pos, box_center, box_half);
+    }
+    let irradiance = sample_ibl_irradiance_layer(Nd, rotation, layer);
     let diffuse_ibl = kD * irradiance * base_colour * ao * intensity;
 
-    let R = reflect(-V, N);
+    // Specular IBL. Parallax-correct the reflection vector for a local probe.
+    var R = reflect(-V, N);
+    if parallax != 0u {
+        R = parallax_box(R, world_pos, box_center, box_half);
+    }
     let prefiltered = sample_ibl_prefiltered_layer(R, roughness, rotation, dr, layer);
     let brdf = sample_brdf_lut(NdotV, roughness);
-    let specular_ibl = prefiltered * (F * brdf.x + brdf.y) * ao * intensity;
+    let so = spec_occlusion(NdotV, ao, roughness);
+    let specular_ibl = prefiltered * (F * brdf.x + brdf.y) * ao * so * intensity;
 
     return IblContrib(diffuse_ibl, specular_ibl);
 }
@@ -281,6 +323,7 @@ fn ibl_ambient_zoned(
         }
         let c = ibl_ambient_layer_grad(
             N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr, i32(z.layer),
+            world_pos, z.center, z.half_extents, z.parallax,
         );
         diffuse = diffuse + c.diffuse * w;
         specular = specular + c.specular * w;
@@ -288,8 +331,10 @@ fn ibl_ambient_zoned(
     }
     let default_w = max(0.0, 1.0 - total_w);
     if default_w > 0.0 {
+        // The default environment (layer 0) is distant: no parallax.
         let c0 = ibl_ambient_layer_grad(
             N, V, base_colour, metallic, roughness, F0, ao, intensity, rotation, dr, 0,
+            world_pos, vec3<f32>(0.0), vec3<f32>(1.0), 0u,
         );
         diffuse = diffuse + c0.diffuse * default_w;
         specular = specular + c0.specular * default_w;

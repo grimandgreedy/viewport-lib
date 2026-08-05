@@ -16,14 +16,18 @@ const PREFILTER_PARAMS_SIZE: u64 = 16; // 4 floats (1 used, 3 pad) = 16 bytes
 
 /// Number of environment layers the irradiance / prefiltered arrays hold. Layer
 /// 0 is the scene default; extra environments (uploaded via `upload_environment`)
-/// take layers 1.. up to this cap, beyond which they fall back to the default.
-/// Array textures cannot grow a layer in place, so this is fixed at allocation.
-pub(crate) const IBL_ENV_CAPACITY: u32 = 16;
+/// and reflection probes take layers 1.. up to this cap, beyond which they fall
+/// back to the default. Array textures cannot grow a layer in place, so this is
+/// fixed at allocation. Sized for a probe-lit scene (default + zones + probes
+/// share this one pool).
+pub(crate) const IBL_ENV_CAPACITY: u32 = 32;
 
 pub(crate) const IBL_IRR_W: u32 = 64;
 pub(crate) const IBL_IRR_H: u32 = 32;
-pub(crate) const IBL_PREFILTER_W: u32 = 128;
-pub(crate) const IBL_PREFILTER_H: u32 = 64;
+/// Prefiltered specular equirect size. 256x128 (not the 128x64 that suffices for
+/// distant ambient IBL) so polished surfaces reflecting a local probe stay sharp.
+pub(crate) const IBL_PREFILTER_W: u32 = 256;
+pub(crate) const IBL_PREFILTER_H: u32 = 128;
 pub(crate) const IBL_PREFILTER_MIPS: u32 = 5;
 pub(crate) const IBL_BRDF_SIZE: u32 = 128;
 
