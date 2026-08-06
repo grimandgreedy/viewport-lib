@@ -86,6 +86,10 @@ wgpu29 = ["dep:wgpu29"]
 # is unchanged for non-users. Compute only, no hardware ray query; reuses the
 # shared helpers/brdf.wgsl.
 raytrace = []
+# Lightmap bake primitives (src/bake/). Off by default. Currently the texel
+# G-buffer pass: rasterise a mesh into UV1/atlas space to get per-texel world
+# position and normal, the input a lightmap GI solve integrates from.
+bake = []
 # Opt in to the hardware ray-query traversal backend (Vulkan/DX12). The tracer
 # still selects the portable compute traversal unless the device advertises the
 # ray-query feature; this only lets `pick_backend` choose the hardware path when

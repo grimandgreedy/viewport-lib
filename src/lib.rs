@@ -121,6 +121,12 @@ pub mod scene;
 #[cfg(feature = "raytrace")]
 pub mod raytrace;
 
+/// Lightmap bake primitives, opt-in via the `bake` feature. The texel G-buffer
+/// pass ([`bake::rasterize_texel_gbuffer`]) rasterises a mesh into UV1/atlas
+/// space so each texel carries the world position and normal a GI solve needs.
+#[cfg(feature = "bake")]
+pub mod bake;
+
 /// [`ViewportSession`](session::ViewportSession): a host object that owns the
 /// per-frame wiring (renderer, scene, camera, input) so consumers do not write
 /// it by hand.
