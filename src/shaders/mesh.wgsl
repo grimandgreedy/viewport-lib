@@ -116,7 +116,8 @@ struct Object {
     normal_override_len: u32,              // offset 316
     has_light_probe: u32,                  // offset 320 : 1 = sample light_probe_sh for indirect diffuse
     light_probe_index: u32,                // offset 324 : base block index into light_probe_sh
-    _pad_lp: vec2<u32>,                    // offset 328 : align to 336
+    lightmap_mode: u32,                    // offset 328 : 0 none, 1 Replace, 2 Add, 3 AmbientOcclusion
+    _pad_lp: u32,                          // offset 332 : align to 336
 };
 
 struct ClipVolumeEntry {
@@ -180,6 +181,16 @@ struct ClipVolumeUB {
 // so the bind group layout is satisfied.
 @group(1) @binding(13) var<storage, read> position_override_buffer: array<f32>;
 @group(1) @binding(14) var<storage, read> normal_override_buffer:   array<f32>;
+// Per-vertex vec4 sidecar (binding 15). Material-plugin hooks read it as their
+// vertex attribute; a baked lightmap reuses the same slot to carry UV1 in .xy
+// (the two are mutually exclusive per mesh). The shared zero fallback is bound
+// when neither is set. The Metal vertex buffer table is full at this slot, so
+// the lightmap rides it rather than taking a new binding.
+@group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;
+// Baked lightmap texture, sampled with the binding-2 material sampler and gated
+// on object.lightmap_mode. Textures use a separate Metal table, so this is a
+// fresh binding. The 1x1 fallback is bound when no lightmap is set.
+@group(1) @binding(17) var lightmap_tex: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -202,6 +213,8 @@ struct VertexOut {
     // Detected in vs_main before interpolation can corrupt the NaN bit pattern.
     @location(6) is_nan_scalar:  f32,
     @location(7) face_colour:     vec4<f32>,
+    // Baked lightmap UV1, interpolated for the fragment lightmap sample.
+    @location(9) lightmap_uv:     vec2<f32>,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -286,6 +299,9 @@ fn vs_main(in: VertexIn) -> VertexOut {
         face_colour_buffer[fc_idx],
         object.use_face_colour != 0u && fc_len > 0u,
     );
+    // Lightmap UV1 rides the vec4 sidecar's xy (zero for non-lightmapped meshes).
+    let lm_len = arrayLength(&extension_attr_buffer);
+    out.lightmap_uv = extension_attr_buffer[min(idx, max(lm_len, 1u) - 1u)].xy;
     // <viewport-shade-slot:vertex-fetch>
     // </viewport-shade-slot:vertex-fetch>
     return out;
@@ -784,6 +800,12 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             ambient = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
+        // Baked lightmap: replace, add, or occlude the ambient term.
+        if object.lightmap_mode != 0u {
+            let lm = textureSample(lightmap_tex, obj_sampler, in.lightmap_uv);
+            ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
+            dbg_ambient_lum = dot(ambient, lum_weights);
+        }
         // </viewport-shade-slot:ambient>
 
         final_rgb = clamp((Lo + ambient) * tint.rgb, vec3<f32>(0.0), vec3<f32>(camera.lit_clamp));
@@ -833,6 +855,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // Light-probe objects take their indirect diffuse from the SH field.
         if object.has_light_probe != 0u {
             hemi_rgb = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
+        }
+        // Baked lightmap: replace, add, or occlude the ambient term.
+        if object.lightmap_mode != 0u {
+            let lm = textureSample(lightmap_tex, obj_sampler, in.lightmap_uv);
+            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
 

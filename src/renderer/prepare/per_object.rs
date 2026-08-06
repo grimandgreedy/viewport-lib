@@ -157,7 +157,12 @@ pub(super) fn build_object_uniform(
         },
         has_light_probe: light_probe_index.map_or(0, |_| 1),
         light_probe_index: light_probe_index.unwrap_or(0),
-        _pad_lp: [0; 2],
+        lightmap_mode: resources
+            .mesh_store
+            .get(item.mesh_id)
+            .and_then(|mesh| mesh.lightmap.as_ref())
+            .map_or(0, |lm| lm.mode),
+        _pad_lp: 0,
     }
 }
 
@@ -377,7 +382,8 @@ impl ViewportRenderer {
                         normal_override_len: u32::MAX,
                         has_light_probe: 0,
                         light_probe_index: 0,
-                        _pad_lp: [0; 2],
+                        lightmap_mode: 0,
+                        _pad_lp: 0,
                     };
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         queue.write_buffer(
@@ -678,6 +684,12 @@ impl ViewportRenderer {
                                 .content
                                 .fallback_extension_attr_buf
                                 .as_entire_binding(),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 17,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                &resources.fallback_texture.view,
+                            ),
                         },
                     ],
                 });

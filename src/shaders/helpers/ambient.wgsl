@@ -284,6 +284,20 @@ fn ibl_ambient_layer_grad(
     return IblContrib(diffuse_ibl, specular_ibl);
 }
 
+/// Fold a baked lightmap sample into the ambient term. `lm` is the raw texture
+/// sample (rgb radiance, or r for occlusion) and `mode` selects the blend:
+/// 1 = Replace the indirect diffuse with the baked radiance, 2 = Add it on top,
+/// 3 = treat the red channel as an occlusion factor over the ambient term. The
+/// caller gates on `mode != 0`.
+fn apply_lightmap(ambient: vec3<f32>, base_colour: vec3<f32>, ao: f32, lm: vec4<f32>, mode: u32) -> vec3<f32> {
+    if mode == 1u {
+        return base_colour * lm.rgb * ao;
+    } else if mode == 2u {
+        return ambient + base_colour * lm.rgb;
+    }
+    return ambient * lm.r;
+}
+
 /// Influence weight of environment zone `z` at world position `p`: 1 inside the
 /// box, smoothly falling to 0 across `z.fade` beyond it. `env_zones` and the
 /// `EnvZone` struct are declared in scene_lighting.wgsl.

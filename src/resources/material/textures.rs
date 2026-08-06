@@ -1035,7 +1035,7 @@ impl DeviceResources {
         // The last two slots track GPU position/normal override (re)bind events.
         // Bumped by `set_*_override_buffer` / `clear_*_override`, so a fresh
         // override forces a bind-group rebuild here.
-        let (pos_override_gen, nrm_override_gen, has_extension_attr) = {
+        let (pos_override_gen, nrm_override_gen, has_extension_attr, lightmap_gen, lightmap_tex_id) = {
             let Some(mesh) = self.mesh_store.get(mesh_id) else {
                 return;
             };
@@ -1043,6 +1043,8 @@ impl DeviceResources {
                 mesh.position_override_gen,
                 mesh.normal_override_gen,
                 mesh.extension_attr_buffer.is_some() as u64,
+                mesh.lightmap_gen,
+                mesh.lightmap.as_ref().map(|lm| lm.texture_id),
             )
         };
 
@@ -1058,7 +1060,10 @@ impl DeviceResources {
             emissive_texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             pos_override_gen,
             nrm_override_gen,
-            has_extension_attr,
+            // Pack the extension-attr presence bit with the lightmap gen so a
+            // lightmap set/clear invalidates the cached bind group. The tuple
+            // stays at 12 elements (its PartialEq arity limit).
+            has_extension_attr | (lightmap_gen << 1),
         );
 
         {
@@ -1093,6 +1098,15 @@ impl DeviceResources {
                 &self.content.colourmap_views[id.0]
             }
             _ => &self.content.fallback_lut_view,
+        };
+        // The lightmap texture is resolved from the mesh's own registration, not
+        // a caller-supplied id, so it is looked up here before the mutable mesh
+        // borrow below.
+        let lightmap_view = match lightmap_tex_id {
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
+            _ => &self.fallback_texture.view,
         };
 
         let Some(mesh) = self.mesh_store.get_mut(mesh_id) else {
@@ -1146,9 +1160,13 @@ impl DeviceResources {
             .normal_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_normal_override_buf);
-        let extension_attr_buf: &crate::gpu::Buffer = mesh
-            .extension_attr_buffer
+        // The binding-15 vec4 sidecar carries the plugin vertex attribute or a
+        // baked lightmap's UV1; the lightmap wins the slot when both are set.
+        let sidecar_buf: &crate::gpu::Buffer = mesh
+            .lightmap
             .as_ref()
+            .map(|lm| &lm.uv1_buffer)
+            .or(mesh.extension_attr_buffer.as_ref())
             .unwrap_or(&self.content.fallback_extension_attr_buf);
 
         let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
@@ -1230,7 +1248,11 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 15,
-                    resource: extension_attr_buf.as_entire_binding(),
+                    resource: sidecar_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 17,
+                    resource: crate::gpu::BindingResource::TextureView(lightmap_view),
                 },
             ],
         });
@@ -1309,6 +1331,7 @@ impl DeviceResources {
             pos_override_gen.hash(&mut h);
             nrm_override_gen.hash(&mut h);
             mesh.extension_attr_buffer.is_some().hash(&mut h);
+            mesh.lightmap_gen.hash(&mut h);
             h.finish()
         };
 
@@ -1391,10 +1414,21 @@ impl DeviceResources {
             .normal_override_buffer
             .as_ref()
             .unwrap_or(&self.content.fallback_normal_override_buf);
-        let extension_attr_buf: &crate::gpu::Buffer = mesh
-            .extension_attr_buffer
+        // Binding-15 vec4 sidecar: lightmap UV1 wins the slot, else the plugin
+        // vertex attribute, else the shared zero fallback.
+        let sidecar_buf: &crate::gpu::Buffer = mesh
+            .lightmap
             .as_ref()
+            .map(|lm| &lm.uv1_buffer)
+            .or(mesh.extension_attr_buffer.as_ref())
             .unwrap_or(&self.content.fallback_extension_attr_buf);
+        let lightmap_view: &crate::gpu::TextureView =
+            match mesh.lightmap.as_ref().map(|lm| lm.texture_id) {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.fallback_texture.view,
+            };
 
         let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
             Some(id) if self.content.textures.get(id).is_some() => {
@@ -1475,7 +1509,11 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 15,
-                    resource: extension_attr_buf.as_entire_binding(),
+                    resource: sidecar_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 17,
+                    resource: crate::gpu::BindingResource::TextureView(lightmap_view),
                 },
             ],
         });

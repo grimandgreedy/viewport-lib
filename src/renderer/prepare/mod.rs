@@ -694,6 +694,12 @@ impl ViewportRenderer {
                             .fallback_extension_attr_buf
                             .as_entire_binding(),
                     },
+                    crate::gpu::BindGroupEntry {
+                        binding: 17,
+                        resource: crate::gpu::BindingResource::TextureView(
+                            &resources.fallback_texture.view,
+                        ),
+                    },
                 ],
             });
             self.mesh_uniforms.tvm_wireframe_buf = Some(buf);

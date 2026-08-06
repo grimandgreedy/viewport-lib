@@ -264,7 +264,10 @@ pub(crate) fn compose_shade_shader(base: &str, hook: &StoredShadingHook) -> Resu
     // draws are per-object), so gate on both the flag and the markers.
     let wire_vertex_attr =
         hook.desc.reads_vertex_attribute && region_bounds(&s, "vertex-fetch").is_some();
-    if wire_vertex_attr {
+    if wire_vertex_attr && !s.contains("@binding(15) var<storage, read> extension_attr_buffer") {
+        // The lit base shaders already declare this sidecar (they read a
+        // lightmap's UV1 from it); only add the declaration when composing a
+        // shader that lacks it, so the two never collide.
         body.push_str(
             "@group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;\n",
         );
@@ -1365,11 +1368,16 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let composed = compose_shade_shader(base, &hook).expect("compose");
         assert!(!composed.contains("extension_attr_buffer"));
         assert!(!composed.contains("ext_attr"));
-        // A hook that does not opt in gets none of the plumbing.
+        // A hook that does not opt in gets none of the vertex-attribute
+        // plumbing. The base lit shaders declare the vec4 sidecar buffer
+        // unconditionally (they read a lightmap's UV1 from it), so the check is
+        // for the absence of the ext_attr varying and surface wire, not the
+        // buffer declaration.
         let plain = stored("calm", TOON_BODY, false);
         let base = registry::lookup_source("mesh.wgsl").expect("lit shader");
         let composed = compose_shade_shader(base, &plain).expect("compose");
-        assert!(!composed.contains("extension_attr_buffer"));
+        assert!(!composed.contains("@location(8) ext_attr: vec4<f32>,"));
+        assert!(!composed.contains("surf.attr = in.ext_attr;"));
     }
 
     const SURFACE_BODY: &str = "\

@@ -37,9 +37,12 @@ pub struct GpuMesh {
     /// The override-gen slots are bumped by `set_position_override_buffer`,
     /// `set_normal_override_buffer`, and their `clear_*` counterparts, so the
     /// next `update_mesh_texture_bind_group` call rebuilds with the real
-    /// override buffer (or the fallback) at bindings 13/14. The final slot is
-    /// 1 when the mesh carries an extension-attribute buffer (uploaded with
-    /// the mesh, so a mesh with one rebuilds once and binds it at 15).
+    /// override buffer (or the fallback) at bindings 13/14. The final slot
+    /// packs the extension-attribute presence bit with `lightmap_gen` (bumped by
+    /// `set_lightmap` / `clear_lightmap`), so a lightmap change forces the
+    /// rebuild that swaps the UV1 (binding 16) and lightmap texture (binding 17)
+    /// for the registered ones (or the fallbacks). Kept at 12 elements because
+    /// `PartialEq` is only derived for tuples up to that arity.
     pub(crate) last_tex_key: (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64),
     /// Per-named-attribute GPU storage buffers (f32 per vertex, STORAGE usage).
     pub attribute_buffers: std::collections::HashMap<String, crate::gpu::Buffer>,
@@ -80,6 +83,16 @@ pub struct GpuMesh {
     /// modules whose hook sets `reads_vertex_attribute`; base shaders never
     /// touch it.
     pub extension_attr_buffer: Option<crate::gpu::Buffer>,
+    /// Baked lightmap registration: the per-vertex UV1 storage buffer (group 1
+    /// binding 16), the lightmap texture (binding 17), and the blend mode. Set
+    /// via `DeviceResources::set_lightmap`; `None` for meshes without one, which
+    /// bind the shared fallbacks and skip the shader branch.
+    pub(crate) lightmap: Option<crate::resources::lightmap::MeshLightmap>,
+    /// Monotonic counter bumped by `set_lightmap` / `clear_lightmap`. Folded
+    /// into `last_tex_key` so the object bind group rebuilds and rebinds the
+    /// real UV1 buffer and lightmap texture (or the fallbacks) on the next
+    /// `prepare()`.
+    pub(crate) lightmap_gen: u64,
     /// Monotonic counter bumped each time `set_position_override_buffer` or
     /// `clear_position_override` is called. Folded into `last_tex_key` so the
     /// object bind group rebuilds on the next `prepare()` call.
@@ -187,6 +200,7 @@ impl GpuMesh {
             self.position_override_buffer.as_ref(),
             self.normal_override_buffer.as_ref(),
             self.extension_attr_buffer.as_ref(),
+            self.lightmap.as_ref().map(|lm| &lm.uv1_buffer),
         ]
         .into_iter()
         .flatten()

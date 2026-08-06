@@ -928,6 +928,98 @@ impl DeviceResources {
         Ok(())
     }
 
+    /// Attach a baked lightmap to a mesh.
+    ///
+    /// `uv1` is the second UV set, one `Vec2` per vertex (zero-padded or
+    /// truncated to the mesh's vertex count). Unlike UV0, it must be a unique,
+    /// non-overlapping unwrap in `[0, 1]` so each surface point maps to its own
+    /// lightmap texel: overlapping UV0 tiling would make two surfaces share a
+    /// baked colour. Producing that unwrap and the texture is a baking-pipeline
+    /// concern; this call only consumes the result.
+    ///
+    /// `data` names the baked texture and `mode` how it combines with the
+    /// shader's ambient term (see [`LightmapMode`](crate::resources::LightmapMode)).
+    /// The texture is sampled in the lit fragment shader on the non-instanced
+    /// mesh paths (`mesh`, `mesh_oit`). Call again to change the lightmap;
+    /// [`clear_lightmap`](Self::clear_lightmap) removes it.
+    ///
+    /// The `TextureId` in `data` must stay uploaded for as long as the lightmap
+    /// is set. Removing the mesh clears the registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `mesh_id` is not registered.
+    pub fn set_lightmap(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        uv1: &[glam::Vec2],
+        data: crate::resources::lightmap::LightmapData,
+        mode: crate::resources::lightmap::LightmapMode,
+    ) -> crate::error::ViewportResult<()> {
+        let store_len = self.mesh_store.len();
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
+        // Zero-pad / truncate UV1 to the vertex count. It rides the same vec4
+        // sidecar as the plugin vertex attribute (binding 15), so pack UV into
+        // .xy and leave .zw zero; the shader reads .xy.
+        let vertex_count = mesh.vertex_count().max(1);
+        let mut values = vec![[0.0f32; 4]; vertex_count];
+        for (dst, src) in values.iter_mut().zip(uv1.iter()) {
+            *dst = [src.x, src.y, 0.0, 0.0];
+        }
+        let uv1_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("lightmap_uv1_buf"),
+            size: (values.len() * std::mem::size_of::<[f32; 4]>()) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        crate::resources::builders::write_mapped(
+            uv1_buffer.slice(..),
+            bytemuck::cast_slice(&values),
+        );
+        uv1_buffer.unmap();
+        mesh.lightmap = Some(crate::resources::lightmap::MeshLightmap {
+            uv1_buffer,
+            texture_id: data.texture_id(),
+            mode: mode.to_shader(),
+        });
+        // The gen bump forces the object bind-group rebuild that swaps the
+        // fallbacks at bindings 16/17 for this UV1 buffer and texture.
+        mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Remove a mesh's lightmap, reverting it to the shared fallbacks. No-op if
+    /// none was set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `mesh_id` is not registered.
+    pub fn clear_lightmap(
+        &mut self,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+    ) -> crate::error::ViewportResult<()> {
+        let store_len = self.mesh_store.len();
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
+        mesh.lightmap = None;
+        mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        Ok(())
+    }
+
     /// Write per-vertex colours into an uploaded mesh in place, starting at
     /// `start_vertex`, without re-uploading the whole mesh.
     ///
@@ -2565,7 +2657,8 @@ impl DeviceResources {
             normal_override_len: u32::MAX,
             has_light_probe: 0,
             light_probe_index: 0,
-            _pad_lp: [0; 2],
+            lightmap_mode: 0,
+            _pad_lp: 0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2649,6 +2742,13 @@ impl DeviceResources {
                     binding: 15,
                     resource: fallback_extension_attr_buf.as_entire_binding(),
                 },
+                // 17: lightmap texture (fallback 1x1). Bound for every mesh; the
+                // real texture is swapped in by the material bind-group rebuild
+                // once a lightmap is set. UV1 rides binding 15 above.
+                crate::gpu::BindGroupEntry {
+                    binding: 17,
+                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
+                },
             ],
         });
 
@@ -2703,7 +2803,8 @@ impl DeviceResources {
             normal_override_len: u32::MAX,
             has_light_probe: 0,
             light_probe_index: 0,
-            _pad_lp: [0; 2],
+            lightmap_mode: 0,
+            _pad_lp: 0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -2787,6 +2888,10 @@ impl DeviceResources {
                     binding: 15,
                     resource: fallback_extension_attr_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 17,
+                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
+                },
             ],
         });
 
@@ -2833,6 +2938,8 @@ impl DeviceResources {
             normal_override_buffer: None,
             normal_override_slice: None,
             extension_attr_buffer: None,
+            lightmap: None,
+            lightmap_gen: 0,
             position_override_gen: 0,
             normal_override_gen: 0,
             content_rev: 0,

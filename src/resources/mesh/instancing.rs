@@ -1443,7 +1443,8 @@ impl DeviceResources {
 /// - normal_override_len:        u32      =  4 bytes  offset 316
 /// - has_light_probe:            u32      =  4 bytes  offset 320
 /// - light_probe_index:          u32      =  4 bytes  offset 324
-/// - _pad_lp:                    [u32; 2] =  8 bytes  offset 328
+/// - lightmap_mode:              u32      =  4 bytes  offset 328
+/// - _pad_lp:                    u32      =  4 bytes  offset 332
 /// Total: 336 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1530,7 +1531,11 @@ pub(crate) struct ObjectUniform {
     pub(crate) has_light_probe: u32, //   4 bytes, offset 320
     /// Base index of this object's 9 SH coefficients in `light_probe_sh_buf`.
     pub(crate) light_probe_index: u32, //   4 bytes, offset 324
-    pub(crate) _pad_lp: [u32; 2],    //   8 bytes, offset 328
+    /// Baked-lightmap blend mode: 0 none, 1 Replace, 2 Add, 3 AmbientOcclusion.
+    /// Read by the non-instanced lit shaders to fold the group 1 binding 17
+    /// lightmap texture into the ambient term.
+    pub(crate) lightmap_mode: u32, //   4 bytes, offset 328
+    pub(crate) _pad_lp: u32,         //   4 bytes, offset 332
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 336);

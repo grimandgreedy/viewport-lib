@@ -526,6 +526,19 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 17: baked lightmap texture (FRAGMENT, filterable).
+                // Sampled with the binding-2 material sampler. The 1x1 fallback
+                // is bound for meshes without a lightmap.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 17,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 

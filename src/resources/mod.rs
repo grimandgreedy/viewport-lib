@@ -11,6 +11,8 @@ pub mod gpu;
 pub mod handle;
 mod init;
 pub mod light_probes;
+/// Baked lightmap consumption (per-mesh UV1 sidecar + lightmap texture).
+pub mod lightmap;
 /// Texture, matcap, colourmap, and environment/IBL resources.
 pub mod material;
 /// GPU memory accounting and the hardware VRAM budget query.
@@ -35,6 +37,7 @@ pub use self::handle::ContentHandle;
 pub use self::light_probes::{
     LightProbe, LightProbeSet, SHCoefficients, evaluate_sh, project_equirect_to_sh,
 };
+pub use self::lightmap::{LightmapData, LightmapMode};
 pub use self::material::environment::{EnvironmentMapId, EnvironmentZone};
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
