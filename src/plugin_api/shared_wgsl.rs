@@ -750,6 +750,15 @@ pub const PICK_PRIM_ENABLE_WGSL: &str = "";
 #[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
 pub const PICK_PRIM_ENABLE_WGSL: &str = "enable primitive_index;\n";
 
+/// Module directive a shader needs before it can use the WGSL `rayQuery` type
+/// and its `rayQuery*` builtins. Prepend at the very top of the source, ahead of
+/// any declaration. Only valid on a device created with
+/// [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE); the path tracer's
+/// hardware backend prepends it via
+/// [`with_ray_query_enable`](crate::resources::builders::with_ray_query_enable).
+#[cfg(any(feature = "wgpu27", feature = "wgpu29"))]
+pub const RAY_QUERY_ENABLE_WGSL: &str = "enable ray_query;\n";
+
 /// Fragment helper for the pick-id pass that reports the hit triangle.
 ///
 /// Same contract as [`SHARED_PICK_WGSL`]'s `viewport_pick_fs`, except the

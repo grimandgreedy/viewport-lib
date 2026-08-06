@@ -41,6 +41,21 @@ pub(crate) fn with_primitive_index_enable(src: &str) -> String {
     )
 }
 
+/// Prepend the `enable ray_query;` directive the WGSL `rayQuery` type needs.
+/// Only valid on a device created with
+/// [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE); the path tracer's
+/// hardware traversal backend composes its kernel through this. Held ahead of
+/// that kernel being wired up.
+#[cfg(feature = "raytrace-hardware")]
+#[allow(dead_code)]
+pub(crate) fn with_ray_query_enable(src: &str) -> String {
+    format!(
+        "{}{}",
+        crate::plugin_api::shared_wgsl::RAY_QUERY_ENABLE_WGSL,
+        src
+    )
+}
+
 /// Remove the pixel-inspector debug block (bracketed by `BEGIN_DEBUG_VIS` /
 /// `END_DEBUG_VIS` in debug_vis.wgsl) from a lit shader source unless `keep`
 /// is set.

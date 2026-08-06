@@ -36,6 +36,10 @@ struct Material {
     metallic: f32,
     emissive: vec3<f32>,
     roughness: f32,
+    transmission: f32,
+    ior: f32,
+    _pad0: f32,
+    _pad1: f32,
 }
 
 // data.xyz = direction (toward light, normalised) for kind 0, or position for
@@ -61,6 +65,10 @@ struct Frame {
 @group(0) @binding(3) var<storage, read> materials: array<Material>;
 @group(0) @binding(4) var<storage, read> lights: array<Light>;
 @group(0) @binding(5) var<storage, read_write> accum: array<vec4<f32>>;
+// First-hit guide buffers for the denoiser: primary-surface albedo (rgb, with
+// w = 1 on a hit / 0 on a sky miss) and world normal (xyz, w unused).
+@group(0) @binding(6) var<storage, read_write> gbuf_albedo: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read_write> gbuf_normal: array<vec4<f32>>;
 
 // #include "helpers/brdf.wgsl"
 
@@ -93,6 +101,7 @@ struct Hit {
     ng: vec3<f32>,   // geometric normal (faced toward the ray)
     mat: u32,
     hit: bool,
+    front: bool,     // true if the ray struck the outward (front) face
 }
 
 // Slab test; returns the near entry distance or T_MAX on miss. Clamps to 0 so a
@@ -196,9 +205,12 @@ fn closest_hit(o: vec3<f32>, d: vec3<f32>) -> Hit {
         h.hit = true;
         h.t = best_t;
         h.pos = o + d * best_t;
-        // Face both normals toward the incoming ray.
+        // Face both normals toward the incoming ray, and record whether the ray
+        // hit the outward (front) face : needed to orient refraction.
         let vd = -d;
-        h.ng = select(-ng, ng, dot(ng, vd) > 0.0);
+        let front = dot(ng, vd) > 0.0;
+        h.front = front;
+        h.ng = select(-ng, ng, front);
         h.ns = select(-ns, ns, dot(h.ng, ns) > 0.0);
         h.mat = tri.mat;
     }
@@ -276,6 +288,22 @@ fn ggx_sample_h(n: vec3<f32>, roughness: f32, rng: ptr<function, u32>) -> vec3<f
     return normalize(build_onb(n) * local);
 }
 
+// Unpolarised Fresnel reflectance at a dielectric interface. `cos_i` is the
+// cosine of the incident angle against the microfacet normal; `n1`/`n2` are the
+// refractive indices on the incident and transmitted sides. Returns 1.0 on
+// total internal reflection.
+fn fresnel_dielectric(cos_i: f32, n1: f32, n2: f32) -> f32 {
+    let ci = clamp(cos_i, 0.0, 1.0);
+    let sin_t = (n1 / n2) * sqrt(max(0.0, 1.0 - ci * ci));
+    if sin_t >= 1.0 {
+        return 1.0;
+    }
+    let ct = sqrt(max(0.0, 1.0 - sin_t * sin_t));
+    let rs = (n1 * ci - n2 * ct) / (n1 * ci + n2 * ct);
+    let rp = (n1 * ct - n2 * ci) / (n1 * ct + n2 * ci);
+    return 0.5 * (rs * rs + rp * rp);
+}
+
 // ----- Direct lighting (NEE to analytic delta lights) -----
 
 fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>) -> vec3<f32> {
@@ -336,36 +364,77 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> ve
         let f0 = mix(vec3<f32>(0.04), m.base, m.metallic);
         let rough = clamp(m.roughness, 0.04, 1.0);
 
-        // Next-event estimation to analytic lights.
-        radiance = radiance + throughput * direct_light(h.pos, n, v, m, f0);
+        // Next-event estimation to analytic lights, scaled down by the
+        // transmission fraction so clear glass is not diffusely lit.
+        let opacity = 1.0 - select(0.0, m.transmission, m.metallic < 0.5);
+        radiance = radiance + throughput * direct_light(h.pos, n, v, m, f0) * opacity;
 
-        // Sample a new direction: pick specular vs diffuse lobe.
-        let ndotv = max(dot(n, v), 1.0e-3);
-        let fr = F_Schlick(ndotv, f0);
-        var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
-        p_spec = mix(p_spec, 1.0, m.metallic * 0.5);
-
-        if rand(rng) < p_spec {
-            // Specular (GGX) lobe.
+        // Choose the interaction: a dielectric transmission event through a
+        // sampled microfacet, or the opaque reflection lobes. Metals never
+        // transmit.
+        let p_trans = 1.0 - opacity;
+        if p_trans > 0.0 && rand(rng) < p_trans {
+            throughput = throughput / p_trans;
+            // Rough-dielectric interface: reflect or refract through a sampled
+            // microfacet normal, split stochastically by the Fresnel term.
             let hvec = ggx_sample_h(n, rough, rng);
-            let l = reflect(-v, hvec);
-            let ndotl = dot(n, l);
-            if ndotl <= 0.0 { break; }
+            let n1 = select(m.ior, 1.0, h.front);
+            let n2 = select(1.0, m.ior, h.front);
+            let cos_i = clamp(dot(v, hvec), 1.0e-4, 1.0);
+            let fr = fresnel_dielectric(cos_i, n1, n2);
+            let ndotv = max(dot(n, v), 1.0e-4);
             let ndoth = max(dot(n, hvec), 1.0e-4);
-            let vdoth = max(dot(v, hvec), 1.0e-4);
-            let g = G_Smith(ndotv, ndotl, rough);
-            let f = F_Schlick(vdoth, f0);
-            // weight = brdf * ndotl / pdf = G F VdotH / (NdotV NdotH), then / p_spec.
-            let weight = f * (g * vdoth / (ndotv * ndoth));
-            throughput = throughput * weight / p_spec;
-            ro = h.pos + n * EPS;
-            rd = l;
+            if rand(rng) < fr {
+                // Reflect. Fresnel is carried by the split, so the weight is the
+                // colourless microfacet-reflection term.
+                let l = reflect(-v, hvec);
+                if dot(h.ng, l) <= 0.0 { break; }
+                let ndotl = max(dot(n, l), 1.0e-4);
+                let g = G_Smith(ndotv, ndotl, rough);
+                throughput = throughput * (g * cos_i / (ndotv * ndoth));
+                ro = h.pos + h.ng * EPS;
+                rd = l;
+            } else {
+                // Refract to the far side, tinted by the glass colour.
+                let l = refract(-v, hvec, n1 / n2);
+                if dot(l, l) < 1.0e-6 { break; }
+                let ln = normalize(l);
+                let ndotl = max(abs(dot(n, ln)), 1.0e-4);
+                let g = G_Smith(ndotv, ndotl, rough);
+                throughput = throughput * m.base * (g * cos_i / (ndotv * max(abs(dot(n, hvec)), 1.0e-4)));
+                ro = h.pos - h.ng * EPS;
+                rd = ln;
+            }
         } else {
-            // Diffuse (cosine) lobe. bsdf/pdf reduces to the diffuse albedo.
-            let albedo = m.base * (1.0 - m.metallic);
-            throughput = throughput * albedo / (1.0 - p_spec);
-            ro = h.pos + n * EPS;
-            rd = cosine_sample(n, rng);
+            throughput = throughput / opacity;
+            // Sample a new direction: pick specular vs diffuse lobe.
+            let ndotv = max(dot(n, v), 1.0e-3);
+            let fr = F_Schlick(ndotv, f0);
+            var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
+            p_spec = mix(p_spec, 1.0, m.metallic * 0.5);
+
+            if rand(rng) < p_spec {
+                // Specular (GGX) lobe.
+                let hvec = ggx_sample_h(n, rough, rng);
+                let l = reflect(-v, hvec);
+                let ndotl = dot(n, l);
+                if ndotl <= 0.0 { break; }
+                let ndoth = max(dot(n, hvec), 1.0e-4);
+                let vdoth = max(dot(v, hvec), 1.0e-4);
+                let g = G_Smith(ndotv, ndotl, rough);
+                let f = F_Schlick(vdoth, f0);
+                // weight = brdf * ndotl / pdf = G F VdotH / (NdotV NdotH), then / p_spec.
+                let weight = f * (g * vdoth / (ndotv * ndoth));
+                throughput = throughput * weight / p_spec;
+                ro = h.pos + n * EPS;
+                rd = l;
+            } else {
+                // Diffuse (cosine) lobe. bsdf/pdf reduces to the diffuse albedo.
+                let albedo = m.base * (1.0 - m.metallic);
+                throughput = throughput * albedo / (1.0 - p_spec);
+                ro = h.pos + n * EPS;
+                rd = cosine_sample(n, rng);
+            }
         }
 
         // Russian roulette.
@@ -378,16 +447,23 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> ve
     return radiance;
 }
 
-fn camera_ray(px: vec2<f32>, rng: ptr<function, u32>) -> vec3<f32> {
-    let w = f32(frame.dims.x);
-    let h = f32(frame.dims.y);
-    let jitter = vec2<f32>(rand(rng), rand(rng));
-    let uv = (px + jitter) / vec2<f32>(w, h);
+fn ray_through(uv: vec2<f32>) -> vec3<f32> {
     var ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
     let far = frame.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
     let far_point = far.xyz / far.w;
     return normalize(far_point - frame.cam_pos.xyz);
+}
+
+fn camera_ray(px: vec2<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+    let dims = vec2<f32>(f32(frame.dims.x), f32(frame.dims.y));
+    let jitter = vec2<f32>(rand(rng), rand(rng));
+    return ray_through((px + jitter) / dims);
+}
+
+fn camera_ray_centre(px: vec2<f32>) -> vec3<f32> {
+    let dims = vec2<f32>(f32(frame.dims.x), f32(frame.dims.y));
+    return ray_through((px + vec2<f32>(0.5)) / dims);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -400,6 +476,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let spp = frame.params.x;
     let sample_base = frame.params.y;
     var rng = init_rng(pidx, frame.params.z);
+
+    // First-hit guide for the denoiser: an unjittered primary ray gives a stable
+    // per-pixel albedo and normal to demodulate and edge-stop against. Written
+    // once on the first accumulation batch; identical for every later batch.
+    if sample_base == 0u {
+        let prd = camera_ray_centre(vec2<f32>(f32(gid.x), f32(gid.y)));
+        let ph = closest_hit(frame.cam_pos.xyz, prd);
+        if ph.hit {
+            let pm = materials[ph.mat];
+            gbuf_albedo[pidx] = vec4<f32>(max(pm.base, vec3<f32>(0.02)), 1.0);
+            gbuf_normal[pidx] = vec4<f32>(ph.ns, 0.0);
+        } else {
+            gbuf_albedo[pidx] = vec4<f32>(1.0, 1.0, 1.0, 0.0);
+            gbuf_normal[pidx] = vec4<f32>(0.0);
+        }
+    }
 
     var sum = vec3<f32>(0.0);
     for (var s = 0u; s < spp; s = s + 1u) {

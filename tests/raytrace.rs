@@ -8,7 +8,9 @@
 #![cfg(feature = "raytrace")]
 
 use glam::{Mat4, Vec3};
-use viewport_lib::raytrace::{RtCamera, RtLight, RtMaterial, RtScene, RtSettings, trace};
+use viewport_lib::raytrace::{
+    RtBackend, RtCamera, RtLight, RtMaterial, RtScene, RtSettings, pick_backend, trace,
+};
 
 /// Create a headless device/queue, or skip the test if no adapter is available.
 fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Queue)> {
@@ -88,6 +90,7 @@ fn output_is_finite() {
         &RtSettings {
             samples: 16,
             max_bounces: 4,
+            denoise: false,
         },
     );
     assert_eq!(img.rgba.len(), 64 * 64 * 4);
@@ -121,6 +124,7 @@ fn lit_and_emissive_deposit_radiance() {
     let settings = RtSettings {
         samples: 24,
         max_bounces: 3,
+        denoise: false,
     };
     let black_sky = |s: &mut RtScene| s.set_sky([0.0; 3], [0.0; 3]);
 
@@ -180,4 +184,150 @@ fn lit_and_emissive_deposit_radiance() {
         emis_l > lit_l,
         "emissive quad ({emis_l}) should be brightest; lit was {lit_l}"
     );
+}
+
+/// Mean squared luminance difference between horizontally adjacent pixels : a
+/// simple measure of per-pixel noise that a denoiser should reduce.
+fn neighbour_variance(img: &viewport_lib::raytrace::RtImage) -> f32 {
+    let w = img.width as usize;
+    let h = img.height as usize;
+    let luma = |i: usize| -> f64 {
+        0.2126 * img.rgba[i * 4] as f64
+            + 0.7152 * img.rgba[i * 4 + 1] as f64
+            + 0.0722 * img.rgba[i * 4 + 2] as f64
+    };
+    let mut sum = 0.0f64;
+    let mut n = 0.0f64;
+    for y in 0..h {
+        for x in 0..w - 1 {
+            let a = luma(y * w + x);
+            let b = luma(y * w + x + 1);
+            sum += (a - b) * (a - b);
+            n += 1.0;
+        }
+    }
+    (sum / n) as f32
+}
+
+/// A clear (fully transmissive) quad in front of the sky must let the sky
+/// through, coming out much brighter than the same quad made opaque and black.
+/// Exercises the refraction lobe end to end.
+#[test]
+fn transmission_lets_the_background_through() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let cam = camera(48, 48);
+    let settings = RtSettings {
+        samples: 32,
+        max_bounces: 4,
+        denoise: false,
+    };
+
+    // Clear glass with no bending (ior = 1) so rays pass straight to the sky.
+    let mut clear = RtScene::new();
+    add_quad(
+        &mut clear,
+        4.0,
+        RtMaterial {
+            base_colour: [1.0, 1.0, 1.0],
+            roughness: 0.05,
+            transmission: 1.0,
+            ior: 1.0,
+            ..RtMaterial::default()
+        },
+    );
+    let clear_l = mean_luma(&trace(&device, &queue, &clear, &cam, &settings));
+
+    // Opaque black quad, no lights: blocks the sky behind it.
+    let mut opaque = RtScene::new();
+    add_quad(
+        &mut opaque,
+        4.0,
+        RtMaterial {
+            base_colour: [0.0, 0.0, 0.0],
+            ..RtMaterial::default()
+        },
+    );
+    let opaque_l = mean_luma(&trace(&device, &queue, &opaque, &cam, &settings));
+
+    assert!(
+        clear_l > opaque_l + 0.1,
+        "clear quad ({clear_l}) should pass the sky through; opaque was {opaque_l}"
+    );
+}
+
+/// The denoiser must lower per-pixel noise on a low-sample image while keeping
+/// the overall brightness roughly the same. A rough metal quad lit only by the
+/// sky gradient produces GGX-sampling noise at a few samples per pixel.
+#[test]
+fn denoise_reduces_noise_and_preserves_mean() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let cam = camera(64, 64);
+    let mut scene = RtScene::new();
+    add_quad(
+        &mut scene,
+        4.0,
+        RtMaterial {
+            base_colour: [0.9, 0.9, 0.9],
+            metallic: 1.0,
+            roughness: 0.6,
+            ..RtMaterial::default()
+        },
+    );
+
+    let raw = trace(
+        &device,
+        &queue,
+        &scene,
+        &cam,
+        &RtSettings {
+            samples: 4,
+            max_bounces: 3,
+            denoise: false,
+        },
+    );
+    let denoised = trace(
+        &device,
+        &queue,
+        &scene,
+        &cam,
+        &RtSettings {
+            samples: 4,
+            max_bounces: 3,
+            denoise: true,
+        },
+    );
+
+    let raw_var = neighbour_variance(&raw);
+    let den_var = neighbour_variance(&denoised);
+    let raw_mean = mean_luma(&raw);
+    let den_mean = mean_luma(&denoised);
+
+    assert!(
+        den_var < raw_var * 0.8,
+        "denoise should cut neighbour variance: raw {raw_var}, denoised {den_var}"
+    );
+    assert!(
+        (den_mean - raw_mean).abs() < 0.1 * raw_mean + 0.02,
+        "denoise should preserve mean luma: raw {raw_mean}, denoised {den_mean}"
+    );
+}
+
+/// Without the `raytrace-hardware` feature the tracer always reports the
+/// portable compute backend, regardless of adapter capabilities.
+#[test]
+fn pick_backend_defaults_to_software() {
+    let Some((device, _queue)) = device_queue() else {
+        return;
+    };
+    let backend = pick_backend(&device);
+    if cfg!(feature = "raytrace-hardware") {
+        // Either is valid depending on the adapter; just ensure it runs.
+        assert!(matches!(backend, RtBackend::Software | RtBackend::Hardware));
+    } else {
+        assert_eq!(backend, RtBackend::Software);
+    }
 }

@@ -54,6 +54,13 @@ pub const PRIMITIVE_INDEX_FEATURE: Features = Features::SHADER_PRIMITIVE_INDEX;
 #[doc(hidden)]
 pub const PRIMITIVE_INDEX_FEATURE: Features = Features::PRIMITIVE_INDEX;
 
+/// The device feature that enables the WGSL `ray_query` extension (hardware BVH
+/// traversal). Named the same on both wgpu legs. The path tracer's hardware
+/// backend requires it; the portable compute traversal does not.
+#[cfg(any(feature = "wgpu27", feature = "wgpu29"))]
+#[doc(hidden)]
+pub const RAY_QUERY_FEATURE: Features = Features::EXPERIMENTAL_RAY_QUERY;
+
 // Version-portability helpers, surfaced here (the version seam) so tests and
 // consumers that build wgpu pipelines directly can do so without their own
 // per-version `#[cfg]`. Each helper is the single place a new wgpu leg (e.g.

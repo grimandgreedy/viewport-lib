@@ -86,6 +86,11 @@ wgpu29 = ["dep:wgpu29"]
 # is unchanged for non-users. Compute only, no hardware ray query; reuses the
 # shared helpers/brdf.wgsl.
 raytrace = []
+# Opt in to the hardware ray-query traversal backend (Vulkan/DX12). The tracer
+# still selects the portable compute traversal unless the device advertises the
+# ray-query feature; this only lets `pick_backend` choose the hardware path when
+# it is available. Unsupported on Metal and the web, so it stays off by default.
+raytrace-hardware = ["raytrace"]
 # Enables the `JobHandle` future wrapper. Off by default so the crate stays
 # free of `std::future` plumbing for consumers that do not run an async
 # runtime.
