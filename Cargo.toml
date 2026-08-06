@@ -180,6 +180,11 @@ path = "examples/headless_shadow_debug/main.rs"
 required-features = ["wgpu27"]
 
 [[example]]
+name = "raytrace-reference"
+path = "examples/raytrace_reference/main.rs"
+required-features = ["wgpu27", "raytrace"]
+
+[[example]]
 name = "eframe-testing"
 path = "examples/eframe_testing/main.rs"
 required-features = ["wgpu27", "example-egui"]
