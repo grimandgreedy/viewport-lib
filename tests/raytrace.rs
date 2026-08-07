@@ -462,6 +462,122 @@ fn progressive_accumulation_converges() {
     assert_eq!(tracer.accumulated_samples(), 0);
 }
 
+/// Mean and sample standard deviation of luminance over the central `frac` box
+/// of the image (avoids any background outside the geometry near the edges).
+fn central_luma_stats(img: &viewport_lib::raytrace::RtImage, frac: f32) -> (f32, f32) {
+    let w = img.width as usize;
+    let h = img.height as usize;
+    let luma = |i: usize| -> f64 {
+        0.2126 * img.rgba[i * 4] as f64
+            + 0.7152 * img.rgba[i * 4 + 1] as f64
+            + 0.0722 * img.rgba[i * 4 + 2] as f64
+    };
+    let mx = ((w as f32) * (1.0 - frac) * 0.5) as usize;
+    let my = ((h as f32) * (1.0 - frac) * 0.5) as usize;
+    let mut vals = Vec::new();
+    for y in my..(h - my) {
+        for x in mx..(w - mx) {
+            vals.push(luma(y * w + x));
+        }
+    }
+    let n = vals.len() as f64;
+    let mean = vals.iter().sum::<f64>() / n;
+    let var = vals.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n;
+    (mean as f32, var.sqrt() as f32)
+}
+
+/// Environment importance sampling must be unbiased: a diffuse surface under a
+/// uniform environment of radiance L returns outgoing radiance `albedo * L`. A
+/// wrong pdf, Jacobian, or MIS weight would shift this mean. Needs at least two
+/// bounces so the BSDF-sampled environment hit and the env NEE both contribute
+/// (they combine by MIS).
+#[test]
+fn env_importance_sampling_matches_analytic_uniform_env() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let cam = camera(48, 48);
+    let settings = RtSettings {
+        samples: 96,
+        max_bounces: 3,
+        denoise: false,
+    };
+    let mut scene = RtScene::new();
+    scene.set_sky([0.0; 3], [0.0; 3]);
+    // Uniform equirect environment of radiance 1.
+    scene.set_environment(&vec![1.0f32; (8 * 4 * 4) as usize], 8, 4);
+    add_quad(
+        &mut scene,
+        3.0,
+        RtMaterial {
+            base_colour: [0.5, 0.5, 0.5],
+            ..RtMaterial::default()
+        },
+    );
+    let mut tracer = Tracer::new(&device, &queue, &scene);
+    let img = tracer.trace(&device, &queue, &cam, &settings);
+    let (mean, _std) = central_luma_stats(&img, 0.4);
+    assert!(
+        (mean - 0.5).abs() < 0.06,
+        "diffuse albedo 0.5 under uniform radiance 1 should read ~0.5, got {mean}"
+    );
+}
+
+/// Environment importance sampling must find a small, bright source reliably: a
+/// diffuse quad lit only by a concentrated env patch converges to low noise at a
+/// modest sample count. Cosine (BSDF) sampling alone would hit such a small solid
+/// angle rarely and stay noisy, so a low relative deviation here is the payoff of
+/// env NEE.
+#[test]
+fn env_importance_sampling_keeps_concentrated_source_low_noise() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let cam = camera(64, 64);
+    let settings = RtSettings {
+        samples: 64,
+        max_bounces: 2,
+        denoise: false,
+    };
+    let mut scene = RtScene::new();
+    scene.set_sky([0.0; 3], [0.0; 3]);
+    // Dark 16x8 environment with a small bright patch around the -Y direction the
+    // quad faces (equirect texel ~ (4, 4)).
+    let (ew, eh) = (16u32, 8u32);
+    let mut env = vec![0.0f32; (ew * eh * 4) as usize];
+    for ty in 3..5u32 {
+        for tx in 3..5u32 {
+            let i = ((ty * ew + tx) * 4) as usize;
+            env[i] = 40.0;
+            env[i + 1] = 40.0;
+            env[i + 2] = 40.0;
+            env[i + 3] = 1.0;
+        }
+    }
+    scene.set_environment(&env, ew, eh);
+    add_quad(
+        &mut scene,
+        3.0,
+        RtMaterial {
+            base_colour: [0.6, 0.6, 0.6],
+            ..RtMaterial::default()
+        },
+    );
+    let mut tracer = Tracer::new(&device, &queue, &scene);
+    let img = tracer.trace(&device, &queue, &cam, &settings);
+    let (mean, std) = central_luma_stats(&img, 0.4);
+    assert!(
+        mean > 0.05,
+        "the bright source should light the quad, mean {mean}"
+    );
+    let rel = std / mean;
+    assert!(
+        rel < 0.25,
+        "env IS should keep a concentrated source low-noise; relative deviation {rel}"
+    );
+}
+
 /// Without the `raytrace-hardware` feature the tracer always reports the
 /// portable compute backend, regardless of adapter capabilities.
 #[test]

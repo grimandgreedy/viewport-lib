@@ -12,8 +12,8 @@
 //! [`pdf`](EnvDistribution::pdf) methods here are the CPU reference the shader
 //! mirrors, and are what the unit tests check.
 
-// The GPU upload and shader consumers land in the next step; until then the
-// accessors are exercised only by the unit tests.
+// `build`/`tables`/`width`/`height`/`integral` feed the GPU upload; `sample` and
+// `pdf` are the CPU reference the shader mirrors, exercised by the unit tests.
 #![allow(dead_code)]
 
 use std::f32::consts::PI;
@@ -140,15 +140,17 @@ impl EnvDistribution {
         (&self.func, &self.conditional_cdf, &self.marginal_cdf)
     }
 
-    /// Find the last index `i` in `[0, n)` with `cdf[off + i] <= x`, i.e. the
-    /// interval `x` falls in. `cdf` is monotone with a leading 0 and trailing 1.
+    /// Find the interval `x` falls in: the largest `i` with `cdf[off + i] <= x`,
+    /// clamped to `[0, n - 2]` so both `cdf[off + i]` and `cdf[off + i + 1]` are
+    /// valid (matching pbrt's `FindInterval`). `cdf` here has `n` entries, a
+    /// leading 0 and trailing 1.
     fn find_interval(cdf: &[f32], off: usize, n: usize, x: f32) -> usize {
         // Linear scan is fine for the CPU reference; the shader binary-searches.
         let mut i = 0usize;
         while i + 1 < n && cdf[off + i + 1] <= x {
             i += 1;
         }
-        i.min(n - 1)
+        i.min(n - 2)
     }
 
     /// Sample a direction parameter from two uniform variates, returning `(u, v)`

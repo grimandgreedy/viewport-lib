@@ -430,6 +430,10 @@ struct FrameUniform {
     sky_bottom: [f32; 4],
     dims: [u32; 4],
     params: [u32; 4],
+    // Environment importance-sampling metadata: (width, height, integral,
+    // enabled). `enabled` is 0 for the hemisphere sky (no distribution built),
+    // in which case the integrator falls back to BSDF-only environment sampling.
+    env_dist: [f32; 4],
 }
 
 #[repr(C)]
@@ -495,6 +499,13 @@ pub struct Tracer {
     env_view: crate::gpu::TextureView,
     env_sampler: crate::gpu::Sampler,
     has_env: bool,
+    // Environment importance-sampling tables (binding 14) and their metadata
+    // (width, height, integral, enabled). The three tables (func, conditional
+    // CDFs, marginal CDF) are concatenated into one storage buffer to stay under
+    // the 8-storage-buffer default limit; the shader slices it by w/h. A small
+    // fallback stands in for the hemisphere-sky case, gated by `env_dist[3]`.
+    env_tables_buf: crate::gpu::Buffer,
+    env_dist: [f32; 4],
     num_lights: u32,
     sky_top: [f32; 3],
     sky_bottom: [f32; 3],
@@ -743,6 +754,38 @@ impl Tracer {
             ..Default::default()
         });
 
+        // Environment importance-sampling tables. Built from the equirect image so
+        // the integrator can next-event-estimate toward bright regions; a
+        // 1-element fallback keeps the bindings valid for the hemisphere-sky case,
+        // where `env_dist[3]` (enabled) is 0 and the shader skips env sampling.
+        // Concatenate func, conditional CDFs, and the marginal CDF into one buffer
+        // (the shader slices it as func[0..w*h], cond[w*h..], marg[..] using w/h).
+        let (env_tables, env_dist) = match &scene.env {
+            Some(e) => {
+                let dist = env_dist::EnvDistribution::build(&e.pixels, e.width, e.height);
+                let (func, cond, marg) = dist.tables();
+                let mut tables = Vec::with_capacity(func.len() + cond.len() + marg.len());
+                tables.extend_from_slice(func);
+                tables.extend_from_slice(cond);
+                tables.extend_from_slice(marg);
+                (
+                    tables,
+                    [
+                        dist.width() as f32,
+                        dist.height() as f32,
+                        dist.integral(),
+                        1.0,
+                    ],
+                )
+            }
+            None => (vec![0.0f32; 4], [0.0; 4]),
+        };
+        let env_tables_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_env_tables"),
+            contents: bytemuck::cast_slice(&env_tables),
+            usage: crate::gpu::BufferUsages::STORAGE,
+        });
+
         #[allow(unused_mut)]
         let mut bgl_entries = vec![
             bgl_entry(0, buffer_ty_uniform()),
@@ -755,6 +798,8 @@ impl Tracer {
             bgl_entry(7, buffer_ty_storage(false)),
             bgl_entry(8, texture_ty_float()),
             bgl_entry(9, sampler_ty_filtering()),
+            // Environment importance-sampling tables (packed into one buffer).
+            bgl_entry(14, buffer_ty_storage(true)),
         ];
         #[cfg(feature = "raytrace-hardware")]
         if use_hw {
@@ -794,9 +839,11 @@ impl Tracer {
         );
 
         // Lightmap-bake pipeline: same module, `bake_main` entry. Its layout
-        // drops the denoiser guide buffers (6/7) and adds the texel G-buffer
-        // (10/11); the shared scene, frame, accum, and environment bindings are
-        // the same.
+        // drops the denoiser guide buffers (6/7) and adds the packed texel
+        // surfaces (10); binding 14 is the env tables `bake_main` pulls in through
+        // the shared `trace_path` (env NEE is disabled for the bake, so it is only
+        // bound, never read). The scene, frame, accum, and environment bindings
+        // are shared with the camera path.
         #[allow(unused_mut)]
         let mut bake_bgl_entries = vec![
             bgl_entry(0, buffer_ty_uniform()),
@@ -808,8 +855,8 @@ impl Tracer {
             bgl_entry(8, texture_ty_float()),
             bgl_entry(9, sampler_ty_filtering()),
             bgl_entry(10, buffer_ty_storage(true)),
-            bgl_entry(11, buffer_ty_storage(true)),
             bgl_entry(12, buffer_ty_storage(false)),
+            bgl_entry(14, buffer_ty_storage(true)),
         ];
         #[cfg(feature = "raytrace-hardware")]
         if use_hw {
@@ -877,6 +924,8 @@ impl Tracer {
             env_view,
             env_sampler,
             has_env,
+            env_tables_buf,
+            env_dist,
             num_lights,
             sky_top: scene.sky_top,
             sky_bottom: scene.sky_bottom,
@@ -946,6 +995,7 @@ impl Tracer {
                 binding: 9,
                 resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
             },
+            bg_entry(14, &self.env_tables_buf),
         ];
         #[cfg(feature = "raytrace-hardware")]
         if let Some(hw) = &self.hw {
@@ -1024,6 +1074,7 @@ impl Tracer {
             ],
             dims: [width, height, self.num_lights, settings.max_bounces.max(1)],
             params: [0, 0, 0, 0],
+            env_dist: self.env_dist,
         };
 
         // Dispatch `settings.samples` more samples in batches, so no single
@@ -1222,14 +1273,16 @@ impl Tracer {
         }
 
         let bytes = (texels as u64) * 16;
-        let pos_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-            label: Some("rt_bake_texel_pos"),
-            contents: bytemuck::cast_slice(surfaces.world_pos),
-            usage: crate::gpu::BufferUsages::STORAGE,
-        });
-        let nrm_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-            label: Some("rt_bake_texel_nrm"),
-            contents: bytemuck::cast_slice(surfaces.world_normal),
+        // Pack positions then normals into one buffer (two contiguous halves), so
+        // the bake layout keeps a storage-buffer slot free for the env tables the
+        // shared `trace_path` references. The shader reads pos at `idx` and normal
+        // at `w*h + idx`.
+        let mut texel_surf: Vec<[f32; 4]> = Vec::with_capacity(texels * 2);
+        texel_surf.extend_from_slice(surfaces.world_pos);
+        texel_surf.extend_from_slice(surfaces.world_normal);
+        let surf_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_bake_texel_surf"),
+            contents: bytemuck::cast_slice(&texel_surf),
             usage: crate::gpu::BufferUsages::STORAGE,
         });
         let storage_out = |label: &str| {
@@ -1258,9 +1311,9 @@ impl Tracer {
                 binding: 9,
                 resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
             },
-            bg_entry(10, &pos_buf),
-            bg_entry(11, &nrm_buf),
+            bg_entry(10, &surf_buf),
             bg_entry(12, &accum_dir_buf),
+            bg_entry(14, &self.env_tables_buf),
         ];
         #[cfg(feature = "raytrace-hardware")]
         if let Some(hw) = &self.hw {
@@ -1287,6 +1340,9 @@ impl Tracer {
             ],
             dims: [width, height, self.num_lights, settings.max_bounces.max(1)],
             params: [0, 0, 0, 0],
+            // The bake path samples the environment on miss only; it does not use
+            // the importance-sampling tables, so leave the metadata disabled.
+            env_dist: [0.0; 4],
         };
 
         // Batch the samples so no single dispatch runs long enough to risk a GPU

@@ -57,8 +57,9 @@ struct Frame {
     cam_pos: vec4<f32>,
     sky_top: vec4<f32>,
     sky_bottom: vec4<f32>,
-    dims: vec4<u32>,    // width, height, num_lights, max_bounces
-    params: vec4<u32>,  // samples_per_frame, sample_base, frame_seed, _
+    dims: vec4<u32>,      // width, height, num_lights, max_bounces
+    params: vec4<u32>,    // samples_per_frame, sample_base, frame_seed, has_env
+    env_dist: vec4<f32>,  // env-IS: width, height, integral, enabled
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -74,16 +75,24 @@ struct Frame {
 // Equirect HDR environment sampled on ray miss when frame.params.w != 0.
 @group(0) @binding(8) var env_tex: texture_2d<f32>;
 @group(0) @binding(9) var env_samp: sampler;
-// Per-texel surfaces for the lightmap bake (bake_main only): world position
-// (xyz, w = coverage; w <= 0 is an empty texel) and world normal (xyz). These
-// replace the camera as the primary-ray source: one bake invocation shoots its
-// hemisphere from the surface point behind its atlas texel.
-@group(0) @binding(10) var<storage, read> texel_pos: array<vec4<f32>>;
-@group(0) @binding(11) var<storage, read> texel_nrm: array<vec4<f32>>;
+// Per-texel surfaces for the lightmap bake (bake_main only), packed as two
+// contiguous halves of one buffer to leave a storage-buffer slot for the env
+// tables: positions in texel_surf[0 .. w*h] (xyz, w = coverage; w <= 0 is an
+// empty texel), then normals in texel_surf[w*h .. 2*w*h] (xyz). These replace the
+// camera as the primary-ray source: one bake invocation shoots its hemisphere
+// from the surface point behind its atlas texel.
+@group(0) @binding(10) var<storage, read> texel_surf: array<vec4<f32>>;
 // Dominant-direction accumulator for the bake: the running mean of the
 // luminance-weighted incoming-light direction (xyz), coverage in w. A later
 // encode stage normalises it into a dominant direction + directionality.
 @group(0) @binding(12) var<storage, read_write> accum_dir: array<vec4<f32>>;
+// Environment importance-sampling tables (camera path only), packed into one
+// buffer to stay under the storage-buffer limit: the sin-weighted luminance
+// func[0 .. w*h], then the per-row conditional CDFs (each width+1 long) at
+// w*h .. w*h + h*(w+1), then the marginal CDF over rows (height+1) after that.
+// Built on the CPU by EnvDistribution; sliced by env_func_at / env_cond_at /
+// env_marg_at below.
+@group(0) @binding(14) var<storage, read> env_tables: array<f32>;
 
 // #include "helpers/brdf.wgsl"
 
@@ -291,6 +300,133 @@ fn sky(dir: vec3<f32>) -> vec3<f32> {
     return mix(frame.sky_bottom.rgb, frame.sky_top.rgb, t);
 }
 
+// ----- Environment importance sampling -----
+//
+// The tables in env_func / env_cond_cdf / env_marg_cdf let the integrator send
+// shadow rays toward bright parts of the environment (next-event estimation)
+// instead of finding them only by chance through BSDF sampling, which is what
+// makes pure-IBL scenes converge slowly. This mirrors the CPU EnvDistribution
+// (raytrace/env_dist.rs): the same marginal/conditional inverse-CDF sampling and
+// the same func/integral density, with the equirect solid-angle Jacobian applied
+// here so the pdf is per unit solid angle.
+
+struct EnvSample {
+    dir: vec3<f32>,
+    pdf: f32,   // solid-angle pdf; 0 when the environment is not importance-sampled
+}
+
+// True when an importance-sampling distribution is available (an equirect
+// environment was set). The hemisphere sky has none, so env NEE is skipped.
+fn env_is_enabled() -> bool {
+    return frame.env_dist.w != 0.0;
+}
+
+// Slice the packed env_tables buffer: func, then conditional CDFs, then marginal.
+fn env_func_at(i: u32) -> f32 {
+    return env_tables[i];
+}
+fn env_cond_at(i: u32) -> f32 {
+    let w = u32(frame.env_dist.x);
+    let h = u32(frame.env_dist.y);
+    return env_tables[w * h + i];
+}
+fn env_marg_at(i: u32) -> f32 {
+    let w = u32(frame.env_dist.x);
+    let h = u32(frame.env_dist.y);
+    return env_tables[w * h + h * (w + 1u) + i];
+}
+
+// Direction for an equirect (u, v): longitude around +Z, +Z at v = 0. Inverse of
+// dir_to_equirect_uv.
+fn equirect_uv_to_dir(u: f32, v: f32) -> vec3<f32> {
+    let phi = (u - 0.5) * 2.0 * PI;
+    let theta = (0.5 - v) * PI;       // latitude; +pi/2 at the top (+Z)
+    let ct = cos(theta);
+    return vec3<f32>(ct * cos(phi), ct * sin(phi), sin(theta));
+}
+
+// Largest i in [0, n-2] with cdf[off + i] <= x. Binary search over a storage CDF
+// with a leading 0 and trailing 1; matches EnvDistribution::find_interval.
+fn cond_find(off: u32, n: u32, x: f32) -> u32 {
+    var lo = 0u;
+    var hi = n - 1u;   // candidate interval indices are [0, n-2]
+    loop {
+        if lo + 1u >= hi { break; }
+        let mid = (lo + hi) / 2u;
+        if env_cond_at(off + mid + 1u) <= x { lo = mid; } else { hi = mid; }
+    }
+    return min(lo, n - 2u);
+}
+
+fn marg_find(n: u32, x: f32) -> u32 {
+    var lo = 0u;
+    var hi = n - 1u;
+    loop {
+        if lo + 1u >= hi { break; }
+        let mid = (lo + hi) / 2u;
+        if env_marg_at(mid + 1u) <= x { lo = mid; } else { hi = mid; }
+    }
+    return min(lo, n - 2u);
+}
+
+// Solid-angle pdf of sampling direction `dir` from the environment distribution.
+// Must agree with sample_env's returned pdf for MIS to be unbiased.
+fn env_pdf(dir: vec3<f32>) -> f32 {
+    if !env_is_enabled() { return 0.0; }
+    let w = u32(frame.env_dist.x);
+    let h = u32(frame.env_dist.y);
+    let uv = dir_to_equirect_uv(dir);
+    let x = min(u32(uv.x * f32(w)), w - 1u);
+    let y = min(u32(uv.y * f32(h)), h - 1u);
+    let sin_t = sin(PI * uv.y);
+    if sin_t <= 0.0 { return 0.0; }
+    let p_uv = env_func_at(y * w + x) / frame.env_dist.z;
+    return p_uv / (2.0 * PI * PI * sin_t);
+}
+
+// Sample a direction toward the environment, returning it with its solid-angle
+// pdf. Returns pdf 0 when there is no distribution.
+fn sample_env(u1: f32, u2: f32) -> EnvSample {
+    var out: EnvSample;
+    out.dir = vec3<f32>(0.0, 0.0, 1.0);
+    out.pdf = 0.0;
+    if !env_is_enabled() { return out; }
+
+    let w = u32(frame.env_dist.x);
+    let h = u32(frame.env_dist.y);
+
+    // Marginal: pick a row, then interpolate within its CDF bin for a continuous v.
+    let y = marg_find(h + 1u, u2);
+    let m0 = env_marg_at(y);
+    let m1 = env_marg_at(y + 1u);
+    let dm = max(m1 - m0, 1.0e-12);
+    let v = (f32(y) + (u2 - m0) / dm) / f32(h);
+
+    // Conditional: pick a column within that row.
+    let base = y * (w + 1u);
+    let x = cond_find(base, w + 1u, u1);
+    let c0 = env_cond_at(base + x);
+    let c1 = env_cond_at(base + x + 1u);
+    let dc = max(c1 - c0, 1.0e-12);
+    let u = (f32(x) + (u1 - c0) / dc) / f32(w);
+
+    let sin_t = sin(PI * v);
+    if sin_t <= 0.0 { return out; }
+    let p_uv = env_func_at(y * w + x) / frame.env_dist.z;
+    out.dir = equirect_uv_to_dir(u, v);
+    out.pdf = p_uv / (2.0 * PI * PI * sin_t);
+    return out;
+}
+
+// Power heuristic (beta = 2) for two sampling strategies with pdfs a and b.
+fn power_heuristic(a: f32, b: f32) -> f32 {
+    let a2 = a * a;
+    let b2 = b * b;
+    let denom = a2 + b2;
+    if denom <= 0.0 { return 0.0; }
+    return a2 / denom;
+}
+
 // ----- Sampling -----
 
 fn build_onb(n: vec3<f32>) -> mat3x3<f32> {
@@ -373,6 +509,43 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
     return sum;
 }
 
+// Pdf (per solid angle) of the opaque-lobe sampler below for direction `l`,
+// matching its diffuse/specular mixture. Needed to MIS environment NEE against
+// BSDF sampling. Returns 0 for directions at or below the surface.
+fn bsdf_pdf(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, metallic: f32, roughness: f32, f0: vec3<f32>) -> f32 {
+    let ndotl = dot(n, l);
+    if ndotl <= 0.0 { return 0.0; }
+    let ndotv = max(dot(n, v), 1.0e-3);
+    let fr = F_Schlick(ndotv, f0);
+    var p_spec = clamp(max(fr.r, max(fr.g, fr.b)), 0.1, 0.9);
+    p_spec = mix(p_spec, 1.0, metallic * 0.5);
+    let rough = clamp(roughness, 0.04, 1.0);
+    let pdf_diff = ndotl / PI;
+    let hvec = normalize(v + l);
+    let ndoth = max(dot(n, hvec), 1.0e-4);
+    let vdoth = max(dot(v, hvec), 1.0e-4);
+    let d = D_GGX(ndoth, rough);
+    let pdf_spec = d * ndoth / (4.0 * vdoth);
+    return p_spec * pdf_spec + (1.0 - p_spec) * pdf_diff;
+}
+
+// One environment next-event-estimation sample at an opaque surface: sample a
+// direction toward the environment, shadow-test it, and return the MIS-weighted
+// (power heuristic) radiance for unit throughput. The matching BSDF-sampled
+// environment hit is weighted on ray miss in trace_path, so the two strategies
+// combine without double counting.
+fn env_nee(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+    if !env_is_enabled() { return vec3<f32>(0.0); }
+    let es = sample_env(rand(rng), rand(rng));
+    if es.pdf <= 0.0 || dot(n, es.dir) <= 0.0 { return vec3<f32>(0.0); }
+    if any_hit(pos + n * EPS, es.dir, T_MAX) { return vec3<f32>(0.0); }
+    let env_rad = sky(es.dir);
+    let bsdf_cos = pbr_light_contrib(n, v, es.dir, vec3<f32>(1.0), m.base, m.metallic, m.roughness, f0);
+    let pdf_b = bsdf_pdf(n, v, es.dir, m.metallic, m.roughness, f0);
+    let w = power_heuristic(es.pdf, pdf_b);
+    return bsdf_cos * env_rad * (w / es.pdf);
+}
+
 // ----- Path integrator -----
 
 fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
@@ -381,11 +554,23 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> ve
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
     let max_bounces = frame.dims.w;
+    // Pdf the last bounce sampled `rd` with, for MIS-weighting an environment hit
+    // reached by BSDF sampling. Negative marks a delta / non-MIS bounce (the
+    // camera ray, or a transmission event): those take the environment at full
+    // weight, since env NEE did not also sample it.
+    var mis_bsdf_pdf = -1.0;
 
     for (var bounce = 0u; bounce < max_bounces; bounce = bounce + 1u) {
         let h = closest_hit(ro, rd);
         if !h.hit {
-            radiance = radiance + throughput * sky(rd);
+            // Environment reached by BSDF sampling. When env NEE also sampled it
+            // (an opaque bounce with a distribution), weight this strategy by the
+            // power heuristic; otherwise take it at full weight.
+            var w = 1.0;
+            if mis_bsdf_pdf >= 0.0 && env_is_enabled() {
+                w = power_heuristic(mis_bsdf_pdf, env_pdf(rd));
+            }
+            radiance = radiance + throughput * sky(rd) * w;
             break;
         }
 
@@ -403,6 +588,8 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> ve
         // transmission fraction so clear glass is not diffusely lit.
         let opacity = 1.0 - select(0.0, m.transmission, m.metallic < 0.5);
         radiance = radiance + throughput * direct_light(h.pos, n, v, m, f0) * opacity;
+        // Environment NEE (importance-sampled), same opaque-only scaling.
+        radiance = radiance + throughput * env_nee(h.pos, n, v, m, f0, rng) * opacity;
 
         // Choose the interaction: a dielectric transmission event through a
         // sampled microfacet, or the opaque reflection lobes. Metals never
@@ -410,6 +597,9 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> ve
         let p_trans = 1.0 - opacity;
         if p_trans > 0.0 && rand(rng) < p_trans {
             throughput = throughput / p_trans;
+            // Transmission is treated as a delta bounce for MIS: env NEE did not
+            // sample through it, so the next environment hit takes full weight.
+            mis_bsdf_pdf = -1.0;
             // Rough-dielectric interface: reflect or refract through a sampled
             // microfacet normal, split stochastically by the Fresnel term.
             let hvec = ggx_sample_h(n, rough, rng);
@@ -470,6 +660,9 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> ve
                 ro = h.pos + n * EPS;
                 rd = cosine_sample(n, rng);
             }
+            // Record the pdf of the sampled direction so a following environment
+            // hit is MIS-weighted against the env NEE done above.
+            mis_bsdf_pdf = bsdf_pdf(n, v, rd, m.metallic, m.roughness, f0);
         }
 
         // Russian roulette.
@@ -613,7 +806,7 @@ fn bake_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.y * w + gid.x;
 
     let sample_base = frame.params.y;
-    let cov = texel_pos[idx].w;
+    let cov = texel_surf[idx].w;
     if cov <= 0.0 {
         // Empty texel: no surface behind it. Clear once on the first batch.
         if sample_base == 0u {
@@ -623,8 +816,8 @@ fn bake_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let pos = texel_pos[idx].xyz;
-    let n = normalize(texel_nrm[idx].xyz);
+    let pos = texel_surf[idx].xyz;
+    let n = normalize(texel_surf[w * h + idx].xyz);
     let spp = frame.params.x;
     var rng = init_rng(idx, frame.params.z);
 
