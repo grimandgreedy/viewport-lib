@@ -13,6 +13,12 @@
 //! either an equirect HDR environment ([`RtScene::set_environment`], for
 //! image-based lighting that matches the rasteriser's IBL) or a hemisphere sky.
 //!
+//! The same integrator also bakes lightmaps: [`bake_lightmap`] / [`Tracer::bake`]
+//! shoot the GI hemisphere from per-texel surface points (a [`TexelSurfaces`]
+//! G-buffer) instead of from a camera, and store incident irradiance into an
+//! atlas. The traversal, shading, and environment code are shared; only the
+//! primary-ray source differs.
+//!
 //! [`pick_backend`] reports whether a hardware ray-query traversal is available
 //! (Vulkan/DX12 with the `raytrace-hardware` feature). The ray-query traversal
 //! kernel itself is not wired up yet, so the tracer always runs the compute
@@ -127,6 +133,23 @@ pub struct RtCamera {
     pub width: u32,
     /// Output height in pixels.
     pub height: u32,
+}
+
+/// Per-texel surfaces for a lightmap bake, row-major `width * height` with the
+/// atlas origin at the top-left : the world position and normal behind every
+/// atlas texel, as produced by the texel G-buffer pass (`bake` feature). Feeds
+/// [`Tracer::bake`] / [`bake_lightmap`], which shoot the GI hemisphere from
+/// these points instead of from a camera.
+pub struct TexelSurfaces<'a> {
+    /// Atlas width in texels.
+    pub width: u32,
+    /// Atlas height in texels.
+    pub height: u32,
+    /// World position in `xyz`; `w > 0` marks a covered texel, `w <= 0` an empty
+    /// one that is left black. Length must be `width * height`.
+    pub world_pos: &'a [[f32; 4]],
+    /// World normal in `xyz` (`w` unused). Length must be `width * height`.
+    pub world_normal: &'a [[f32; 4]],
 }
 
 /// Trace settings.
@@ -358,6 +381,11 @@ pub fn trace(
 pub struct Tracer {
     pipeline: crate::gpu::ComputePipeline,
     bgl: crate::gpu::BindGroupLayout,
+    // Lightmap-bake variant of the kernel: the same integrator with a texel
+    // ray-gen front-end (bindings 10/11) instead of the camera. Compiled from
+    // the same module as `pipeline`.
+    bake_pipeline: crate::gpu::ComputePipeline,
+    bake_bgl: crate::gpu::BindGroupLayout,
     denoise_pipeline: crate::gpu::ComputePipeline,
     denoise_bgl: crate::gpu::BindGroupLayout,
     node_buf: crate::gpu::Buffer,
@@ -603,6 +631,38 @@ impl Tracer {
             "main",
         );
 
+        // Lightmap-bake pipeline: same module, `bake_main` entry. Its layout
+        // drops the denoiser guide buffers (6/7) and adds the texel G-buffer
+        // (10/11); the shared scene, frame, accum, and environment bindings are
+        // the same.
+        let bake_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("rt_bake_bgl"),
+            entries: &[
+                bgl_entry(0, buffer_ty_uniform()),
+                bgl_entry(1, buffer_ty_storage(true)),
+                bgl_entry(2, buffer_ty_storage(true)),
+                bgl_entry(3, buffer_ty_storage(true)),
+                bgl_entry(4, buffer_ty_storage(true)),
+                bgl_entry(5, buffer_ty_storage(false)),
+                bgl_entry(8, texture_ty_float()),
+                bgl_entry(9, sampler_ty_filtering()),
+                bgl_entry(10, buffer_ty_storage(true)),
+                bgl_entry(11, buffer_ty_storage(true)),
+            ],
+        });
+        let bake_layout = crate::resources::builders::pipeline_layout(
+            device,
+            Some("rt_bake_layout"),
+            &[&bake_bgl],
+        );
+        let bake_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "rt_bake_pipeline",
+            &bake_layout,
+            &shader,
+            "bake_main",
+        );
+
         // Denoiser pipeline, compiled once and reused across settled frames.
         let denoise_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("rt_denoise_bgl"),
@@ -635,6 +695,8 @@ impl Tracer {
         Self {
             pipeline,
             bgl,
+            bake_pipeline,
+            bake_bgl,
             denoise_pipeline,
             denoise_bgl,
             node_buf,
@@ -873,6 +935,180 @@ impl Tracer {
     pub fn reset_accumulation(&mut self) {
         self.accumulated = 0;
     }
+
+    /// Bake incident irradiance into a lightmap atlas.
+    ///
+    /// Runs the path integrator with a texel ray-gen front-end: one invocation
+    /// per atlas texel shoots the GI hemisphere from the surface point behind it
+    /// (from `surfaces`), summing direct irradiance from the analytic lights and
+    /// cosine-sampled indirect + environment irradiance. Returns an [`RtImage`]
+    /// sized to the atlas: linear HDR incident irradiance in `rgb`, with `a`
+    /// carrying texel coverage (1 on a baked texel, 0 on an empty one). Empty
+    /// texels (`world_pos.w <= 0`) are left black.
+    ///
+    /// This is a one-shot solve, not progressive: it allocates the atlas-sized
+    /// buffers, accumulates `settings.samples` samples per texel, and reads back.
+    /// `settings.denoise` is ignored (baked GI wants a dedicated guided denoiser,
+    /// a later stage, not the interactive a-trous pass). Returns a black atlas if
+    /// the scene has no geometry or the surface slices are the wrong length.
+    pub fn bake(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        surfaces: &TexelSurfaces,
+        settings: &RtSettings,
+    ) -> RtImage {
+        let width = surfaces.width.max(1);
+        let height = surfaces.height.max(1);
+        let texels = (width * height) as usize;
+
+        let black = || RtImage {
+            width,
+            height,
+            rgba: vec![0.0; texels * 4],
+        };
+        if !self.has_geometry
+            || surfaces.world_pos.len() != texels
+            || surfaces.world_normal.len() != texels
+        {
+            return black();
+        }
+
+        let bytes = (texels as u64) * 16;
+        let pos_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_bake_texel_pos"),
+            contents: bytemuck::cast_slice(surfaces.world_pos),
+            usage: crate::gpu::BufferUsages::STORAGE,
+        });
+        let nrm_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_bake_texel_nrm"),
+            contents: bytemuck::cast_slice(surfaces.world_normal),
+            usage: crate::gpu::BufferUsages::STORAGE,
+        });
+        let accum_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("rt_bake_accum"),
+            size: bytes,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let staging_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("rt_bake_staging"),
+            size: bytes,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("rt_bake_bg"),
+            layout: &self.bake_bgl,
+            entries: &[
+                bg_entry(0, &self.frame_buf),
+                bg_entry(1, &self.node_buf),
+                bg_entry(2, &self.tri_buf),
+                bg_entry(3, &self.mat_buf),
+                bg_entry(4, &self.light_buf),
+                bg_entry(5, &accum_buf),
+                crate::gpu::BindGroupEntry {
+                    binding: 8,
+                    resource: crate::gpu::BindingResource::TextureView(&self.env_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 9,
+                    resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
+                },
+                bg_entry(10, &pos_buf),
+                bg_entry(11, &nrm_buf),
+            ],
+        });
+
+        let base_frame = FrameUniform {
+            inv_view_proj: Mat4::IDENTITY.to_cols_array(),
+            cam_pos: [0.0; 4],
+            sky_top: [self.sky_top[0], self.sky_top[1], self.sky_top[2], 0.0],
+            sky_bottom: [
+                self.sky_bottom[0],
+                self.sky_bottom[1],
+                self.sky_bottom[2],
+                0.0,
+            ],
+            dims: [width, height, self.num_lights, settings.max_bounces.max(1)],
+            params: [0, 0, 0, 0],
+        };
+
+        // Batch the samples so no single dispatch runs long enough to risk a GPU
+        // watchdog reset; `sample_base` blends each batch into the running mean.
+        const BATCH: u32 = 16;
+        let gx = width.div_ceil(8);
+        let gy = height.div_ceil(8);
+        let target = settings.samples.max(1);
+        let mut done = 0u32;
+        while done < target {
+            let this_batch = (target - done).min(BATCH);
+            let mut fu = base_frame;
+            fu.params = [
+                this_batch,
+                done,
+                done.wrapping_mul(2_654_435_761).wrapping_add(1),
+                self.has_env as u32,
+            ];
+            queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
+
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("rt_bake_encoder"),
+                });
+            {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+                    label: Some("rt_bake_pass"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&self.bake_pipeline);
+                cpass.set_bind_group(0, &bind_group, &[]);
+                cpass.dispatch_workgroups(gx, gy, 1);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+            done += this_batch;
+        }
+
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("rt_bake_readback"),
+        });
+        encoder.copy_buffer_to_buffer(&accum_buf, 0, &staging_buf, 0, bytes);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging_buf.slice(..);
+        slice.map_async(crate::gpu::MapMode::Read, |_| {});
+        let _ = device.poll(crate::gpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(60)),
+        });
+        let rgba: Vec<f32> = {
+            let data = slice.get_mapped_range();
+            bytemuck::cast_slice::<u8, f32>(&data).to_vec()
+        };
+        staging_buf.unmap();
+
+        RtImage {
+            width,
+            height,
+            rgba,
+        }
+    }
+}
+
+/// Bake incident irradiance into a lightmap atlas from per-texel surfaces.
+///
+/// Builds a tracer for `scene` and runs [`Tracer::bake`]. Like [`trace`], this
+/// rebuilds the BVH and uploads the scene each call; a bake is a one-shot solve,
+/// so that setup cost is not worth caching. See [`Tracer::bake`] for the output
+/// layout.
+pub fn bake_lightmap(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    scene: &RtScene,
+    surfaces: &TexelSurfaces,
+    settings: &RtSettings,
+) -> RtImage {
+    Tracer::new(device, queue, scene).bake(device, queue, surfaces, settings)
 }
 
 /// Run the edge-aware a-trous denoiser over `accum` and return the buffer that

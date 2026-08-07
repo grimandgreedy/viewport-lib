@@ -72,6 +72,12 @@ struct Frame {
 // Equirect HDR environment sampled on ray miss when frame.params.w != 0.
 @group(0) @binding(8) var env_tex: texture_2d<f32>;
 @group(0) @binding(9) var env_samp: sampler;
+// Per-texel surfaces for the lightmap bake (bake_main only): world position
+// (xyz, w = coverage; w <= 0 is an empty texel) and world normal (xyz). These
+// replace the camera as the primary-ray source: one bake invocation shoots its
+// hemisphere from the surface point behind its atlas texel.
+@group(0) @binding(10) var<storage, read> texel_pos: array<vec4<f32>>;
+@group(0) @binding(11) var<storage, read> texel_nrm: array<vec4<f32>>;
 
 // #include "helpers/brdf.wgsl"
 
@@ -527,4 +533,94 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         result = (prev * f32(sample_base) + sum) / total;
     }
     accum[pidx] = vec4<f32>(result, 1.0);
+}
+
+// ----- Lightmap bake -----
+
+// Irradiance a texel receives directly from the analytic delta lights: the
+// geometric term (radiance times cosine, visibility-tested), with no BRDF. A
+// hemisphere ray almost never hits a delta light, so these must be sampled
+// explicitly; the environment and bounced surfaces are left to the hemisphere
+// integral in bake_main.
+fn texel_direct_irradiance(pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    var e = vec3<f32>(0.0);
+    let count = frame.dims.z;
+    for (var i = 0u; i < count; i = i + 1u) {
+        let lt = lights[i];
+        var l: vec3<f32>;
+        var radiance = lt.colour.rgb;
+        var max_t = T_MAX;
+        if lt.data.w < 0.5 {
+            l = normalize(lt.data.xyz);
+        } else {
+            let to = lt.data.xyz - pos;
+            let dist = length(to);
+            l = to / dist;
+            let range = lt.colour.w;
+            var atten = 1.0 / max(dist * dist, 1.0e-4);
+            if range > 0.0 {
+                let f = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
+                atten = atten * f * f;
+            }
+            radiance = radiance * atten;
+            max_t = dist - EPS;
+        }
+        let ndl = dot(n, l);
+        if ndl <= 0.0 { continue; }
+        if any_hit(pos + n * EPS, l, max_t) { continue; }
+        e = e + radiance * ndl;
+    }
+    return e;
+}
+
+// One invocation per atlas texel. Reads the surface point behind the texel from
+// the G-buffer, sums direct irradiance from the analytic lights, and estimates
+// indirect + environment irradiance by cosine-sampling the hemisphere: for a
+// cosine pdf the estimator of the irradiance integral is PI times the mean of
+// the radiance each ray gathers (trace_path handles further bounces, emissive
+// surfaces, and the sky/environment on miss). Stores incident irradiance, which
+// is material-independent; a later encode stage applies albedo.
+@compute @workgroup_size(8, 8, 1)
+fn bake_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let w = frame.dims.x;
+    let h = frame.dims.y;
+    if gid.x >= w || gid.y >= h { return; }
+    let idx = gid.y * w + gid.x;
+
+    let sample_base = frame.params.y;
+    let cov = texel_pos[idx].w;
+    if cov <= 0.0 {
+        // Empty texel: no surface behind it. Clear once on the first batch.
+        if sample_base == 0u { accum[idx] = vec4<f32>(0.0); }
+        return;
+    }
+
+    let pos = texel_pos[idx].xyz;
+    let n = normalize(texel_nrm[idx].xyz);
+    let spp = frame.params.x;
+    var rng = init_rng(idx, frame.params.z);
+
+    // Direct irradiance is deterministic per texel; evaluate it once and add it
+    // to every sample so the cross-batch mean below stays exact.
+    let e_direct = texel_direct_irradiance(pos, n);
+
+    var sum = vec3<f32>(0.0);
+    for (var s = 0u; s < spp; s = s + 1u) {
+        let dir = cosine_sample(n, &rng);
+        let li = trace_path(pos + n * EPS, dir, &rng);
+        let c = e_direct + PI * li;
+        if all(c == c) {
+            sum = sum + c;
+        }
+    }
+
+    let mean_new = sum / f32(spp);
+    var result = mean_new;
+    if sample_base > 0u {
+        let prev = accum[idx].rgb;
+        let total = f32(sample_base) + f32(spp);
+        result = (prev * f32(sample_base) + sum) / total;
+    }
+    // w carries coverage so a consumer can tell baked texels from empty ones.
+    accum[idx] = vec4<f32>(result, cov);
 }
