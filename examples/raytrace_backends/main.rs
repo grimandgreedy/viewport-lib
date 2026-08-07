@@ -450,8 +450,17 @@ impl ApplicationHandler for App {
         } else {
             wgpu::ExperimentalFeatures::disabled()
         };
+        // The acceleration-structure limits (max_blas_geometry_count and friends)
+        // default to 0, so building a BLAS fails validation unless they are
+        // raised; take the adapter's supported limits when using ray query.
+        let required_limits = if has_ray_query {
+            adapter.limits()
+        } else {
+            wgpu::Limits::default()
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: wanted,
+            required_limits,
             experimental_features,
             ..Default::default()
         }))
