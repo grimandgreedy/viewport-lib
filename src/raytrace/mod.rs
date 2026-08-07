@@ -523,8 +523,27 @@ struct TracerSized {
 }
 
 impl Tracer {
-    /// Build the pipeline and upload `scene`. Cheap to keep around and re-trace.
+    /// Build the pipeline and upload `scene`, selecting the traversal backend
+    /// with [`pick_backend`]. Cheap to keep around and re-trace.
     pub fn new(device: &crate::gpu::Device, queue: &crate::gpu::Queue, scene: &RtScene) -> Self {
+        Self::new_with_backend(device, queue, scene, pick_backend(device))
+    }
+
+    /// Build the pipeline and upload `scene` for a specific traversal backend.
+    ///
+    /// [`RtBackend::Hardware`] falls back to [`RtBackend::Software`] when the
+    /// `raytrace-hardware` feature is off or the device does not advertise
+    /// [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE); [`backend`](Tracer::backend)
+    /// reports what was actually built. Forcing the software backend on a
+    /// ray-query device is useful for comparing the two paths on one device.
+    pub fn new_with_backend(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        scene: &RtScene,
+        backend: RtBackend,
+    ) -> Self {
+        #[cfg(not(feature = "raytrace-hardware"))]
+        let _ = backend;
         let has_geometry = !scene.tris.is_empty();
 
         // Build the BVH and the reordered triangle array it references. An empty
@@ -564,7 +583,10 @@ impl Tracer {
         // group layouts, and bind groups all follow `use_hw`: with no geometry or
         // no ray-query device the software compute traversal is used unchanged.
         #[cfg(feature = "raytrace-hardware")]
-        let hw = if pick_backend(device) == RtBackend::Hardware && has_geometry {
+        let hw = if backend == RtBackend::Hardware
+            && device.features().contains(crate::gpu::RAY_QUERY_FEATURE)
+            && has_geometry
+        {
             let mut positions = Vec::with_capacity(gpu_tris.len() * 3);
             for t in &gpu_tris {
                 positions.push(t.p0);
@@ -863,6 +885,17 @@ impl Tracer {
             #[cfg(feature = "raytrace-hardware")]
             hw,
         }
+    }
+
+    /// The traversal backend this tracer was built with. [`RtBackend::Hardware`]
+    /// only when the `raytrace-hardware` feature is on, the device advertises ray
+    /// query, and the scene has geometry; otherwise [`RtBackend::Software`].
+    pub fn backend(&self) -> RtBackend {
+        #[cfg(feature = "raytrace-hardware")]
+        if self.hw.is_some() {
+            return RtBackend::Hardware;
+        }
+        RtBackend::Software
     }
 
     /// Ensure the size-dependent buffers and bind group match `width`/`height`,
