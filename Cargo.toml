@@ -189,6 +189,11 @@ path = "examples/raytrace_reference/main.rs"
 required-features = ["wgpu27", "raytrace"]
 
 [[example]]
+name = "raytrace-interactive"
+path = "examples/raytrace_interactive/main.rs"
+required-features = ["wgpu27", "raytrace"]
+
+[[example]]
 name = "eframe-testing"
 path = "examples/eframe_testing/main.rs"
 required-features = ["wgpu27", "example-egui"]

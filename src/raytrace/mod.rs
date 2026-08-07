@@ -301,6 +301,11 @@ struct GpuDenoiseParams {
 /// Runs entirely on the compute path (portable to every backend). Blocks until
 /// the accumulation is read back to the CPU. For an empty scene, returns a black
 /// image of the requested size.
+///
+/// This builds the pipeline and uploads the scene on every call. To trace the
+/// same scene repeatedly (e.g. an interactive viewer re-tracing as the camera
+/// moves), build a [`Tracer`] once and call [`Tracer::trace`] instead : it keeps
+/// the compiled pipeline and uploaded scene, so each frame only re-dispatches.
 pub fn trace(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
@@ -308,297 +313,420 @@ pub fn trace(
     camera: &RtCamera,
     settings: &RtSettings,
 ) -> RtImage {
-    let width = camera.width.max(1);
-    let height = camera.height.max(1);
-    let pixels = (width * height) as usize;
+    Tracer::new(device, scene).trace(device, queue, camera, settings)
+}
 
-    // The hardware ray-query kernel is not built yet, so both backends run the
-    // compute traversal below. Selecting here keeps the choice in one place for
-    // when the hardware kernel lands.
-    let _backend = pick_backend(device);
+/// A reusable path tracer that holds a compiled pipeline and an uploaded scene.
+///
+/// The reference [`trace`] function rebuilds the BVH, re-uploads the scene, and
+/// recompiles the compute pipeline on every call, which dominates the cost when
+/// the same scene is traced many times (an interactive preview re-traces on
+/// every camera move). A `Tracer` does that setup once in [`Tracer::new`]; each
+/// [`Tracer::trace`] only rewrites the per-frame uniform, re-dispatches, and
+/// reads back. Size-dependent buffers are (re)allocated when the output
+/// resolution changes.
+pub struct Tracer {
+    pipeline: crate::gpu::ComputePipeline,
+    bgl: crate::gpu::BindGroupLayout,
+    denoise_pipeline: crate::gpu::ComputePipeline,
+    denoise_bgl: crate::gpu::BindGroupLayout,
+    node_buf: crate::gpu::Buffer,
+    tri_buf: crate::gpu::Buffer,
+    mat_buf: crate::gpu::Buffer,
+    light_buf: crate::gpu::Buffer,
+    frame_buf: crate::gpu::Buffer,
+    num_lights: u32,
+    sky_top: [f32; 3],
+    sky_bottom: [f32; 3],
+    has_geometry: bool,
+    sized: Option<TracerSized>,
+}
 
-    if scene.tris.is_empty() {
-        return RtImage {
+/// Output-resolution-dependent buffers, rebuilt when the size changes.
+struct TracerSized {
+    width: u32,
+    height: u32,
+    bytes: u64,
+    accum_buf: crate::gpu::Buffer,
+    staging_buf: crate::gpu::Buffer,
+    gbuf_albedo: crate::gpu::Buffer,
+    gbuf_normal: crate::gpu::Buffer,
+    bind_group: crate::gpu::BindGroup,
+}
+
+impl Tracer {
+    /// Build the pipeline and upload `scene`. Cheap to keep around and re-trace.
+    pub fn new(device: &crate::gpu::Device, scene: &RtScene) -> Self {
+        let has_geometry = !scene.tris.is_empty();
+
+        // Build the BVH and the reordered triangle array it references. An empty
+        // scene still needs valid (single-element) buffers so the bind group and
+        // pipeline exist; trace() short-circuits to black before dispatching.
+        let (nodes, order) = bvh::build(&scene.tris);
+        let gpu_tris: Vec<GpuTri> = order
+            .iter()
+            .map(|&k| {
+                let k = k as usize;
+                let p = scene.tris[k];
+                let n = scene.normals[k];
+                GpuTri {
+                    p0: p[0].to_array(),
+                    mat: scene.tri_mat[k],
+                    p1: p[1].to_array(),
+                    _p1: 0,
+                    p2: p[2].to_array(),
+                    _p2: 0,
+                    n0: n[0].to_array(),
+                    _n0: 0,
+                    n1: n[1].to_array(),
+                    _n1: 0,
+                    n2: n[2].to_array(),
+                    _n2: 0,
+                }
+            })
+            .collect();
+        let gpu_tris = if gpu_tris.is_empty() {
+            vec![<GpuTri as bytemuck::Zeroable>::zeroed()]
+        } else {
+            gpu_tris
+        };
+
+        let mut gpu_mats: Vec<GpuMaterial> = scene
+            .materials
+            .iter()
+            .map(|m| GpuMaterial {
+                base: m.base_colour,
+                metallic: m.metallic,
+                emissive: m.emissive,
+                roughness: m.roughness,
+                transmission: m.transmission.clamp(0.0, 1.0),
+                ior: m.ior.max(1.0),
+                _pad0: 0.0,
+                _pad1: 0.0,
+            })
+            .collect();
+        if gpu_mats.is_empty() {
+            gpu_mats.push(GpuMaterial {
+                base: [0.8, 0.8, 0.8],
+                metallic: 0.0,
+                emissive: [0.0; 3],
+                roughness: 0.5,
+                transmission: 0.0,
+                ior: 1.5,
+                _pad0: 0.0,
+                _pad1: 0.0,
+            });
+        }
+
+        let mut gpu_lights: Vec<GpuLight> = scene
+            .lights
+            .iter()
+            .map(|l| match *l {
+                RtLight::Directional { direction, colour } => GpuLight {
+                    data: [direction[0], direction[1], direction[2], 0.0],
+                    colour: [colour[0], colour[1], colour[2], 0.0],
+                },
+                RtLight::Point {
+                    position,
+                    colour,
+                    range,
+                } => GpuLight {
+                    data: [position[0], position[1], position[2], 1.0],
+                    colour: [colour[0], colour[1], colour[2], range.max(0.0)],
+                },
+            })
+            .collect();
+        let num_lights = gpu_lights.len() as u32;
+        if gpu_lights.is_empty() {
+            gpu_lights.push(GpuLight {
+                data: [0.0; 4],
+                colour: [0.0; 4],
+            });
+        }
+
+        let node_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_nodes"),
+            contents: bytemuck::cast_slice(&nodes),
+            usage: crate::gpu::BufferUsages::STORAGE,
+        });
+        let tri_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_tris"),
+            contents: bytemuck::cast_slice(&gpu_tris),
+            usage: crate::gpu::BufferUsages::STORAGE,
+        });
+        let mat_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_materials"),
+            contents: bytemuck::cast_slice(&gpu_mats),
+            usage: crate::gpu::BufferUsages::STORAGE,
+        });
+        let light_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_lights"),
+            contents: bytemuck::cast_slice(&gpu_lights),
+            usage: crate::gpu::BufferUsages::STORAGE,
+        });
+        let frame_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("rt_frame"),
+            size: std::mem::size_of::<FrameUniform>() as u64,
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("rt_bgl"),
+            entries: &[
+                bgl_entry(0, buffer_ty_uniform()),
+                bgl_entry(1, buffer_ty_storage(true)),
+                bgl_entry(2, buffer_ty_storage(true)),
+                bgl_entry(3, buffer_ty_storage(true)),
+                bgl_entry(4, buffer_ty_storage(true)),
+                bgl_entry(5, buffer_ty_storage(false)),
+                bgl_entry(6, buffer_ty_storage(false)),
+                bgl_entry(7, buffer_ty_storage(false)),
+            ],
+        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "rt_kernel",
+            crate::resources::builders::wgsl_source!("raytrace"),
+        );
+        let layout =
+            crate::resources::builders::pipeline_layout(device, Some("rt_layout"), &[&bgl]);
+        let pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "rt_pipeline",
+            &layout,
+            &shader,
+            "main",
+        );
+
+        // Denoiser pipeline, compiled once and reused across settled frames.
+        let denoise_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("rt_denoise_bgl"),
+            entries: &[
+                bgl_entry(0, buffer_ty_uniform()),
+                bgl_entry(1, buffer_ty_storage(true)),
+                bgl_entry(2, buffer_ty_storage(true)),
+                bgl_entry(3, buffer_ty_storage(true)),
+                bgl_entry(4, buffer_ty_storage(false)),
+            ],
+        });
+        let denoise_shader = crate::resources::builders::wgsl_module(
+            device,
+            "rt_denoise",
+            crate::resources::builders::wgsl_source!("denoise"),
+        );
+        let denoise_layout = crate::resources::builders::pipeline_layout(
+            device,
+            Some("rt_denoise_layout"),
+            &[&denoise_bgl],
+        );
+        let denoise_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "rt_denoise_pipeline",
+            &denoise_layout,
+            &denoise_shader,
+            "main",
+        );
+
+        Self {
+            pipeline,
+            bgl,
+            denoise_pipeline,
+            denoise_bgl,
+            node_buf,
+            tri_buf,
+            mat_buf,
+            light_buf,
+            frame_buf,
+            num_lights,
+            sky_top: scene.sky_top,
+            sky_bottom: scene.sky_bottom,
+            has_geometry,
+            sized: None,
+        }
+    }
+
+    /// Ensure the size-dependent buffers and bind group match `width`/`height`,
+    /// (re)allocating them if the resolution changed since the last trace.
+    fn ensure_sized(&mut self, device: &crate::gpu::Device, width: u32, height: u32) {
+        if let Some(s) = &self.sized {
+            if s.width == width && s.height == height {
+                return;
+            }
+        }
+        let bytes = (width as u64) * (height as u64) * 16;
+        let storage = |label: &str, extra: crate::gpu::BufferUsages| {
+            device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some(label),
+                size: bytes,
+                usage: crate::gpu::BufferUsages::STORAGE | extra,
+                mapped_at_creation: false,
+            })
+        };
+        let accum_buf = storage("rt_accum", crate::gpu::BufferUsages::COPY_SRC);
+        let gbuf_albedo = storage("rt_gbuf_albedo", crate::gpu::BufferUsages::empty());
+        let gbuf_normal = storage("rt_gbuf_normal", crate::gpu::BufferUsages::empty());
+        let staging_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("rt_staging"),
+            size: bytes,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("rt_bg"),
+            layout: &self.bgl,
+            entries: &[
+                bg_entry(0, &self.frame_buf),
+                bg_entry(1, &self.node_buf),
+                bg_entry(2, &self.tri_buf),
+                bg_entry(3, &self.mat_buf),
+                bg_entry(4, &self.light_buf),
+                bg_entry(5, &accum_buf),
+                bg_entry(6, &gbuf_albedo),
+                bg_entry(7, &gbuf_normal),
+            ],
+        });
+        self.sized = Some(TracerSized {
             width,
             height,
-            rgba: vec![0.0; pixels * 4],
+            bytes,
+            accum_buf,
+            staging_buf,
+            gbuf_albedo,
+            gbuf_normal,
+            bind_group,
+        });
+    }
+
+    /// Trace `camera` at `settings` and read back the HDR image. Reuses the
+    /// pipeline and uploaded scene; only per-frame work runs here.
+    pub fn trace(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        camera: &RtCamera,
+        settings: &RtSettings,
+    ) -> RtImage {
+        let width = camera.width.max(1);
+        let height = camera.height.max(1);
+
+        if !self.has_geometry {
+            return RtImage {
+                width,
+                height,
+                rgba: vec![0.0; (width * height * 4) as usize],
+            };
+        }
+
+        self.ensure_sized(device, width, height);
+        let s = self.sized.as_ref().expect("sized set by ensure_sized");
+
+        let base_frame = FrameUniform {
+            inv_view_proj: camera.inv_view_proj.to_cols_array(),
+            cam_pos: [camera.position.x, camera.position.y, camera.position.z, 0.0],
+            sky_top: [self.sky_top[0], self.sky_top[1], self.sky_top[2], 0.0],
+            sky_bottom: [
+                self.sky_bottom[0],
+                self.sky_bottom[1],
+                self.sky_bottom[2],
+                0.0,
+            ],
+            dims: [width, height, self.num_lights, settings.max_bounces.max(1)],
+            params: [0, 0, 0, 0],
         };
-    }
 
-    // Build the BVH and the reordered triangle array it references.
-    let (nodes, order) = bvh::build(&scene.tris);
-    let gpu_tris: Vec<GpuTri> = order
-        .iter()
-        .map(|&k| {
-            let k = k as usize;
-            let p = scene.tris[k];
-            let n = scene.normals[k];
-            GpuTri {
-                p0: p[0].to_array(),
-                mat: scene.tri_mat[k],
-                p1: p[1].to_array(),
-                _p1: 0,
-                p2: p[2].to_array(),
-                _p2: 0,
-                n0: n[0].to_array(),
-                _n0: 0,
-                n1: n[1].to_array(),
-                _n1: 0,
-                n2: n[2].to_array(),
-                _n2: 0,
+        // Accumulate in batches so no single dispatch runs long enough to risk a
+        // GPU watchdog reset. The first batch (sample_base == 0) overwrites the
+        // reused accumulation buffer, so nothing leaks between traces.
+        let total = settings.samples.max(1);
+        const BATCH: u32 = 32;
+        let gx = width.div_ceil(8);
+        let gy = height.div_ceil(8);
+
+        let mut done = 0u32;
+        let mut batch_index = 0u32;
+        while done < total {
+            let this_batch = (total - done).min(BATCH);
+            let mut fu = base_frame;
+            fu.params = [this_batch, done, batch_index.wrapping_mul(2_654_435_761), 0];
+            queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
+
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("rt_encoder"),
+                });
+            {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+                    label: Some("rt_pass"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&self.pipeline);
+                cpass.set_bind_group(0, &s.bind_group, &[]);
+                cpass.dispatch_workgroups(gx, gy, 1);
             }
-        })
-        .collect();
+            queue.submit(std::iter::once(encoder.finish()));
 
-    let mut gpu_mats: Vec<GpuMaterial> = scene
-        .materials
-        .iter()
-        .map(|m| GpuMaterial {
-            base: m.base_colour,
-            metallic: m.metallic,
-            emissive: m.emissive,
-            roughness: m.roughness,
-            transmission: m.transmission.clamp(0.0, 1.0),
-            ior: m.ior.max(1.0),
-            _pad0: 0.0,
-            _pad1: 0.0,
-        })
-        .collect();
-    if gpu_mats.is_empty() {
-        gpu_mats.push(GpuMaterial {
-            base: [0.8, 0.8, 0.8],
-            metallic: 0.0,
-            emissive: [0.0; 3],
-            roughness: 0.5,
-            transmission: 0.0,
-            ior: 1.5,
-            _pad0: 0.0,
-            _pad1: 0.0,
-        });
-    }
+            done += this_batch;
+            batch_index += 1;
+        }
 
-    let mut gpu_lights: Vec<GpuLight> = scene
-        .lights
-        .iter()
-        .map(|l| match *l {
-            RtLight::Directional { direction, colour } => GpuLight {
-                data: [direction[0], direction[1], direction[2], 0.0],
-                colour: [colour[0], colour[1], colour[2], 0.0],
-            },
-            RtLight::Point {
-                position,
-                colour,
-                range,
-            } => GpuLight {
-                data: [position[0], position[1], position[2], 1.0],
-                colour: [colour[0], colour[1], colour[2], range.max(0.0)],
-            },
-        })
-        .collect();
-    let num_lights = gpu_lights.len() as u32;
-    if gpu_lights.is_empty() {
-        gpu_lights.push(GpuLight {
-            data: [0.0; 4],
-            colour: [0.0; 4],
-        });
-    }
-
-    // Buffers.
-    let node_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-        label: Some("rt_nodes"),
-        contents: bytemuck::cast_slice(&nodes),
-        usage: crate::gpu::BufferUsages::STORAGE,
-    });
-    let tri_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-        label: Some("rt_tris"),
-        contents: bytemuck::cast_slice(&gpu_tris),
-        usage: crate::gpu::BufferUsages::STORAGE,
-    });
-    let mat_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-        label: Some("rt_materials"),
-        contents: bytemuck::cast_slice(&gpu_mats),
-        usage: crate::gpu::BufferUsages::STORAGE,
-    });
-    let light_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-        label: Some("rt_lights"),
-        contents: bytemuck::cast_slice(&gpu_lights),
-        usage: crate::gpu::BufferUsages::STORAGE,
-    });
-
-    let accum_bytes = (pixels * 16) as u64;
-    let accum_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("rt_accum"),
-        size: accum_bytes,
-        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let staging_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("rt_staging"),
-        size: accum_bytes,
-        usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    // First-hit guide buffers the kernel fills for the denoiser.
-    let gbuf_albedo = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("rt_gbuf_albedo"),
-        size: accum_bytes,
-        usage: crate::gpu::BufferUsages::STORAGE,
-        mapped_at_creation: false,
-    });
-    let gbuf_normal = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("rt_gbuf_normal"),
-        size: accum_bytes,
-        usage: crate::gpu::BufferUsages::STORAGE,
-        mapped_at_creation: false,
-    });
-
-    let frame_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some("rt_frame"),
-        size: std::mem::size_of::<FrameUniform>() as u64,
-        usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    // Bind group layout: uniform + 4 read storage + 3 read_write storage
-    // (accumulation, plus the two first-hit guide buffers).
-    let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-        label: Some("rt_bgl"),
-        entries: &[
-            bgl_entry(0, buffer_ty_uniform()),
-            bgl_entry(1, buffer_ty_storage(true)),
-            bgl_entry(2, buffer_ty_storage(true)),
-            bgl_entry(3, buffer_ty_storage(true)),
-            bgl_entry(4, buffer_ty_storage(true)),
-            bgl_entry(5, buffer_ty_storage(false)),
-            bgl_entry(6, buffer_ty_storage(false)),
-            bgl_entry(7, buffer_ty_storage(false)),
-        ],
-    });
-    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-        label: Some("rt_bg"),
-        layout: &bgl,
-        entries: &[
-            bg_entry(0, &frame_buf),
-            bg_entry(1, &node_buf),
-            bg_entry(2, &tri_buf),
-            bg_entry(3, &mat_buf),
-            bg_entry(4, &light_buf),
-            bg_entry(5, &accum_buf),
-            bg_entry(6, &gbuf_albedo),
-            bg_entry(7, &gbuf_normal),
-        ],
-    });
-
-    let shader = crate::resources::builders::wgsl_module(
-        device,
-        "rt_kernel",
-        crate::resources::builders::wgsl_source!("raytrace"),
-    );
-    let layout = crate::resources::builders::pipeline_layout(device, Some("rt_layout"), &[&bgl]);
-    let pipeline = crate::resources::builders::compute_pipeline(
-        device,
-        "rt_pipeline",
-        &layout,
-        &shader,
-        "main",
-    );
-
-    // Progressive accumulation, dispatched in batches so no single dispatch runs
-    // long enough to risk a GPU watchdog reset.
-    let base_frame = FrameUniform {
-        inv_view_proj: camera.inv_view_proj.to_cols_array(),
-        cam_pos: [camera.position.x, camera.position.y, camera.position.z, 0.0],
-        sky_top: [scene.sky_top[0], scene.sky_top[1], scene.sky_top[2], 0.0],
-        sky_bottom: [
-            scene.sky_bottom[0],
-            scene.sky_bottom[1],
-            scene.sky_bottom[2],
-            0.0,
-        ],
-        dims: [width, height, num_lights, settings.max_bounces.max(1)],
-        params: [0, 0, 0, 0],
-    };
-
-    let total = settings.samples.max(1);
-    const BATCH: u32 = 32;
-    let gx = width.div_ceil(8);
-    let gy = height.div_ceil(8);
-
-    let mut done = 0u32;
-    let mut batch_index = 0u32;
-    while done < total {
-        let this_batch = (total - done).min(BATCH);
-        let mut fu = base_frame;
-        fu.params = [this_batch, done, batch_index.wrapping_mul(2_654_435_761), 0];
-        queue.write_buffer(&frame_buf, 0, bytemuck::bytes_of(&fu));
+        // Optionally denoise, then read back whichever buffer holds the result.
+        let denoised;
+        let result_buf: &crate::gpu::Buffer = if settings.denoise {
+            denoised = denoise(
+                device,
+                queue,
+                &self.denoise_pipeline,
+                &self.denoise_bgl,
+                width,
+                height,
+                s.bytes,
+                &s.accum_buf,
+                &s.gbuf_albedo,
+                &s.gbuf_normal,
+            );
+            &denoised
+        } else {
+            &s.accum_buf
+        };
 
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("rt_encoder"),
+            label: Some("rt_readback"),
         });
-        {
-            let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
-                label: Some("rt_pass"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&pipeline);
-            cpass.set_bind_group(0, &bind_group, &[]);
-            cpass.dispatch_workgroups(gx, gy, 1);
-        }
+        encoder.copy_buffer_to_buffer(result_buf, 0, &s.staging_buf, 0, s.bytes);
         queue.submit(std::iter::once(encoder.finish()));
 
-        done += this_batch;
-        batch_index += 1;
-    }
+        let slice = s.staging_buf.slice(..);
+        slice.map_async(crate::gpu::MapMode::Read, |_| {});
+        let _ = device.poll(crate::gpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(30)),
+        });
+        let rgba: Vec<f32> = {
+            let data = slice.get_mapped_range();
+            bytemuck::cast_slice::<u8, f32>(&data).to_vec()
+        };
+        s.staging_buf.unmap();
 
-    // Optionally denoise, then read back whichever buffer holds the result.
-    let result_buf = if settings.denoise {
-        denoise(
-            device,
-            queue,
+        RtImage {
             width,
             height,
-            accum_bytes,
-            &accum_buf,
-            &gbuf_albedo,
-            &gbuf_normal,
-        )
-    } else {
-        accum_buf
-    };
-
-    let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-        label: Some("rt_readback"),
-    });
-    encoder.copy_buffer_to_buffer(&result_buf, 0, &staging_buf, 0, accum_bytes);
-    queue.submit(std::iter::once(encoder.finish()));
-
-    let slice = staging_buf.slice(..);
-    slice.map_async(crate::gpu::MapMode::Read, |_| {});
-    let _ = device.poll(crate::gpu::PollType::Wait {
-        submission_index: None,
-        timeout: Some(std::time::Duration::from_secs(30)),
-    });
-    let rgba: Vec<f32> = {
-        let data = slice.get_mapped_range();
-        bytemuck::cast_slice::<u8, f32>(&data).to_vec()
-    };
-    staging_buf.unmap();
-
-    RtImage {
-        width,
-        height,
-        rgba,
+            rgba,
+        }
     }
 }
 
 /// Run the edge-aware a-trous denoiser over `accum` and return the buffer that
 /// holds the filtered result (with `COPY_SRC` for readback). Ping-pongs between
-/// two scratch buffers across a fixed set of growing-step iterations.
+/// two scratch buffers across a fixed set of growing-step iterations. The
+/// pipeline and layout are owned by the [`Tracer`] and passed in, so no shader
+/// is compiled here.
 #[allow(clippy::too_many_arguments)]
 fn denoise(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
+    pipeline: &crate::gpu::ComputePipeline,
+    bgl: &crate::gpu::BindGroupLayout,
     width: u32,
     height: u32,
     bytes: u64,
@@ -624,31 +752,6 @@ fn denoise(
         mapped_at_creation: false,
     });
 
-    let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-        label: Some("rt_denoise_bgl"),
-        entries: &[
-            bgl_entry(0, buffer_ty_uniform()),
-            bgl_entry(1, buffer_ty_storage(true)),
-            bgl_entry(2, buffer_ty_storage(true)),
-            bgl_entry(3, buffer_ty_storage(true)),
-            bgl_entry(4, buffer_ty_storage(false)),
-        ],
-    });
-    let shader = crate::resources::builders::wgsl_module(
-        device,
-        "rt_denoise",
-        crate::resources::builders::wgsl_source!("denoise"),
-    );
-    let layout =
-        crate::resources::builders::pipeline_layout(device, Some("rt_denoise_layout"), &[&bgl]);
-    let pipeline = crate::resources::builders::compute_pipeline(
-        device,
-        "rt_denoise_pipeline",
-        &layout,
-        &shader,
-        "main",
-    );
-
     const ITERS: u32 = 5;
     let gx = width.div_ceil(8);
     let gy = height.div_ceil(8);
@@ -668,7 +771,7 @@ fn denoise(
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("rt_denoise_bg"),
-            layout: &bgl,
+            layout: bgl,
             entries: &[
                 bg_entry(0, &param_buf),
                 bg_entry(1, gbuf_albedo),
@@ -686,7 +789,7 @@ fn denoise(
                 label: Some("rt_denoise_pass"),
                 timestamp_writes: None,
             });
-            cpass.set_pipeline(&pipeline);
+            cpass.set_pipeline(pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
             cpass.dispatch_workgroups(gx, gy, 1);
         }

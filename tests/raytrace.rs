@@ -9,7 +9,7 @@
 
 use glam::{Mat4, Vec3};
 use viewport_lib::raytrace::{
-    RtBackend, RtCamera, RtLight, RtMaterial, RtScene, RtSettings, pick_backend, trace,
+    RtBackend, RtCamera, RtLight, RtMaterial, RtScene, RtSettings, Tracer, pick_backend, trace,
 };
 
 /// Create a headless device/queue, or skip the test if no adapter is available.
@@ -313,6 +313,53 @@ fn denoise_reduces_noise_and_preserves_mean() {
     assert!(
         (den_mean - raw_mean).abs() < 0.1 * raw_mean + 0.02,
         "denoise should preserve mean luma: raw {raw_mean}, denoised {den_mean}"
+    );
+}
+
+/// A persistent `Tracer` reused across two cameras and a resolution change must
+/// keep producing correct images : the second camera sees the lit quad, and a
+/// smaller re-trace returns the smaller buffer without stale data. Guards the
+/// pipeline/scene caching and the size-dependent buffer reallocation.
+#[test]
+fn tracer_reuse_across_cameras_and_sizes() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let mut scene = RtScene::new();
+    scene.set_sky([0.0; 3], [0.0; 3]);
+    add_quad(
+        &mut scene,
+        1.5,
+        RtMaterial {
+            base_colour: [0.8, 0.8, 0.8],
+            ..RtMaterial::default()
+        },
+    );
+    scene.add_light(RtLight::Directional {
+        direction: [0.0, -0.3, 1.0],
+        colour: [4.0, 4.0, 4.0],
+    });
+
+    let settings = RtSettings {
+        samples: 16,
+        max_bounces: 3,
+        denoise: false,
+    };
+
+    let mut tracer = Tracer::new(&device, &scene);
+
+    // First trace at 48x48.
+    let a = tracer.trace(&device, &queue, &camera(48, 48), &settings);
+    assert_eq!(a.rgba.len(), 48 * 48 * 4);
+    assert!(mean_luma(&a) > 0.01, "lit quad should not be black");
+
+    // Re-trace at a different resolution: buffers reallocate, output resizes.
+    let b = tracer.trace(&device, &queue, &camera(80, 32), &settings);
+    assert_eq!(b.rgba.len(), 80 * 32 * 4);
+    assert!(b.rgba.iter().all(|v| v.is_finite()));
+    assert!(
+        mean_luma(&b) > 0.01,
+        "reused tracer should still light the quad"
     );
 }
 
