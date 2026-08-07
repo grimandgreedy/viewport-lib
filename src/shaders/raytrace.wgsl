@@ -725,7 +725,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var s = 0u; s < spp; s = s + 1u) {
         let rd = camera_ray(vec2<f32>(f32(gid.x), f32(gid.y)), &rng);
         let c = trace_path(frame.cam_pos.xyz, rd, &rng);
-        if all(c == c) {  // reject NaN
+        // Reject non-finite samples (NaN via self-inequality, Inf via the bound):
+        // a degenerate path from a pdf underflow carries no real energy but would
+        // otherwise poison the pixel's running mean.
+        if all(c == c) && max(c.x, max(c.y, c.z)) < 1.0e30 {
             sum = sum + c;
         }
     }
@@ -832,7 +835,8 @@ fn bake_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let li = trace_path(pos + n * EPS, dir, &rng);
         let indirect = PI * li;
         let c = direct.e + indirect;
-        if all(c == c) {
+        // Reject non-finite samples (NaN and Inf), as in the camera kernel.
+        if all(c == c) && max(c.x, max(c.y, c.z)) < 1.0e30 {
             sum = sum + c;
             dir_sum = dir_sum + direct.d + dir * luminance(indirect);
         }
