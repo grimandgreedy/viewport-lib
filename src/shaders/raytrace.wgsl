@@ -69,6 +69,9 @@ struct Frame {
 // w = 1 on a hit / 0 on a sky miss) and world normal (xyz, w unused).
 @group(0) @binding(6) var<storage, read_write> gbuf_albedo: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> gbuf_normal: array<vec4<f32>>;
+// Equirect HDR environment sampled on ray miss when frame.params.w != 0.
+@group(0) @binding(8) var env_tex: texture_2d<f32>;
+@group(0) @binding(9) var env_samp: sampler;
 
 // #include "helpers/brdf.wgsl"
 
@@ -250,7 +253,21 @@ fn any_hit(o: vec3<f32>, d: vec3<f32>, max_t: f32) -> bool {
 
 // ----- Environment -----
 
+// viewport-lib is Z-up: longitude around +Z, latitude with +Z at the top. Must
+// match dir_to_equirect_uv in the IBL shaders so the tracer and rasteriser read
+// the same environment.
+fn dir_to_equirect_uv(dir: vec3<f32>) -> vec2<f32> {
+    let phi = atan2(dir.y, dir.x);
+    let theta = asin(clamp(dir.z, -1.0, 1.0));
+    return vec2<f32>(0.5 + phi / (2.0 * PI), 0.5 - theta / PI);
+}
+
 fn sky(dir: vec3<f32>) -> vec3<f32> {
+    if frame.params.w != 0u {
+        // Equirect environment (image-based lighting).
+        let uv = dir_to_equirect_uv(dir);
+        return textureSampleLevel(env_tex, env_samp, uv, 0.0).rgb;
+    }
     // Z-up hemisphere gradient.
     let t = clamp(dir.z * 0.5 + 0.5, 0.0, 1.0);
     return mix(frame.sky_bottom.rgb, frame.sky_top.rgb, t);

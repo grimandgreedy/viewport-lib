@@ -346,7 +346,7 @@ fn tracer_reuse_across_cameras_and_sizes() {
         denoise: false,
     };
 
-    let mut tracer = Tracer::new(&device, &scene);
+    let mut tracer = Tracer::new(&device, &queue, &scene);
 
     // First trace at 48x48.
     let a = tracer.trace(&device, &queue, &camera(48, 48), &settings);
@@ -360,6 +360,48 @@ fn tracer_reuse_across_cameras_and_sizes() {
     assert!(
         mean_luma(&b) > 0.01,
         "reused tracer should still light the quad"
+    );
+}
+
+/// A constant-radiance equirect environment must light a diffuse quad through
+/// image-based lighting alone (rays that miss the geometry sample the env), far
+/// brighter than the same quad under a black environment with no analytic lights.
+#[test]
+fn environment_lights_the_scene() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let cam = camera(48, 48);
+    let settings = RtSettings {
+        samples: 32,
+        max_bounces: 3,
+        denoise: false,
+    };
+
+    // 4x2 equirect; `fill` is the constant linear radiance in every texel.
+    let solid_env = |fill: f32| -> Vec<f32> { vec![fill; 4 * 2 * 4] };
+
+    let build = |env_fill: f32| -> f32 {
+        let mut scene = RtScene::new();
+        scene.set_sky([0.0; 3], [0.0; 3]); // isolate the environment's contribution
+        scene.set_environment(&solid_env(env_fill), 4, 2);
+        add_quad(
+            &mut scene,
+            1.5,
+            RtMaterial {
+                base_colour: [0.8, 0.8, 0.8],
+                ..RtMaterial::default()
+            },
+        );
+        let mut tracer = Tracer::new(&device, &queue, &scene);
+        mean_luma(&tracer.trace(&device, &queue, &cam, &settings))
+    };
+
+    let dark = build(0.0);
+    let bright = build(1.0);
+    assert!(
+        bright > dark + 0.2,
+        "bright environment ({bright}) should light the quad; dark env was {dark}"
     );
 }
 

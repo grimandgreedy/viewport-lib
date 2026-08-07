@@ -9,15 +9,18 @@
 //! The portable compute traversal runs on every backend and does not touch the
 //! main render path: build an [`RtScene`], call [`trace`], get an [`RtImage`]
 //! back. A dielectric transmission lobe and an optional edge-aware a-trous
-//! denoiser ([`RtSettings::denoise`]) are built in.
+//! denoiser ([`RtSettings::denoise`]) are built in. On ray miss the tracer reads
+//! either an equirect HDR environment ([`RtScene::set_environment`], for
+//! image-based lighting that matches the rasteriser's IBL) or a hemisphere sky.
 //!
 //! [`pick_backend`] reports whether a hardware ray-query traversal is available
 //! (Vulkan/DX12 with the `raytrace-hardware` feature). The ray-query traversal
 //! kernel itself is not wired up yet, so the tracer always runs the compute
 //! traversal; the selection plumbing is in place for that kernel to slot in.
 //!
-//! Not handled yet: a two-level BVH, image-based lighting from an environment
-//! map, and the hardware ray-query kernel. The environment is a hemisphere sky.
+//! Not handled yet: a two-level BVH, importance sampling of the environment (it
+//! is sampled on miss but not used for next-event estimation, so pure-IBL scenes
+//! converge more slowly), and the hardware ray-query kernel.
 
 mod bvh;
 
@@ -159,8 +162,17 @@ pub struct RtImage {
     pub rgba: Vec<f32>,
 }
 
+/// An equirectangular HDR environment used on ray miss for image-based lighting.
+/// `pixels` is linear RGBA f32, row-major, `width * height * 4` long.
+struct EnvMap {
+    pixels: Vec<f32>,
+    width: u32,
+    height: u32,
+}
+
 /// A scene to trace: triangles with per-vertex normals and a material index,
-/// analytic lights, and a hemisphere sky used on ray miss.
+/// analytic lights, and either an equirect HDR environment or a hemisphere sky
+/// used on ray miss.
 #[derive(Default)]
 pub struct RtScene {
     tris: Vec<[Vec3; 3]>,
@@ -170,6 +182,7 @@ pub struct RtScene {
     lights: Vec<RtLight>,
     sky_top: [f32; 3],
     sky_bottom: [f32; 3],
+    env: Option<EnvMap>,
 }
 
 impl RtScene {
@@ -215,6 +228,23 @@ impl RtScene {
     /// Add an analytic light.
     pub fn add_light(&mut self, light: RtLight) {
         self.lights.push(light);
+    }
+
+    /// Set an equirectangular HDR environment sampled on ray miss, giving
+    /// image-based lighting that matches the rasteriser's IBL. `pixels` is linear
+    /// RGBA f32, row-major, `width * height * 4` long, in the same Z-up equirect
+    /// projection the renderer uses (longitude around +Z, latitude with +Z at the
+    /// top). Replaces the hemisphere sky while set. A wrong-length slice is
+    /// ignored.
+    pub fn set_environment(&mut self, pixels: &[f32], width: u32, height: u32) {
+        if (width * height * 4) as usize != pixels.len() || width == 0 || height == 0 {
+            return;
+        }
+        self.env = Some(EnvMap {
+            pixels: pixels.to_vec(),
+            width,
+            height,
+        });
     }
 
     /// Set the hemisphere sky colours (linear). `top` is straight up (+Z),
@@ -313,7 +343,7 @@ pub fn trace(
     camera: &RtCamera,
     settings: &RtSettings,
 ) -> RtImage {
-    Tracer::new(device, scene).trace(device, queue, camera, settings)
+    Tracer::new(device, queue, scene).trace(device, queue, camera, settings)
 }
 
 /// A reusable path tracer that holds a compiled pipeline and an uploaded scene.
@@ -335,6 +365,13 @@ pub struct Tracer {
     mat_buf: crate::gpu::Buffer,
     light_buf: crate::gpu::Buffer,
     frame_buf: crate::gpu::Buffer,
+    // Equirect environment (or a 1x1 fallback). `env_view` is kept valid by
+    // holding `_env_texture`; `has_env` gates the shader between the environment
+    // and the hemisphere sky.
+    _env_texture: crate::gpu::Texture,
+    env_view: crate::gpu::TextureView,
+    env_sampler: crate::gpu::Sampler,
+    has_env: bool,
     num_lights: u32,
     sky_top: [f32; 3],
     sky_bottom: [f32; 3],
@@ -356,7 +393,7 @@ struct TracerSized {
 
 impl Tracer {
     /// Build the pipeline and upload `scene`. Cheap to keep around and re-trace.
-    pub fn new(device: &crate::gpu::Device, scene: &RtScene) -> Self {
+    pub fn new(device: &crate::gpu::Device, queue: &crate::gpu::Queue, scene: &RtScene) -> Self {
         let has_geometry = !scene.tris.is_empty();
 
         // Build the BVH and the reordered triangle array it references. An empty
@@ -471,6 +508,68 @@ impl Tracer {
             mapped_at_creation: false,
         });
 
+        // Equirect environment as an Rgba16Float texture (filterable everywhere
+        // without an extra device feature). Falls back to a 1x1 black texture the
+        // shader ignores when `has_env` is false.
+        let has_env = scene.env.is_some();
+        let (env_w, env_h): (u32, u32) = match &scene.env {
+            Some(e) => (e.width, e.height),
+            None => (1, 1),
+        };
+        let env_texels: Vec<u16> = match &scene.env {
+            Some(e) => e
+                .pixels
+                .iter()
+                .map(|&c| half::f16::from_f32(c).to_bits())
+                .collect(),
+            None => vec![0u16; 4],
+        };
+        let env_texture = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("rt_env"),
+            size: crate::gpu::Extent3d {
+                width: env_w,
+                height: env_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba16Float,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &env_texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&env_texels),
+            crate::gpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(env_w * 8),
+                rows_per_image: Some(env_h),
+            },
+            crate::gpu::Extent3d {
+                width: env_w,
+                height: env_h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let env_view = env_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+        // Wrap longitude, clamp latitude, bilinear.
+        let env_sampler = device.create_sampler(&crate::gpu::SamplerDescriptor {
+            label: Some("rt_env_sampler"),
+            address_mode_u: crate::gpu::AddressMode::Repeat,
+            address_mode_v: crate::gpu::AddressMode::ClampToEdge,
+            address_mode_w: crate::gpu::AddressMode::ClampToEdge,
+            mag_filter: crate::gpu::FilterMode::Linear,
+            min_filter: crate::gpu::FilterMode::Linear,
+            mipmap_filter: crate::gpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("rt_bgl"),
             entries: &[
@@ -482,6 +581,8 @@ impl Tracer {
                 bgl_entry(5, buffer_ty_storage(false)),
                 bgl_entry(6, buffer_ty_storage(false)),
                 bgl_entry(7, buffer_ty_storage(false)),
+                bgl_entry(8, texture_ty_float()),
+                bgl_entry(9, sampler_ty_filtering()),
             ],
         });
         let shader = crate::resources::builders::wgsl_module(
@@ -538,6 +639,10 @@ impl Tracer {
             mat_buf,
             light_buf,
             frame_buf,
+            _env_texture: env_texture,
+            env_view,
+            env_sampler,
+            has_env,
             num_lights,
             sky_top: scene.sky_top,
             sky_bottom: scene.sky_bottom,
@@ -584,6 +689,14 @@ impl Tracer {
                 bg_entry(5, &accum_buf),
                 bg_entry(6, &gbuf_albedo),
                 bg_entry(7, &gbuf_normal),
+                crate::gpu::BindGroupEntry {
+                    binding: 8,
+                    resource: crate::gpu::BindingResource::TextureView(&self.env_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 9,
+                    resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
+                },
             ],
         });
         self.sized = Some(TracerSized {
@@ -648,7 +761,12 @@ impl Tracer {
         while done < total {
             let this_batch = (total - done).min(BATCH);
             let mut fu = base_frame;
-            fu.params = [this_batch, done, batch_index.wrapping_mul(2_654_435_761), 0];
+            fu.params = [
+                this_batch,
+                done,
+                batch_index.wrapping_mul(2_654_435_761),
+                self.has_env as u32,
+            ];
             queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
 
             let mut encoder =
@@ -825,6 +943,18 @@ fn buffer_ty_storage(read_only: bool) -> crate::gpu::BindingType {
         has_dynamic_offset: false,
         min_binding_size: None,
     }
+}
+
+fn texture_ty_float() -> crate::gpu::BindingType {
+    crate::gpu::BindingType::Texture {
+        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+        view_dimension: crate::gpu::TextureViewDimension::D2,
+        multisampled: false,
+    }
+}
+
+fn sampler_ty_filtering() -> crate::gpu::BindingType {
+    crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering)
 }
 
 fn bg_entry(binding: u32, buffer: &crate::gpu::Buffer) -> crate::gpu::BindGroupEntry<'_> {

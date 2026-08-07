@@ -63,10 +63,55 @@ struct AppState {
     settle_at: Option<std::time::Instant>,
 }
 
+/// A procedural equirect HDR environment: a Z-up sky gradient with a bright sun
+/// disc aligned to the scene's directional light. Fills the same projection the
+/// tracer samples (longitude around +Z, latitude with +Z at the top).
+fn procedural_env(w: u32, h: u32, sun_dir: Vec3) -> Vec<f32> {
+    use std::f32::consts::PI;
+    let sun = sun_dir.normalize();
+    let ground = Vec3::new(0.20, 0.18, 0.16);
+    let horizon = Vec3::new(0.72, 0.78, 0.88);
+    let zenith = Vec3::new(0.18, 0.40, 0.90);
+    let mut px = vec![0.0f32; (w * h * 4) as usize];
+    for y in 0..h {
+        let v = (y as f32 + 0.5) / h as f32;
+        let theta = (0.5 - v) * PI; // +pi/2 at the top (+Z)
+        let (st, ct) = theta.sin_cos();
+        for x in 0..w {
+            let u = (x as f32 + 0.5) / w as f32;
+            let phi = (u - 0.5) * 2.0 * PI;
+            let dir = Vec3::new(ct * phi.cos(), ct * phi.sin(), st);
+
+            // Sky: ground below the horizon, horizon->zenith above.
+            let mut c = if dir.z >= 0.0 {
+                horizon.lerp(zenith, dir.z.powf(0.6))
+            } else {
+                ground.lerp(horizon, (dir.z + 1.0).clamp(0.0, 1.0))
+            };
+
+            // Sun: a small bright disc plus a soft glow.
+            let d = dir.dot(sun).clamp(-1.0, 1.0);
+            if d > 0.9995 {
+                c = Vec3::splat(10.0);
+            } else {
+                c += Vec3::new(1.0, 0.85, 0.6) * (d.max(0.0).powf(64.0)) * 3.0;
+            }
+
+            let i = ((y * w + x) * 4) as usize;
+            px[i] = c.x;
+            px[i + 1] = c.y;
+            px[i + 2] = c.z;
+            px[i + 3] = 1.0;
+        }
+    }
+    px
+}
+
 /// Build the demo scene once.
 fn build_scene() -> RtScene {
     let mut scene = RtScene::new();
-    scene.set_sky([0.55, 0.72, 1.0], [0.25, 0.26, 0.28]);
+    let sun_dir = Vec3::new(0.3, -0.4, 0.85);
+    scene.set_environment(&procedural_env(512, 256, sun_dir), 512, 256);
 
     let add =
         |scene: &mut RtScene, mesh: &viewport_lib::MeshData, origin: Vec3, mat: RtMaterial| {
@@ -398,7 +443,7 @@ impl ApplicationHandler for App {
             "path tracer viewer: {} triangles. left-drag orbit, scroll zoom.",
             scene.triangle_count()
         );
-        let tracer = Tracer::new(&device, &scene);
+        let tracer = Tracer::new(&device, &queue, &scene);
 
         let mut state = AppState {
             window,
