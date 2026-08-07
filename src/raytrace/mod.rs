@@ -377,6 +377,9 @@ pub struct Tracer {
     sky_bottom: [f32; 3],
     has_geometry: bool,
     sized: Option<TracerSized>,
+    // Samples already blended into the accumulation buffer. `trace` resets it to
+    // 0 each call; `accumulate` adds on top for progressive convergence.
+    accumulated: u32,
 }
 
 /// Output-resolution-dependent buffers, rebuilt when the size changes.
@@ -648,6 +651,7 @@ impl Tracer {
             sky_bottom: scene.sky_bottom,
             has_geometry,
             sized: None,
+            accumulated: 0,
         }
     }
 
@@ -659,6 +663,9 @@ impl Tracer {
                 return;
             }
         }
+        // New buffers mean a fresh accumulation; the old running average does not
+        // carry to a different resolution.
+        self.accumulated = 0;
         let bytes = (width as u64) * (height as u64) * 16;
         let storage = |label: &str, extra: crate::gpu::BufferUsages| {
             device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -711,9 +718,27 @@ impl Tracer {
         });
     }
 
-    /// Trace `camera` at `settings` and read back the HDR image. Reuses the
-    /// pipeline and uploaded scene; only per-frame work runs here.
+    /// Trace `camera` at `settings` from scratch and read back the HDR image.
+    /// Discards any running accumulation first, so each call is an independent
+    /// `settings.samples`-sample render. Reuses the pipeline and uploaded scene.
     pub fn trace(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        camera: &RtCamera,
+        settings: &RtSettings,
+    ) -> RtImage {
+        self.reset_accumulation();
+        self.accumulate(device, queue, camera, settings)
+    }
+
+    /// Add `settings.samples` more samples on top of the running accumulation and
+    /// read back the current mean. Successive calls with the same camera converge
+    /// toward the reference image (progressive rendering); call
+    /// [`reset_accumulation`](Self::reset_accumulation) when the camera or output
+    /// size changes (a size change resets automatically). [`accumulated_samples`](Self::accumulated_samples)
+    /// reports how many samples are blended in so far.
+    pub fn accumulate(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
@@ -748,23 +773,26 @@ impl Tracer {
             params: [0, 0, 0, 0],
         };
 
-        // Accumulate in batches so no single dispatch runs long enough to risk a
-        // GPU watchdog reset. The first batch (sample_base == 0) overwrites the
-        // reused accumulation buffer, so nothing leaks between traces.
-        let total = settings.samples.max(1);
+        // Dispatch `settings.samples` more samples in batches, so no single
+        // dispatch runs long enough to risk a GPU watchdog reset. `sample_base`
+        // is the running count: the shader blends each batch into the mean, so
+        // the first batch of a fresh accumulation (base 0) overwrites and later
+        // batches refine. The seed is keyed on the running count so every batch,
+        // within a call and across calls, draws a distinct sample set.
         const BATCH: u32 = 32;
         let gx = width.div_ceil(8);
         let gy = height.div_ceil(8);
 
-        let mut done = 0u32;
-        let mut batch_index = 0u32;
-        while done < total {
-            let this_batch = (total - done).min(BATCH);
+        let start = self.accumulated;
+        let target = start + settings.samples.max(1);
+        let mut done = start;
+        while done < target {
+            let this_batch = (target - done).min(BATCH);
             let mut fu = base_frame;
             fu.params = [
                 this_batch,
                 done,
-                batch_index.wrapping_mul(2_654_435_761),
+                done.wrapping_mul(2_654_435_761).wrapping_add(1),
                 self.has_env as u32,
             ];
             queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
@@ -785,8 +813,8 @@ impl Tracer {
             queue.submit(std::iter::once(encoder.finish()));
 
             done += this_batch;
-            batch_index += 1;
         }
+        self.accumulated = target;
 
         // Optionally denoise, then read back whichever buffer holds the result.
         let denoised;
@@ -831,6 +859,19 @@ impl Tracer {
             height,
             rgba,
         }
+    }
+
+    /// Samples blended into the accumulation so far (0 after a reset or a size
+    /// change). A convergence signal: keep calling [`accumulate`](Self::accumulate)
+    /// until this reaches the target sample count.
+    pub fn accumulated_samples(&self) -> u32 {
+        self.accumulated
+    }
+
+    /// Discard the running accumulation so the next [`accumulate`](Self::accumulate)
+    /// starts a fresh image. Call when the camera or scene changes.
+    pub fn reset_accumulation(&mut self) {
+        self.accumulated = 0;
     }
 }
 

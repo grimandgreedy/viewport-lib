@@ -1,10 +1,11 @@
 //! Interactive path-tracer viewer.
 //!
 //! Opens a window and path-traces a small Z-up scene (a ground plane and three
-//! spheres: diffuse, clear glass, and metal), blitting the traced image to the
-//! surface. The tracer is offscreen and reads back to the CPU, so this re-traces
-//! on demand: a fast low-sample denoised preview while you drag the camera, and
-//! a cleaner pass once you let go.
+//! spheres: diffuse, clear glass, and metal) lit by a procedural HDR
+//! environment, blitting the traced image to the surface. The tracer is
+//! offscreen and reads back to the CPU: while you move the camera it shows a
+//! fast low-sample denoised preview, and once the camera is still it
+//! progressively accumulates samples, refining toward a converged image.
 //!
 //! Controls: left-drag orbits, scroll zooms.
 //!
@@ -20,6 +21,11 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
+
+/// Samples to converge to when the camera is idle.
+const TARGET_SPP: u32 = 512;
+/// Samples added per idle frame, so each progressive step stays short.
+const CHUNK: u32 = 24;
 
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
@@ -57,9 +63,8 @@ struct AppState {
 
     dragging: bool,
     last_cursor: Option<(f64, f64)>,
-    dirty: bool,
-    // Set after a scroll to schedule the clean high-sample pass once zooming
-    // stops (scroll has no release event to trigger it).
+    // Set after a scroll to resume convergence once zooming stops (scroll has no
+    // release event to trigger it).
     settle_at: Option<std::time::Instant>,
 }
 
@@ -189,34 +194,39 @@ impl AppState {
         self.target + dir * self.distance
     }
 
-    /// Trace the scene at the given quality and upload the result as a texture.
-    fn retrace(&mut self) {
+    /// Render one frame and upload it. While interacting, traces a fresh cheap
+    /// denoised preview at reduced resolution. When idle, progressively
+    /// accumulates full-resolution samples toward `TARGET_SPP`. Returns true when
+    /// more accumulation is pending, so the caller keeps requesting redraws until
+    /// the image has converged.
+    fn render(&mut self) -> bool {
         let sw = self.surface_config.width.max(1);
         let sh = self.surface_config.height.max(1);
-        // Cap the trace resolution so a drag stays responsive; the blit stretches
-        // it to fill the window.
-        let tw = sw.min(900);
-        let th = ((tw as f32) * (sh as f32) / (sw as f32)).round().max(1.0) as u32;
+        // Cap the trace resolution; the blit stretches it to fill the window.
+        let full_w = sw.min(900);
+        let full_h = ((full_w as f32) * (sh as f32) / (sw as f32))
+            .round()
+            .max(1.0) as u32;
 
         let eye = self.eye();
         let view = Mat4::look_at_rh(eye, self.target, Vec3::Z);
 
         // "Interacting" covers both an active drag and the brief settle window
         // after a scroll (which has no release event): both want the cheap
-        // preview, and the settle timer promotes to the clean pass once input
-        // stops.
+        // preview, and convergence resumes once input stops.
         let interacting = self.dragging || self.settle_at.is_some();
 
-        // Drop the resolution while interacting so it stays responsive; the blit
-        // stretches it to fill the window.
+        // Drop the resolution while interacting so it stays responsive.
         let (tw, th) = if interacting {
-            let dw = tw.min(480);
+            let dw = full_w.min(480);
             (
                 dw,
-                ((dw as f32) * (th as f32) / (tw as f32)).round().max(1.0) as u32,
+                ((dw as f32) * (full_h as f32) / (full_w as f32))
+                    .round()
+                    .max(1.0) as u32,
             )
         } else {
-            (tw, th)
+            (full_w, full_h)
         };
 
         let proj = Mat4::perspective_rh(42f32.to_radians(), tw as f32 / th as f32, 0.1, 100.0);
@@ -227,25 +237,41 @@ impl AppState {
             height: th,
         };
 
-        // Fast denoised preview while interacting; a cleaner pass when settled.
-        let settings = if interacting {
-            RtSettings {
+        let (img, pending) = if interacting {
+            // Fresh denoised low-res preview each frame the camera moves.
+            let settings = RtSettings {
                 samples: 6,
                 max_bounces: 4,
                 denoise: true,
-            }
+            };
+            (
+                self.tracer
+                    .trace(&self.device, &self.queue, &camera, &settings),
+                false,
+            )
         } else {
-            RtSettings {
-                samples: 48,
+            // Idle: keep adding samples to the same image until it converges.
+            if self.tracer.accumulated_samples() >= TARGET_SPP {
+                return false; // converged; leave the current texture on screen
+            }
+            let settings = RtSettings {
+                samples: CHUNK,
                 max_bounces: 8,
                 denoise: false,
-            }
+            };
+            let img = self
+                .tracer
+                .accumulate(&self.device, &self.queue, &camera, &settings);
+            let pending = self.tracer.accumulated_samples() < TARGET_SPP;
+            (img, pending)
         };
 
-        let img = self
-            .tracer
-            .trace(&self.device, &self.queue, &camera, &settings);
+        self.upload(&img, tw, th);
+        pending
+    }
 
+    /// Tone-map the traced HDR image and upload it as the blit texture.
+    fn upload(&mut self, img: &viewport_lib::raytrace::RtImage, tw: u32, th: u32) {
         // Reinhard tone map to linear 8-bit; the sRGB surface applies gamma.
         let mut bytes = vec![0u8; (tw * th * 4) as usize];
         for (i, px) in img.rgba.chunks_exact(4).enumerate() {
@@ -462,11 +488,8 @@ impl ApplicationHandler for App {
             target: Vec3::new(0.0, 0.0, 1.0),
             dragging: false,
             last_cursor: None,
-            dirty: true,
             settle_at: None,
         };
-        state.retrace();
-        state.dirty = false;
         state.window.request_redraw();
         self.state = Some(state);
     }
@@ -485,7 +508,7 @@ impl ApplicationHandler for App {
                     state
                         .surface
                         .configure(&state.device, &state.surface_config);
-                    state.dirty = true;
+                    state.tracer.reset_accumulation();
                     state.window.request_redraw();
                 }
             }
@@ -498,8 +521,8 @@ impl ApplicationHandler for App {
                 state.dragging = btn_state == ElementState::Pressed;
                 if !state.dragging {
                     state.last_cursor = None;
-                    // Settled: request the cleaner high-sample pass.
-                    state.dirty = true;
+                    // Released: resume convergence from a clean slate.
+                    state.tracer.reset_accumulation();
                     state.window.request_redraw();
                 }
             }
@@ -512,7 +535,8 @@ impl ApplicationHandler for App {
                         let dy = (y - py) as f32;
                         state.yaw -= dx * 0.008;
                         state.pitch = (state.pitch + dy * 0.008).clamp(-1.45, 1.45);
-                        state.dirty = true;
+                        // Camera moved: the running accumulation is stale.
+                        state.tracer.reset_accumulation();
                         state.window.request_redraw();
                     }
                 }
@@ -525,18 +549,19 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.02,
                 };
                 state.distance = (state.distance * (1.0 - dy * 0.1)).clamp(2.5, 40.0);
-                state.dirty = true;
-                // Push the settle deadline out; a preview renders now, and the
-                // clean pass fires from about_to_wait once scrolling stops.
+                // Camera moved; push the settle deadline out so a preview renders
+                // now and convergence resumes once scrolling stops.
+                state.tracer.reset_accumulation();
                 state.settle_at =
                     Some(std::time::Instant::now() + std::time::Duration::from_millis(160));
                 state.window.request_redraw();
             }
 
             WindowEvent::RedrawRequested => {
-                if state.dirty {
-                    state.retrace();
-                    state.dirty = false;
+                let pending = state.render();
+                if pending {
+                    // Keep converging: schedule the next accumulation step.
+                    state.window.request_redraw();
                 }
                 let frame = match state.surface.get_current_texture() {
                     Ok(f) => f,
@@ -591,12 +616,12 @@ impl ApplicationHandler for App {
             return;
         };
         // Drive the post-scroll settle: once no wheel event has arrived for the
-        // debounce window, render the clean high-sample pass. Until then, sleep
-        // exactly until the deadline; when idle, wait for the next event.
+        // debounce window, resume convergence. Until then, sleep exactly until the
+        // deadline; when idle, wait for the next event.
         match state.settle_at {
             Some(deadline) if std::time::Instant::now() >= deadline => {
                 state.settle_at = None;
-                state.dirty = true;
+                state.tracer.reset_accumulation();
                 state.window.request_redraw();
                 event_loop.set_control_flow(ControlFlow::Wait);
             }

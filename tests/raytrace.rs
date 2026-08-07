@@ -405,6 +405,63 @@ fn environment_lights_the_scene() {
     );
 }
 
+/// Progressive accumulation must reduce noise as samples build up while keeping
+/// the mean stable, and the sample counter and reset must track correctly.
+#[test]
+fn progressive_accumulation_converges() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    let cam = camera(64, 64);
+    // A rough metal quad lit only by the sky gradient: pure GGX-sampling noise
+    // that averages down as samples accumulate.
+    let mut scene = RtScene::new();
+    add_quad(
+        &mut scene,
+        4.0,
+        RtMaterial {
+            base_colour: [0.9, 0.9, 0.9],
+            metallic: 1.0,
+            roughness: 0.6,
+            ..RtMaterial::default()
+        },
+    );
+    let chunk = RtSettings {
+        samples: 8,
+        max_bounces: 3,
+        denoise: false,
+    };
+
+    let mut tracer = Tracer::new(&device, &queue, &scene);
+
+    // First small chunk: noisy.
+    let early = tracer.accumulate(&device, &queue, &cam, &chunk);
+    assert_eq!(tracer.accumulated_samples(), 8);
+
+    // Keep accumulating on the same camera toward convergence.
+    let mut late = tracer.accumulate(&device, &queue, &cam, &chunk);
+    while tracer.accumulated_samples() < 128 {
+        late = tracer.accumulate(&device, &queue, &cam, &chunk);
+    }
+    assert!(tracer.accumulated_samples() >= 128);
+
+    let early_var = neighbour_variance(&early);
+    let late_var = neighbour_variance(&late);
+    assert!(
+        late_var < early_var * 0.6,
+        "more samples should cut noise: 8 spp var {early_var}, 128+ spp var {late_var}"
+    );
+    let early_mean = mean_luma(&early);
+    let late_mean = mean_luma(&late);
+    assert!(
+        (late_mean - early_mean).abs() < 0.12 * early_mean + 0.02,
+        "accumulation should preserve the mean: early {early_mean}, late {late_mean}"
+    );
+
+    tracer.reset_accumulation();
+    assert_eq!(tracer.accumulated_samples(), 0);
+}
+
 /// Without the `raytrace-hardware` feature the tracer always reports the
 /// portable compute backend, regardless of adapter capabilities.
 #[test]
