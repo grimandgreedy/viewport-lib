@@ -50,6 +50,10 @@ pub(crate) fn is_instanceable(
             .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
         && resources.mesh_store.get(item.mesh_id).map_or(true, |m| {
             m.position_override_buffer.is_none() && m.normal_override_buffer.is_none()
+            // A baked lightmap is sampled only on the per-object path; the
+            // instanced shader has no lightmap binding, so a lightmapped mesh must
+            // stay per-object or its lightmap silently does not render.
+                && m.lightmap.is_none()
         })
 }
 
@@ -246,6 +250,45 @@ mod tests {
         assert!(
             !is_instanceable(&item, &resources, &[]),
             "an emissive-textured item must fall back to the per-object path",
+        );
+    }
+
+    /// A baked lightmap is sampled only on the per-object path (the instanced
+    /// shader has no lightmap binding), so a lightmapped mesh must not instance
+    /// or its lightmap silently fails to render.
+    #[test]
+    fn lightmapped_mesh_is_not_instanceable() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mesh = crate::geometry::primitives::plane(1.0, 1.0);
+        let mesh_id = resources.upload_mesh_data(&device, &mesh).unwrap();
+
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "a plain mesh item should instance",
+        );
+
+        let tex = resources
+            .upload_texture(&device, &queue, 1, 1, &[255u8, 255, 255, 255])
+            .unwrap();
+        resources
+            .set_lightmap(
+                &device,
+                mesh_id,
+                &[glam::Vec2::ZERO; 4],
+                crate::resources::lightmap::LightmapData::NonDirectional { radiance: tex },
+                crate::resources::lightmap::LightmapMode::Replace,
+            )
+            .unwrap();
+        assert!(
+            !is_instanceable(&item, &resources, &[]),
+            "a lightmapped mesh must fall back to the per-object path",
         );
     }
 }

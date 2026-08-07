@@ -129,6 +129,9 @@ naga = { version = "27", features = ["termcolor"] }
 winit = "0.30"
 pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# The lightmap-bake showcase runs the full offline lightmapper: this crate's
+# unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Example-only.
+viewport-lib-bake = { path = "../viewport-lib-bake" }
 
 
 
@@ -140,7 +143,7 @@ required-features = ["wgpu27", "example-egui", "egui-adapter"]
 [[example]]
 name = "showcase"
 path = "examples/showcase/main.rs"
-required-features = ["wgpu27", "example-egui", "egui-adapter"]
+required-features = ["wgpu27", "example-egui", "egui-adapter", "raytrace", "bake"]
 
 [[example]]
 name = "eframe-minimal-wgpu29"

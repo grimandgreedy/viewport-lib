@@ -13,6 +13,7 @@
 use glam::Vec3;
 use viewport_lib::raytrace::{
     RtImage, RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap,
+    bake_lightmap_directional,
 };
 
 fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Queue)> {
@@ -258,6 +259,54 @@ fn empty_texels_stay_black() {
             }
         }
     }
+}
+
+/// The directional bake's dominant-direction atlas points back toward a single
+/// light: a texel lit only from straight up reports a direction along +Z.
+#[test]
+fn directional_bake_points_at_the_light() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut scene = RtScene::new();
+    scene.set_sky([0.0; 3], [0.0; 3]);
+    add_floor(&mut scene, 5.0, RtMaterial::default());
+    scene.add_light(RtLight::Directional {
+        direction: [0.0, 0.0, 1.0],
+        colour: [2.0, 2.0, 2.0],
+    });
+
+    let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let surf = TexelSurfaces {
+        width: 32,
+        height: 32,
+        world_pos: &pos,
+        world_normal: &nrm,
+    };
+    let bake = bake_lightmap_directional(&device, &queue, &scene, &surf, &settings(128));
+    assert_eq!(bake.irradiance.len(), 32 * 32 * 4);
+    assert_eq!(bake.direction.len(), 32 * 32 * 4);
+
+    // Average the weighted-direction vectors over covered texels and normalise.
+    let mut d = [0.0f64; 3];
+    let mut n = 0u64;
+    for px in bake.direction.chunks_exact(4) {
+        if px[3] > 0.5 {
+            d[0] += px[0] as f64;
+            d[1] += px[1] as f64;
+            d[2] += px[2] as f64;
+            n += 1;
+        }
+    }
+    assert!(n > 0);
+    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    assert!(len > 1e-6, "expected a non-zero dominant direction");
+    let dz = d[2] / len;
+    assert!(
+        dz > 0.9,
+        "dominant direction should point toward +Z, got {d:?}"
+    );
 }
 
 /// A scene with no geometry bakes a black atlas of the requested size.
