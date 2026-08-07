@@ -434,13 +434,25 @@ impl ApplicationHandler for App {
         // tracer can build its acceleration structure and rayQuery kernel. Absent
         // it (Metal, the web), the hardware tracer falls back to the compute path.
         let ray_query = wgpu::Features::EXPERIMENTAL_RAY_QUERY;
-        let wanted = if adapter.features().contains(ray_query) {
+        let has_ray_query = adapter.features().contains(ray_query);
+        let wanted = if has_ray_query {
             ray_query
         } else {
             wgpu::Features::empty()
         };
+        // `EXPERIMENTAL_RAY_QUERY` is an experimental feature, so requesting it
+        // also needs the acknowledgement token or the device request fails with
+        // `ExperimentalFeaturesNotEnabled`. Only opt in when actually asking for it.
+        let experimental_features = if has_ray_query {
+            // Safety: we only read the acceleration structure through the tracer's
+            // own rayQuery kernel, which is the intended use of the feature.
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: wanted,
+            experimental_features,
             ..Default::default()
         }))
         .expect("device");

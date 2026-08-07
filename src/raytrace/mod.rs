@@ -33,6 +33,7 @@
 #[cfg(feature = "raytrace-hardware")]
 mod accel;
 mod bvh;
+mod env_dist;
 
 use crate::gpu::util::DeviceExt;
 use glam::{Mat4, Vec3};
