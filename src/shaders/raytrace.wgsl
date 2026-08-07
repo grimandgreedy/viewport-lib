@@ -1,8 +1,10 @@
 // ---------------------------------------------------------------------------
 // Path tracer megakernel.
 //
-// One invocation per pixel traces a full path in registers. Compute only, no
-// hardware ray query. World-space triangle BVH; next-event estimation to
+// One invocation per pixel traces a full path in registers. The traversal
+// (closest_hit / any_hit, marked with rt-traversal below) is a compute walk of
+// a world-space triangle BVH by default; the raytrace-hardware backend swaps
+// that region for a rayQuery kernel. Next-event estimation to
 // analytic lights plus a hemisphere sky on miss; cosine-weighted diffuse and
 // GGX-sampled specular lobes; Russian-roulette termination; samples accumulate
 // into a storage buffer.
@@ -78,6 +80,10 @@ struct Frame {
 // hemisphere from the surface point behind its atlas texel.
 @group(0) @binding(10) var<storage, read> texel_pos: array<vec4<f32>>;
 @group(0) @binding(11) var<storage, read> texel_nrm: array<vec4<f32>>;
+// Dominant-direction accumulator for the bake: the running mean of the
+// luminance-weighted incoming-light direction (xyz), coverage in w. A later
+// encode stage normalises it into a dominant direction + directionality.
+@group(0) @binding(12) var<storage, read_write> accum_dir: array<vec4<f32>>;
 
 // #include "helpers/brdf.wgsl"
 
@@ -150,6 +156,11 @@ fn ray_triangle(o: vec3<f32>, d: vec3<f32>, p0: vec3<f32>, p1: vec3<f32>, p2: ve
     return true;
 }
 
+// closest_hit + any_hit walk the compute BVH below. The hardware backend
+// (raytrace-hardware) replaces this whole region, up to the matching close
+// marker, with a rayQuery kernel over an acceleration structure, keeping the
+// same Hit layout so all shading downstream is untouched.
+// <rt-traversal>
 fn closest_hit(o: vec3<f32>, d: vec3<f32>) -> Hit {
     var h: Hit;
     h.hit = false;
@@ -256,6 +267,7 @@ fn any_hit(o: vec3<f32>, d: vec3<f32>, max_t: f32) -> bool {
     }
     return false;
 }
+// </rt-traversal>
 
 // ----- Environment -----
 
@@ -537,13 +549,24 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 // ----- Lightmap bake -----
 
-// Irradiance a texel receives directly from the analytic delta lights: the
-// geometric term (radiance times cosine, visibility-tested), with no BRDF. A
-// hemisphere ray almost never hits a delta light, so these must be sampled
-// explicitly; the environment and bounced surfaces are left to the hemisphere
-// integral in bake_main.
-fn texel_direct_irradiance(pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// Direct lighting a texel receives from the analytic delta lights: the geometric
+// irradiance (radiance times cosine, visibility-tested, no BRDF) in `e`, and the
+// luminance-weighted sum of the light directions in `d` for the dominant-
+// direction encode. A hemisphere ray almost never hits a delta light, so these
+// are sampled explicitly; the environment and bounced surfaces are left to the
+// hemisphere integral in bake_main.
+struct DirectLighting {
+    e: vec3<f32>,
+    d: vec3<f32>,
+}
+
+fn texel_direct(pos: vec3<f32>, n: vec3<f32>) -> DirectLighting {
     var e = vec3<f32>(0.0);
+    var d = vec3<f32>(0.0);
     let count = frame.dims.z;
     for (var i = 0u; i < count; i = i + 1u) {
         let lt = lights[i];
@@ -568,9 +591,11 @@ fn texel_direct_irradiance(pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         let ndl = dot(n, l);
         if ndl <= 0.0 { continue; }
         if any_hit(pos + n * EPS, l, max_t) { continue; }
-        e = e + radiance * ndl;
+        let contrib = radiance * ndl;
+        e = e + contrib;
+        d = d + l * luminance(contrib);
     }
-    return e;
+    return DirectLighting(e, d);
 }
 
 // One invocation per atlas texel. Reads the surface point behind the texel from
@@ -591,7 +616,10 @@ fn bake_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cov = texel_pos[idx].w;
     if cov <= 0.0 {
         // Empty texel: no surface behind it. Clear once on the first batch.
-        if sample_base == 0u { accum[idx] = vec4<f32>(0.0); }
+        if sample_base == 0u {
+            accum[idx] = vec4<f32>(0.0);
+            accum_dir[idx] = vec4<f32>(0.0);
+        }
         return;
     }
 
@@ -600,27 +628,32 @@ fn bake_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let spp = frame.params.x;
     var rng = init_rng(idx, frame.params.z);
 
-    // Direct irradiance is deterministic per texel; evaluate it once and add it
-    // to every sample so the cross-batch mean below stays exact.
-    let e_direct = texel_direct_irradiance(pos, n);
+    // Direct lighting is deterministic per texel; evaluate it once and add it to
+    // every sample so the cross-batch mean below stays exact.
+    let direct = texel_direct(pos, n);
 
     var sum = vec3<f32>(0.0);
+    var dir_sum = vec3<f32>(0.0);
     for (var s = 0u; s < spp; s = s + 1u) {
         let dir = cosine_sample(n, &rng);
         let li = trace_path(pos + n * EPS, dir, &rng);
-        let c = e_direct + PI * li;
+        let indirect = PI * li;
+        let c = direct.e + indirect;
         if all(c == c) {
             sum = sum + c;
+            dir_sum = dir_sum + direct.d + dir * luminance(indirect);
         }
     }
 
-    let mean_new = sum / f32(spp);
-    var result = mean_new;
+    let inv = 1.0 / f32(spp);
+    var result = sum * inv;
+    var dir_result = dir_sum * inv;
     if sample_base > 0u {
-        let prev = accum[idx].rgb;
         let total = f32(sample_base) + f32(spp);
-        result = (prev * f32(sample_base) + sum) / total;
+        result = (accum[idx].rgb * f32(sample_base) + sum) / total;
+        dir_result = (accum_dir[idx].xyz * f32(sample_base) + dir_sum) / total;
     }
     // w carries coverage so a consumer can tell baked texels from empty ones.
     accum[idx] = vec4<f32>(result, cov);
+    accum_dir[idx] = vec4<f32>(dir_result, cov);
 }

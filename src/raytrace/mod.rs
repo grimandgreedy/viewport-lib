@@ -20,18 +20,93 @@
 //! primary-ray source differs.
 //!
 //! [`pick_backend`] reports whether a hardware ray-query traversal is available
-//! (Vulkan/DX12 with the `raytrace-hardware` feature). The ray-query traversal
-//! kernel itself is not wired up yet, so the tracer always runs the compute
-//! traversal; the selection plumbing is in place for that kernel to slot in.
+//! (Vulkan/DX12 with the `raytrace-hardware` feature). When it is, the tracer
+//! builds an acceleration structure and compiles the `rayQuery` variant of the
+//! kernel, which swaps only the traversal (`closest_hit` / `any_hit`); all
+//! shading is shared with the compute path. Metal and the web have no ray query,
+//! so they always run the portable compute traversal.
 //!
-//! Not handled yet: a two-level BVH, importance sampling of the environment (it
-//! is sampled on miss but not used for next-event estimation, so pure-IBL scenes
-//! converge more slowly), and the hardware ray-query kernel.
+//! Not handled yet: a two-level BVH, and importance sampling of the environment
+//! (it is sampled on miss but not used for next-event estimation, so pure-IBL
+//! scenes converge more slowly).
 
+#[cfg(feature = "raytrace-hardware")]
+mod accel;
 mod bvh;
 
 use crate::gpu::util::DeviceExt;
 use glam::{Mat4, Vec3};
+
+/// Compose the hardware ray-query kernel from the compute megakernel source.
+///
+/// Everything except the traversal is shared: this swaps the `rt-traversal`
+/// region (the compute `closest_hit` / `any_hit` BVH walk) for `rayQuery`
+/// versions over an `acceleration_structure` declared at group 0, binding 13.
+/// WGSL's `rayQuery` type needs no enable-directive (naga recognises it
+/// directly), so nothing is prepended. The `Hit` layout the rest of the kernel
+/// reads is identical, so shading, sampling, the integrator, and both entry
+/// points are untouched.
+///
+/// `primitive_index` from the committed intersection indexes the `tris` buffer
+/// directly (the BLAS is built in `tris` order), and the barycentrics use the
+/// same vertex-1/vertex-2 convention as the Moller-Trumbore path, so normals and
+/// front-face orientation match the software backend.
+#[cfg(feature = "raytrace-hardware")]
+fn compose_hw_kernel(src: &str) -> String {
+    const OPEN: &str = "// <rt-traversal>";
+    const CLOSE: &str = "// </rt-traversal>";
+    let start = src
+        .find(OPEN)
+        .expect("raytrace.wgsl is missing the rt-traversal open marker");
+    let close = src
+        .find(CLOSE)
+        .expect("raytrace.wgsl is missing the rt-traversal close marker");
+    let end = close + CLOSE.len();
+
+    const HW_TRAVERSAL: &str = r#"@group(0) @binding(13) var rt_accel: acceleration_structure;
+
+fn closest_hit(o: vec3<f32>, d: vec3<f32>) -> Hit {
+    var h: Hit;
+    h.hit = false;
+    h.t = T_MAX;
+    var rq: ray_query;
+    rayQueryInitialize(&rq, rt_accel, RayDesc(RAY_FLAG_NONE, 0xFFu, EPS, T_MAX, o, d));
+    while (rayQueryProceed(&rq)) {}
+    let isect = rayQueryGetCommittedIntersection(&rq);
+    if isect.kind == RAY_QUERY_INTERSECTION_TRIANGLE {
+        let tri = tris[isect.primitive_index];
+        let bc = isect.barycentrics;
+        let w = 1.0 - bc.x - bc.y;
+        let ns = normalize(tri.n0 * w + tri.n1 * bc.x + tri.n2 * bc.y);
+        let ng = normalize(cross(tri.p1 - tri.p0, tri.p2 - tri.p0));
+        h.hit = true;
+        h.t = isect.t;
+        h.pos = o + d * isect.t;
+        let vd = -d;
+        let front = dot(ng, vd) > 0.0;
+        h.front = front;
+        h.ng = select(-ng, ng, front);
+        h.ns = select(-ns, ns, dot(h.ng, ns) > 0.0);
+        h.mat = tri.mat;
+    }
+    return h;
+}
+
+fn any_hit(o: vec3<f32>, d: vec3<f32>, max_t: f32) -> bool {
+    var rq: ray_query;
+    rayQueryInitialize(&rq, rt_accel, RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, EPS, max_t, o, d));
+    rayQueryProceed(&rq);
+    let isect = rayQueryGetCommittedIntersection(&rq);
+    return isect.kind == RAY_QUERY_INTERSECTION_TRIANGLE;
+}
+"#;
+
+    let mut out = String::with_capacity(src.len() + HW_TRAVERSAL.len());
+    out.push_str(&src[..start]);
+    out.push_str(HW_TRAVERSAL);
+    out.push_str(&src[end..]);
+    out
+}
 
 /// Which traversal backend the tracer would use for a device.
 ///
@@ -51,9 +126,9 @@ pub enum RtBackend {
 ///
 /// Returns [`RtBackend::Hardware`] only when the `raytrace-hardware` feature is
 /// enabled and `device` advertises [`RAY_QUERY_FEATURE`](crate::gpu::RAY_QUERY_FEATURE),
-/// otherwise [`RtBackend::Software`]. Note the hardware traversal kernel is not
-/// implemented yet: [`trace`] runs the compute traversal regardless. This
-/// reports capability so the selection is testable ahead of that kernel.
+/// otherwise [`RtBackend::Software`]. A [`Tracer`] built on a device this returns
+/// [`RtBackend::Hardware`] for uses the ray-query kernel; every other case uses
+/// the compute traversal.
 pub fn pick_backend(device: &crate::gpu::Device) -> RtBackend {
     #[cfg(feature = "raytrace-hardware")]
     if device.features().contains(crate::gpu::RAY_QUERY_FEATURE) {
@@ -150,6 +225,25 @@ pub struct TexelSurfaces<'a> {
     pub world_pos: &'a [[f32; 4]],
     /// World normal in `xyz` (`w` unused). Length must be `width * height`.
     pub world_normal: &'a [[f32; 4]],
+}
+
+/// A lightmap bake with directional data, from [`Tracer::bake_directional`] /
+/// [`bake_lightmap_directional`]. Both atlases are linear, row-major RGBA f32,
+/// `width * height * 4` long. `irradiance` holds incident irradiance in `rgb`
+/// with coverage in `a`; `direction` holds the running mean of the
+/// luminance-weighted incoming-light direction in `xyz` (not yet normalised;
+/// an encode stage turns it into a unit dominant direction + directionality)
+/// with coverage in `a`.
+pub struct DirectionalBake {
+    /// Atlas width in texels.
+    pub width: u32,
+    /// Atlas height in texels.
+    pub height: u32,
+    /// Incident irradiance (`rgb`) + coverage (`a`), row-major RGBA f32.
+    pub irradiance: Vec<f32>,
+    /// Luminance-weighted mean incoming direction (`xyz`) + coverage (`a`),
+    /// row-major RGBA f32.
+    pub direction: Vec<f32>,
 }
 
 /// Trace settings.
@@ -408,6 +502,12 @@ pub struct Tracer {
     // Samples already blended into the accumulation buffer. `trace` resets it to
     // 0 each call; `accumulate` adds on top for progressive convergence.
     accumulated: u32,
+    // Hardware ray-query structures, `Some` only when the hardware backend was
+    // selected and the scene has geometry. When set, `bgl`/`bake_bgl` carry the
+    // extra binding-13 acceleration structure and the kernel is the rayQuery
+    // variant, so the bind groups bind `hw.tlas` at that slot.
+    #[cfg(feature = "raytrace-hardware")]
+    hw: Option<accel::HwAccel>,
 }
 
 /// Output-resolution-dependent buffers, rebuilt when the size changes.
@@ -458,6 +558,25 @@ impl Tracer {
         } else {
             gpu_tris
         };
+
+        // Select the traversal backend and, for the hardware one, build the
+        // acceleration structure from the reordered triangles. The kernel, bind
+        // group layouts, and bind groups all follow `use_hw`: with no geometry or
+        // no ray-query device the software compute traversal is used unchanged.
+        #[cfg(feature = "raytrace-hardware")]
+        let hw = if pick_backend(device) == RtBackend::Hardware && has_geometry {
+            let mut positions = Vec::with_capacity(gpu_tris.len() * 3);
+            for t in &gpu_tris {
+                positions.push(t.p0);
+                positions.push(t.p1);
+                positions.push(t.p2);
+            }
+            Some(accel::HwAccel::build(device, queue, &positions))
+        } else {
+            None
+        };
+        #[cfg(feature = "raytrace-hardware")]
+        let use_hw = hw.is_some();
 
         let mut gpu_mats: Vec<GpuMaterial> = scene
             .materials
@@ -597,30 +716,50 @@ impl Tracer {
             address_mode_w: crate::gpu::AddressMode::ClampToEdge,
             mag_filter: crate::gpu::FilterMode::Linear,
             min_filter: crate::gpu::FilterMode::Linear,
-            mipmap_filter: crate::gpu::FilterMode::Nearest,
+            mipmap_filter: crate::resources::builders::dmipmap(crate::gpu::FilterMode::Nearest),
             ..Default::default()
         });
 
+        #[allow(unused_mut)]
+        let mut bgl_entries = vec![
+            bgl_entry(0, buffer_ty_uniform()),
+            bgl_entry(1, buffer_ty_storage(true)),
+            bgl_entry(2, buffer_ty_storage(true)),
+            bgl_entry(3, buffer_ty_storage(true)),
+            bgl_entry(4, buffer_ty_storage(true)),
+            bgl_entry(5, buffer_ty_storage(false)),
+            bgl_entry(6, buffer_ty_storage(false)),
+            bgl_entry(7, buffer_ty_storage(false)),
+            bgl_entry(8, texture_ty_float()),
+            bgl_entry(9, sampler_ty_filtering()),
+        ];
+        #[cfg(feature = "raytrace-hardware")]
+        if use_hw {
+            bgl_entries.push(bgl_entry(13, accel_binding_ty()));
+        }
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("rt_bgl"),
-            entries: &[
-                bgl_entry(0, buffer_ty_uniform()),
-                bgl_entry(1, buffer_ty_storage(true)),
-                bgl_entry(2, buffer_ty_storage(true)),
-                bgl_entry(3, buffer_ty_storage(true)),
-                bgl_entry(4, buffer_ty_storage(true)),
-                bgl_entry(5, buffer_ty_storage(false)),
-                bgl_entry(6, buffer_ty_storage(false)),
-                bgl_entry(7, buffer_ty_storage(false)),
-                bgl_entry(8, texture_ty_float()),
-                bgl_entry(9, sampler_ty_filtering()),
-            ],
+            entries: &bgl_entries,
         });
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "rt_kernel",
-            crate::resources::builders::wgsl_source!("raytrace"),
-        );
+        // The hardware backend swaps the traversal for a rayQuery kernel; every
+        // other kernel entry (`main`, `bake_main`) is compiled from the same
+        // composed source so their shading is byte-identical to the software one.
+        let kernel_src: std::borrow::Cow<'static, str> = {
+            let base = crate::resources::builders::wgsl_source!("raytrace");
+            #[cfg(feature = "raytrace-hardware")]
+            {
+                if use_hw {
+                    compose_hw_kernel(base).into()
+                } else {
+                    base.into()
+                }
+            }
+            #[cfg(not(feature = "raytrace-hardware"))]
+            {
+                base.into()
+            }
+        };
+        let shader = crate::resources::builders::wgsl_module(device, "rt_kernel", kernel_src);
         let layout =
             crate::resources::builders::pipeline_layout(device, Some("rt_layout"), &[&bgl]);
         let pipeline = crate::resources::builders::compute_pipeline(
@@ -635,20 +774,27 @@ impl Tracer {
         // drops the denoiser guide buffers (6/7) and adds the texel G-buffer
         // (10/11); the shared scene, frame, accum, and environment bindings are
         // the same.
+        #[allow(unused_mut)]
+        let mut bake_bgl_entries = vec![
+            bgl_entry(0, buffer_ty_uniform()),
+            bgl_entry(1, buffer_ty_storage(true)),
+            bgl_entry(2, buffer_ty_storage(true)),
+            bgl_entry(3, buffer_ty_storage(true)),
+            bgl_entry(4, buffer_ty_storage(true)),
+            bgl_entry(5, buffer_ty_storage(false)),
+            bgl_entry(8, texture_ty_float()),
+            bgl_entry(9, sampler_ty_filtering()),
+            bgl_entry(10, buffer_ty_storage(true)),
+            bgl_entry(11, buffer_ty_storage(true)),
+            bgl_entry(12, buffer_ty_storage(false)),
+        ];
+        #[cfg(feature = "raytrace-hardware")]
+        if use_hw {
+            bake_bgl_entries.push(bgl_entry(13, accel_binding_ty()));
+        }
         let bake_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("rt_bake_bgl"),
-            entries: &[
-                bgl_entry(0, buffer_ty_uniform()),
-                bgl_entry(1, buffer_ty_storage(true)),
-                bgl_entry(2, buffer_ty_storage(true)),
-                bgl_entry(3, buffer_ty_storage(true)),
-                bgl_entry(4, buffer_ty_storage(true)),
-                bgl_entry(5, buffer_ty_storage(false)),
-                bgl_entry(8, texture_ty_float()),
-                bgl_entry(9, sampler_ty_filtering()),
-                bgl_entry(10, buffer_ty_storage(true)),
-                bgl_entry(11, buffer_ty_storage(true)),
-            ],
+            entries: &bake_bgl_entries,
         });
         let bake_layout = crate::resources::builders::pipeline_layout(
             device,
@@ -714,6 +860,8 @@ impl Tracer {
             has_geometry,
             sized: None,
             accumulated: 0,
+            #[cfg(feature = "raytrace-hardware")]
+            hw,
         }
     }
 
@@ -746,27 +894,36 @@ impl Tracer {
             usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        #[allow(unused_mut)]
+        let mut entries = vec![
+            bg_entry(0, &self.frame_buf),
+            bg_entry(1, &self.node_buf),
+            bg_entry(2, &self.tri_buf),
+            bg_entry(3, &self.mat_buf),
+            bg_entry(4, &self.light_buf),
+            bg_entry(5, &accum_buf),
+            bg_entry(6, &gbuf_albedo),
+            bg_entry(7, &gbuf_normal),
+            crate::gpu::BindGroupEntry {
+                binding: 8,
+                resource: crate::gpu::BindingResource::TextureView(&self.env_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 9,
+                resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
+            },
+        ];
+        #[cfg(feature = "raytrace-hardware")]
+        if let Some(hw) = &self.hw {
+            entries.push(crate::gpu::BindGroupEntry {
+                binding: 13,
+                resource: hw.tlas.as_binding(),
+            });
+        }
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("rt_bg"),
             layout: &self.bgl,
-            entries: &[
-                bg_entry(0, &self.frame_buf),
-                bg_entry(1, &self.node_buf),
-                bg_entry(2, &self.tri_buf),
-                bg_entry(3, &self.mat_buf),
-                bg_entry(4, &self.light_buf),
-                bg_entry(5, &accum_buf),
-                bg_entry(6, &gbuf_albedo),
-                bg_entry(7, &gbuf_normal),
-                crate::gpu::BindGroupEntry {
-                    binding: 8,
-                    resource: crate::gpu::BindingResource::TextureView(&self.env_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 9,
-                    resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
-                },
-            ],
+            entries: &entries,
         });
         self.sized = Some(TracerSized {
             width,
@@ -951,6 +1108,9 @@ impl Tracer {
     /// `settings.denoise` is ignored (baked GI wants a dedicated guided denoiser,
     /// a later stage, not the interactive a-trous pass). Returns a black atlas if
     /// the scene has no geometry or the surface slices are the wrong length.
+    ///
+    /// [`bake_directional`](Self::bake_directional) also returns the dominant
+    /// light direction per texel, for a directional lightmap encode.
     pub fn bake(
         &mut self,
         device: &crate::gpu::Device,
@@ -960,18 +1120,71 @@ impl Tracer {
     ) -> RtImage {
         let width = surfaces.width.max(1);
         let height = surfaces.height.max(1);
-        let texels = (width * height) as usize;
+        match self.run_bake(device, queue, surfaces, settings) {
+            Some((irradiance, _direction)) => RtImage {
+                width,
+                height,
+                rgba: irradiance,
+            },
+            None => RtImage {
+                width,
+                height,
+                rgba: vec![0.0; (width * height * 4) as usize],
+            },
+        }
+    }
 
-        let black = || RtImage {
-            width,
-            height,
-            rgba: vec![0.0; texels * 4],
-        };
+    /// Bake a lightmap with a dominant-direction atlas alongside the irradiance.
+    ///
+    /// Same solve as [`bake`](Self::bake), but also reads back the running mean of
+    /// the luminance-weighted incoming-light direction per texel, so a later
+    /// encode stage can produce a directional lightmap. See [`DirectionalBake`]
+    /// for the layout. Returns all-black atlases if the scene has no geometry or
+    /// the surface slices are the wrong length.
+    pub fn bake_directional(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        surfaces: &TexelSurfaces,
+        settings: &RtSettings,
+    ) -> DirectionalBake {
+        let width = surfaces.width.max(1);
+        let height = surfaces.height.max(1);
+        match self.run_bake(device, queue, surfaces, settings) {
+            Some((irradiance, direction)) => DirectionalBake {
+                width,
+                height,
+                irradiance,
+                direction,
+            },
+            None => DirectionalBake {
+                width,
+                height,
+                irradiance: vec![0.0; (width * height * 4) as usize],
+                direction: vec![0.0; (width * height * 4) as usize],
+            },
+        }
+    }
+
+    /// Run the bake and read back both the irradiance and direction atlases as
+    /// row-major RGBA f32. Returns `None` (leaving the caller to supply black
+    /// atlases) when the scene has no geometry or the surface slices do not match
+    /// `width * height`.
+    fn run_bake(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        surfaces: &TexelSurfaces,
+        settings: &RtSettings,
+    ) -> Option<(Vec<f32>, Vec<f32>)> {
+        let width = surfaces.width.max(1);
+        let height = surfaces.height.max(1);
+        let texels = (width * height) as usize;
         if !self.has_geometry
             || surfaces.world_pos.len() != texels
             || surfaces.world_normal.len() != texels
         {
-            return black();
+            return None;
         }
 
         let bytes = (texels as u64) * 16;
@@ -985,39 +1198,47 @@ impl Tracer {
             contents: bytemuck::cast_slice(surfaces.world_normal),
             usage: crate::gpu::BufferUsages::STORAGE,
         });
-        let accum_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("rt_bake_accum"),
-            size: bytes,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let staging_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("rt_bake_staging"),
-            size: bytes,
-            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let storage_out = |label: &str| {
+            device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some(label),
+                size: bytes,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            })
+        };
+        let accum_buf = storage_out("rt_bake_accum");
+        let accum_dir_buf = storage_out("rt_bake_accum_dir");
+        #[allow(unused_mut)]
+        let mut entries = vec![
+            bg_entry(0, &self.frame_buf),
+            bg_entry(1, &self.node_buf),
+            bg_entry(2, &self.tri_buf),
+            bg_entry(3, &self.mat_buf),
+            bg_entry(4, &self.light_buf),
+            bg_entry(5, &accum_buf),
+            crate::gpu::BindGroupEntry {
+                binding: 8,
+                resource: crate::gpu::BindingResource::TextureView(&self.env_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 9,
+                resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
+            },
+            bg_entry(10, &pos_buf),
+            bg_entry(11, &nrm_buf),
+            bg_entry(12, &accum_dir_buf),
+        ];
+        #[cfg(feature = "raytrace-hardware")]
+        if let Some(hw) = &self.hw {
+            entries.push(crate::gpu::BindGroupEntry {
+                binding: 13,
+                resource: hw.tlas.as_binding(),
+            });
+        }
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("rt_bake_bg"),
             layout: &self.bake_bgl,
-            entries: &[
-                bg_entry(0, &self.frame_buf),
-                bg_entry(1, &self.node_buf),
-                bg_entry(2, &self.tri_buf),
-                bg_entry(3, &self.mat_buf),
-                bg_entry(4, &self.light_buf),
-                bg_entry(5, &accum_buf),
-                crate::gpu::BindGroupEntry {
-                    binding: 8,
-                    resource: crate::gpu::BindingResource::TextureView(&self.env_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 9,
-                    resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
-                },
-                bg_entry(10, &pos_buf),
-                bg_entry(11, &nrm_buf),
-            ],
+            entries: &entries,
         });
 
         let base_frame = FrameUniform {
@@ -1069,30 +1290,43 @@ impl Tracer {
             done += this_batch;
         }
 
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("rt_bake_readback"),
-        });
-        encoder.copy_buffer_to_buffer(&accum_buf, 0, &staging_buf, 0, bytes);
-        queue.submit(std::iter::once(encoder.finish()));
-
-        let slice = staging_buf.slice(..);
-        slice.map_async(crate::gpu::MapMode::Read, |_| {});
-        let _ = device.poll(crate::gpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(60)),
-        });
-        let rgba: Vec<f32> = {
-            let data = slice.get_mapped_range();
-            bytemuck::cast_slice::<u8, f32>(&data).to_vec()
-        };
-        staging_buf.unmap();
-
-        RtImage {
-            width,
-            height,
-            rgba,
-        }
+        let irradiance = readback_f32(device, queue, &accum_buf, bytes);
+        let direction = readback_f32(device, queue, &accum_dir_buf, bytes);
+        Some((irradiance, direction))
     }
+}
+
+/// Copy a storage buffer to a staging buffer and read it back as `f32`.
+fn readback_f32(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    src: &crate::gpu::Buffer,
+    bytes: u64,
+) -> Vec<f32> {
+    let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+        label: Some("rt_bake_staging"),
+        size: bytes,
+        usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+        label: Some("rt_bake_readback"),
+    });
+    encoder.copy_buffer_to_buffer(src, 0, &staging, 0, bytes);
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let slice = staging.slice(..);
+    slice.map_async(crate::gpu::MapMode::Read, |_| {});
+    let _ = device.poll(crate::gpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::from_secs(60)),
+    });
+    let out: Vec<f32> = {
+        let data = slice.get_mapped_range();
+        bytemuck::cast_slice::<u8, f32>(&data).to_vec()
+    };
+    staging.unmap();
+    out
 }
 
 /// Bake incident irradiance into a lightmap atlas from per-texel surfaces.
@@ -1109,6 +1343,18 @@ pub fn bake_lightmap(
     settings: &RtSettings,
 ) -> RtImage {
     Tracer::new(device, queue, scene).bake(device, queue, surfaces, settings)
+}
+
+/// Bake a directional lightmap (irradiance + dominant direction) from per-texel
+/// surfaces. Builds a tracer for `scene` and runs [`Tracer::bake_directional`].
+pub fn bake_lightmap_directional(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    scene: &RtScene,
+    surfaces: &TexelSurfaces,
+    settings: &RtSettings,
+) -> DirectionalBake {
+    Tracer::new(device, queue, scene).bake_directional(device, queue, surfaces, settings)
 }
 
 /// Run the edge-aware a-trous denoiser over `accum` and return the buffer that
@@ -1234,9 +1480,54 @@ fn sampler_ty_filtering() -> crate::gpu::BindingType {
     crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering)
 }
 
+/// Layout entry for the hardware traversal's acceleration structure (binding 13).
+/// `vertex_return` stays off: the kernel reads normals from the `tris` buffer by
+/// `primitive_index`, not the ray-query vertex-return path.
+#[cfg(feature = "raytrace-hardware")]
+fn accel_binding_ty() -> crate::gpu::BindingType {
+    crate::gpu::BindingType::AccelerationStructure {
+        vertex_return: false,
+    }
+}
+
 fn bg_entry(binding: u32, buffer: &crate::gpu::Buffer) -> crate::gpu::BindGroupEntry<'_> {
     crate::gpu::BindGroupEntry {
         binding,
         resource: buffer.as_entire_binding(),
+    }
+}
+
+// The hardware kernel targets a ray-query device, which Metal (the dev platform)
+// is not, so it cannot be dispatched here. It can still be validated: naga
+// (a dev-dependency) parses and validates the composed WGSL with the RAY_QUERY
+// capability, which is what a ray-query driver would compile. This catches a
+// broken splice or a stale `rayQuery` API without a Vulkan/DX12 GPU.
+#[cfg(all(test, feature = "raytrace-hardware"))]
+mod hw_tests {
+    #[test]
+    fn hardware_kernel_validates() {
+        let src = super::compose_hw_kernel(crate::resources::builders::wgsl_source!("raytrace"));
+        assert!(
+            src.contains("var rt_accel: acceleration_structure;"),
+            "the acceleration structure binding must be present"
+        );
+        assert!(
+            src.contains("rayQueryInitialize(&rq, rt_accel"),
+            "the traversal must be the rayQuery variant"
+        );
+        assert!(
+            !src.contains("// <rt-traversal>"),
+            "the software traversal region must be spliced out"
+        );
+
+        let module = naga::front::wgsl::parse_str(&src)
+            .unwrap_or_else(|e| panic!("hardware kernel failed to parse: {e:?}"));
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::RAY_QUERY,
+        );
+        validator
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("hardware kernel failed to validate: {e:?}"));
     }
 }
