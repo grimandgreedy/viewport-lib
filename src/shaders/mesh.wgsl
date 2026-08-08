@@ -800,9 +800,13 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             ambient = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
-        // Baked lightmap: replace, add, or occlude the ambient term.
+        // Baked lightmap: replace, add, or occlude the ambient term. Sample the
+        // base mip explicitly: a lightmap packs charts tightly, so UV
+        // derivatives across a chart are large and derivative-based mip
+        // selection would snap to a coarse level and show the atlas texels as
+        // blocky bands on the mesh. The atlas has no detail to lose at range.
         if object.lightmap_mode != 0u {
-            let lm = textureSample(lightmap_tex, obj_sampler, in.lightmap_uv);
+            let lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
             ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
@@ -856,9 +860,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         if object.has_light_probe != 0u {
             hemi_rgb = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
         }
-        // Baked lightmap: replace, add, or occlude the ambient term.
+        // Baked lightmap: replace, add, or occlude the ambient term. Sample the
+        // base mip explicitly (see the ambient branch above): derivative-based
+        // mip selection over tightly-packed atlas charts reads as blocky bands.
         if object.lightmap_mode != 0u {
-            let lm = textureSample(lightmap_tex, obj_sampler, in.lightmap_uv);
+            let lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
             hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);

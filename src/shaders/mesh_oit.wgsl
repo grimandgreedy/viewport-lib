@@ -639,9 +639,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             ambient = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
-        // Baked lightmap: replace, add, or occlude the ambient term.
+        // Baked lightmap: replace, add, or occlude the ambient term. Force the
+        // base mip: derivative-based selection over tightly-packed atlas charts
+        // reads as blocky bands on the mesh.
         if object.lightmap_mode != 0u {
-            let lm = textureSample(lightmap_tex, obj_sampler, in.lightmap_uv);
+            let lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
             ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
@@ -675,9 +677,10 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         if object.has_light_probe != 0u {
             hemi_rgb = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
         }
-        // Baked lightmap: replace, add, or occlude the ambient term.
+        // Baked lightmap: replace, add, or occlude the ambient term. Force the
+        // base mip (see the ambient branch above).
         if object.lightmap_mode != 0u {
-            let lm = textureSample(lightmap_tex, obj_sampler, in.lightmap_uv);
+            let lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
             hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
