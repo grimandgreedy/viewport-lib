@@ -135,6 +135,73 @@ impl DeviceResources {
         ))
     }
 
+    /// Upload a linear HDR RGBA texture (`Rgba16Float`) and return its texture ID.
+    ///
+    /// For baked lightmaps and other data whose values exceed 1.0: the 8-bit
+    /// [`upload_texture`](Self::upload_texture) path clamps at upload, so bright
+    /// baked radiance is lost before it reaches the HDR render path. This keeps
+    /// the full range. `rgba` is `width * height * 4` linear `f32` values (RGBA,
+    /// row-major); they are converted to half floats. No mip chain is built
+    /// (lightmaps sample the base level), so the texture is single-mip.
+    pub fn upload_texture_hdr(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: &[f32],
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        let id = self.begin_upload_texture_hdr(device, queue, width, height, rgba.to_vec())?;
+        self.drain_until(device, queue, id)?;
+        self.upload_result_texture(id)
+    }
+
+    /// Start an asynchronous linear-HDR (`Rgba16Float`) texture upload.
+    ///
+    /// Same shape as [`begin_upload_texture`](Self::begin_upload_texture) but the
+    /// texture is created as `Rgba16Float` (single mip) so values above 1.0
+    /// survive. `rgba` is `width * height * 4` linear `f32` values, converted to
+    /// half floats before upload. Take the result with
+    /// [`upload_result_texture`](Self::upload_result_texture) once `Ready`.
+    ///
+    /// # Errors
+    ///
+    /// Returns
+    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// when `rgba.len() != width * height * 4`.
+    pub fn begin_upload_texture_hdr(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<f32>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        let expected = (width * height * 4) as usize;
+        if rgba.len() != expected {
+            return Err(crate::error::ViewportError::InvalidTextureData {
+                expected,
+                actual: rgba.len(),
+            });
+        }
+        // Pack to half-float bytes (2 bytes per channel, little-endian).
+        let mut bytes = Vec::with_capacity(rgba.len() * 2);
+        for &v in &rgba {
+            bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+        }
+        Ok(self.spawn_texture_upload(
+            device,
+            queue,
+            TextureUploadSpec {
+                width,
+                height,
+                format: crate::gpu::TextureFormat::Rgba16Float,
+                is_normal_map: false,
+                mip_levels: vec![bytes],
+            },
+        ))
+    }
+
     /// Take the texture id produced by a completed `begin_upload_texture`
     /// or `begin_upload_normal_map` job.
     ///

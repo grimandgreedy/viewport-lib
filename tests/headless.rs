@@ -415,6 +415,82 @@ fn capture_hdr_preserves_values_above_one() {
     assert_eq!(frame.effects.post_process.enabled, orig_pp_enabled);
 }
 
+/// A baked lightmap with radiance above 1.0 must survive to the HDR render path.
+/// The 8-bit `upload_texture` path clamps at upload (sRGB, [0,1]); the
+/// `upload_texture_hdr` (`Rgba16Float`) path must not. Both are rendered in
+/// Replace mode with no runtime lights, so the captured radiance is the lightmap
+/// value straight through: the LDR one saturates near 1.0, the HDR one keeps 4.0.
+#[test]
+fn hdr_lightmap_survives_above_one() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let vcount = box_mesh().positions.len();
+    let uv1 = vec![glam::Vec2::new(0.5, 0.5); vcount];
+
+    // Render the box lit only by a uniform lightmap of value `radiance`, and
+    // return the peak captured channel.
+    let mut capture_with = |renderer: &mut ViewportRenderer, tex| -> f32 {
+        renderer
+            .resources_mut()
+            .set_lightmap(
+                &device,
+                mesh,
+                &uv1,
+                viewport_lib::resources::LightmapData::NonDirectional { radiance: tex },
+                viewport_lib::resources::LightmapMode::Replace,
+            )
+            .unwrap();
+        let cam = Camera::default();
+        let mut frame = FrameData::default();
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.lights = Vec::new();
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.material.base_colour = [1.0, 1.0, 1.0];
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        let mut face_cam = RenderCamera::from_camera(&cam);
+        face_cam.aspect = 1.0;
+        let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
+        captured.rgba.iter().copied().fold(0.0f32, f32::max)
+    };
+
+    // LDR upload: value 4.0 -> byte 255 -> ~1.0 after sRGB decode; clamped.
+    let ldr = renderer
+        .resources_mut()
+        .upload_texture(&device, &queue, 4, 4, &[255u8; 4 * 4 * 4])
+        .unwrap();
+    let ldr_peak = capture_with(&mut renderer, ldr);
+
+    // HDR upload: linear 4.0 kept through Rgba16Float.
+    let hdr_rgba: Vec<f32> = std::iter::repeat([4.0f32, 4.0, 4.0, 1.0])
+        .take(4 * 4)
+        .flatten()
+        .collect();
+    let hdr = renderer
+        .resources_mut()
+        .upload_texture_hdr(&device, &queue, 4, 4, &hdr_rgba)
+        .unwrap();
+    let hdr_peak = capture_with(&mut renderer, hdr);
+
+    assert!(
+        ldr_peak <= 1.2,
+        "LDR lightmap should clamp near 1.0, got {ldr_peak}"
+    );
+    assert!(
+        hdr_peak > 3.0,
+        "HDR lightmap radiance was lost: peak {hdr_peak} (expected ~4.0)"
+    );
+}
+
 /// `capture_equirect` must resolve the six faces into a panorama whose
 /// direction mapping matches the shader consumer: a bright emissive box placed
 /// along +X, viewed from the origin, has to land near the equirect centre
