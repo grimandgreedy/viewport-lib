@@ -1035,9 +1035,83 @@ impl DeviceResources {
             texture_id: data.texture_id(),
             direction_texture_id: data.direction_texture_id(),
             mode: mode.to_shader(),
+            // A per-mesh lightmap owns its whole atlas: identity sub-rect, layer 0.
+            // The array layer for a multi-page lightmap comes per vertex (UV1.z),
+            // not from here. Scene lightmaps override both via `set_scene_lightmap`.
+            scale_bias: [1.0, 1.0, 0.0, 0.0],
+            layer: 0,
         });
         // The gen bump forces the object bind-group rebuild that swaps the
         // fallbacks at bindings 16/17 for this UV1 buffer and texture.
+        mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Attach a mesh to a shared scene lightmap atlas.
+    ///
+    /// Scene-level atlasing packs many objects into a handful of shared atlas
+    /// pages instead of giving each mesh its own atlas. Every object points at the
+    /// same atlas array (one `TextureId`, uploaded with
+    /// [`upload_texture_hdr_layers`](crate::resources::ViewportGpuResources::upload_texture_hdr_layers))
+    /// and carries its own placement: `layer` selects the atlas page and
+    /// `scale_bias` maps its `[0, 1]` unwrap onto its sub-rect of that page
+    /// (`lm_uv = uv1 * scale_bias.xy + scale_bias.zw`). This is the Unity/Unreal
+    /// per-instance lightmap-index + `LightmapScaleBias` model.
+    ///
+    /// `uv1` is the object's own unique unwrap in `[0, 1]`, exactly as for
+    /// [`set_lightmap`](Self::set_lightmap); the sub-rect transform is applied in
+    /// the shader, so the same unwrap works whether the object owns an atlas or
+    /// shares one. Radiance only (`NonDirectional`); pass the shared atlas array as
+    /// `radiance`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `mesh_id` is not registered.
+    pub fn set_scene_lightmap(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        uv1: &[glam::Vec2],
+        radiance: crate::resources::TextureId,
+        layer: u32,
+        scale_bias: [f32; 4],
+        mode: crate::resources::lightmap::LightmapMode,
+    ) -> crate::error::ViewportResult<()> {
+        let store_len = self.mesh_store.len();
+        let mesh =
+            self.mesh_store
+                .get_mut(mesh_id)
+                .ok_or(crate::error::ViewportError::StaleHandle {
+                    index: mesh_id.index(),
+                    count: store_len,
+                })?;
+        // The object's own unwrap, page 0: the shared page comes from `layer` on
+        // the uniform, so UV1.z stays 0 (the shader adds them).
+        let vertex_count = mesh.vertex_count().max(1);
+        let mut values = vec![[0.0f32; 4]; vertex_count];
+        for (dst, src) in values.iter_mut().zip(uv1.iter()) {
+            *dst = [src.x, src.y, 0.0, 0.0];
+        }
+        let uv1_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("scene_lightmap_uv1_buf"),
+            size: (values.len() * std::mem::size_of::<[f32; 4]>()) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        crate::resources::builders::write_mapped(
+            uv1_buffer.slice(..),
+            bytemuck::cast_slice(&values),
+        );
+        uv1_buffer.unmap();
+        mesh.lightmap = Some(crate::resources::lightmap::MeshLightmap {
+            uv1_buffer,
+            texture_id: radiance,
+            direction_texture_id: None,
+            mode: mode.to_shader(),
+            scale_bias,
+            layer,
+        });
         mesh.lightmap_gen = mesh.lightmap_gen.wrapping_add(1);
         Ok(())
     }
@@ -2711,6 +2785,9 @@ impl DeviceResources {
             light_probe_index: 0,
             lightmap_mode: 0,
             lightmap_directional: 0,
+            lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+            lightmap_index: 0,
+            _pad_ls: [0; 3],
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2865,6 +2942,9 @@ impl DeviceResources {
             light_probe_index: 0,
             lightmap_mode: 0,
             lightmap_directional: 0,
+            lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
+            lightmap_index: 0,
+            _pad_ls: [0; 3],
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

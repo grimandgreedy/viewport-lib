@@ -699,6 +699,114 @@ fn multi_page_lightmap_selects_layer_per_vertex() {
     );
 }
 
+/// Scene-level atlasing: many objects share one atlas array, each sampling its own
+/// page (array layer) and sub-rect via a per-object layer + UV scale/bias. One
+/// 2-layer, 4x1 atlas is shared by two meshes: object A reads the dim left half of
+/// layer 0, object B reads the bright right half of layer 1. Because both point at
+/// the same texture and differ only in their per-object `set_scene_lightmap`
+/// placement, this proves the layer and scale/bias route each object to its own
+/// region of a shared atlas.
+#[test]
+fn scene_lightmap_addresses_shared_atlas_per_object() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_a = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let mesh_b = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let vcount = box_mesh().positions.len();
+    let uv1 = vec![glam::Vec2::new(0.5, 0.5); vcount];
+
+    // Shared atlas: 4 texels wide, 1 tall, 2 layers. Left half / right half differ
+    // within each layer, and the two layers differ, so a wrong layer or a wrong
+    // sub-rect reads a clearly different value. Layout is layer-major.
+    let row = |left: f32, right: f32| -> Vec<f32> {
+        let mut v = Vec::new();
+        for &c in &[left, left, right, right] {
+            v.extend_from_slice(&[c, c, c, 1.0]);
+        }
+        v
+    };
+    let mut atlas = row(0.2, 1.0); // layer 0: left 0.2, right 1.0
+    atlas.extend(row(2.0, 4.0)); // layer 1: left 2.0, right 4.0
+    let shared = renderer
+        .resources_mut()
+        .upload_texture_hdr_layers(&device, &queue, 4, 1, 2, &atlas)
+        .unwrap();
+
+    // A: layer 0, left half -> lm_u = 0.5*0.5 + 0.0 = 0.25 -> 0.2.
+    renderer
+        .resources_mut()
+        .set_scene_lightmap(
+            &device,
+            mesh_a,
+            &uv1,
+            shared,
+            0,
+            [0.5, 1.0, 0.0, 0.0],
+            viewport_lib::resources::LightmapMode::Replace,
+        )
+        .unwrap();
+    // B: layer 1, right half -> lm_u = 0.5*0.5 + 0.5 = 0.75 -> 4.0.
+    renderer
+        .resources_mut()
+        .set_scene_lightmap(
+            &device,
+            mesh_b,
+            &uv1,
+            shared,
+            1,
+            [0.5, 1.0, 0.5, 0.0],
+            viewport_lib::resources::LightmapMode::Replace,
+        )
+        .unwrap();
+
+    let peak_of = |renderer: &mut ViewportRenderer, mesh| -> f32 {
+        let cam = Camera::default();
+        let mut frame = FrameData::default();
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.lights = Vec::new();
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.material.base_colour = [1.0, 1.0, 1.0];
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        let mut face_cam = RenderCamera::from_camera(&cam);
+        face_cam.aspect = 1.0;
+        let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
+        // Peak over RGB only; alpha is 1.0 and would mask the dim object.
+        captured
+            .rgba
+            .chunks_exact(4)
+            .flat_map(|px| [px[0], px[1], px[2]])
+            .fold(0.0f32, f32::max)
+    };
+
+    let peak_a = peak_of(&mut renderer, mesh_a);
+    let peak_b = peak_of(&mut renderer, mesh_b);
+    println!("scene atlas: A(layer0,left)={peak_a:.3} B(layer1,right)={peak_b:.3}");
+    assert!(
+        peak_a < 1.0,
+        "object A should read layer 0's dim left region (~0.2), got {peak_a}"
+    );
+    assert!(
+        peak_b > 3.0,
+        "object B should read layer 1's bright right region (~4.0), got {peak_b}"
+    );
+    assert!(
+        peak_b > peak_a * 3.0,
+        "the two objects share an atlas but must land in different regions: A={peak_a} B={peak_b}"
+    );
+}
+
 /// `capture_equirect` must resolve the six faces into a panorama whose
 /// direction mapping matches the shader consumer: a bright emissive box placed
 /// along +X, viewed from the origin, has to land near the equirect centre

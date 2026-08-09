@@ -1539,9 +1539,19 @@ pub(crate) struct ObjectUniform {
     /// applies the directional normal response; 0 for a flat lightmap. (Reuses
     /// the former tail padding, so the 336-byte layout is unchanged.)
     pub(crate) lightmap_directional: u32, //   4 bytes, offset 332
+    /// Maps this object's `[0, 1]` lightmap unwrap onto its sub-rect of a shared
+    /// scene atlas page: `lm_uv = uv1 * scale_bias.xy + scale_bias.zw`. Identity
+    /// `[1, 1, 0, 0]` for a per-mesh lightmap that owns its whole atlas.
+    pub(crate) lightmap_scale_bias: [f32; 4], //  16 bytes, offset 336
+    /// Base atlas page (array layer) for this object. Added to the per-vertex page
+    /// (`uv1.z`), so scene lightmaps select a layer per object while multi-page
+    /// per-mesh lightmaps keep selecting per vertex. 0 for a single-page lightmap.
+    pub(crate) lightmap_index: u32, //   4 bytes, offset 352
+    /// Pads the struct to a 16-byte multiple (368) for the uniform layout.
+    pub(crate) _pad_ls: [u32; 3], //  12 bytes, offset 356
 }
 
-const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 336);
+const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
 /// Layout: 192 bytes.

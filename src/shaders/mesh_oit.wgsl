@@ -100,6 +100,10 @@ struct Object {
     light_probe_index: u32,                // offset 324 : base block index into light_probe_sh
     lightmap_mode: u32,                    // offset 328 : 0 none, 1 Replace, 2 Add, 3 AmbientOcclusion
     lightmap_directional: u32,             // offset 332 : 1 = sample the binding-18 direction atlas
+    lightmap_scale_bias: vec4<f32>,        // offset 336 : lm_uv = uv1 * .xy + .zw (scene atlas sub-rect)
+    lightmap_index: u32,                   // offset 352 : base atlas layer, added to the per-vertex page
+    // The vec4 above makes the struct 16-aligned, so WGSL rounds its size up to
+    // 368 to match the Rust ObjectUniform (which pads with a trailing [u32; 3]).
 };
 
 struct ClipVolumeEntry {
@@ -658,10 +662,14 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // base mip: derivative-based selection over tightly-packed atlas charts
         // reads as blocky bands on the mesh.
         if object.lightmap_mode != 0u {
-            let lm_page = i32(round(in.lightmap_page));
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, lm_page, 0.0);
+            // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
+            // and add its base layer to the per-vertex page. Identity scale/bias and
+            // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
+            let lm_uv = in.lightmap_uv * object.lightmap_scale_bias.xy + object.lightmap_scale_bias.zw;
+            let lm_page = i32(object.lightmap_index) + i32(round(in.lightmap_page));
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, lm_uv, lm_page, 0.0);
             if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(in.lightmap_uv, lm_page, N, in.world_normal);
+                let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
             ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
@@ -700,10 +708,14 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // Baked lightmap: replace, add, or occlude the ambient term. Force the
         // base mip (see the ambient branch above).
         if object.lightmap_mode != 0u {
-            let lm_page = i32(round(in.lightmap_page));
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, lm_page, 0.0);
+            // Scene-atlas placement: map the object's [0,1] unwrap into its sub-rect
+            // and add its base layer to the per-vertex page. Identity scale/bias and
+            // layer 0 reproduce a per-mesh (single- or multi-page) lightmap exactly.
+            let lm_uv = in.lightmap_uv * object.lightmap_scale_bias.xy + object.lightmap_scale_bias.zw;
+            let lm_page = i32(object.lightmap_index) + i32(round(in.lightmap_page));
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, lm_uv, lm_page, 0.0);
             if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(in.lightmap_uv, lm_page, N, in.world_normal);
+                let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
             hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);

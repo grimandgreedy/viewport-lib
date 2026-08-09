@@ -100,4 +100,11 @@ pub(crate) struct MeshLightmap {
     pub(crate) direction_texture_id: Option<TextureId>,
     /// Shader mode code (see [`LightmapMode::to_shader`]).
     pub(crate) mode: u32,
+    /// Maps this mesh's `[0, 1]` unwrap onto its sub-rect of a shared scene atlas:
+    /// `lm_uv = uv1 * scale_bias.xy + scale_bias.zw`. Identity `[1, 1, 0, 0]` when
+    /// the mesh owns its whole atlas (a per-mesh lightmap).
+    pub(crate) scale_bias: [f32; 4],
+    /// Base atlas page (array layer) this mesh's lightmap starts on. Added to the
+    /// per-vertex page in the shader. 0 for a single-page or per-mesh lightmap.
+    pub(crate) layer: u32,
 }
