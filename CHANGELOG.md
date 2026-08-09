@@ -1,245 +1,70 @@
 # Changelog
 
-## [Unreleased]
-
-### Features
-
-#### Fewer lines to a running viewport
-
-New wrappers get a basic viewport on screen in a handful of lines instead of a few hundred. `ViewportApp` (feature `app`) owns the window and event loop and runs a standalone app from a setup and a per-frame closure. For embedded viewports, `OrbitSession` bundles a session with default orbit camera controls, and `ViewportSession` handles the frame assembly when you bring your own camera or tool wiring. All of them expose the renderer, resources, and runtime, so starting simple does not limit what you can reach later.
-
-#### Sub-object GPU picking for item-type plugins
-
-Plugin items can now resolve faces, vertices, and edges through the GPU pick
-pass, not just the whole object:
-
-- `shared_wgsl::SHARED_PICK_PRIM_WGSL` is a pick fragment helper whose
-  primitive channel carries `@builtin(primitive_index)` (the rasterised
-  triangle index) instead of `0`. Needs `PRIMITIVE_INDEX_FEATURE`; prepend
-  `shared_wgsl::PICK_PRIM_ENABLE_WGSL` to the module source for wgpu-leg
-  portability.
-- `ItemTypePlugin::resolve_sub_object` (default `None`) maps a read-back
-  `(pick_id, primitive_index)` plus the hit's reconstructed world position to
-  a `SubObjectRef`, so face lookup and vertex/edge snapping run against the
-  plugin's own topology. Correct for GPU-deformed geometry: the position
-  comes from the pick pass's depth channel, and topology does not deform.
-- The pick router now draws plugin items whenever the mask asks for OBJECT,
-  FACE, VERTEX, EDGE, or CELL (previously OBJECT only). This also means
-  plugin geometry occludes in sub-object-only queries instead of letting
-  items behind it be picked through it.
-- `PickPassContext` gained a `mask` field so `render_pick` can select a
-  pipeline variant per query or skip levels its items do not answer.
-
-Cursor, rect, and snap queries all consult the hook. Plugins that change
-nothing keep today's object-level behaviour.
-
-#### Same-device external GPU buffer binding
-
-Three ways to render straight out of a `wgpu::Buffer` a consumer produced on
-the renderer's own device (a GPU physics solver, compute skinning, any
-GPU-resident producer), with no CPU round-trip. Synchronisation in all three
-is queue-submission order: submit the compute that writes the buffer before
-the frame renders.
-
-- **Sliced position/normal overrides.** `set_position_override_buffer_sliced`
-  and `set_normal_override_buffer_sliced` bind a window of a pooled buffer as
-  a mesh's per-vertex source: `OverrideBufferSlice { base_element,
-  element_count }` is in 12-byte vec3 elements with no alignment requirement
-  (the window is a shader-side base index, not a buffer binding offset), so a
-  solver keeping every body's particles in one allocation can point each mesh
-  at its own range. The existing unsliced setters are unchanged and remain
-  the whole-buffer case.
-- **External instance sets.** `create_external_instance_set` registers a
-  consumer-owned buffer of packed `[x, y, z]` `f32` positions; an
-  `ExternalInstancesItem` on `SceneFrame::external_instances` then draws a
-  mesh once per element, with `first_instance`/`instance_count` windowing the
-  buffer through the draw call's instance range. Opaque, depth-tested,
-  HDR-path only, no shadows/picking/culling (matching the GPU particle mesh
-  route). `set_external_instance_set_buffer` re-points a set after the
-  consumer reallocates its pool.
-- **External marching-cubes scalar source.** `set_mc_scalar_source_buffer`
-  feeds a GPU-MC volume's scalar field from a consumer buffer (f32 per node,
-  x-fastest, `COPY_SRC` usage): the renderer copies it into its slab buffers
-  before every dispatch, so the isosurface tracks the buffer each frame.
-  This is also the first path for animating a density field without
-  re-uploading the volume.
-
-Limitations, documented on the APIs: CPU-derived state (cull AABBs, the
-picking BVH) does not follow GPU overrides, and all items sharing a `MeshId`
-share that mesh's slice window. The GPU Wave showcase drives sliced
-position/normal overrides out of one pooled compute-written buffer and
-renders its buoys through an external instance set.
-
-### Improvements
-
-- `DeviceResources::measure_overlay_text` returns the width, height, and ascent a `LabelItem` would draw, for laying out overlay UI.
-
-### Fixes
-
-- On the wgpu 29 leg, the built-in pick shaders that read
-  `@builtin(primitive_index)` (`pick_id` rewrite, `pick_vertex`, `pick_edge`,
-  `pick_node`) now prepend the `enable primitive_index;` directive naga 29
-  requires, so GPU sub-object picking works there instead of failing shader
-  validation on devices with the feature.
-- `replace_mesh_data` with a topology change no longer drops a bound
-  position/normal override: the binding (and its slice window) carries over
-  to the rebuilt mesh and rebinds on the next frame.
-- The selection outline mask now reads position-override buffers (including
-  sliced ones), so the halo tracks geometry driven through
-  `set_position_override_buffer` instead of outlining the bind pose.
-
 ## [0.20.0]
 
-A release in two halves: custom fragment shading and many-light performance. Materials can now select runtime-registered WGSL shading hooks, so custom BRDFs, toon looks, shader-graph-style surface authoring, and per-vertex-driven effects no longer require forking the mesh shaders; a consumer that registers no plugin renders byte-identically. On the performance side, the release focuses on scenes with many lights. A game-scale test scene (3251 instances, 251 point lights) went from 2.3 to 10.5 fps facing its densest area, and from 30 to 79 fps looking away, on an RTX 3080. GPU frame timing also now measures the whole frame instead of just the main pass.
+The big themes this release are baked lighting, custom fragment shading, and viewport runners, on top of a round of many-light performance work.
 
 ### Features
 
-#### Material plugins
-
-`register_material_plugin(&device, &plugin)` registers a `MaterialPlugin`: a named WGSL body defining any non-empty subset of four hooks, validated against every lit shader at registration under a wgpu error scope, so a malformed body fails with the naga message instead of poisoning the renderer. A material opts in with `Material::shading_plugin = Some(id)`; plugin draws keep scene shadows, AO, normal maps, IBL, and alpha modes.
-
-The hooks:
-
-- `shade_surface(surf) -> SurfaceOverride` authors the PBR surface (base colour, normal, metallic, roughness, emissive, alpha) and lets stock Cook-Torrance lighting, shadows, and IBL run on the result. This is the shader-graph shape: a node-graph compiler emits one of these per material. The `alpha` output is honoured only under `Mask`/`Blend` alpha modes (Mask re-tests the material's cutoff, Blend takes it as the output alpha, Opaque ignores it).
-- `shade_light(surf, light)` replaces the built-in per-light term (custom BRDFs, toon bands, wrap lighting); the lib keeps the light loop, clustering, range culling, and shadow sampling. `needs_back_hemisphere` opts into receiving lights behind the surface.
-- `shade_ambient(surf)` replaces the ambient/IBL term; blessed helpers (`ibl_ambient` and the individual IBL taps) let a body reshape the standard ambient rather than rebuild it.
-- `recolor(surf, direct, ambient)` adjusts the final colour after lighting (rim light, posterise, tint).
-
-Per-material parameters and textures ride variants: `register_material_plugin` returns the default variant and `create_material_plugin_variant` mints further ids that share the plugin's shaders and pipelines but carry their own 16 x vec4 params window and texture set (`material_texture_0..N`, 1x1 white fallback). `material_plugin_params_handle` returns a cloneable handle whose `write(&queue, ...)` updates a variant's params live each frame. `material_plugin_stats()` reports per-plugin variant and pipeline counts.
-
-Plugin draws need `max_bind_groups >= 4` (the wgpu default; registration fails with a clear error on more limited devices) and render per-object rather than instanced. Reference plugins live in `examples/plugins/` (toon, rim, detail layer, parallax relief, dissolve), all live in the "Custom Shading Plugins" showcase.
-
-A plugin's pipeline set (roughly nine render pipelines plus two shader compiles) is not built at registration. It builds on the first frame that references the plugin, capped at a few plugins per frame; materials whose plugin is still cold draw built-in shading until their set is ready. To pay that cost at a moment you control (a load screen, scene setup) instead, call `warm_material_plugin_pipelines(&device, &ids)` with the plugins the scene uses, or `warm_all_material_plugin_pipelines(&device)`. `material_plugin_pipelines_ready(id)` reports whether a plugin's set is built (false while cold or invalidated), and `MaterialPluginStats` carries the plugin's `id` so stats rows correlate with held ids without matching on name.
-
-#### Foreground composite pass
-
-`SceneFrame::foreground_items` draws `SceneRenderItem`s over the finished scene against a cleared depth buffer, so they are never occluded by world geometry and never clip into it: a first-person weapon, an always-on-top gizmo or manipulator, an x-ray part, a HUD prop. The items go through the normal mesh path, so skinning, deformers, and materials work unchanged, and they are lit by their own material (an unlit material or a material plugin for a world-independent look) rather than a baked light rig. `EffectsFrame::foreground = Some(ForegroundPass { projection })` is only needed to override the projection: `Some(ForegroundProjection { fov_y, near, far })` gives a close-held item its own field of view and a near plane small enough to avoid clipping while sharing the main camera's view transform; `None` reuses the scene projection. The foreground depth doubles as a coverage mask into depth of field and the screen-space post terms, so foreground items stay sharp and are not shaded by effects meant for the world.
-
-The pass runs in the HDR path and the owned-encoder LDR path, not in `paint_to`-style host render passes (a cleared depth attachment cannot exist there; foreground items submitted that way warn once and draw nothing). An `ItemTypePlugin::paint_foreground` hook draws a plugin's own item type into the same pass. `SceneNode::deform_instance()` reads a node's deform slot back so a consumer building its own foreground `SceneRenderItem` from a scene node binds the same skinning palette. The "Foreground Composite Pass" showcase flies a camera around a scene with racking depth of field while three cubes stay pinned in front.
-
-#### Per-vertex extension attributes
-
-`MeshData::extension_attributes` uploads one `vec4<f32>` per vertex alongside the mesh. A material plugin that returns `reads_vertex_attribute() = true` receives it interpolated as `surf.attr`; the meaning of the components is up to the plugin (blend masks, wind weights, bake data). Meshes without the channel read `vec4(0.0)`, so one plugin serves meshes with and without the data.
-
-#### Per-material normal strength
-
-`Material::normal_strength` scales the strength of the normal map (glTF `normalScale`): 1.0 is the authored strength, 0.0 flattens the map. Applied in the TBN unpack across all lit paths.
-
-#### Dash and dot patterns for world-space polylines
-
-`PolylineItem::stroke_pattern` accepts `Solid`, `Dashed`, or `Dotted`, with cadence measured in world-space arc length along the line so the pattern is view independent and stays fixed to the geometry. This is the world-space counterpart of the overlay polyline patterns below, e.g. for dashed constraint axes on a gizmo. `Solid` stays the default, so existing polylines are unchanged.
-
-#### Deferred-submit mode
-
-`prepare_deferred`, `render_deferred`, and `render_to_texture_deferred` return command buffers instead of submitting them, and `submit_frame` submits the batch. This lets an app encode a frame on a worker thread and submit it from the main thread, which some drivers require. Nothing changes for existing callers: the default mode submits inline exactly as before.
-
-#### Device-loss detection
-
-`DeviceLostWatcher::install(&device)` gives you a flag to poll once per frame that tells you the GPU device was lost. Without something like this, a lost device (a driver reset, or the OS killing a submission that ran too long) produces no error anywhere: the app just freezes while appearing to run. `info()` carries the reason and the driver's message.
-
-#### `recommended_device_features`
-
-`ViewportRenderer::recommended_device_features(&adapter)` returns the optional wgpu features the renderer can use, filtered to what the adapter supports, so you can pass it as `required_features` at device creation instead of hand-rolling the checks. Currently: `INDIRECT_FIRST_INSTANCE` (GPU culling), `TIMESTAMP_QUERY` (GPU frame timing), and `PIPELINE_CACHE` (reusable pipeline compilation, see below). The examples all use it.
-
-#### Pipeline cache
-
-With `PIPELINE_CACHE` enabled, `pipeline_cache_data()` returns bytes you can save to disk and pass back through `new_with_pipeline_cache` on the next launch, so shaders compile once per machine rather than once per run.
-
-#### Mip chains for uploaded textures
-
-`upload_texture`, `begin_upload_texture`, and `begin_upload_normal_map` now build a full mip chain and sample trilinear, so textures viewed at a distance filter smoothly instead of shimmering. Textures take about a third more VRAM. `replace_texture` stays single-mip since it is the path for per-frame dynamic content.
-
-#### GPU object picking
-
-`pick_object(PickBackend::Gpu, ...)` rasterises object ids into an offscreen target and reads back the pixel under the cursor, so a pick costs one render pass instead of a CPU ray-cast against every item. This is the backend for large scenes, where the CPU path's per-click cost grows with the item count. It covers scene surfaces, volume-mesh boundaries, the tube family (streamtubes, tubes, ribbons), glyphs, tensor glyphs, sprites, and polylines, and honours a `PickMask` to restrict which item types answer. It also resolves sub-object detail (face, vertex, edge, cell, curve node, instance, point, splat, voxel) on the GPU when the device has `SHADER_PRIMITIVE_INDEX`; without it a sub-object query returns the object level, and `PickBackend::Auto` routes to the CPU backend when its cache is enabled. `PickHit::sub_object_world_pos` gives the exact feature coordinate for snapping a gizmo to it.
-
-For picking during continuous rendering, `pick_object_begin` and `pick_object_poll` split submit from read-back: the pass is submitted now and its result read a frame later, without blocking the calling thread on the GPU queue. The blocking `pick_object` path also no longer drains the whole queue; it waits only on the pick's own submission.
-
-Item-type plugins draw their own pick ids into the pass through `ItemTypePlugin::render_pick`, so a registered plugin's items become GPU-pickable without the CPU `pick` fallback.
-
-#### Snap query and surface normals
-
-`snap_query(cursor, radius_px, ..., mask)` returns the best snap feature within a screen-pixel tolerance of the cursor, for latching a gizmo to a vertex or edge the cursor is near but not exactly on. It renders the mask-selected geometry into the pick pass over a window around the cursor and picks the highest-priority feature in it (a vertex or node beats an edge beats a surface), tie-broken by screen distance, returning a `SnapHit` with the feature's world position. A consumer's gizmo overlay carries no `pick_id`, so it is never its own snap target.
-
-`pick_object` now fills `PickHit::normal` with the real geometric normal for a surface face hit, computed from the hit triangle and oriented toward the camera, so align-to-surface placement (a decal flush on a wall, a light on a face) has a usable normal instead of the camera-facing stand-in. Vertex, edge, and object-level hits keep the stand-in.
-
-#### Polyline overlay stroke controls and path helpers
-
-`OverlayPolylineItem` gains a `cap` (`Butt`, `Square`, `Round`) and a `stroke_pattern` (`Solid`, `Dashed { dash_length, gap_length, offset }`, `Dotted { spacing, offset }`). Caps apply to open ends and to the ends of every dash. Dashes and dots are measured in arc length along the path and continue across the closing segment of a closed polyline; animating a dash `offset` gives a marching-ants effect. Defaults stay `Butt` + `Solid`, so existing polylines are unchanged. It all tessellates on the CPU into the existing overlay pipeline, so there are no new draw calls or shader changes.
-
-`OverlayPolylineItem::closed_from_path` builds a closed, filled polygon from a closure, sampling `[0, 1)` so the closing segment does not double the start point. `set_points_from_path` resamples the points in place following the item's `closed` flag, for animating a function-generated path each frame.
+- **Viewport Runners** - `ViewportApp` (feature `app`) owns the window and event loop; `ViewportSession` handle embedded frame assembly. A basic viewport in a handful of lines instead of a few hundred.
+- **Material plugins** - `register_material_plugin` registers named WGSL shading hooks (`shade_surface`, `shade_light`, `shade_ambient`, `recolor`); a material opts in with `Material::shading_plugin`. Plugin draws keep shadows, AO, normal maps, IBL, and alpha modes. Per-material params and textures ride variants; `warm_material_plugin_pipelines` pays the pipeline cost up front. Reference plugins (toon, rim, detail layer, parallax relief, dissolve) live in `examples/plugins/`.
+- **Foreground composite pass** - `SceneFrame::foreground_items` draws items over the finished scene against a cleared depth buffer (first-person weapon, always-on-top gizmo, HUD prop), with an optional override projection for a close-held field of view. HDR and owned-encoder LDR paths only.
+- **Baked lighting (lightmaps)** - compute bounced light, soft shadows, and colour bleed offline into textures. Built in: UV unwrapping, path-traced solve, denoise, seam cleanup, HDR output, and directional lightmaps. A whole scene bakes in one call and packs into a handful of shared textures; bakes are deterministic.
+- **Light and reflection probes** - moving objects pick up baked bounced light through light probes placed around the scene; reflection probes add baked, position-corrected reflections. Both captured offline, sampled cheaply each frame.
+- **Emissive and area lights in bakes** - glowing surfaces and soft area lights (light panels, strip lights, neon) bake cleanly, without the heavy grain they used to produce at low sample counts.
+- **Mixed baked and realtime lighting** - baked static lighting and realtime lights share a scene; a moving object casts a realtime shadow onto baked geometry, and a shadowmask keeps a realtime light's baked static shadows while staying adjustable without re-baking.
+- **Reference path tracer** - offscreen path tracer for reference-quality images and the engine behind light baking; software everywhere, hardware ray tracing where supported.
+- **Same-device external GPU buffer binding** - render straight out of a consumer's `wgpu::Buffer` with no CPU round-trip: sliced position/normal overrides, external instance sets, and an external marching-cubes scalar source. CPU-derived state (cull AABBs, picking BVH) does not follow GPU overrides.
+- **Per-vertex extension attributes** - `MeshData::extension_attributes` uploads one `vec4<f32>` per vertex, delivered to a plugin as `surf.attr` (blend masks, wind weights, bake data).
+- **Per-material normal strength** - `Material::normal_strength` scales the normal map (glTF `normalScale`) across all lit paths.
+- **Dash and dot patterns for world-space polylines** - `PolylineItem::stroke_pattern` accepts `Solid`, `Dashed`, or `Dotted`, measured in world-space arc length so the pattern stays fixed to the geometry.
+- **Polyline overlay stroke controls** - `OverlayPolylineItem` gains caps (`Butt`, `Square`, `Round`) and dash/dot patterns, plus `closed_from_path` / `set_points_from_path` helpers for function-generated paths.
+- **Deferred-submit mode** - `prepare_deferred`, `render_deferred`, and `render_to_texture_deferred` return command buffers; `submit_frame` submits the batch, for encoding on a worker thread and submitting from the main thread.
+- **Device-loss detection** - `DeviceLostWatcher::install` gives a per-frame flag when the GPU device is lost, carrying the reason and the driver's message.
+- **`recommended_device_features`** - returns the optional wgpu features the renderer can use, filtered to adapter support (`INDIRECT_FIRST_INSTANCE`, `TIMESTAMP_QUERY`, `PIPELINE_CACHE`), for `required_features` at device creation.
+- **Pipeline cache** - with `PIPELINE_CACHE`, save `pipeline_cache_data()` to disk and restore via `new_with_pipeline_cache` so shaders compile once per machine rather than once per run.
+- **Mip chains for uploaded textures** - `upload_texture` and friends build a full mip chain and sample trilinear, so distant textures filter smoothly instead of shimmering (about a third more VRAM). `replace_texture` stays single-mip for dynamic content.
 
 ### Improvements
 
-- **Deformer registration no longer rebuilds pipelines per call.** `register_deformer` validates immediately (errors still surface at the call) but defers the mesh-family pipeline rebuild to the start of the next `prepare()`, so registering N deformers in a row costs one recompose-and-rebuild pass instead of N.
-
-- **Scenes with many lights are much faster on the instanced path.** Instanced draws previously lit every pixel with every light in the scene; they now use the same per-cluster light lists the per-object path uses, so each pixel only pays for the lights that can actually reach it. Scenes with 16 or fewer lights are unchanged.
-
-- **Point-light shadows are cached.** A shadow cubemap re-renders only when its light moves or something in its range changes; a static scene pays for its shadow maps once instead of every frame. Meshes animated through the deform or position-override paths still re-render their shadows every frame, so nothing goes stale.
-
-- **Crowded lighting no longer flickers.** When many lights overlapped, whole screen regions used to randomly lose their lights from one frame to the next. Each region now keeps its most important lights and drops the least important ones, the same way every frame. If a specific light must never be dropped in a dense area, raise its `importance`.
-
-- **At most 8 point lights cast shadows per frame**, chosen by distance to the camera weighted by `importance`. Lights default to `cast_shadows = true`, so a scene with hundreds of default-constructed lights used to render hundreds of shadow maps per frame and crawl. The rest render unshadowed.
-
-- **The per-object path is cheaper.** Opaque per-object draws are recorded once into a render bundle and replayed until the item set changes, and the draw loops skip redundant binds. The bundle covers both the LDR and HDR paths (it previously only engaged with post-processing off). `FrameStats::per_object_bundle_cached` reports when the bundle is in use. Under sustained item-set churn (spawn/despawn every few frames) the bundle backs off to immediate draws and re-arms once the set stabilises: re-recording every frame costs more than it saves, and repeatedly dropped bundles leak in wgpu 27 (gfx-rs/wgpu#8656).
-
-- **Shadow casters are culled per cascade on the CPU** when the device lacks `INDIRECT_FIRST_INSTANCE`, matching what the GPU path already did.
-
-- **Mesh uploads are several times faster.** The wireframe and normal-line debug buffers are now built the first time something displays them instead of on every upload. The first wireframe toggle on a large mesh pays a one-time build, or call `prebuild_mesh_debug_sidecars` after upload to pay it at load time.
-
-- **Streaming uploads no longer stall the render thread.** Async texture uploads used to run their whole job, mip-chain build and pixel copy included, on the render thread inside `process_uploads`: a 4k texture cost a ~280 ms frame on an RTX 3080 regardless of the upload budget. The mip chain now builds on a worker thread, and with a budget set (`set_upload_budget`), the remaining copies are sliced across frames: texture chains in 4 MB row bands, mesh buffers in 4 MB fills, as many slices per frame as the budget allows. Measured on an RTX 3080 streaming meshes and textures over a game scene: worst frames dropped from ~280 ms to single digits, with a 0.5 ms budget sustaining ~600 MB/s and zero hitch frames over a 2000-frame run, and a 4 ms budget reaching ~890 MB/s. Without a budget nothing changes: uploads land whole and as fast as possible, which is the right trade for loading screens. Results are still published only when an asset is complete, so nothing can observe a partial upload.
-
-- **GPU particle systems cost far less CPU per frame.** Each system used to allocate fresh uniform buffers and bind groups for its emit and sim dispatches every frame, and encoded two compute passes per system: roughly 20 us of render-thread time per system on a desktop CPU, which adds up with dozens of emitters. The params buffers and bind groups are now created once per system and rewritten with `write_buffer`, and all systems share a single compute pass. Measured at 100 systems: prepare time dropped about 5x.
-
-- **The first decal no longer hitches.** The decal pipelines compiled on the first frame that showed a decal, which cost about 8 ms mid-game; they now build at renderer creation. Volume, gaussian splat, marching cubes, and projected-tet uploads likewise compile their pipelines inside the upload call instead of on first draw. `FrameStats::pipelines_built_this_frame` reports any remaining lazy compiles, so a hitch caused by one is visible in the stats.
-
-- **Re-showing a hidden set no longer spikes.** The per-object draw cache used to drop an item's GPU resources after 60 frames of absence, so hiding a large set for over a second and showing it again rebuilt everything in one frame (11 ms at 1k items). The cache now keeps stale entries until a capacity budget forces the oldest out, so the re-show frame costs the same as any other. Freeing a texture or mesh still reclaims its memory immediately.
-
-- **`FrameStats::gpu_frame_ms` measures the whole frame**: shadows, compute, transparency, and post are included instead of just the main scene pass. Expect the number to jump on upgrade; the old value was under-reporting. The breakdown gains `point_shadow_ms`, `cluster_ms`, `ssao_ms`, `bloom_ms`, and `fxaa_ms` (previously the post effects were invisible to pass attribution; only the tone-map pass was timed), and `FrameStats::gpu_sample_generation` lets you deduplicate timing samples when building percentiles.
+- **Many-light instanced path is much faster** - instanced draws use the same per-cluster light lists as the per-object path instead of every light per pixel; 16 or fewer lights unchanged.
+- **Point-light shadows are cached** - a shadow cubemap re-renders only when its light moves or its range changes; deform/position-override meshes still re-render so nothing goes stale.
+- **Crowded lighting no longer flickers** - each region keeps its most important lights the same way every frame; raise a light's `importance` to pin it.
+- **At most 8 point lights cast shadows per frame**, chosen by camera distance weighted by `importance`; the rest render unshadowed.
+- **The per-object path is cheaper** - opaque draws record into a render bundle replayed until the item set changes (LDR and HDR); backs off to immediate draws under churn. `FrameStats::per_object_bundle_cached` reports when it is in use.
+- **Deformer registration defers its pipeline rebuild** - `register_deformer` validates immediately but rebuilds once at the next `prepare()`, so N registrations cost one rebuild.
+- **Shadow casters are culled per cascade on the CPU** when the device lacks `INDIRECT_FIRST_INSTANCE`, matching the GPU path.
+- **Mesh uploads are several times faster** - wireframe and normal-line debug buffers build on first display, not every upload (`prebuild_mesh_debug_sidecars` pays it at load time).
+- **Streaming uploads no longer stall the render thread** - the mip chain builds on a worker and copies slice across frames under `set_upload_budget`; worst frames dropped from ~280 ms to single digits on my system (a 4 ms budget reaches ~890 MB/s). Without a budget, uploads land whole as before.
+- **GPU particle systems cost far less CPU** - params buffers and bind groups are created once and rewritten, and all systems share one compute pass; prepare time dropped ~5x at 100 systems.
+- **The first decal no longer hitches** - decal (and volume, gaussian splat, marching cubes, projected-tet) pipelines build at creation/upload instead of first draw. `FrameStats::pipelines_built_this_frame` reports any remaining lazy compiles.
+- **Re-showing a hidden set no longer spikes** - the per-object draw cache keeps stale entries until a capacity budget evicts them, so a re-show frame costs the same as any other.
+- **`FrameStats::gpu_frame_ms` measures the whole frame** (shadows, compute, transparency, post), with new `point_shadow_ms`, `cluster_ms`, `ssao_ms`, `bloom_ms`, and `fxaa_ms` breakdowns. Expect the number to jump on upgrade; the old value under-reported.
+- **Snap query and surface normals** - `snap_query` latches a gizmo to the nearest vertex or edge within a pixel tolerance; `pick_object` now fills `PickHit::normal` with the real geometric normal for surface-face hits.
+- **GPU object picking** - `pick_object(PickBackend::Gpu, ...)` rasterises object ids and reads back the pixel under the cursor, one render pass instead of a CPU ray-cast per item. Covers surfaces, volume boundaries, tubes, glyphs, sprites, and polylines; resolves sub-object detail (face, vertex, edge, cell, ...) where `SHADER_PRIMITIVE_INDEX` is available. `pick_object_begin`/`pick_object_poll` split submit from read-back for continuous rendering.
+- **Sub-object GPU picking for plugin items** - item-type plugins resolve faces, vertices, and edges through the GPU pick pass via `ItemTypePlugin::resolve_sub_object`, correct for GPU-deformed geometry.
 
 ### Breaking changes
 
-- **The default shadow filter dropped from 32 to 8 PCF taps, and `ShadowFilter` gained tiers.** Receiver-side shadow filtering runs per lit fragment and was the single largest cost on dense shadowed scenes (~16 ms at 12M triangles on an RTX 3080); 8 rotated Poisson taps over the same 1.5-texel radius look nearly identical at a quarter of the cost. `ShadowFilter::PcfHigh` restores the previous 32-tap output exactly; new `Hard` (one hardware-compare tap) and `PcssFast` (halved PCSS loops) tiers round out the range. The enum is now `#[non_exhaustive]`. The CSM sampling code also moved to one shared shader include; per-shader copies had drifted (the two-sided receiver bias fix existed only on the per-object path).
-
-- **`cast_shadows = false` is now honoured on the primary directional light.** If your scene sets the flag but relied on shadows rendering anyway, set it back to `true`.
-
-- **Oversized meshes are refused up front.** `upload_mesh_data` and friends return `ViewportError::MeshTooLarge` for meshes that exceed the device's buffer limit, instead of losing the device to a validation error.
-
-- **`draw_calls` and `triangles_submitted` now count per-object draws too.** They previously read 0 for all-per-object scenes; dashboards keyed on them will see higher, correct numbers.
-
-- **`FrameStats::upload_bytes` now counts instance-buffer and per-object uniform writes**, not just mesh data. Dynamic scenes that previously read 0 will report their real per-frame transfer volume; static scenes still read 0 on steady frames.
-
-- **`ClusterCell::_pad` is now `punctual_demand`**, and the `ClusterStats` per-cluster light counts report how many lights wanted each cluster rather than how many were kept; `dropped_punctual_slots` is new.
+- **Default shadow filter dropped from 32 to 8 PCF taps.** `ShadowFilter` gains `Hard`, `PcssFast`, and `PcfHigh` (restores the old 32-tap output exactly) and is now `#[non_exhaustive]`.
+- **`cast_shadows = false` is now honoured on the primary directional light** - set it back to `true` if you relied on shadows rendering anyway.
+- **Oversized meshes are refused up front** - `upload_mesh_data` returns `ViewportError::MeshTooLarge` instead of losing the device to a validation error.
+- **`draw_calls` and `triangles_submitted` now count per-object draws** (previously 0 for all-per-object scenes).
+- **`FrameStats::upload_bytes` now counts instance-buffer and per-object uniform writes**, not just mesh data.
+- **`ClusterCell::_pad` is now `punctual_demand`**; `ClusterStats` reports per-cluster light demand rather than what was kept, and `dropped_punctual_slots` is new.
 
 ### Bug Fixes
 
-#### Transparent surfaces ignored the material's texture transform
-
-The OIT path did not apply `uv_transform`, so a tiled or offset texture jumped when an object faded from opaque to transparent. Both paths now sample identically.
-
-#### Alpha-cutout foliage rendered as opaque cards on the instanced path
-
-A two-sided `AlphaMode::Mask` material batches through the instanced path, but that path never carried or applied the cutoff, so alpha-test foliage (leaf cards, chain-link, grates) drew every quad in full including the transparent gaps. The instance data now carries the cutoff, and the instanced colour and shadow shaders discard fragments below it, so cut-out geometry matches the per-object path. Leaf shadows take the cut-out silhouette instead of casting solid rectangles. Opaque batches are unaffected and stay on the depth-only shadow path.
-
-#### Khronos Neutral tone mapping darkened saturated colours
-
-Two branches in the tone mapper were swapped, so strongly tinted pixels were darkened by an offset meant for brighter ones. Large uniform surfaces (terrain, walls) show the correction most: they read slightly brighter and more saturated now, which is the curve working as specified.
-
-#### Skybox could drop out on some hardware
-
-The skybox depth test compared against a value the driver was allowed to compute slightly differently each frame. Its depth is now pinned exactly, so sky pixels cannot flicker or drop out.
-
-#### GPU timing hang on Apple Metal
-
-Reading GPU timestamps could hang the frame on Metal; timestamps now resolve one submission later, which Metal requires.
-
-#### Directional light `direction` doc corrected
-
-The field was documented as the direction light travels; the shaders have always treated it as the surface-to-light vector. The doc now says so. No behaviour change.
-
-#### PBR specular aliased into speckle on normal-mapped surfaces under IBL
-
-With an environment map active, a detailed normal map at low-to-moderate roughness rendered as per-pixel multi-colour glints, and low-roughness surfaces washed out into a flat environment reflection that swallowed the albedo. Two changes in all lit paths: perceptual roughness is widened by the screen-space variance of the shading normal (geometric specular anti-aliasing), and the prefiltered environment sample floors its mip level by the screen-space footprint of the reflection vector, so magnified reflections integrate over the environment instead of point-sampling hot HDR texels. Smooth normals at ordinary viewing distances are unaffected; direct specular highlights on detailed normal maps get slightly wider and dimmer instead of sparkling.
+- **Transparent surfaces ignored the material's texture transform** - the OIT path now applies `uv_transform`, so a tiled texture no longer jumps when an object fades to transparent.
+- **Alpha-cutout foliage rendered as opaque cards on the instanced path** - instance data now carries the cutoff and the instanced colour and shadow shaders discard below it, so cut-outs and their shadows match the per-object path.
+- **Khronos Neutral tone mapping darkened saturated colours** - two swapped tone-mapper branches fixed; large tinted surfaces read slightly brighter and more saturated.
+- **Skybox could drop out on some hardware** - its depth is now pinned exactly, so sky pixels cannot flicker or drop out.
+- **GPU timing hang on Apple Metal** - timestamps now resolve one submission later, which Metal requires.
+- **Directional light `direction` doc corrected** - documented as the surface-to-light vector, which the shaders always used. No behaviour change.
+- **PBR specular aliased into speckle on normal-mapped surfaces under IBL** - geometric specular anti-aliasing plus a mip floor on the prefiltered environment sample; smooth normals at ordinary distances are unaffected.
+- **wgpu 29 pick shaders** reading `@builtin(primitive_index)` now prepend the `enable primitive_index;` directive naga 29 requires.
+- **`replace_mesh_data` with a topology change** no longer drops a bound position/normal override; the binding and its slice window carry over.
+- **The selection outline** now reads position-override buffers (including sliced ones), so the halo tracks driven geometry instead of the bind pose.
 
 ## [0.19.0]
 
