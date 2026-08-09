@@ -25,9 +25,6 @@ mod settings;
 
 pub use extras::ExtraId;
 
-mod orbit;
-pub use orbit::OrbitSession;
-
 /// Host integrations that own the window and event loop (feature-gated).
 pub mod hosts;
 

@@ -15,8 +15,7 @@ impl ViewportSession {
     ///
     /// Orbit is suppressed while a manipulation session is active so pointer
     /// motion drives the gizmo, not the camera. `orbit` is borrowed so the
-    /// application keeps its own handle for tuning; a session with a default
-    /// orbit controller is [`OrbitSession`](super::OrbitSession).
+    /// application keeps its own handle for tuning.
     pub fn update_orbit(&mut self, orbit: &mut OrbitCameraController) -> &FrameData {
         self.action = self.input.resolve();
         orbit.set_viewport_size(self.viewport_size);
