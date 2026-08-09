@@ -1,4 +1,4 @@
-//! [`ViewportApp`]: a fullscreen winit runner over a [`ViewportInstance`].
+//! `ViewportApp` is a fullscreen winit runner over a [`ViewportInstance`].
 //!
 //! This owns the window, the wgpu bring-up, and the event loop, and drives a
 //! [`ViewportInstance`] each frame. It is the standalone-application path: the
@@ -109,14 +109,14 @@ impl AppConfig {
     }
 }
 
-/// What the per-frame callback receives: the session (via deref) plus timing.
+/// What the per-frame callback receives: the viewport instance (via deref) plus timing.
 ///
 /// The callback runs before the frame is assembled, and assembly clears the
 /// overlay frame, so overlays pushed directly through
 /// [`frame_data_mut`](ViewportInstance::frame_data_mut) would be wiped before
 /// render. Use [`overlays_mut`](Self::overlays_mut) (or [`inject`](Self::inject)
 /// for other per-frame, non-mesh items): the runner applies them after assembly
-/// and before render, at the same point the session's `update_orbit_with` seam
+/// and before render, at the same point the instance's `update_orbit_with` seam
 /// runs.
 pub struct FrameCtx<'a> {
     session: &'a mut ViewportInstance,
@@ -163,7 +163,7 @@ impl FrameCtx<'_> {
     /// [`pick_rect_gpu`](ViewportInstance::pick_rect_gpu),
     /// [`pick_begin`](ViewportInstance::pick_begin)) or a mesh upload through
     /// [`resources_mut`](ViewportInstance::resources_mut). Those methods also take
-    /// `&mut self` on the session, which the callback reaches by deref, so borrow
+    /// `&mut self` on the instance, which the callback reaches by deref, so borrow
     /// the handle first (a wgpu `Device` is a cheap `Arc`-backed clone):
     ///
     /// ```rust,ignore
@@ -221,7 +221,7 @@ impl FrameCtx<'_> {
 
     /// The input events that arrived since the last frame, in order.
     ///
-    /// The runner already feeds these to the session (so orbit navigation and
+    /// The runner already feeds these to the instance (so orbit navigation and
     /// bound actions work), and resolves them into
     /// [`action_frame`](ViewportInstance::action_frame), which stays the
     /// convenient path for the cursor, left click, and camera. This is the raw
@@ -274,10 +274,10 @@ impl std::ops::DerefMut for FrameCtx<'_> {
 ///
 /// let mut cube = None;
 /// ViewportApp::new(AppConfig::default().with_title("demo"))
-///     .setup(|session, device| {
-///         let mesh = session.resources_mut()
+///     .setup(|viewport, device| {
+///         let mesh = viewport.resources_mut()
 ///             .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
-///         cube = Some(session.scene_mut().add(
+///         cube = Some(viewport.scene_mut().add(
 ///             Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2])));
 ///     })
 ///     .run(move |ctx| {
@@ -300,7 +300,7 @@ impl ViewportApp {
         }
     }
 
-    /// Register a one-time setup callback, run after the session is created with
+    /// Register a one-time setup callback, run after the instance is created with
     /// the wgpu device in hand: upload meshes, build the initial scene, attach a
     /// runtime.
     pub fn setup(
@@ -480,7 +480,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 self.last_frame = now;
                 let time = (now - self.start).as_secs_f32();
 
-                // Sync the session to the live surface size and DPI before the
+                // Sync the instance to the live surface size and DPI before the
                 // callback runs, so a callback that reads viewport_size or picks
                 // (pick_gpu and friends project through this size) sees this
                 // frame's value even when a resize just landed, not last frame's.

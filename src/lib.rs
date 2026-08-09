@@ -128,7 +128,7 @@ pub mod raytrace;
 pub mod bake;
 
 /// Ready-made ways to run a viewport: [`ViewportInstance`](runners::ViewportInstance),
-/// the runner you drive from your own loop, and [`ViewportApp`](runners::viewport_app::ViewportApp),
+/// the runner you drive from your own loop, and `ViewportApp` (feature `app`),
 /// the runner that owns the window and event loop for you.
 pub mod runners;
 

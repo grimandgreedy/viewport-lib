@@ -1,19 +1,26 @@
-//! [`ViewportInstance`]: a host object that owns the per-frame wiring.
+//! Runners: ready-made ways to run a viewport's per-frame work.
 //!
-//! The library deliberately stops at [`FrameData`]: the host owns the window,
-//! the event loop, and tool state. That leaves every consumer writing the same
-//! setup: translate native events, resolve input, drive the camera, assemble a
-//! [`FrameData`], render. `ViewportInstance` bundles that wiring behind one object
-//! while leaving the advanced surface reachable through accessors
-//! ([`resources_mut`](ViewportInstance::resources_mut),
+//! A runner owns the renderer, scene, camera, and input resolver and assembles a
+//! [`FrameData`] each frame. There are two, differing in how much they own:
+//!
+//! - [`ViewportInstance`]: the runner you drive yourself. Your application owns
+//!   the window, the event loop, and tool state; you feed the instance events and
+//!   drive it once per frame.
+//! - `ViewportApp` (feature `app`): the runner that owns the window and event
+//!   loop for you, so you write only scene setup and a per-frame closure.
+//!
+//! The library deliberately stops at [`FrameData`]: without a runner, every
+//! consumer writes the same setup by hand (translate native events, resolve
+//! input, drive the camera, assemble a [`FrameData`], render). `ViewportInstance`
+//! bundles that wiring behind one object while leaving the advanced surface
+//! reachable through accessors ([`resources_mut`](ViewportInstance::resources_mut),
 //! [`runtime_mut`](ViewportInstance::runtime_mut),
 //! [`renderer_mut`](ViewportInstance::renderer_mut)), so a program can start small
 //! and grow into plugins and custom passes without a rewrite.
 //!
-//! The session owns the renderer, scene, selection, camera, and the input
-//! resolver. It does not own the `device`/`queue` (the host framework creates
-//! those, and the wgpu version must match the host's), and it does not weld in a
-//! camera-motion policy: [`update_orbit`](ViewportInstance::update_orbit) is the
+//! An instance does not own the `device`/`queue` (your application creates those,
+//! and the wgpu version must match it), and it does not weld in a camera-motion
+//! policy: [`update_orbit`](ViewportInstance::update_orbit) is the
 //! batteries-included path, and [`resolve`](ViewportInstance::resolve) +
 //! [`camera_mut`](ViewportInstance::camera_mut) + [`frame`](ViewportInstance::frame)
 //! let any controller drive the camera instead.
@@ -25,8 +32,8 @@ mod settings;
 
 pub use extras::ExtraId;
 
-/// The standalone winit runner: [`ViewportApp`](viewport_app::ViewportApp) owns
-/// the window and event loop (feature-gated behind `app`).
+/// The standalone winit runner: `ViewportApp` owns the window and event loop
+/// (feature-gated behind `app`).
 #[cfg(feature = "app")]
 pub mod viewport_app;
 
@@ -47,7 +54,7 @@ use crate::{FrameData, InteractionFrame, ViewportInput, ViewportRenderer};
 /// via [`handle_event`](Self::handle_event), drive it once per frame with
 /// [`update_orbit`](Self::update_orbit) (or the manual camera path), then submit
 /// with [`render`](Self::render) (owned surface) or
-/// [`prepare`](Self::prepare) + [`paint`](Self::paint) (render-pass host).
+/// [`prepare`](Self::prepare) + [`paint`](Self::paint) (render-pass framework).
 pub struct ViewportInstance {
     renderer: ViewportRenderer,
     scene: Scene,
@@ -85,13 +92,13 @@ pub struct ViewportInstance {
 }
 
 impl ViewportInstance {
-    /// Create a session for a renderer targeting `target_format`.
+    /// Create an instance for a renderer targeting `target_format`.
     ///
-    /// The `device` is used to build the renderer's pipelines; the session does
+    /// The `device` is used to build the renderer's pipelines; the instance does
     /// not keep it. CPU picking is enabled so [`pick`](Self::pick) works after
     /// the first frame.
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
-        // Embedded hosts create the device before the session, so a missing
+        // Your application creates the device before the instance, so a missing
         // feature otherwise degrades silently (e.g. mesh sub-object picking).
         // Warn about the ones the caller could still enable at device creation.
         fn warn_missing_device_features(device: &crate::gpu::Device) {
@@ -133,7 +140,7 @@ impl ViewportInstance {
             selection: Selection::new(),
             camera: Camera::default(),
             // ViewportAll carries the manipulation keybindings (G/R/S, axis
-            // constraints) as well as camera navigation, so a session with a
+            // constraints) as well as camera navigation, so an instance with a
             // ManipulationController resolves them without extra setup.
             input: ViewportInput::from_preset(BindingPreset::ViewportAll),
             manip: None,
@@ -172,11 +179,11 @@ impl ViewportInstance {
         self
     }
 
-    // ---- per-frame input (universal, all hosts) --------------------------------
+    // ---- per-frame input (universal, all setups) --------------------------------
 
     /// Begin a frame: record the viewport context and reset the input
     /// accumulator. Call once per frame around the batch of `handle_event` calls,
-    /// following the host's event delivery (start of frame for egui/iced, end of
+    /// following your application's event delivery (start of frame for egui/iced, end of
     /// frame after present for winit).
     pub fn begin_frame(&mut self, ctx: ViewportContext) {
         self.viewport_size = ctx.viewport_size;
@@ -192,7 +199,7 @@ impl ViewportInstance {
     ///
     /// The size drives camera aspect and the renderer's internal target sizes, so
     /// it must match the surface being rendered into. Call this when the surface
-    /// resizes between [`begin_frame`](Self::begin_frame) calls (a host that
+    /// resizes between [`begin_frame`](Self::begin_frame) calls (an application that
     /// begins its frame at the end of the render loop would otherwise assemble
     /// with a stale size, mismatching the freshly resized swapchain texture).
     pub fn set_viewport_size(&mut self, size: [f32; 2]) {
@@ -212,7 +219,7 @@ impl ViewportInstance {
     ///
     /// [`viewport_size`](Self::set_viewport_size) stays in logical units; this
     /// only sizes the physical render target and keeps overlays and the axes
-    /// indicator crisp on HiDPI displays. The host that renders into an offscreen
+    /// indicator crisp on HiDPI displays. The application that renders into an offscreen
     /// texture must size it `viewport_size * pixels_per_point`. Default 1.0.
     pub fn set_pixels_per_point(&mut self, pixels_per_point: f32) {
         self.pixels_per_point = pixels_per_point.max(0.001);
@@ -240,7 +247,7 @@ impl ViewportInstance {
         self.last_manip
     }
 
-    /// Whether a move/rotate/scale session is currently active. A host driving
+    /// Whether a move/rotate/scale session is currently active. An application driving
     /// its own camera (first-person, fly) uses this to suppress camera motion
     /// while a manipulation drag owns the pointer, the way
     /// [`update_orbit`](Self::update_orbit) suppresses orbit internally.
@@ -303,13 +310,13 @@ impl ViewportInstance {
         self.runtime.as_mut()
     }
 
-    /// The underlying renderer, for advanced use the session does not wrap.
+    /// The underlying renderer, for advanced use the instance does not wrap.
     pub fn renderer_mut(&mut self) -> &mut ViewportRenderer {
         &mut self.renderer
     }
 
-    /// Forward a host device recreation to the renderer and runtime so their
-    /// GPU state re-initialises. Call after the host rebuilds the device.
+    /// Forward a device recreation from your application to the renderer and runtime so their
+    /// GPU state re-initialises. Call after your application rebuilds the device.
     pub fn notify_device_recreated(
         &mut self,
         device: &crate::gpu::Device,
@@ -408,7 +415,7 @@ mod tests {
     #[test]
     fn pointer_state_drives_click_detection() {
         // Verifies step 0: a press then release without movement is a click, and
-        // the session surfaces it on the resolved frame's pointer state.
+        // the instance surfaces it on the resolved frame's pointer state.
         let Some((device, _queue)) = headless_device() else {
             eprintln!("skipping pointer_state_drives_click_detection: no GPU adapter");
             return;
