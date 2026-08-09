@@ -40,6 +40,22 @@ pub enum LightmapData {
         /// Baked ambient occlusion, sampled by UV1.
         occlusion: TextureId,
     },
+    /// A radiance texture plus a per-light static-occluder shadowmask: the RGBA
+    /// channels hold the baked visibility (0 = shadowed, 1 = lit) of up to four
+    /// realtime lights (light index `i` -> channel `i`). The lit shaders combine
+    /// it with each light's realtime shadow by `min`, so static shadows come from
+    /// the bake (crisp at any distance) and dynamic ones from the shadow map,
+    /// while the lights stay fully dynamic (Unity Shadowmask parity). Bake the
+    /// shadowmask with [`bake_shadowmask`](crate::raytrace::bake_shadowmask) and
+    /// upload it linear. Pairs with [`LightmapMode::Replace`] (the radiance is the
+    /// baked indirect). Mutually exclusive with a directional lightmap: both ride
+    /// group-1 binding 18.
+    Shadowmask {
+        /// Baked incoming radiance (indirect), sampled by UV1.
+        radiance: TextureId,
+        /// Per-light static-occluder visibility (RGBA), sampled by UV1.
+        shadowmask: TextureId,
+    },
 }
 
 impl LightmapData {
@@ -49,16 +65,24 @@ impl LightmapData {
             LightmapData::NonDirectional { radiance } => radiance,
             LightmapData::DominantDirection { radiance, .. } => radiance,
             LightmapData::AmbientOcclusion { occlusion } => occlusion,
+            LightmapData::Shadowmask { radiance, .. } => radiance,
         }
     }
 
-    /// The dominant-direction texture (bound at binding 18), if this is a
-    /// directional lightmap.
+    /// The secondary texture bound at binding 18: the dominant-direction atlas for
+    /// a directional lightmap, or the shadowmask for a shadowmask lightmap (the two
+    /// are mutually exclusive and share the binding).
     pub(crate) fn direction_texture_id(self) -> Option<TextureId> {
         match self {
             LightmapData::DominantDirection { direction, .. } => Some(direction),
+            LightmapData::Shadowmask { shadowmask, .. } => Some(shadowmask),
             _ => None,
         }
+    }
+
+    /// True when binding 18 carries a shadowmask (rather than a direction atlas).
+    pub(crate) fn is_shadowmask(self) -> bool {
+        matches!(self, LightmapData::Shadowmask { .. })
     }
 }
 
@@ -103,9 +127,13 @@ pub(crate) struct MeshLightmap {
     pub(crate) uv1_buffer: crate::gpu::Buffer,
     /// The baked texture, bound at group 1 binding 17.
     pub(crate) texture_id: TextureId,
-    /// The dominant-direction atlas, bound at group 1 binding 18. `Some` only for
-    /// a directional lightmap; drives the shader's `lightmap_directional` flag.
+    /// The secondary atlas, bound at group 1 binding 18. `Some` for a directional
+    /// lightmap (dominant-direction atlas) or a shadowmask lightmap (per-light
+    /// visibility); `is_shadowmask` says which, and they are mutually exclusive.
     pub(crate) direction_texture_id: Option<TextureId>,
+    /// When true, binding 18 carries a shadowmask (drives `has_shadowmask` in the
+    /// object uniform); when false, a dominant-direction atlas.
+    pub(crate) is_shadowmask: bool,
     /// Shader mode code (see [`LightmapMode::to_shader`]).
     pub(crate) mode: u32,
     /// Maps this mesh's `[0, 1]` unwrap onto its sub-rect of a shared scene atlas:

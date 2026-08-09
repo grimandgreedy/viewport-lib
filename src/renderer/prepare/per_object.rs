@@ -166,7 +166,9 @@ pub(super) fn build_object_uniform(
             .mesh_store
             .get(item.mesh_id)
             .and_then(|mesh| mesh.lightmap.as_ref())
-            .map_or(0, |lm| lm.direction_texture_id.is_some() as u32),
+            .map_or(0, |lm| {
+                (lm.direction_texture_id.is_some() && !lm.is_shadowmask) as u32
+            }),
         // Scene-atlas placement: a per-mesh lightmap owns its whole atlas
         // (identity scale/bias, layer 0); a scene lightmap sits in a sub-rect of a
         // shared page. Both read straight off the registration.
@@ -180,7 +182,12 @@ pub(super) fn build_object_uniform(
             .get(item.mesh_id)
             .and_then(|mesh| mesh.lightmap.as_ref())
             .map_or(0, |lm| lm.layer),
-        _pad_ls: [0; 3],
+        has_shadowmask: resources
+            .mesh_store
+            .get(item.mesh_id)
+            .and_then(|mesh| mesh.lightmap.as_ref())
+            .map_or(0, |lm| lm.is_shadowmask as u32),
+        _pad_ls: [0; 2],
     }
 }
 
@@ -404,7 +411,8 @@ impl ViewportRenderer {
                         lightmap_directional: 0,
                         lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
                         lightmap_index: 0,
-                        _pad_ls: [0; 3],
+                        has_shadowmask: 0,
+                        _pad_ls: [0; 2],
                     };
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         queue.write_buffer(

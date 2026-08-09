@@ -1034,6 +1034,7 @@ impl DeviceResources {
             uv1_buffer,
             texture_id: data.texture_id(),
             direction_texture_id: data.direction_texture_id(),
+            is_shadowmask: data.is_shadowmask(),
             mode: mode.to_shader(),
             // A per-mesh lightmap owns its whole atlas: identity sub-rect, layer 0.
             // The array layer for a multi-page lightmap comes per vertex (UV1.z),
@@ -1108,6 +1109,7 @@ impl DeviceResources {
             uv1_buffer,
             texture_id: radiance,
             direction_texture_id: None,
+            is_shadowmask: false,
             mode: mode.to_shader(),
             scale_bias,
             layer,
@@ -2787,7 +2789,8 @@ impl DeviceResources {
             lightmap_directional: 0,
             lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
             lightmap_index: 0,
-            _pad_ls: [0; 3],
+            has_shadowmask: 0,
+            _pad_ls: [0; 2],
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2944,7 +2947,8 @@ impl DeviceResources {
             lightmap_directional: 0,
             lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
             lightmap_index: 0,
-            _pad_ls: [0; 3],
+            has_shadowmask: 0,
+            _pad_ls: [0; 2],
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

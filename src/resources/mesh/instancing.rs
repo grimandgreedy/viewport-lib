@@ -1547,8 +1547,12 @@ pub(crate) struct ObjectUniform {
     /// (`uv1.z`), so scene lightmaps select a layer per object while multi-page
     /// per-mesh lightmaps keep selecting per vertex. 0 for a single-page lightmap.
     pub(crate) lightmap_index: u32, //   4 bytes, offset 352
+    /// 1 when binding 18 carries a per-light shadowmask (rather than a direction
+    /// atlas): the lit shaders combine its baked static-occluder visibility with
+    /// each light's realtime shadow. Mutually exclusive with `lightmap_directional`.
+    pub(crate) has_shadowmask: u32, //   4 bytes, offset 356
     /// Pads the struct to a 16-byte multiple (368) for the uniform layout.
-    pub(crate) _pad_ls: [u32; 3], //  12 bytes, offset 356
+    pub(crate) _pad_ls: [u32; 2], //   8 bytes, offset 360
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);

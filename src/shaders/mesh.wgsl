@@ -120,8 +120,9 @@ struct Object {
     lightmap_directional: u32,             // offset 332 : 1 = sample the binding-18 direction atlas
     lightmap_scale_bias: vec4<f32>,        // offset 336 : lm_uv = uv1 * .xy + .zw (scene atlas sub-rect)
     lightmap_index: u32,                   // offset 352 : base atlas layer, added to the per-vertex page
+    has_shadowmask: u32,                   // offset 356 : 1 = the binding-18 atlas is a shadowmask
     // The vec4 above makes the struct 16-aligned, so WGSL rounds its size up to
-    // 368 to match the Rust ObjectUniform (which pads with a trailing [u32; 3]).
+    // 368 to match the Rust ObjectUniform (which pads with a trailing [u32; 2]).
 };
 
 struct ClipVolumeEntry {
@@ -721,6 +722,17 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
     var dbg_metallic     = 0.0;
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
 
+    // Baked per-light shadowmask when bound at binding 18 (RGBA static-occluder
+    // visibility, channel = light index), sampled once at explicit LOD 0 and
+    // combined with each light's realtime shadow in the loops below, so static
+    // shadows come from the bake and dynamic ones from the shadow map.
+    var shadowmask = vec4<f32>(1.0);
+    if object.has_shadowmask != 0u {
+        let sm_uv = in.lightmap_uv * object.lightmap_scale_bias.xy + object.lightmap_scale_bias.zw;
+        let sm_page = i32(object.lightmap_index) + i32(round(in.lightmap_page));
+        shadowmask = textureSampleLevel(lightmap_dir_tex, obj_sampler, sm_uv, sm_page, 0.0);
+    }
+
     if object.use_pbr != 0u {
         // Cook-Torrance PBR path
         var metallic  = clamp(object.metallic,  0.0, 1.0);
@@ -777,6 +789,12 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
                 }
             }
             // </viewport-shade-slot:shadow>
+            // Shadowmask: fold in the baked static-occluder visibility for this
+            // light (channel = light index) by min, so static shadows are baked
+            // and dynamic ones come from the realtime shadow above.
+            if object.has_shadowmask != 0u && i < 4u {
+                shadow_factor = min(shadow_factor, shadowmask[i]);
+            }
             // <viewport-shade-slot:light>
             radiance *= shadow_factor;
             // Subtractive lightmap: the main directional light (index 0) is baked
@@ -878,6 +896,9 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
                 } else if l.light_type == 1u && l.point_shadow_slot >= 0 {
                     shadow = sample_point_shadow(l, in.world_pos);
                 }
+            }
+            if object.has_shadowmask != 0u && i < 4u {
+                shadow = min(shadow, shadowmask[i]);
             }
 
             let H = normalize(light_dir + V);

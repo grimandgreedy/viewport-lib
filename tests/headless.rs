@@ -534,6 +534,104 @@ fn directional_lightmap_responds_to_normal() {
     );
 }
 
+/// A shadowmask attenuates a realtime light's direct contribution per channel: the
+/// same quad lit by one directional light reads bright where light 0's shadowmask
+/// channel is 1 (lit) and dark where it is 0 (shadowed). Black radiance in Replace
+/// mode removes the ambient term, so the readback is the shadowmask-gated direct.
+#[test]
+fn shadowmask_attenuates_direct_light() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let mut quad = MeshData::default();
+    quad.positions = vec![
+        [-1.0, -1.0, 0.0],
+        [1.0, -1.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [-1.0, 1.0, 0.0],
+    ];
+    quad.normals = vec![[0.0, 0.0, 1.0]; 4];
+    quad.indices = vec![0, 1, 2, 0, 2, 3];
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &quad)
+        .unwrap();
+    let uv1 = vec![glam::Vec2::new(0.5, 0.5); 4];
+
+    // Black radiance -> Replace zeroes the ambient term, so only the direct light
+    // (gated by the shadowmask) reaches the readback.
+    let radiance = renderer
+        .resources_mut()
+        .upload_texture_hdr(&device, &queue, 2, 2, &[0.0f32; 2 * 2 * 4])
+        .unwrap();
+
+    let peak_with_vis = |renderer: &mut ViewportRenderer, v: f32| -> f32 {
+        // Shadowmask: light 0 -> red channel = v; the other channels stay lit (1).
+        let sm: Vec<f32> = std::iter::repeat([v, 1.0, 1.0, 1.0])
+            .take(2 * 2)
+            .flatten()
+            .collect();
+        let shadowmask = renderer
+            .resources_mut()
+            .upload_texture_hdr(&device, &queue, 2, 2, &sm)
+            .unwrap();
+        renderer
+            .resources_mut()
+            .set_lightmap(
+                &device,
+                mesh,
+                &uv1,
+                viewport_lib::resources::LightmapData::Shadowmask {
+                    radiance,
+                    shadowmask,
+                },
+                viewport_lib::resources::LightmapMode::Replace,
+            )
+            .unwrap();
+
+        let cam = Camera::default();
+        let mut frame = FrameData::default();
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        // One directional light (index 0) straight toward the quad's +Z face.
+        let mut key = LightSource::default();
+        key.kind = LightKind::Directional {
+            direction: [0.0, 0.0, 1.0],
+        };
+        key.colour = [1.0, 1.0, 1.0];
+        key.intensity = 1.0;
+        frame.effects.lighting.lights = vec![key];
+        frame.effects.lighting.hemisphere_intensity = 0.0;
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.material.base_colour = [1.0, 1.0, 1.0];
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        let mut face_cam = RenderCamera::from_camera(&cam);
+        face_cam.aspect = 1.0;
+        let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
+        let c = ((32 * 64 + 32) * 4) as usize;
+        captured.rgba[c]
+            .max(captured.rgba[c + 1])
+            .max(captured.rgba[c + 2])
+    };
+
+    let lit = peak_with_vis(&mut renderer, 1.0);
+    let shadowed = peak_with_vis(&mut renderer, 0.0);
+    println!("shadowmask: lit={lit:.3} shadowed={shadowed:.3}");
+    assert!(
+        lit > 0.05,
+        "lit texel should receive direct light, got {lit}"
+    );
+    assert!(
+        lit > shadowed * 4.0,
+        "shadowmask 0 should strongly darken the direct light: lit={lit} shadowed={shadowed}"
+    );
+}
+
 /// A baked lightmap with radiance above 1.0 must survive to the HDR render path.
 /// The 8-bit `upload_texture` path clamps at upload (sRGB, [0,1]); the
 /// `upload_texture_hdr` (`Rgba16Float`) path must not. Both are rendered in

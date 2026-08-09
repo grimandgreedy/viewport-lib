@@ -102,8 +102,9 @@ struct Object {
     lightmap_directional: u32,             // offset 332 : 1 = sample the binding-18 direction atlas
     lightmap_scale_bias: vec4<f32>,        // offset 336 : lm_uv = uv1 * .xy + .zw (scene atlas sub-rect)
     lightmap_index: u32,                   // offset 352 : base atlas layer, added to the per-vertex page
+    has_shadowmask: u32,                   // offset 356 : 1 = the binding-18 atlas is a shadowmask
     // The vec4 above makes the struct 16-aligned, so WGSL rounds its size up to
-    // 368 to match the Rust ObjectUniform (which pads with a trailing [u32; 3]).
+    // 368 to match the Rust ObjectUniform (which pads with a trailing [u32; 2]).
 };
 
 struct ClipVolumeEntry {
