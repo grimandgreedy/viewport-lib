@@ -297,7 +297,7 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
             } else if (dir == 2) {
                 tp = vec2<f32>(tp.y, tp.x);
             } else if (dir == 3) {
-                tp = vec2<f32>(-tp.y, tp.x);
+                tp = vec2<f32>(tp.y, -tp.x);
             }
             var ths = hs;
             if (dir >= 2) {
