@@ -285,6 +285,12 @@ impl ViewportSession {
         &mut self.selection
     }
 
+    /// The GPU resource registry, read-only: queries that do not need a mutable
+    /// borrow.
+    pub fn resources(&self) -> &DeviceResources {
+        self.renderer.resources()
+    }
+
     /// The GPU resource registry: mesh uploads, plugins, deformers, and mesh
     /// sidecars (skinning, displacement, scalar fields).
     pub fn resources_mut(&mut self) -> &mut DeviceResources {
