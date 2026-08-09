@@ -431,12 +431,20 @@ fn directional_lightmap_responds_to_normal() {
 
     // Quad in the XY plane facing +Z, tangent +X, with UV0 for normal mapping.
     let mut quad = MeshData::default();
-    quad.positions = vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]];
+    quad.positions = vec![
+        [-1.0, -1.0, 0.0],
+        [1.0, -1.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [-1.0, 1.0, 0.0],
+    ];
     quad.normals = vec![[0.0, 0.0, 1.0]; 4];
     quad.uvs = Some(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     quad.tangents = Some(vec![[1.0, 0.0, 0.0, 1.0]; 4]);
     quad.indices = vec![0, 1, 2, 0, 2, 3];
-    let mesh = renderer.resources_mut().upload_mesh_data(&device, &quad).unwrap();
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &quad)
+        .unwrap();
     let uv1 = vec![glam::Vec2::new(0.5, 0.5); 4];
 
     // Uniform radiance 1.0, dominant direction (0.6,0,0.8) world, directionality 1.
@@ -444,7 +452,10 @@ fn directional_lightmap_responds_to_normal() {
         .resources_mut()
         .upload_texture_hdr(&device, &queue, 2, 2, &[1.0f32; 2 * 2 * 4])
         .unwrap();
-    let dir_rgba: Vec<f32> = std::iter::repeat([0.6f32, 0.0, 0.8, 1.0]).take(2 * 2).flatten().collect();
+    let dir_rgba: Vec<f32> = std::iter::repeat([0.6f32, 0.0, 0.8, 1.0])
+        .take(2 * 2)
+        .flatten()
+        .collect();
     let direction = renderer
         .resources_mut()
         .upload_texture_hdr(&device, &queue, 2, 2, &dir_rgba)
@@ -455,7 +466,10 @@ fn directional_lightmap_responds_to_normal() {
             &device,
             mesh,
             &uv1,
-            viewport_lib::resources::LightmapData::DominantDirection { radiance, direction },
+            viewport_lib::resources::LightmapData::DominantDirection {
+                radiance,
+                direction,
+            },
             viewport_lib::resources::LightmapMode::Replace,
         )
         .unwrap();
@@ -470,10 +484,22 @@ fn directional_lightmap_responds_to_normal() {
             255,
         ]
     };
-    let toward: Vec<u8> = std::iter::repeat(enc(0.6, 0.0, 0.8)).take(2 * 2).flatten().collect();
-    let away: Vec<u8> = std::iter::repeat(enc(-0.6, 0.0, 0.8)).take(2 * 2).flatten().collect();
-    let nm_toward = renderer.resources_mut().upload_normal_map(&device, &queue, 2, 2, &toward).unwrap();
-    let nm_away = renderer.resources_mut().upload_normal_map(&device, &queue, 2, 2, &away).unwrap();
+    let toward: Vec<u8> = std::iter::repeat(enc(0.6, 0.0, 0.8))
+        .take(2 * 2)
+        .flatten()
+        .collect();
+    let away: Vec<u8> = std::iter::repeat(enc(-0.6, 0.0, 0.8))
+        .take(2 * 2)
+        .flatten()
+        .collect();
+    let nm_toward = renderer
+        .resources_mut()
+        .upload_normal_map(&device, &queue, 2, 2, &toward)
+        .unwrap();
+    let nm_away = renderer
+        .resources_mut()
+        .upload_normal_map(&device, &queue, 2, 2, &away)
+        .unwrap();
 
     let peak_with = |renderer: &mut ViewportRenderer, nm| -> f32 {
         let cam = Camera::default();
@@ -494,7 +520,9 @@ fn directional_lightmap_responds_to_normal() {
         // Sample the centre pixel (on the quad) rather than the global peak, which
         // would pick up the background clear when the quad is dim.
         let c = ((32 * 64 + 32) * 4) as usize;
-        captured.rgba[c].max(captured.rgba[c + 1]).max(captured.rgba[c + 2])
+        captured.rgba[c]
+            .max(captured.rgba[c + 1])
+            .max(captured.rgba[c + 2])
     };
 
     let peak_toward = peak_with(&mut renderer, nm_toward);
@@ -579,6 +607,95 @@ fn hdr_lightmap_survives_above_one() {
     assert!(
         hdr_peak > 3.0,
         "HDR lightmap radiance was lost: peak {hdr_peak} (expected ~4.0)"
+    );
+}
+
+/// A multi-page lightmap must select its atlas layer from the per-vertex page
+/// index (UV1.z). One 2-layer HDR array is uploaded (layer 0 dim = 0.25, layer 1
+/// bright = 4.0) and the same mesh with the same UV1 is rendered twice, changing
+/// only the page assigned to every vertex. Page 0 must read the dim layer and
+/// page 1 the bright layer, so the two captures diverge by the layer contents
+/// alone. This proves the page index routes to distinct texture-array layers.
+#[test]
+fn multi_page_lightmap_selects_layer_per_vertex() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let vcount = box_mesh().positions.len();
+    let uv1 = vec![glam::Vec2::new(0.5, 0.5); vcount];
+
+    // Two-layer atlas: page 0 = 0.25 everywhere, page 1 = 4.0 everywhere. Data is
+    // layer-major (all of page 0, then all of page 1).
+    let mut atlas: Vec<f32> = Vec::new();
+    atlas.extend(
+        std::iter::repeat([0.25f32, 0.25, 0.25, 1.0])
+            .take(2 * 2)
+            .flatten(),
+    );
+    atlas.extend(
+        std::iter::repeat([4.0f32, 4.0, 4.0, 1.0])
+            .take(2 * 2)
+            .flatten(),
+    );
+    let radiance = renderer
+        .resources_mut()
+        .upload_texture_hdr_layers(&device, &queue, 2, 2, 2, &atlas)
+        .unwrap();
+
+    let mut capture_page = |renderer: &mut ViewportRenderer, page: u32| -> f32 {
+        let pages = vec![page; vcount];
+        renderer
+            .resources_mut()
+            .set_lightmap_paged(
+                &device,
+                mesh,
+                &uv1,
+                &pages,
+                viewport_lib::resources::LightmapData::NonDirectional { radiance },
+                viewport_lib::resources::LightmapMode::Replace,
+            )
+            .unwrap();
+        let cam = Camera::default();
+        let mut frame = FrameData::default();
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.lights = Vec::new();
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.material.base_colour = [1.0, 1.0, 1.0];
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        let mut face_cam = RenderCamera::from_camera(&cam);
+        face_cam.aspect = 1.0;
+        let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
+        // Peak over RGB only; the alpha channel is 1.0 and would mask a dim layer.
+        captured
+            .rgba
+            .chunks_exact(4)
+            .flat_map(|px| [px[0], px[1], px[2]])
+            .fold(0.0f32, f32::max)
+    };
+
+    let page0_peak = capture_page(&mut renderer, 0);
+    let page1_peak = capture_page(&mut renderer, 1);
+    println!("multi-page lightmap: page0={page0_peak:.3} page1={page1_peak:.3}");
+    assert!(
+        page0_peak < 1.0,
+        "page 0 should read the dim layer (~0.25), got {page0_peak}"
+    );
+    assert!(
+        page1_peak > 3.0,
+        "page 1 should read the bright layer (~4.0), got {page1_peak}"
+    );
+    assert!(
+        page1_peak > page0_peak * 3.0,
+        "the two pages must diverge by layer contents: page0={page0_peak} page1={page1_peak}"
     );
 }
 

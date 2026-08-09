@@ -526,28 +526,32 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // binding 17: baked lightmap texture (FRAGMENT, filterable).
-                // Sampled with the binding-2 material sampler. The 1x1 fallback
-                // is bound for meshes without a lightmap.
+                // binding 17: baked lightmap texture array (FRAGMENT, filterable).
+                // Sampled with the binding-2 material sampler. A lightmap can
+                // spill across several atlas pages, so this is a texture_2d_array
+                // and the shader selects a layer per vertex from UV1.z. Single-page
+                // lightmaps (and the 1x1 fallback for meshes without one) bind a
+                // one-layer array.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 17,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
                         sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
                 },
-                // binding 18: dominant-direction atlas for directional lightmaps
-                // (FRAGMENT, filterable). The 1x1 fallback is bound and ignored
-                // unless object.lightmap_directional is set.
+                // binding 18: dominant-direction atlas array for directional
+                // lightmaps (FRAGMENT, filterable). Same page layout as binding 17.
+                // The 1x1 fallback is bound and ignored unless
+                // object.lightmap_directional is set.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 18,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Texture {
                         sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -1972,6 +1976,18 @@ impl DeviceResources {
             }
         };
 
+        // A D2Array view of the same 1x1 fallback texture. Lightmap bindings 17
+        // and 18 are texture_2d_array (a lightmap can spill across atlas pages),
+        // so every mesh without a lightmap binds this single-layer array view.
+        let fallback_texture_array_view =
+            fallback_texture
+                .texture
+                .create_view(&crate::gpu::TextureViewDescriptor {
+                    label: Some("fallback_lightmap_array_view"),
+                    dimension: Some(crate::gpu::TextureViewDimension::D2Array),
+                    ..Default::default()
+                });
+
         // ------------------------------------------------------------------
         // Colourmap / LUT fallback resources
         // ------------------------------------------------------------------
@@ -2065,6 +2081,7 @@ impl DeviceResources {
             device,
             &object_bgl,
             &fallback_texture.view,
+            &fallback_texture_array_view,
             &fallback_normal_map_view,
             &fallback_ao_map_view,
             &fallback_texture.sampler,
@@ -2463,6 +2480,7 @@ impl DeviceResources {
             axes_vertex_count: 0,
             texture_bind_group_layout: texture_bgl,
             fallback_texture,
+            fallback_texture_array_view,
             fallback_normal_map,
             fallback_normal_map_view,
             fallback_ao_map,

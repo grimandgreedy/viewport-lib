@@ -190,19 +190,19 @@ struct ClipVolumeUB {
 // Baked lightmap texture, sampled with the binding-2 material sampler and gated
 // on object.lightmap_mode. Textures use a separate Metal table, so this is a
 // fresh binding. The 1x1 fallback is bound when no lightmap is set.
-@group(1) @binding(17) var lightmap_tex: texture_2d<f32>;
+@group(1) @binding(17) var lightmap_tex: texture_2d_array<f32>;
 // Dominant-direction atlas for a directional lightmap: xyz = unit incoming
 // direction (world space), w = directionality. Gated on object.lightmap_directional;
 // the 1x1 fallback is bound (and ignored) for flat lightmaps.
-@group(1) @binding(18) var lightmap_dir_tex: texture_2d<f32>;
+@group(1) @binding(18) var lightmap_dir_tex: texture_2d_array<f32>;
 
 // Directional-lightmap response: scale the baked radiance by how the shading
 // normal (post normal-map) faces the baked dominant light, relative to the
 // geometric normal the bake integrated against. Returns 1 when they match (flat
 // or non-normal-mapped surface -> baked value reproduced exactly), and diverges
 // only where a normal map perturbs the normal, weighted by directionality (w).
-fn lightmap_directional_factor(uv: vec2<f32>, n_pix: vec3<f32>, n_geo: vec3<f32>) -> f32 {
-    let d = textureSampleLevel(lightmap_dir_tex, obj_sampler, uv, 0.0);
+fn lightmap_directional_factor(uv: vec2<f32>, page: i32, n_pix: vec3<f32>, n_geo: vec3<f32>) -> f32 {
+    let d = textureSampleLevel(lightmap_dir_tex, obj_sampler, uv, page, 0.0);
     let ndl_pix = max(dot(normalize(n_pix), d.xyz), 0.0);
     let ndl_geo = max(dot(normalize(n_geo), d.xyz), 0.0);
     return mix(1.0, ndl_pix / max(ndl_geo, 0.1), d.w);
@@ -231,6 +231,9 @@ struct VertexOut {
     @location(7) face_colour:     vec4<f32>,
     // Baked lightmap UV1, interpolated for the fragment lightmap sample.
     @location(9) lightmap_uv:     vec2<f32>,
+    // Atlas page (array layer) for a multi-page lightmap, carried in UV1.z. Flat:
+    // every vertex of a chart shares one page, so no interpolation is wanted.
+    @location(10) @interpolate(flat) lightmap_page: f32,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -316,8 +319,11 @@ fn vs_main(in: VertexIn) -> VertexOut {
         object.use_face_colour != 0u && fc_len > 0u,
     );
     // Lightmap UV1 rides the vec4 sidecar's xy (zero for non-lightmapped meshes).
+    // .z carries the atlas page for a multi-page lightmap (0 otherwise).
     let lm_len = arrayLength(&extension_attr_buffer);
-    out.lightmap_uv = extension_attr_buffer[min(idx, max(lm_len, 1u) - 1u)].xy;
+    let lm_sidecar = extension_attr_buffer[min(idx, max(lm_len, 1u) - 1u)];
+    out.lightmap_uv = lm_sidecar.xy;
+    out.lightmap_page = lm_sidecar.z;
     // <viewport-shade-slot:vertex-fetch>
     // </viewport-shade-slot:vertex-fetch>
     return out;
@@ -822,9 +828,10 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // selection would snap to a coarse level and show the atlas texels as
         // blocky bands on the mesh. The atlas has no detail to lose at range.
         if object.lightmap_mode != 0u {
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            let lm_page = i32(round(in.lightmap_page));
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, lm_page, 0.0);
             if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(in.lightmap_uv, N, in.world_normal);
+                let f = lightmap_directional_factor(in.lightmap_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
             ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
@@ -884,9 +891,10 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // base mip explicitly (see the ambient branch above): derivative-based
         // mip selection over tightly-packed atlas charts reads as blocky bands.
         if object.lightmap_mode != 0u {
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            let lm_page = i32(round(in.lightmap_page));
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, lm_page, 0.0);
             if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(in.lightmap_uv, N, in.world_normal);
+                let f = lightmap_directional_factor(in.lightmap_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
             hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);

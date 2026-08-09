@@ -97,6 +97,7 @@ impl DeviceResources {
             device,
             &self.object_bind_group_layout,
             &self.fallback_texture.view,
+            &self.fallback_texture_array_view,
             &self.fallback_normal_map_view,
             &self.fallback_ao_map_view,
             &self.material_sampler,
@@ -237,6 +238,7 @@ impl DeviceResources {
             device,
             &self.object_bind_group_layout,
             &self.fallback_texture.view,
+            &self.fallback_texture_array_view,
             &self.fallback_normal_map_view,
             &self.fallback_ao_map_view,
             &self.material_sampler,
@@ -440,6 +442,7 @@ impl DeviceResources {
                                 &device,
                                 &resources.object_bind_group_layout,
                                 &resources.fallback_texture.view,
+                                &resources.fallback_texture_array_view,
                                 &resources.fallback_normal_map_view,
                                 &resources.fallback_ao_map_view,
                                 &resources.material_sampler,
@@ -958,6 +961,46 @@ impl DeviceResources {
         data: crate::resources::lightmap::LightmapData,
         mode: crate::resources::lightmap::LightmapMode,
     ) -> crate::error::ViewportResult<()> {
+        self.set_lightmap_impl(device, mesh_id, uv1, None, data, mode)
+    }
+
+    /// Attach a multi-page baked lightmap to a mesh.
+    ///
+    /// Like [`set_lightmap`](Self::set_lightmap), but for an unwrap whose charts
+    /// spilled across several atlas pages. `pages` is one atlas-page (array-layer)
+    /// index per vertex, parallel to `uv1`; every vertex of a chart shares one
+    /// page. `data` must name a texture-array lightmap uploaded with
+    /// [`upload_texture_hdr_layers`](crate::resources::ViewportGpuResources::upload_texture_hdr_layers)
+    /// whose layer count covers the largest page index. A single-page lightmap
+    /// (all pages `0`) is identical to `set_lightmap`.
+    ///
+    /// `pages` is zero-padded / truncated to the vertex count like `uv1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
+    /// if `mesh_id` is not registered.
+    pub fn set_lightmap_paged(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        uv1: &[glam::Vec2],
+        pages: &[u32],
+        data: crate::resources::lightmap::LightmapData,
+        mode: crate::resources::lightmap::LightmapMode,
+    ) -> crate::error::ViewportResult<()> {
+        self.set_lightmap_impl(device, mesh_id, uv1, Some(pages), data, mode)
+    }
+
+    fn set_lightmap_impl(
+        &mut self,
+        device: &crate::gpu::Device,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        uv1: &[glam::Vec2],
+        pages: Option<&[u32]>,
+        data: crate::resources::lightmap::LightmapData,
+        mode: crate::resources::lightmap::LightmapMode,
+    ) -> crate::error::ViewportResult<()> {
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store
@@ -968,11 +1011,13 @@ impl DeviceResources {
                 })?;
         // Zero-pad / truncate UV1 to the vertex count. It rides the same vec4
         // sidecar as the plugin vertex attribute (binding 15), so pack UV into
-        // .xy and leave .zw zero; the shader reads .xy.
+        // .xy and the atlas page into .z (0 for single-page lightmaps); the shader
+        // reads .xy and selects the array layer from .z.
         let vertex_count = mesh.vertex_count().max(1);
         let mut values = vec![[0.0f32; 4]; vertex_count];
-        for (dst, src) in values.iter_mut().zip(uv1.iter()) {
-            *dst = [src.x, src.y, 0.0, 0.0];
+        for (i, (dst, src)) in values.iter_mut().zip(uv1.iter()).enumerate() {
+            let page = pages.and_then(|p| p.get(i)).copied().unwrap_or(0) as f32;
+            *dst = [src.x, src.y, page, 0.0];
         }
         let uv1_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("lightmap_uv1_buf"),
@@ -1223,6 +1268,7 @@ impl DeviceResources {
             device,
             &self.object_bind_group_layout,
             &self.fallback_texture.view,
+            &self.fallback_texture_array_view,
             &self.fallback_normal_map_view,
             &self.fallback_ao_map_view,
             &self.material_sampler,
@@ -2443,6 +2489,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         object_bgl: &crate::gpu::BindGroupLayout,
         fallback_albedo_view: &crate::gpu::TextureView,
+        fallback_lightmap_array_view: &crate::gpu::TextureView,
         fallback_normal_view: &crate::gpu::TextureView,
         fallback_ao_view: &crate::gpu::TextureView,
         fallback_sampler: &crate::gpu::Sampler,
@@ -2464,6 +2511,7 @@ impl DeviceResources {
             device,
             object_bgl,
             fallback_albedo_view,
+            fallback_lightmap_array_view,
             fallback_normal_view,
             fallback_ao_view,
             fallback_sampler,
@@ -2488,6 +2536,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         object_bgl: &crate::gpu::BindGroupLayout,
         fallback_albedo_view: &crate::gpu::TextureView,
+        fallback_lightmap_array_view: &crate::gpu::TextureView,
         fallback_normal_view: &crate::gpu::TextureView,
         fallback_ao_view: &crate::gpu::TextureView,
         fallback_sampler: &crate::gpu::Sampler,
@@ -2537,6 +2586,7 @@ impl DeviceResources {
             device,
             object_bgl,
             fallback_albedo_view,
+            fallback_lightmap_array_view,
             fallback_normal_view,
             fallback_ao_view,
             fallback_sampler,
@@ -2585,6 +2635,7 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         object_bgl: &crate::gpu::BindGroupLayout,
         fallback_albedo_view: &crate::gpu::TextureView,
+        fallback_lightmap_array_view: &crate::gpu::TextureView,
         fallback_normal_view: &crate::gpu::TextureView,
         fallback_ao_view: &crate::gpu::TextureView,
         fallback_sampler: &crate::gpu::Sampler,
@@ -2748,11 +2799,15 @@ impl DeviceResources {
                 // once a lightmap is set. UV1 rides binding 15 above.
                 crate::gpu::BindGroupEntry {
                     binding: 17,
-                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        fallback_lightmap_array_view,
+                    ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 18,
-                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        fallback_lightmap_array_view,
+                    ),
                 },
             ],
         });
@@ -2895,11 +2950,15 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,
-                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        fallback_lightmap_array_view,
+                    ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 18,
-                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
+                    resource: crate::gpu::BindingResource::TextureView(
+                        fallback_lightmap_array_view,
+                    ),
                 },
             ],
         });

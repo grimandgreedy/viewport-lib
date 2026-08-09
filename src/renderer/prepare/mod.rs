@@ -697,13 +697,13 @@ impl ViewportRenderer {
                     crate::gpu::BindGroupEntry {
                         binding: 17,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_texture.view,
+                            &resources.fallback_texture_array_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 18,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_texture.view,
+                            &resources.fallback_texture_array_view,
                         ),
                     },
                 ],

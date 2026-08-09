@@ -1,20 +1,25 @@
 //! The whole offline lightmapper, run live: unwrap -> texel G-buffer -> GI solve
 //! -> denoise -> encode -> consume.
 //!
-//! A small room (grey floor, red and green side walls, a back wall) with a torus
-//! sitting on the floor. The floor and the torus have their lighting baked by the
-//! path tracer: the torus is UV-unwrapped with xatlas, both are rasterised into
-//! their lightmap atlas to get a world point per texel, a GI hemisphere is shot
-//! from each, the noisy atlas is denoised and dilated, and the result is encoded
-//! and sampled back onto the surface by UV1.
+//! A small room (grey floor, red and green side walls, a back wall) holds four
+//! baked hero objects: a torus, an icosphere, a normal-mapped cuboid, and a
+//! finely tessellated torus. Each is UV-unwrapped with xatlas, rasterised into
+//! its lightmap atlas to get a world point per texel, has a GI hemisphere shot
+//! from each texel, then the noisy atlas is denoised, seam-stitched, dilated,
+//! encoded, and sampled back onto the surface by UV1. Three cases are exercised
+//! side by side: the cuboid gets a directional lightmap (its bump normal map
+//! catches the baked light direction); the front torus deliberately spills its
+//! unwrap across several atlas pages and loads as a texture array with a
+//! per-vertex page index; the rest are single-page HDR radiance.
 //!
 //! The top chip switches **Baked GI** against **Realtime only** : the same room
 //! lit by one realtime light with flat ambient. Baked adds the soft contact
-//! shadow under the torus, the red/green colour bleed onto the floor and the
-//! torus, and the ambient occlusion in the torus' inner ring : indirect light no
-//! single realtime light reproduces. The side panel re-bakes at different sample
-//! counts, toggles the denoiser (watch the noise return), and shows the baked
-//! atlas on a floating panel.
+//! shadows under the objects, the red/green colour bleed onto the floor and the
+//! objects, and the ambient occlusion in the torus' inner ring : indirect light
+//! no single realtime light reproduces. The side panel re-bakes at different
+//! sample counts, toggles the denoiser (watch the noise return), shows the baked
+//! atlas on a floating panel, and reports how many pages the multi-page hero
+//! spilled into.
 
 use eframe::egui;
 use glam::{Mat3, Mat4, Vec2, Vec3};
@@ -48,6 +53,9 @@ const TORUS_ALBEDO: [f32; 3] = [0.82, 0.80, 0.72];
 const RED: [f32; 3] = [0.85, 0.12, 0.10];
 const GREEN: [f32; 3] = [0.15, 0.75, 0.20];
 const BACK: [f32; 3] = [0.75, 0.75, 0.78];
+const SPHERE_ALBEDO: [f32; 3] = [0.78, 0.80, 0.85];
+const BOX_ALBEDO: [f32; 3] = [0.80, 0.72, 0.55];
+const KNOT_ALBEDO: [f32; 3] = [0.72, 0.58, 0.82];
 
 /// One surface in the room. `pos`/`nrm`/`idx` are the local geometry (kept so the
 /// bake can transform it to world space and rasterise its texel G-buffer); `uv1`
@@ -68,12 +76,31 @@ struct Piece {
     xf: Mat4,
     albedo: [f32; 3],
     baked: bool,
-    /// Cached bake outputs, so denoise/encode can re-run without re-tracing.
-    raw_irradiance: Vec<[f32; 4]>,
-    raw_direction: Vec<[f32; 4]>,
-    gbuf_pos: Vec<[f32; 4]>,
-    gbuf_nrm: Vec<[f32; 4]>,
+    /// Per-vertex atlas page from the unwrap. Empty for non-unwrapped pieces (all
+    /// page 0). When `atlas_count > 1` this drives `set_lightmap_paged` so each
+    /// vertex samples its own layer of the texture-array lightmap.
+    pages: Vec<u32>,
+    /// Number of atlas pages this piece's lightmap spans. 1 for the single-page
+    /// hero objects; > 1 for the multi-page hero, whose charts spilled several
+    /// pages and load as one texture array.
+    atlas_count: u32,
+    /// Optional tangent-space normal map. When set, the piece renders with it and
+    /// its baked lightmap is directional (so the bumps respond to the baked light
+    /// direction).
+    normal_tex: Option<TextureId>,
+    /// Cached bake outputs per atlas page, so denoise/encode can re-run without
+    /// re-tracing. Single-page pieces have one entry; the multi-page hero has one
+    /// per page (each page rasterises and bakes only its own charts).
+    raw_irradiance: Vec<Vec<[f32; 4]>>,
+    raw_direction: Vec<Vec<[f32; 4]>>,
+    gbuf_pos: Vec<Vec<[f32; 4]>>,
+    gbuf_nrm: Vec<Vec<[f32; 4]>>,
+    /// Baked radiance atlas (linear HDR), sampled at binding 17. A single texture
+    /// for single-page pieces, or an N-layer texture array for the multi-page hero.
     tex: Option<TextureId>,
+    /// Baked dominant-direction atlas (linear HDR), sampled at binding 18. Set
+    /// only for normal-mapped pieces, which want the directional response.
+    dir_tex: Option<TextureId>,
 }
 
 pub struct LightmapBakeShowcase {
@@ -102,6 +129,9 @@ pub struct LightmapBakeShowcase {
     /// Actual packed atlas size of the torus (xatlas picks it; it is usually not
     /// the requested resolution).
     torus_atlas: (u32, u32),
+    /// Atlas pages the multi-page hero spilled into, and its per-page size.
+    knot_pages: u32,
+    knot_atlas: (u32, u32),
     bake_ms: u32,
     directionality: f32,
     request_rebake: bool,
@@ -127,6 +157,8 @@ impl LightmapBakeShowcase {
             atlas_node: None,
             torus_charts: 0,
             torus_atlas: (ATLAS, ATLAS),
+            knot_pages: 1,
+            knot_atlas: (ATLAS, ATLAS),
             bake_ms: 0,
             directionality: 0.0,
             request_rebake: false,
@@ -175,48 +207,72 @@ impl LightmapBakeShowcase {
             if !self.pieces[i].baked {
                 continue;
             }
-            let (pos, nrm, uv1, idx, xf, aw, ah) = {
+            let (pos, nrm, uv1, idx, pages, xf, aw, ah, atlas_count) = {
                 let p = &self.pieces[i];
                 (
                     p.pos.clone(),
                     p.nrm.clone(),
                     p.uv1.iter().map(|u| [u.x, u.y]).collect::<Vec<_>>(),
                     p.idx.clone(),
+                    p.pages.clone(),
                     p.xf,
                     p.atlas_w,
                     p.atlas_h,
+                    p.atlas_count.max(1),
                 )
             };
-            let gbuf = rasterize_texel_gbuffer(
-                device,
-                queue,
-                &TexelGeometry {
-                    positions: &pos,
-                    normals: &nrm,
-                    uv1: &uv1,
-                    indices: &idx,
-                    model: xf,
-                },
-                aw,
-                ah,
-            );
-            let bake = bake_lightmap_directional(
-                device,
-                queue,
-                &scene,
-                &TexelSurfaces {
-                    width: gbuf.width,
-                    height: gbuf.height,
-                    world_pos: &gbuf.world_pos,
-                    world_normal: &gbuf.world_normal,
-                },
-                &settings,
-            );
+            // Bake each atlas page on its own: a page holds a disjoint set of
+            // charts (all three vertices of a triangle share a page), so its texel
+            // G-buffer must rasterise only that page's triangles. Single-page
+            // pieces run this loop once over the whole mesh.
+            let mut irr_pages = Vec::with_capacity(atlas_count as usize);
+            let mut dir_pages = Vec::with_capacity(atlas_count as usize);
+            let mut gp_pages = Vec::with_capacity(atlas_count as usize);
+            let mut gn_pages = Vec::with_capacity(atlas_count as usize);
+            for page in 0..atlas_count {
+                let idx_k = page_indices(&idx, &pages, page);
+                if idx_k.is_empty() {
+                    irr_pages.push(Vec::new());
+                    dir_pages.push(Vec::new());
+                    gp_pages.push(Vec::new());
+                    gn_pages.push(Vec::new());
+                    continue;
+                }
+                let gbuf = rasterize_texel_gbuffer(
+                    device,
+                    queue,
+                    &TexelGeometry {
+                        positions: &pos,
+                        normals: &nrm,
+                        uv1: &uv1,
+                        indices: &idx_k,
+                        model: xf,
+                    },
+                    aw,
+                    ah,
+                );
+                let bake = bake_lightmap_directional(
+                    device,
+                    queue,
+                    &scene,
+                    &TexelSurfaces {
+                        width: gbuf.width,
+                        height: gbuf.height,
+                        world_pos: &gbuf.world_pos,
+                        world_normal: &gbuf.world_normal,
+                    },
+                    &settings,
+                );
+                irr_pages.push(to_rgba4(&bake.irradiance));
+                dir_pages.push(to_rgba4(&bake.direction));
+                gp_pages.push(gbuf.world_pos);
+                gn_pages.push(gbuf.world_normal);
+            }
             let p = &mut self.pieces[i];
-            p.raw_irradiance = to_rgba4(&bake.irradiance);
-            p.raw_direction = to_rgba4(&bake.direction);
-            p.gbuf_pos = gbuf.world_pos;
-            p.gbuf_nrm = gbuf.world_normal;
+            p.raw_irradiance = irr_pages;
+            p.raw_direction = dir_pages;
+            p.gbuf_pos = gp_pages;
+            p.gbuf_nrm = gn_pages;
         }
         self.baked_at = Some(self.samples);
     }
@@ -233,80 +289,158 @@ impl LightmapBakeShowcase {
                 continue;
             }
             let (aw, ah) = (self.pieces[i].atlas_w, self.pieces[i].atlas_h);
-            // Denoise is optional (the toggle), but dilation is not: it fills the
-            // empty chart gutter so bilinear sampling at a chart edge never reads
-            // the black border. Always dilate, so denoise-off still has clean
-            // chart edges rather than black seam lines.
-            let denoised = if self.denoise {
-                denoise(
-                    &self.pieces[i].raw_irradiance,
-                    &self.pieces[i].gbuf_pos,
-                    &self.pieces[i].gbuf_nrm,
-                    aw,
-                    ah,
-                    &DenoiseParams::default(),
-                )
-            } else {
-                self.pieces[i].raw_irradiance.clone()
-            };
-            // Stitch cross-chart seams: make the two sides of every chart cut
-            // agree so the boundary stops showing as a thin line, then dilate the
-            // corrected charts into the gutter.
-            let uv1: Vec<[f32; 2]> = self.pieces[i].uv1.iter().map(|u| [u.x, u.y]).collect();
+            let atlas_count = self.pieces[i].atlas_count.max(1);
+            let idx = self.pieces[i].idx.clone();
+            let pages = self.pieces[i].pages.clone();
+            let inv_pi = 1.0 / std::f32::consts::PI;
+            let page_texels = (aw * ah) as usize;
+            let p = atlas_count as usize;
+
+            // Denoise is optional (the toggle) and local, so it runs per page on
+            // that page's own atlas. Dilation is not optional; it comes after the
+            // stitch below.
+            let mut denoised_pages: Vec<Vec<[f32; 4]>> = Vec::with_capacity(p);
+            for page in 0..p {
+                let raw = &self.pieces[i].raw_irradiance[page];
+                if raw.is_empty() {
+                    denoised_pages.push(vec![[0.0f32; 4]; page_texels]);
+                    continue;
+                }
+                let d = if self.denoise {
+                    denoise(
+                        raw,
+                        &self.pieces[i].gbuf_pos[page],
+                        &self.pieces[i].gbuf_nrm[page],
+                        aw,
+                        ah,
+                        &DenoiseParams::default(),
+                    )
+                } else {
+                    raw.clone()
+                };
+                denoised_pages.push(d);
+            }
+
+            // Stitch every chart seam at once, including cuts whose two charts
+            // landed on different atlas pages. Stack the pages into one tall atlas
+            // (page k -> vertical band k) and shift each vertex's UV into its band;
+            // stitch welds the two sides of a cut by 3D position, so a cross-page
+            // cut reconciles exactly like a within-page one. Stitching each page in
+            // isolation would leave those cross-page seams visible. Single-page
+            // pieces stack to themselves (band 0), so this is a no-op for them.
+            let stacked: Vec<[f32; 4]> = denoised_pages.concat();
+            let inv_p = 1.0 / p as f32;
+            let uv_stacked: Vec<[f32; 2]> = self.pieces[i]
+                .uv1
+                .iter()
+                .enumerate()
+                .map(|(v, u)| {
+                    let page = pages.get(v).copied().unwrap_or(0).min(atlas_count - 1) as f32;
+                    [u.x, (u.y + page) * inv_p]
+                })
+                .collect();
             let stitched = stitch(
-                &denoised,
+                &stacked,
                 aw,
-                ah,
+                ah * atlas_count,
                 &StitchGeometry {
                     positions: &self.pieces[i].pos,
-                    uv1: &uv1,
-                    indices: &self.pieces[i].idx,
+                    uv1: &uv_stacked,
+                    indices: &idx,
                 },
                 &StitchParams::default(),
             );
-            let cleaned = dilate(&stitched, aw, ah, 6);
-            // Encode into the neutral directional lightmap (exercises the encoder
-            // and yields the directionality stat); the display samples the
-            // radiance channel.
-            let lm = encode(
-                aw,
-                ah,
-                &cleaned,
-                Some(&self.pieces[i].raw_direction),
-                &self.pieces[i].gbuf_nrm,
-                Encoding::DominantDirection,
-            );
-            if let Some(dir) = lm.direction() {
-                for d in dir {
-                    if d[3] > 0.0 {
-                        directionality_sum += d[3] as f64;
-                        directionality_n += 1;
+
+            // Per page: dilate its band into the gutter, encode, and write its
+            // layer. Radiance is concatenated layer-major (page 0, then page 1, ...)
+            // so a multi-page piece uploads as one texture array; single-page
+            // pieces produce one layer.
+            let mut layers = vec![0.0f32; page_texels * 4 * p];
+            // The directional atlas is only uploaded for the (single-page) normal-
+            // mapped pieces; the multi-page hero is non-directional.
+            let mut dir_tex: Option<TextureId> = None;
+            for page in 0..p {
+                if self.pieces[i].raw_irradiance[page].is_empty() {
+                    continue; // leaves this layer zeroed (no charts on this page)
+                }
+                let band = &stitched[page * page_texels..(page + 1) * page_texels];
+                let cleaned = dilate(band, aw, ah, 6);
+                // Encode into the neutral directional lightmap (exercises the
+                // encoder and yields the directionality stat); the display samples
+                // the radiance channel.
+                let lm = encode(
+                    aw,
+                    ah,
+                    &cleaned,
+                    Some(&self.pieces[i].raw_direction[page]),
+                    &self.pieces[i].gbuf_nrm[page],
+                    Encoding::DominantDirection,
+                );
+                if let Some(dir) = lm.direction() {
+                    for d in dir {
+                        if d[3] > 0.0 {
+                            directionality_sum += d[3] as f64;
+                            directionality_n += 1;
+                        }
+                    }
+                }
+                // Write this page's linear diffuse radiance (incident irradiance /
+                // pi) into its layer. The material keeps the true albedo, so
+                // Replace mode (base_colour * lm.rgb) gives albedo * E/pi. No albedo
+                // baked in, no exposure here: the renderer's HDR pipeline tonemaps
+                // once for display.
+                let base = page * page_texels * 4;
+                for (t, px) in lm.radiance().iter().enumerate() {
+                    if px[3] <= 0.5 {
+                        continue;
+                    }
+                    layers[base + t * 4] = px[0] * inv_pi;
+                    layers[base + t * 4 + 1] = px[1] * inv_pi;
+                    layers[base + t * 4 + 2] = px[2] * inv_pi;
+                    layers[base + t * 4 + 3] = 1.0;
+                }
+
+                // Normal-mapped pieces get the directional atlas too (dominant
+                // direction xyz + directionality w, uploaded linear/raw), so the
+                // bumps respond to where the baked light came from. These are all
+                // single-page, so only page 0 runs.
+                if atlas_count == 1 && self.pieces[i].normal_tex.is_some() {
+                    if let Some(dir) = lm.direction() {
+                        // Dilate the direction atlas into the gutter using the
+                        // radiance coverage as the mask (its own w is directionality,
+                        // not coverage), so bilinear at a chart edge reads a real
+                        // direction rather than the w=0 gutter (which fades to flat).
+                        let covered: Vec<bool> = cleaned.iter().map(|c| c[3] > 0.5).collect();
+                        let dir = dilate_masked(dir, &covered, aw as usize, ah as usize, 6);
+                        let mut dirbuf = vec![0.0f32; dir.len() * 4];
+                        for (t, d) in dir.iter().enumerate() {
+                            dirbuf[t * 4] = d[0];
+                            dirbuf[t * 4 + 1] = d[1];
+                            dirbuf[t * 4 + 2] = d[2];
+                            dirbuf[t * 4 + 3] = d[3];
+                        }
+                        dir_tex = Some(
+                            ctx.session
+                                .resources_mut()
+                                .upload_texture_hdr(device, queue, aw, ah, &dirbuf)
+                                .unwrap(),
+                        );
                     }
                 }
             }
-            // Upload linear diffuse radiance (incident irradiance / pi) through
-            // the HDR path. The material keeps the true albedo, so Replace mode
-            // (base_colour * lm.rgb) gives albedo * E/pi. No albedo baked in, no
-            // exposure applied here: the renderer's HDR pipeline tonemaps once for
-            // display. (The old 8-bit sRGB upload pre-tonemapped, so the render
-            // path tonemapped it a second time.)
-            let inv_pi = 1.0 / std::f32::consts::PI;
-            let mut radiance = vec![0.0f32; lm.radiance().len() * 4];
-            for (t, px) in lm.radiance().iter().enumerate() {
-                if px[3] <= 0.5 {
-                    continue;
-                }
-                radiance[t * 4] = px[0] * inv_pi;
-                radiance[t * 4 + 1] = px[1] * inv_pi;
-                radiance[t * 4 + 2] = px[2] * inv_pi;
-                radiance[t * 4 + 3] = 1.0;
-            }
-            let tex = ctx
-                .session
-                .resources_mut()
-                .upload_texture_hdr(device, queue, aw, ah, &radiance)
-                .unwrap();
+
+            // Single texture for single-page pieces; an N-layer texture array for
+            // the multi-page hero, which set_lightmap_paged then samples per vertex.
+            let res = ctx.session.resources_mut();
+            let tex = if atlas_count > 1 {
+                res.upload_texture_hdr_layers(device, queue, aw, ah, atlas_count, &layers)
+                    .unwrap()
+            } else {
+                res.upload_texture_hdr(device, queue, aw, ah, &layers)
+                    .unwrap()
+            };
             self.pieces[i].tex = Some(tex);
+            self.pieces[i].dir_tex = dir_tex;
         }
         self.directionality = if directionality_n > 0 {
             (directionality_sum / directionality_n as f64) as f32
@@ -369,6 +503,12 @@ impl LightmapBakeShowcase {
             // multiplies it by the material's base_colour (albedo).
             let mut mat = Material::pbr(p.albedo, 0.0, 0.9);
             mat.backface_policy = BackfacePolicy::Identical;
+            // Normal-mapped pieces carry their map in both modes; combined with the
+            // directional lightmap (baked mode) the bumps pick up the baked light.
+            if let Some(nt) = p.normal_tex {
+                mat.normal_map_id = Some(nt);
+                mat.normal_strength = 1.0;
+            }
             let id = session.scene_mut().add(Some(p.mesh), p.xf, mat);
             // Per-object cast-shadows: the shadow pass skips items with this off,
             // so the toggle reliably shows/hides the realtime shadow. Baked mode
@@ -425,13 +565,30 @@ impl LightmapBakeShowcase {
             }
             match (baked_mode, p.tex) {
                 (true, Some(tex)) => {
-                    let _ = res.set_lightmap(
-                        device,
-                        p.mesh,
-                        &p.uv1,
-                        LightmapData::NonDirectional { radiance: tex },
-                        LightmapMode::Replace,
-                    );
+                    // Directional when a dominant-direction atlas was baked (the
+                    // normal-mapped pieces), flat otherwise.
+                    let data = match p.dir_tex {
+                        Some(direction) => LightmapData::DominantDirection {
+                            radiance: tex,
+                            direction,
+                        },
+                        None => LightmapData::NonDirectional { radiance: tex },
+                    };
+                    if p.atlas_count > 1 {
+                        // Multi-page: the lightmap is a texture array; each vertex
+                        // carries the atlas page it was packed onto.
+                        let _ = res.set_lightmap_paged(
+                            device,
+                            p.mesh,
+                            &p.uv1,
+                            &p.pages,
+                            data,
+                            LightmapMode::Replace,
+                        );
+                    } else {
+                        let _ =
+                            res.set_lightmap(device, p.mesh, &p.uv1, data, LightmapMode::Replace);
+                    }
                 }
                 _ => {
                     let _ = res.clear_lightmap(p.mesh);
@@ -474,55 +631,65 @@ impl Showcase for LightmapBakeShowcase {
         let floor = primitives::plane(20.0, 14.0);
         pieces.push(make_piece(ctx, &floor, Mat4::IDENTITY, FLOOR_ALBEDO, true));
 
-        // Torus hero, UV-unwrapped with xatlas so its lightmap UVs are unique.
-        let torus = primitives::torus(2.2, 0.8, 64, 32);
-        let unwrapped = viewport_lib_bake::unwrap(
-            &viewport_lib_bake::UnwrapInput {
-                positions: &torus.positions,
-                normals: Some(&torus.normals),
-                indices: &torus.indices,
-            },
-            &viewport_lib_bake::UnwrapOptions {
-                resolution: ATLAS,
-                // Generous inter-chart padding so dilation can fill the gutter and
-                // bilinear sampling at a chart edge never reads across the seam.
-                padding: 6,
-                ..Default::default()
-            },
-        )
-        .expect("unwrap torus");
-        self.torus_charts = unwrapped.chart_count;
-        self.torus_atlas = (unwrapped.width, unwrapped.height);
-        let torus_mesh = build_mesh(
+        // A procedural bump normal map for the directional-lightmap demo.
+        let bump = make_bump_normal_map(ctx, 512, 4.0);
+
+        // Three hero objects of different topology, each UV-unwrapped with xatlas
+        // so its lightmap UVs are unique. The torus is the seam-free hero (and
+        // drives the atlas panel); the sphere is a smooth radiance hero; the
+        // cuboid carries the bump normal map, so its baked lightmap is directional
+        // and the bumps catch the raked light. The cuboid gets the normal map (not
+        // the sphere) because its per-face charts meet at real geometric edges, so
+        // the directional atlas has no smooth-surface seams to show.
+        let torus = primitives::torus(1.9, 0.7, 64, 32);
+        let (torus_piece, torus_charts) = unwrap_piece(
             ctx,
-            &unwrapped.positions,
-            &unwrapped.normals,
-            &unwrapped.uv1,
-            &unwrapped.indices,
+            &torus,
+            Mat4::from_translation(Vec3::new(0.0, 1.0, 1.1)) * Mat4::from_rotation_x(0.35),
+            TORUS_ALBEDO,
+            None,
         );
-        let torus_xf =
-            Mat4::from_translation(Vec3::new(0.0, 0.0, 1.2)) * Mat4::from_rotation_x(0.35);
-        pieces.push(Piece {
-            mesh: torus_mesh,
-            pos: unwrapped.positions,
-            nrm: unwrapped.normals,
-            idx: unwrapped.indices,
-            uv1: unwrapped
-                .uv1
-                .iter()
-                .map(|u| Vec2::new(u[0], u[1]))
-                .collect(),
-            atlas_w: unwrapped.width,
-            atlas_h: unwrapped.height,
-            xf: torus_xf,
-            albedo: TORUS_ALBEDO,
-            baked: true,
-            raw_irradiance: Vec::new(),
-            raw_direction: Vec::new(),
-            gbuf_pos: Vec::new(),
-            gbuf_nrm: Vec::new(),
-            tex: None,
-        });
+        self.torus_charts = torus_charts;
+        self.torus_atlas = (torus_piece.atlas_w, torus_piece.atlas_h);
+        pieces.push(torus_piece);
+
+        // Icosphere, not a UV sphere: a UV sphere's pole collapses many triangles
+        // to one point with degenerate UVs, leaving an uncovered (black) texel
+        // patch at the pole. The icosphere has uniform triangles and no pole.
+        let sphere = primitives::icosphere(1.5, 4);
+        let (sphere_piece, _) = unwrap_piece(
+            ctx,
+            &sphere,
+            Mat4::from_translation(Vec3::new(-4.6, -1.5, 1.5)),
+            SPHERE_ALBEDO,
+            None,
+        );
+        pieces.push(sphere_piece);
+
+        let box_mesh = primitives::cuboid(2.4, 2.4, 2.4);
+        let (box_piece, _) = unwrap_piece(
+            ctx,
+            &box_mesh,
+            Mat4::from_translation(Vec3::new(4.8, -1.2, 1.2)) * Mat4::from_rotation_z(0.5),
+            BOX_ALBEDO,
+            Some(bump),
+        );
+        pieces.push(box_piece);
+
+        // Multi-page hero: a finely tessellated torus with enough chart area that
+        // its unwrap spills across several atlas pages. Its lightmap loads as a
+        // texture array and is sampled with a per-vertex page index : the case the
+        // single-atlas heroes never reach.
+        let knot = primitives::torus(1.3, 0.5, 96, 48);
+        let (knot_piece, _) = unwrap_piece_multipage(
+            ctx,
+            &knot,
+            Mat4::from_translation(Vec3::new(0.0, -4.2, 1.35)) * Mat4::from_rotation_x(1.1),
+            KNOT_ALBEDO,
+        );
+        self.knot_pages = knot_piece.atlas_count;
+        self.knot_atlas = (knot_piece.atlas_w, knot_piece.atlas_h);
+        pieces.push(knot_piece);
 
         // Walls: coloured context, not baked, part of the trace scene for bleed.
         let side = primitives::plane(14.0, 7.0);
@@ -607,9 +774,12 @@ impl Showcase for LightmapBakeShowcase {
     fn description(&self) -> &str {
         match self.mode {
             0 => {
-                "Baked GI: the floor and torus lighting is path-traced offline : unwrap, \
-                 texel G-buffer, GI solve, denoise, encode. Soft contact shadow, red/green \
-                 colour bleed, and inner-ring occlusion are all baked in."
+                "Baked GI: torus, sphere, cuboid, and a finely tessellated multi-page torus on a \
+                 floor, all path-traced offline : unwrap, texel G-buffer, GI solve, denoise, \
+                 seam-stitch, encode. HDR radiance, soft contact shadows, red/green colour bleed, \
+                 and inter-object occlusion are baked in. The cuboid has a directional lightmap so \
+                 its bump normal map catches the baked light direction; the front torus spilled its \
+                 unwrap across several atlas pages and loads as a texture array (see Bake stats)."
             }
             _ => {
                 "Realtime only: the same room lit by one realtime light and flat ambient. \
@@ -681,6 +851,10 @@ impl Showcase for LightmapBakeShowcase {
             "Torus atlas: {} x {}",
             self.torus_atlas.0, self.torus_atlas.1
         ));
+        ui.label(format!(
+            "Multi-page hero: {} pages ({} x {} each)",
+            self.knot_pages, self.knot_atlas.0, self.knot_atlas.1
+        ));
         ui.label(format!("Samples: {}", self.baked_at.unwrap_or(0)));
         ui.label(format!("Bake time: {} ms", self.bake_ms));
         ui.label(format!("Mean directionality: {:.2}", self.directionality));
@@ -723,31 +897,253 @@ fn make_piece(
         xf,
         albedo,
         baked,
+        pages: Vec::new(),
+        atlas_count: 1,
+        normal_tex: None,
         raw_irradiance: Vec::new(),
         raw_direction: Vec::new(),
         gbuf_pos: Vec::new(),
         gbuf_nrm: Vec::new(),
         tex: None,
+        dir_tex: None,
     }
 }
 
+/// Unwrap a primitive with xatlas. `resolution` fixes the atlas (page) size in
+/// texels; `texels_per_unit` sets the lightmap density (0 lets xatlas estimate a
+/// density that fits one page). A fixed page size plus a high density makes the
+/// charts overflow one page and spill onto more, which is how the multi-page
+/// hero is produced.
+fn do_unwrap(
+    mesh: &MeshData,
+    resolution: u32,
+    texels_per_unit: f32,
+) -> viewport_lib_bake::UnwrapResult {
+    viewport_lib_bake::unwrap(
+        &viewport_lib_bake::UnwrapInput {
+            positions: &mesh.positions,
+            normals: Some(&mesh.normals),
+            indices: &mesh.indices,
+        },
+        &viewport_lib_bake::UnwrapOptions {
+            resolution,
+            texels_per_unit,
+            padding: 6,
+            ..Default::default()
+        },
+    )
+    .expect("unwrap piece")
+}
+
+/// Build a baked [`Piece`] from an unwrap result. `normal_tex` opts the piece
+/// into normal mapping + a directional lightmap. Carries the per-vertex atlas
+/// page so a multi-page unwrap (`atlas_count > 1`) loads as a texture array.
+fn build_piece_from_unwrap(
+    ctx: &mut SetupCtx,
+    mesh: &MeshData,
+    xf: Mat4,
+    albedo: [f32; 3],
+    normal_tex: Option<TextureId>,
+    unwrapped: viewport_lib_bake::UnwrapResult,
+) -> (Piece, u32) {
+    let charts = unwrapped.chart_count;
+    // Carry the art UV0 onto the re-indexed mesh (gathered by xref) so normal
+    // mapping still has texture coordinates after the unwrap split the vertices.
+    let uv0: Option<Vec<[f32; 2]>> = mesh
+        .uvs
+        .as_ref()
+        .map(|uvs| unwrapped.xref.iter().map(|&x| uvs[x as usize]).collect());
+    let id = build_mesh_uv0(
+        ctx,
+        &unwrapped.positions,
+        &unwrapped.normals,
+        uv0.as_deref(),
+        &unwrapped.indices,
+    );
+    // An unassigned vertex (u32::MAX) sits on no page; clamp it to page 0 so it
+    // never indexes past the array (it is degenerate and not visibly shaded).
+    let pages: Vec<u32> = unwrapped
+        .atlas_index
+        .iter()
+        .map(|&a| if a == u32::MAX { 0 } else { a })
+        .collect();
+    let piece = Piece {
+        mesh: id,
+        pos: unwrapped.positions,
+        nrm: unwrapped.normals,
+        idx: unwrapped.indices,
+        uv1: unwrapped
+            .uv1
+            .iter()
+            .map(|u| Vec2::new(u[0], u[1]))
+            .collect(),
+        atlas_w: unwrapped.width,
+        atlas_h: unwrapped.height,
+        xf,
+        albedo,
+        baked: true,
+        pages,
+        atlas_count: unwrapped.atlas_count.max(1),
+        normal_tex,
+        raw_irradiance: Vec::new(),
+        raw_direction: Vec::new(),
+        gbuf_pos: Vec::new(),
+        gbuf_nrm: Vec::new(),
+        tex: None,
+        dir_tex: None,
+    };
+    (piece, charts)
+}
+
+/// Unwrap a primitive with xatlas and build a baked [`Piece`] from the result.
+/// `normal_tex` opts the piece into normal mapping + a directional lightmap.
+fn unwrap_piece(
+    ctx: &mut SetupCtx,
+    mesh: &MeshData,
+    xf: Mat4,
+    albedo: [f32; 3],
+    normal_tex: Option<TextureId>,
+) -> (Piece, u32) {
+    let unwrapped = do_unwrap(mesh, ATLAS, 0.0);
+    build_piece_from_unwrap(ctx, mesh, xf, albedo, normal_tex, unwrapped)
+}
+
+/// Unwrap a primitive deliberately into two or more atlas pages, so the piece
+/// exercises the multi-page load path. The trick is only to make a small object
+/// spill: the pages are the same full size as every other hero (`ATLAS`) and the
+/// density starts high, so each page is as sharp as the single-page bakes. Only
+/// the page count is contrived here, never the per-page quality. The density is
+/// raised until the charts no longer fit one page and xatlas spills onto more.
+fn unwrap_piece_multipage(
+    ctx: &mut SetupCtx,
+    mesh: &MeshData,
+    xf: Mat4,
+    albedo: [f32; 3],
+) -> (Piece, u32) {
+    let mut tpu = 48.0f32;
+    let unwrapped = loop {
+        let u = do_unwrap(mesh, ATLAS, tpu);
+        if u.atlas_count >= 2 || tpu >= 320.0 {
+            break u;
+        }
+        tpu *= 1.3;
+    };
+    build_piece_from_unwrap(ctx, mesh, xf, albedo, None, unwrapped)
+}
+
+/// Indices of the triangles whose vertices sit on atlas `page`. All three
+/// vertices of a triangle share a page (charts do not split across pages), so
+/// testing the first vertex is enough. An empty `pages` slice (non-unwrapped
+/// piece) means one page holding every triangle.
+fn page_indices(idx: &[u32], pages: &[u32], page: u32) -> Vec<u32> {
+    if pages.is_empty() {
+        return idx.to_vec();
+    }
+    idx.chunks_exact(3)
+        .filter(|t| pages[t[0] as usize] == page)
+        .flat_map(|t| t.iter().copied())
+        .collect()
+}
+
 /// Build a mesh from raw arrays (used for the unwrapped, re-indexed torus).
-fn build_mesh(
+fn build_mesh_uv0(
     ctx: &mut SetupCtx,
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
-    uv0: &[[f32; 2]],
+    uv0: Option<&[[f32; 2]]>,
     indices: &[u32],
 ) -> MeshId {
     let mut m = MeshData::default();
     m.positions = positions.to_vec();
     m.normals = normals.to_vec();
     m.indices = indices.to_vec();
-    m.uvs = Some(uv0.to_vec());
+    // Art UV0 (for normal mapping); the lightmap UV1 rides `set_lightmap`, not
+    // the mesh. Tangents are auto-computed from UV0 when present.
+    m.uvs = uv0.map(|u| u.to_vec());
     ctx.session
         .resources_mut()
         .upload_mesh_data(ctx.device, &m)
         .unwrap()
+}
+
+/// A procedural tangent-space normal map: a grid of rounded bumps. Demonstrates
+/// the directional lightmap, since each bump's slopes face different directions
+/// and pick up the baked dominant light accordingly.
+fn make_bump_normal_map(ctx: &mut SetupCtx, size: u32, bumps: f32) -> TextureId {
+    let n = (size * size) as usize;
+    let mut rgba = vec![0u8; n * 4];
+    let tau = std::f32::consts::TAU;
+    for y in 0..size {
+        for x in 0..size {
+            let u = x as f32 / size as f32;
+            let v = y as f32 / size as f32;
+            // Height field of rounded bumps; slope gives the tangent-space normal.
+            let amp = 0.3;
+            let dhdu = amp * bumps * tau * (u * bumps * tau).cos() * (v * bumps * tau).sin();
+            let dhdv = amp * bumps * tau * (u * bumps * tau).sin() * (v * bumps * tau).cos();
+            let nrm = glam::Vec3::new(-dhdu, -dhdv, 1.0).normalize();
+            let i = ((y * size + x) * 4) as usize;
+            rgba[i] = ((nrm.x * 0.5 + 0.5) * 255.0) as u8;
+            rgba[i + 1] = ((nrm.y * 0.5 + 0.5) * 255.0) as u8;
+            rgba[i + 2] = ((nrm.z * 0.5 + 0.5) * 255.0) as u8;
+            rgba[i + 3] = 255;
+        }
+    }
+    ctx.session
+        .resources_mut()
+        .upload_normal_map(ctx.device, ctx.queue, size, size, &rgba)
+        .unwrap()
+}
+
+/// Grow `src` into texels that are uncovered but neighbour a covered one,
+/// averaging covered neighbours. `covered` is an external coverage mask (the
+/// radiance coverage), used because the direction atlas' own `w` is
+/// directionality, not coverage.
+fn dilate_masked(
+    src: &[[f32; 4]],
+    covered: &[bool],
+    w: usize,
+    h: usize,
+    iters: u32,
+) -> Vec<[f32; 4]> {
+    let mut cur = src.to_vec();
+    let mut cov = covered.to_vec();
+    for _ in 0..iters {
+        let mut nxt = cur.clone();
+        let mut ncov = cov.clone();
+        for y in 0..h {
+            for x in 0..w {
+                let ci = y * w + x;
+                if cov[ci] {
+                    continue;
+                }
+                let mut acc = [0.0f32; 4];
+                let mut cnt = 0.0f32;
+                for (dx, dy) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
+                    let (sx, sy) = (x as i32 + dx, y as i32 + dy);
+                    if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 {
+                        continue;
+                    }
+                    let si = sy as usize * w + sx as usize;
+                    if cov[si] {
+                        for c in 0..4 {
+                            acc[c] += cur[si][c];
+                        }
+                        cnt += 1.0;
+                    }
+                }
+                if cnt > 0.0 {
+                    for c in 0..4 {
+                        nxt[ci][c] = acc[c] / cnt;
+                    }
+                    ncov[ci] = true;
+                }
+            }
+        }
+        cur = nxt;
+        cov = ncov;
+    }
+    cur
 }
 
 /// Transform local positions and normals into world space for the trace scene.

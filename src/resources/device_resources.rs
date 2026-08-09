@@ -765,6 +765,10 @@ pub struct DeviceResources {
     pub(crate) texture_bind_group_layout: crate::gpu::BindGroupLayout,
     /// Fallback 1x1 white texture used when material.texture_id is None.
     pub(crate) fallback_texture: GpuTexture,
+    /// D2Array view of `fallback_texture`, bound at lightmap bindings 17/18 for
+    /// meshes without a lightmap. Those bindings are `texture_2d_array` so a
+    /// multi-page lightmap can select an atlas layer per vertex.
+    pub(crate) fallback_texture_array_view: crate::gpu::TextureView,
     /// Fallback 1x1 flat normal map [128,128,255,255] (tangent-space neutral).
     pub(crate) fallback_normal_map: crate::gpu::Texture,
     pub(crate) fallback_normal_map_view: crate::gpu::TextureView,

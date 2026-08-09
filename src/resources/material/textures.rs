@@ -202,6 +202,134 @@ impl DeviceResources {
         ))
     }
 
+    /// Upload a multi-page HDR lightmap atlas (`Rgba16Float` texture array) and
+    /// return its texture ID.
+    ///
+    /// A lightmap unwrap can spill its charts across several atlas pages. Pack
+    /// those pages into one texture array and register it with
+    /// [`set_lightmap`](crate::resources::ViewportGpuResources::set_lightmap),
+    /// passing the per-vertex page index so each vertex samples its own layer.
+    /// `rgba` holds `width * height * 4 * layers` linear `f32` values, layer-major
+    /// (all of page 0, then page 1, ...); each page is `width x height`. Values
+    /// are converted to half floats. Single mip, matching
+    /// [`upload_texture_hdr`](Self::upload_texture_hdr).
+    ///
+    /// A single-layer upload is equivalent to `upload_texture_hdr`; both bind at
+    /// the same `texture_2d_array` lightmap slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns
+    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// when `layers == 0` or `rgba.len() != width * height * 4 * layers`.
+    pub fn upload_texture_hdr_layers(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        layers: u32,
+        rgba: &[f32],
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        let expected = (width as usize) * (height as usize) * 4 * (layers as usize);
+        if layers == 0 || rgba.len() != expected {
+            return Err(crate::error::ViewportError::InvalidTextureData {
+                expected,
+                actual: rgba.len(),
+            });
+        }
+        // Pack to half-float bytes (2 bytes per channel, little-endian). Pages are
+        // contiguous, so the whole array uploads in one write_texture.
+        let mut bytes = Vec::with_capacity(rgba.len() * 2);
+        for &v in rgba {
+            bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+        }
+        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("lightmap_array_texture"),
+            size: crate::gpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: layers,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba16Float,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            &bytes,
+            crate::gpu::TexelCopyBufferLayout {
+                offset: 0,
+                // Rgba16Float is 8 bytes per texel.
+                bytes_per_row: Some(width * 8),
+                rows_per_image: Some(height),
+            },
+            crate::gpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: layers,
+            },
+        );
+        // The lightmap draw path builds its own D2Array view from `.texture`, so
+        // the stored `.view` and `bind_group` are only for the shared GpuTexture
+        // slot (never sampled for lightmaps). Give them a plain D2 view of layer 0
+        // so the bind group is valid against the D2 albedo slot in texture_bgl.
+        let view = texture.create_view(&crate::gpu::TextureViewDescriptor {
+            label: Some("lightmap_array_layer0_view"),
+            dimension: Some(crate::gpu::TextureViewDimension::D2),
+            base_array_layer: 0,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let sampler = crate::resources::builders::repeat_linear_sampler(
+            device,
+            "lightmap_array_sampler",
+            crate::gpu::FilterMode::Nearest,
+        );
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("lightmap_array_bg"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: crate::gpu::BindingResource::TextureView(&view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::gpu::BindingResource::Sampler(&sampler),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: crate::gpu::BindingResource::TextureView(
+                        &self.fallback_normal_map_view,
+                    ),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: crate::gpu::BindingResource::TextureView(&self.fallback_ao_map_view),
+                },
+            ],
+        });
+        let gpu_texture = GpuTexture {
+            texture,
+            view,
+            sampler,
+            bind_group,
+        };
+        Ok(self
+            .content
+            .textures
+            .insert(gpu_texture, bytes.len() as u64))
+    }
+
     /// Take the texture id produced by a completed `begin_upload_texture`
     /// or `begin_upload_normal_map` job.
     ///
@@ -1119,7 +1247,9 @@ impl DeviceResources {
                 mesh.extension_attr_buffer.is_some() as u64,
                 mesh.lightmap_gen,
                 mesh.lightmap.as_ref().map(|lm| lm.texture_id),
-                mesh.lightmap.as_ref().and_then(|lm| lm.direction_texture_id),
+                mesh.lightmap
+                    .as_ref()
+                    .and_then(|lm| lm.direction_texture_id),
             )
         };
 
@@ -1176,19 +1306,27 @@ impl DeviceResources {
         };
         // The lightmap texture is resolved from the mesh's own registration, not
         // a caller-supplied id, so it is looked up here before the mutable mesh
-        // borrow below.
-        let lightmap_view = match lightmap_tex_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.fallback_texture.view,
+        // borrow below. Bindings 17/18 are texture_2d_array (a lightmap can spill
+        // across atlas pages), so build an explicit D2Array view over the
+        // registered texture; single-page lightmaps view as one layer. Meshes
+        // without a lightmap fall back to the shared 1x1 array view.
+        let lightmap_array_desc = crate::gpu::TextureViewDescriptor {
+            label: Some("lightmap_array_view"),
+            dimension: Some(crate::gpu::TextureViewDimension::D2Array),
+            ..Default::default()
         };
-        let lightmap_dir_view = match lightmap_dir_tex_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.fallback_texture.view,
-        };
+        let lightmap_owned = lightmap_tex_id
+            .and_then(|id| self.content.textures.get(id))
+            .map(|t| t.texture.create_view(&lightmap_array_desc));
+        let lightmap_view: &crate::gpu::TextureView = lightmap_owned
+            .as_ref()
+            .unwrap_or(&self.fallback_texture_array_view);
+        let lightmap_dir_owned = lightmap_dir_tex_id
+            .and_then(|id| self.content.textures.get(id))
+            .map(|t| t.texture.create_view(&lightmap_array_desc));
+        let lightmap_dir_view: &crate::gpu::TextureView = lightmap_dir_owned
+            .as_ref()
+            .unwrap_or(&self.fallback_texture_array_view);
 
         let Some(mesh) = self.mesh_store.get_mut(mesh_id) else {
             return;
@@ -1507,20 +1645,32 @@ impl DeviceResources {
             .map(|lm| &lm.uv1_buffer)
             .or(mesh.extension_attr_buffer.as_ref())
             .unwrap_or(&self.content.fallback_extension_attr_buf);
-        let lightmap_view: &crate::gpu::TextureView =
-            match mesh.lightmap.as_ref().map(|lm| lm.texture_id) {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.fallback_texture.view,
-            };
-        let lightmap_dir_view: &crate::gpu::TextureView =
-            match mesh.lightmap.as_ref().and_then(|lm| lm.direction_texture_id) {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.fallback_texture.view,
-            };
+        // Bindings 17/18 are texture_2d_array; view the registered lightmap as a
+        // D2Array (single-page = one layer) and select a page per vertex in the
+        // shader. Meshes without a lightmap bind the shared 1x1 array fallback.
+        let lightmap_array_desc = crate::gpu::TextureViewDescriptor {
+            label: Some("lightmap_array_view"),
+            dimension: Some(crate::gpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        };
+        let lightmap_owned = mesh
+            .lightmap
+            .as_ref()
+            .map(|lm| lm.texture_id)
+            .and_then(|id| self.content.textures.get(id))
+            .map(|t| t.texture.create_view(&lightmap_array_desc));
+        let lightmap_view: &crate::gpu::TextureView = lightmap_owned
+            .as_ref()
+            .unwrap_or(&self.fallback_texture_array_view);
+        let lightmap_dir_owned = mesh
+            .lightmap
+            .as_ref()
+            .and_then(|lm| lm.direction_texture_id)
+            .and_then(|id| self.content.textures.get(id))
+            .map(|t| t.texture.create_view(&lightmap_array_desc));
+        let lightmap_dir_view: &crate::gpu::TextureView = lightmap_dir_owned
+            .as_ref()
+            .unwrap_or(&self.fallback_texture_array_view);
 
         let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
             Some(id) if self.content.textures.get(id).is_some() => {

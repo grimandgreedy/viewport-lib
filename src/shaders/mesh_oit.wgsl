@@ -158,12 +158,12 @@ struct ClipVolumeUB {
 // lightmap's UV1 in .xy. See mesh.wgsl for why the lightmap reuses this slot.
 @group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;
 // Baked lightmap texture, sampled with the binding-2 material sampler.
-@group(1) @binding(17) var lightmap_tex: texture_2d<f32>;
+@group(1) @binding(17) var lightmap_tex: texture_2d_array<f32>;
 // Dominant-direction atlas for a directional lightmap (see mesh.wgsl).
-@group(1) @binding(18) var lightmap_dir_tex: texture_2d<f32>;
+@group(1) @binding(18) var lightmap_dir_tex: texture_2d_array<f32>;
 
-fn lightmap_directional_factor(uv: vec2<f32>, n_pix: vec3<f32>, n_geo: vec3<f32>) -> f32 {
-    let d = textureSampleLevel(lightmap_dir_tex, obj_sampler, uv, 0.0);
+fn lightmap_directional_factor(uv: vec2<f32>, page: i32, n_pix: vec3<f32>, n_geo: vec3<f32>) -> f32 {
+    let d = textureSampleLevel(lightmap_dir_tex, obj_sampler, uv, page, 0.0);
     let ndl_pix = max(dot(normalize(n_pix), d.xyz), 0.0);
     let ndl_geo = max(dot(normalize(n_geo), d.xyz), 0.0);
     return mix(1.0, ndl_pix / max(ndl_geo, 0.1), d.w);
@@ -190,6 +190,9 @@ struct VertexOut {
     @location(7) face_colour:     vec4<f32>,
     // Baked lightmap UV1, interpolated for the fragment lightmap sample.
     @location(9) lightmap_uv:     vec2<f32>,
+    // Atlas page (array layer) for a multi-page lightmap, carried in UV1.z. Flat:
+    // every vertex of a chart shares one page, so no interpolation is wanted.
+    @location(10) @interpolate(flat) lightmap_page: f32,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -248,8 +251,11 @@ fn vs_main(in: VertexIn) -> VertexOut {
         object.use_face_colour != 0u && fc_len > 0u,
     );
     // Lightmap UV1 rides the vec4 sidecar's xy (zero for non-lightmapped meshes).
+    // .z carries the atlas page for a multi-page lightmap (0 otherwise).
     let lm_len = arrayLength(&extension_attr_buffer);
-    out.lightmap_uv = extension_attr_buffer[min(idx, max(lm_len, 1u) - 1u)].xy;
+    let lm_sidecar = extension_attr_buffer[min(idx, max(lm_len, 1u) - 1u)];
+    out.lightmap_uv = lm_sidecar.xy;
+    out.lightmap_page = lm_sidecar.z;
     // <viewport-shade-slot:vertex-fetch>
     // </viewport-shade-slot:vertex-fetch>
     return out;
@@ -652,9 +658,10 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // base mip: derivative-based selection over tightly-packed atlas charts
         // reads as blocky bands on the mesh.
         if object.lightmap_mode != 0u {
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            let lm_page = i32(round(in.lightmap_page));
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, lm_page, 0.0);
             if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(in.lightmap_uv, N, in.world_normal);
+                let f = lightmap_directional_factor(in.lightmap_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
             ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
@@ -693,9 +700,10 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // Baked lightmap: replace, add, or occlude the ambient term. Force the
         // base mip (see the ambient branch above).
         if object.lightmap_mode != 0u {
-            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            let lm_page = i32(round(in.lightmap_page));
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, lm_page, 0.0);
             if object.lightmap_directional == 1u {
-                let f = lightmap_directional_factor(in.lightmap_uv, N, in.world_normal);
+                let f = lightmap_directional_factor(in.lightmap_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
             hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);
