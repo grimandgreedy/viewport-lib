@@ -12,15 +12,18 @@
 //! unwrap across several atlas pages and loads as a texture array with a
 //! per-vertex page index; the rest are single-page HDR radiance.
 //!
-//! The top chip switches three modes. **Baked GI** lights the bake with a
+//! The top chip switches four modes. **Baked GI** lights the bake with a
 //! directional key. **Emissive GI** swaps that for a glowing ceiling panel, so the
 //! room is lit entirely by an area light the bake finds with area-light next-event
 //! estimation (low-noise soft shading and soft contact shadows a directional light
-//! cannot give). **Realtime only** is the flat comparison: the same room under one
-//! realtime light with flat ambient, no bounce or baked occlusion. The side panel
-//! re-bakes at different sample counts, toggles the denoiser (watch the noise
-//! return), shows the baked atlas on a floating panel, and reports how many pages
-//! the multi-page hero spilled into.
+//! cannot give). **Mixed** keeps the same baked lighting but leaves the realtime key
+//! on and consumes the lightmap subtractively: a floating dynamic sphere casts a
+//! realtime shadow across the baked floor without double-counting the baked direct
+//! light. **Realtime only** is the flat comparison: the same room under one realtime
+//! light with flat ambient, no bounce or baked occlusion. The side panel re-bakes at
+//! different sample counts, toggles the denoiser (watch the noise return), shows the
+//! baked atlas on a floating panel, and reports how many pages the multi-page hero
+//! spilled into.
 
 use eframe::egui;
 use glam::{Mat3, Mat4, Vec2, Vec3};
@@ -31,7 +34,7 @@ use viewport_lib::raytrace::{
 use viewport_lib::resources::{LightmapData, LightmapMode, TextureId};
 use viewport_lib::{
     BackfacePolicy, ItemSettings, LightKind, LightSource, Material, MeshData, MeshId, NodeId,
-    primitives,
+    ShadowFilter, primitives,
 };
 use viewport_lib_bake::denoise::{DenoiseParams, denoise, dilate};
 use viewport_lib_bake::encode::{Encoding, encode};
@@ -58,11 +61,20 @@ const SPHERE_ALBEDO: [f32; 3] = [0.78, 0.80, 0.85];
 const BOX_ALBEDO: [f32; 3] = [0.80, 0.72, 0.55];
 const KNOT_ALBEDO: [f32; 3] = [0.72, 0.58, 0.82];
 
-/// Modes. Baked GI and Emissive GI both path-trace a lightmap; they differ only in
-/// the light source the bake integrates against. Realtime is the flat comparison.
+/// Modes. Baked GI, Emissive GI, and Mixed all path-trace a lightmap; Baked and
+/// Mixed share the same bake (directional key), Emissive integrates a glowing panel
+/// instead. Mixed then keeps the realtime light on and consumes the lightmap
+/// subtractively. Realtime is the flat comparison.
 const BAKED_MODE: usize = 0;
 const EMISSIVE_MODE: usize = 1;
-const REALTIME_MODE: usize = 2;
+const MIXED_MODE: usize = 2;
+const REALTIME_MODE: usize = 3;
+
+/// Mixed mode: a floating dynamic sphere (not lightmapped) hovers over the room and
+/// casts a realtime shadow onto the baked floor. Its transform.
+fn dynamic_occluder_xf() -> Mat4 {
+    Mat4::from_translation(Vec3::new(-1.5, -0.5, 4.0))
+}
 
 /// Emissive GI mode replaces the directional key with a glowing ceiling panel, so
 /// the room is lit entirely by an area light: soft, directionless illumination and
@@ -173,6 +185,9 @@ pub struct LightmapBakeShowcase {
     request_rebake: bool,
     /// The glowing ceiling panel shown (and emitting) in Emissive GI mode.
     emissive_panel: Option<MeshId>,
+    /// The floating dynamic sphere shown in Mixed mode, casting a realtime shadow
+    /// onto the baked floor.
+    dynamic_occluder: Option<MeshId>,
     /// Which mode's scene the cached bake was traced against (Baked vs Emissive
     /// integrate different lights), so a switch between them forces a re-trace.
     baked_kind: Option<usize>,
@@ -209,13 +224,21 @@ impl LightmapBakeShowcase {
             directionality: 0.0,
             request_rebake: false,
             emissive_panel: None,
+            dynamic_occluder: None,
             baked_kind: None,
         }
     }
 
-    /// True in the two baked modes (Baked GI, Emissive GI), false for Realtime.
+    /// True in the baked modes (Baked GI, Emissive GI, Mixed), false for Realtime.
     fn baked_mode(&self) -> bool {
         self.mode != REALTIME_MODE
+    }
+
+    /// Which scene variant the bake integrates against: Emissive uses the glowing
+    /// panel (1), everything else the directional key (0). Baked and Mixed share
+    /// variant 0, so switching between them reuses the cached bake with no re-trace.
+    fn bake_scene_variant(&self) -> usize {
+        if self.mode == EMISSIVE_MODE { 1 } else { 0 }
     }
 
     /// Build the ray-traced scene every bake integrates against: all pieces in
@@ -642,16 +665,40 @@ impl LightmapBakeShowcase {
 
         let baked_mode = self.baked_mode();
 
-        // Lighting: baked mode leans on the lightmaps (runtime lights off, dim
-        // ambient for the walls); realtime mode lights everything with one key
-        // light plus hemisphere ambient : the flat look baking improves on.
+        // Lighting: pure-baked modes lean on the lightmaps (runtime lights off, dim
+        // ambient for the walls); Mixed keeps the realtime key on so the dynamic
+        // occluder casts a realtime shadow onto the baked floor; realtime mode
+        // lights everything with one key light plus hemisphere ambient.
         {
             let l = &mut session.effects_mut().lighting;
-            if baked_mode {
+            if self.mode == BAKED_MODE || self.mode == EMISSIVE_MODE {
                 l.lights = Vec::new();
                 l.hemisphere_intensity = 0.28;
                 l.sky_colour = [0.5, 0.54, 0.62];
                 l.ground_colour = [0.16, 0.16, 0.18];
+            } else if self.mode == MIXED_MODE {
+                // The lightmap (consumed subtractively) carries the static lighting;
+                // the realtime directional stays on. On lightmapped surfaces its
+                // direct is baked (suppressed), but its realtime shadow darkens the
+                // baked term, so the dynamic occluder casts onto the baked floor.
+                let mut key = LightSource::default();
+                key.kind = LightKind::Directional {
+                    direction: LIGHT_DIR.to_array(),
+                };
+                key.colour = [1.0, 0.98, 0.95];
+                key.intensity = 1.1;
+                key.cast_shadows = true;
+                l.lights = vec![key];
+                l.hemisphere_intensity = 0.15;
+                l.sky_colour = [0.5, 0.54, 0.62];
+                l.ground_colour = [0.16, 0.16, 0.18];
+                l.shadows_enabled = true;
+                l.shadow_extent_override = Some(13.0);
+                // Soft (PCSS) shadow with a wide penumbra, so the dynamic object's
+                // realtime shadow reads as a soft contact shadow that blends with the
+                // baked GI rather than a hard-edged blot on the curved baked heroes.
+                l.shadow_filter = ShadowFilter::Pcss;
+                l.pcss_light_radius = 0.05;
             } else {
                 let mut key = LightSource::default();
                 key.kind = LightKind::Directional {
@@ -691,13 +738,33 @@ impl LightmapBakeShowcase {
                 mat.normal_strength = 1.0;
             }
             let id = session.scene_mut().add(Some(p.mesh), p.xf, mat);
-            // Per-object cast-shadows: the shadow pass skips items with this off,
-            // so the toggle reliably shows/hides the realtime shadow. Baked mode
-            // has no realtime light, so this is inert there.
+            // Per-object cast-shadows: the shadow pass skips items with this off, so
+            // the toggle reliably shows/hides the realtime shadow. Baked/Emissive
+            // have no realtime light (inert). In Mixed the static pieces' shadows are
+            // baked, so they must not also cast a realtime shadow (that would double
+            // up); only the dynamic occluder casts.
             let mut ap = ItemSettings::default();
-            ap.cast_shadows = self.realtime_shadows;
+            ap.cast_shadows = self.realtime_shadows && self.mode != MIXED_MODE;
             session.scene_mut().set_appearance(id, ap);
             self.nodes.push(id);
+        }
+
+        // Mixed GI: a floating dynamic sphere, not lightmapped, lit fully in realtime
+        // by the key light and casting a realtime shadow onto the baked floor. This
+        // is the dynamic object a subtractive setup exists to support: baked static
+        // GI plus a moving object that shadows it in realtime.
+        if self.mode == MIXED_MODE {
+            if let Some(sphere) = self.dynamic_occluder {
+                let mut mat = Material::pbr([0.85, 0.85, 0.88], 0.0, 0.6);
+                mat.backface_policy = BackfacePolicy::Identical;
+                let id = session
+                    .scene_mut()
+                    .add(Some(sphere), dynamic_occluder_xf(), mat);
+                let mut ap = ItemSettings::default();
+                ap.cast_shadows = true;
+                session.scene_mut().set_appearance(id, ap);
+                self.nodes.push(id);
+            }
         }
 
         // Emissive GI: show the glowing ceiling panel that lit the bake. It carries
@@ -791,6 +858,15 @@ impl LightmapBakeShowcase {
             .get(self.atlas_view.min(sources.len().saturating_sub(1)))
             .map(|&(tex, layer, _)| (tex, layer));
 
+        // Mixed consumes the same baked atlas subtractively: the realtime key's
+        // direct is suppressed on these static receivers (baked in) and its shadow
+        // darkens the baked term. Baked/Emissive replace the indirect diffuse.
+        let lm_mode = if self.mode == MIXED_MODE {
+            LightmapMode::Subtractive
+        } else {
+            LightmapMode::Replace
+        };
+
         let res = ctx.session.resources_mut();
         for p in &self.pieces {
             if !p.baked {
@@ -808,7 +884,7 @@ impl LightmapBakeShowcase {
                             tex,
                             p.scene_layer,
                             p.scene_scale_bias,
-                            LightmapMode::Replace,
+                            lm_mode,
                         );
                     } else {
                         // Directional when a dominant-direction atlas was baked (the
@@ -824,21 +900,10 @@ impl LightmapBakeShowcase {
                             // Multi-page: the lightmap is a texture array; each vertex
                             // carries the atlas page it was packed onto.
                             let _ = res.set_lightmap_paged(
-                                device,
-                                p.mesh,
-                                &p.uv1,
-                                &p.pages,
-                                data,
-                                LightmapMode::Replace,
+                                device, p.mesh, &p.uv1, &p.pages, data, lm_mode,
                             );
                         } else {
-                            let _ = res.set_lightmap(
-                                device,
-                                p.mesh,
-                                &p.uv1,
-                                data,
-                                LightmapMode::Replace,
-                            );
+                            let _ = res.set_lightmap(device, p.mesh, &p.uv1, data, lm_mode);
                         }
                     }
                 }
@@ -1006,6 +1071,15 @@ impl Showcase for LightmapBakeShowcase {
                 .unwrap(),
         );
 
+        // The Mixed-mode dynamic occluder (a floating sphere that casts a realtime
+        // shadow onto the baked floor).
+        self.dynamic_occluder = Some(
+            ctx.session
+                .resources_mut()
+                .upload_mesh_data(ctx.device, &primitives::icosphere(1.1, 3))
+                .unwrap(),
+        );
+
         ctx.session.viewport_frame_mut().show_grid = false;
         ctx.session.camera_mut().distance = 30.0;
         ctx.session.camera_mut().orientation = glam::Quat::from_rotation_x(0.5);
@@ -1022,13 +1096,15 @@ impl Showcase for LightmapBakeShowcase {
 
         if self.baked_mode() {
             // Re-trace on first entry, a rebake request, a sample-count change, or a
-            // switch between Baked and Emissive (they integrate different lights, so
-            // the cached bake is stale); re-encode only (cheap, no tracing) when the
-            // denoiser is toggled.
+            // switch to a different bake scene variant (Emissive integrates a
+            // different light than Baked/Mixed, so its cached bake is stale);
+            // re-encode only (cheap, no tracing) when the denoiser is toggled.
+            // Baked and Mixed share variant 0, so switching between them reuses the
+            // bake and only re-consumes it (Replace vs Subtractive) in rebuild.
             let need_trace = self.request_rebake
                 || self.baked_at.is_none()
                 || self.baked_at != Some(self.samples)
-                || self.baked_kind != Some(self.mode);
+                || self.baked_kind != Some(self.bake_scene_variant());
             if need_trace {
                 self.request_rebake = false;
                 let t0 = std::time::Instant::now();
@@ -1037,7 +1113,7 @@ impl Showcase for LightmapBakeShowcase {
                 self.bake_ms = t0.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
                 self.need_reencode = false;
                 self.built = true;
-                self.baked_kind = Some(self.mode);
+                self.baked_kind = Some(self.bake_scene_variant());
             } else if self.need_reencode {
                 self.need_reencode = false;
                 self.encode_all(ctx);
@@ -1068,6 +1144,14 @@ impl Showcase for LightmapBakeShowcase {
                  shading and soft contact shadows a single directional light cannot produce. Same \
                  unwrap, atlas, and encode path as Baked GI."
             }
+            MIXED_MODE => {
+                "Mixed: the same baked lighting as Baked GI, but the realtime key light stays on and \
+                 the lightmap is consumed subtractively. On the baked static geometry the key's \
+                 direct is already baked (so it is suppressed to avoid double counting), while its \
+                 realtime shadow still darkens the baked term : the floating sphere is a dynamic, \
+                 non-lightmapped object, lit fully in realtime and casting a real shadow across the \
+                 baked floor. Baked GI and dynamic objects coexist (Unity Subtractive parity)."
+            }
             _ => {
                 "Realtime only: the same room lit by one realtime light and flat ambient. \
                  No bounce, no colour bleed, no baked occlusion : switch to Baked GI or Emissive \
@@ -1081,9 +1165,11 @@ impl Showcase for LightmapBakeShowcase {
     }
 
     fn top_overlay(&mut self, ui: &mut egui::Ui) {
-        if let Some(i) =
-            crate::ui::segmented(ui, self.mode, &["Baked GI", "Emissive GI", "Realtime only"])
-        {
+        if let Some(i) = crate::ui::segmented(
+            ui,
+            self.mode,
+            &["Baked GI", "Emissive GI", "Mixed", "Realtime only"],
+        ) {
             self.mode = i;
         }
     }
