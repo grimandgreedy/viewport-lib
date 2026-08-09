@@ -53,101 +53,56 @@ Note: the feature flags are there so that when you run them you don't have to pu
 
 ## Quick start
 
-In a typical app you will need to use both the renderer (to build and submit a `FrameData`) and the input handler to define and handle keys and events.
+There are a few ways to create a viewport, differing in how much of the app you own. The right one comes down to who owns the window and event loop:
 
-### Rendering
+- **`ViewportApp`**: the simplest. It owns the window, the run loop, and the input, and works like most other 3D renderers.
+- **`ViewportSession`**: for embedding a viewport in an app you already run. You own the loop and the input, redraw each frame, and route each event to either the viewport's input controller or your GUI.
+- **Your own wrapper**: for multiple viewports or fine-grained control of wgpu and its features. You drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two above do internally.
+
+### `ViewportApp`
+
+`ViewportApp` owns the window and event loop, so you only write scene setup and a per-frame closure. Good for a standalone tool.
+
 ```rust
-use viewport_lib::{
-    Camera,
-    CameraFrame,
-    FrameData,
-    SceneFrame,
-    SceneRenderItem,
-    primitives,
-};
+use viewport_lib::session::hosts::{AppConfig, ViewportApp};
+use viewport_lib::{Material, primitives};
 
-// Upload the cube primitive mesh once at startup
-let mesh_id = renderer.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
-
-// Build a frame each render tick
-let camera = Camera::default();
-let model = glam::Mat4::from_translation(glam::vec3(1.0, 2.0, 0.0));
-let item = SceneRenderItem {
-    mesh_id,
-    model: model.to_cols_array_2d(),
-    ..SceneRenderItem::default()
-};
-
-let fd = FrameData::new(
-    CameraFrame::from_camera(&camera, [width, height]),
-    SceneFrame::from_surface_items(vec![item]),
-);
-
-// prepare once per frame (uploads uniforms, batches instances)
-renderer.pass().prepare(&device, &queue, &fd);
-
-// then paint into a render pass -- exact call depends on your GUI framework:
-// renderer.pass_view().paint(&mut render_pass, &fd);  // eframe / iced / raw wgpu
-// renderer.owned().render(&device, &queue, &output_view, &fd);  // winit HDR
-
+ViewportApp::new(AppConfig::default().with_title("demo").with_window_size(1280, 720))
+    .setup(|session, device| {
+        // runs once, with the device in hand: upload meshes and build the scene
+        let mesh = session.resources_mut()
+            .upload_mesh_data(device, &primitives::cube(1.0)).unwrap();
+        session.scene_mut().add(
+            Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
+    })
+    .run(|_ctx| {
+        // runs once per frame, before rendering: update the scene here
+    });
 ```
 
-### Input handling
+### `ViewportSession`
 
-`OrbitCameraController` is one of the available built-in controllers. You can also build your own controller directly on top of `ViewportInput` and `ViewportBinding` if you need different navigation behaviour - but OrbitCameraController is a good starting point. Push events each frame, then call `apply_to_camera` to orbit/pan/zoom and get back an `ActionFrame` for the rest of your input logic.
+When your app already owns the window, wgpu device/queue, and event loop, use a `ViewportSession` and drive it from inside your render loop. The `eframe-minimal` example is this embedded in egui.
 
 ```rust
-use viewport_lib::{BindingPreset, ManipulationContext, ManipulationController, ManipResult, OrbitCameraController, ViewportContext, ViewportEvent};
+use viewport_lib::{Material, OrbitCameraController, ViewportContext, ViewportSession, primitives};
 
-// --- app state ---
-let mut orbit = OrbitCameraController::new(BindingPreset::ViewportAll);
-let mut manip = ManipulationController::new();
+// Your app creates the window, wgpu device/queue, and event loop.
+// Once the device is available, create the session and a camera controller:
+let mut session = ViewportSession::new(&device, target_format);
+let mut orbit = OrbitCameraController::viewport_all();
 
-// prime the controller before the first frame
-orbit.begin_frame(ViewportContext { hovered: true, focused: true, viewport_size: [width, height] });
+let mesh = session.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
+session.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
 
-// --- each frame ---
-
-// 1. drive camera navigation; get the action frame for this frame
-let frame = if manip.is_active() {
-    // suppress orbit while a manipulation is in progress
-    orbit.resolve()
-} else {
-    orbit.apply_to_camera(&mut camera)
-};
-
-// 2. drive the manipulation controller
-let ctx = ManipulationContext {
-    camera: camera.clone(),
-    viewport_size: glam::Vec2::new(width, height),
-    cursor_viewport: Some(cursor_pos),
-    pointer_delta,
-    selection_center: selected_object_center,
-    gizmo: None,
-    drag_started,
-    dragging,
-    clicked,
-};
-
-match manip.update(&frame, ctx) {
-    ManipResult::Update(delta) => {
-        // apply incremental transform to selected objects each frame
-        object_translation += delta.translation;
-        object_rotation    = delta.rotation * object_rotation;
-        object_scale       *= delta.scale;
-    }
-    ManipResult::ConstraintChanged => {
-        // axis constraint changed mid-session: restore objects to their
-        // pre-session transforms (same as cancel but keep the session alive)
-        restore_snapshot();
-    }
-    ManipResult::Commit => finalize_and_push_undo(),
-    ManipResult::Cancel => restore_snapshot(),
-    ManipResult::None   => {}
+// Then, each frame inside your app's render loop:
+session.begin_frame(ViewportContext { hovered, focused, viewport_size: [width, height] });
+for ev in native_events {
+    // translate to ViewportEvent (from_winit / from_egui adapters, or by hand)
+    session.handle_event(ev);
 }
-
-// 3. reset for next frame
-orbit.begin_frame(ViewportContext { hovered, focused, viewport_size: [width, height] });
+session.update_orbit(&mut orbit);                   // resolve input, orbit the camera, assemble
+let cmd = session.render(&device, &queue, &view);   // submit cmd to your queue
 ```
 
 ## wgpu version
