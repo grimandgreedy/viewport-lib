@@ -12,7 +12,7 @@ use ::winit::event::WindowEvent;
 use ::winit::event_loop::{ActiveEventLoop, EventLoop};
 use ::winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::interaction::input::ViewportContext;
+use crate::interaction::input::{ViewportContext, ViewportEvent};
 use crate::interaction::input::adapters::from_winit;
 use crate::session::ViewportSession;
 use crate::{FrameData, OrbitCameraController, OverlayFrame};
@@ -128,6 +128,7 @@ pub struct FrameCtx<'a> {
     queue: &'a crate::gpu::Queue,
     overlays: OverlayFrame,
     injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
+    events: Vec<ViewportEvent>,
     request_exit: bool,
     request_redraw: bool,
 }
@@ -205,6 +206,39 @@ impl FrameCtx<'_> {
     pub fn inject(&mut self, f: impl FnOnce(&mut FrameData) + 'static) {
         self.injects.push(Box::new(f));
     }
+
+    /// The input events that arrived since the last frame, in order.
+    ///
+    /// The runner already feeds these to the session (so orbit navigation and
+    /// bound actions work), and resolves them into
+    /// [`action_frame`](ViewportSession::action_frame), which stays the
+    /// convenient path for the cursor, left click, and camera. This is the raw
+    /// stream on top of that, for input the resolved frame does not surface:
+    /// the secondary and middle mouse buttons, and individual keys such as the
+    /// arrows, Enter, and Escape. A right-click context menu or keyboard menu
+    /// navigation reads them here.
+    ///
+    /// Every translated event is included, whether or not the camera also acted
+    /// on it, so match on the ones you want:
+    ///
+    /// ```rust,ignore
+    /// use viewport_lib::{ButtonState, KeyCode, MouseButton, ViewportEvent};
+    ///
+    /// for ev in ctx.events() {
+    ///     match ev {
+    ///         ViewportEvent::MouseButton { button: MouseButton::Right, state: ButtonState::Pressed } => {
+    ///             // open a context menu at ctx.action_frame().pointer.cursor
+    ///         }
+    ///         ViewportEvent::Key { key: KeyCode::Escape, state: ButtonState::Pressed, .. } => {
+    ///             // close the menu
+    ///         }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    pub fn events(&self) -> &[ViewportEvent] {
+        &self.events
+    }
 }
 
 impl std::ops::Deref for FrameCtx<'_> {
@@ -276,6 +310,7 @@ impl ViewportApp {
             callback,
             state: None,
             orbit: OrbitCameraController::viewport_all(),
+            events: Vec::new(),
             last_frame: Instant::now(),
             start: Instant::now(),
         };
@@ -303,6 +338,9 @@ struct Runner<F> {
     callback: F,
     state: Option<RunState>,
     orbit: OrbitCameraController,
+    /// Events translated since the last frame, handed to the callback via
+    /// [`FrameCtx::events`] and cleared each redraw.
+    events: Vec<ViewportEvent>,
     last_frame: Instant,
     start: Instant,
 }
@@ -446,6 +484,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                     queue: &state.queue,
                     overlays: OverlayFrame::default(),
                     injects: Vec::new(),
+                    events: std::mem::take(&mut self.events),
                     request_exit: false,
                     request_redraw: false,
                 };
@@ -531,7 +570,10 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
             other => {
                 let scale = state.window.scale_factor() as f32;
                 if let Some(ev) = from_winit(&other, scale) {
-                    state.session.handle_event(ev);
+                    // Feed the resolver (orbit / bound actions) and buffer the
+                    // raw event for the callback to read via `FrameCtx::events`.
+                    state.session.handle_event(ev.clone());
+                    self.events.push(ev);
                     state.window.request_redraw();
                 }
             }
