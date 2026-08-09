@@ -27,12 +27,18 @@ use viewport_lib::{
     BackfacePolicy, ItemSettings, LightKind, LightSource, Material, MeshData, MeshId, NodeId,
     primitives,
 };
-use viewport_lib_bake::denoise::{DenoiseParams, clean};
+use viewport_lib_bake::denoise::{DenoiseParams, denoise, dilate};
 use viewport_lib_bake::encode::{Encoding, encode};
+use viewport_lib_bake::stitch::{StitchGeometry, StitchParams, stitch};
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
-const ATLAS: u32 = 256;
+// Requested unwrap resolution. xatlas packs into its own size (often larger than
+// this), and each baked piece then bakes and uploads at that actual packed size
+// (see `Piece::atlas_w`): the texel G-buffer, denoise, and texture must all match
+// the size the piece's uv1 is normalised to, or the charts squash and read as
+// blocky steps on the mesh.
+const ATLAS: u32 = 512;
 /// Key-light direction (toward the light); shared by the bake and the realtime
 /// mode so the two are directly comparable. Raked off vertical so the torus casts
 /// a long, obvious shadow across the floor.
@@ -53,6 +59,12 @@ struct Piece {
     nrm: Vec<[f32; 3]>,
     idx: Vec<u32>,
     uv1: Vec<Vec2>,
+    /// Atlas size this piece's `uv1` is normalised to. The unwrap packs into its
+    /// own size (often not the requested resolution), and the texel G-buffer and
+    /// uploaded texture must match it: bake at a different size and the charts
+    /// are squashed and read as blocky steps on the mesh.
+    atlas_w: u32,
+    atlas_h: u32,
     xf: Mat4,
     albedo: [f32; 3],
     baked: bool,
@@ -87,6 +99,9 @@ pub struct LightmapBakeShowcase {
     atlas_node: Option<NodeId>,
     // Stats for the panel.
     torus_charts: u32,
+    /// Actual packed atlas size of the torus (xatlas picks it; it is usually not
+    /// the requested resolution).
+    torus_atlas: (u32, u32),
     bake_ms: u32,
     directionality: f32,
     request_rebake: bool,
@@ -100,7 +115,7 @@ impl LightmapBakeShowcase {
             built: false,
             pieces: Vec::new(),
             nodes: Vec::new(),
-            samples: 96,
+            samples: 64,
             denoise: true,
             baked_at: None,
             need_reencode: false,
@@ -111,6 +126,7 @@ impl LightmapBakeShowcase {
             show_atlas: false,
             atlas_node: None,
             torus_charts: 0,
+            torus_atlas: (ATLAS, ATLAS),
             bake_ms: 0,
             directionality: 0.0,
             request_rebake: false,
@@ -142,9 +158,12 @@ impl LightmapBakeShowcase {
                 },
             );
         }
+        // Tuned for the HDR display path: the baked radiance now feeds the
+        // renderer's tonemapper once (linear `Rgba16Float` upload), so the key is
+        // dimmer than the old value that was sized for a pre-tonemapped upload.
         scene.add_light(RtLight::Directional {
             direction: LIGHT_DIR.normalize().to_array(),
-            colour: [4.2, 4.1, 3.8],
+            colour: [2.1, 2.05, 1.9],
         });
 
         let settings = RtSettings {
@@ -156,7 +175,7 @@ impl LightmapBakeShowcase {
             if !self.pieces[i].baked {
                 continue;
             }
-            let (pos, nrm, uv1, idx, xf) = {
+            let (pos, nrm, uv1, idx, xf, aw, ah) = {
                 let p = &self.pieces[i];
                 (
                     p.pos.clone(),
@@ -164,6 +183,8 @@ impl LightmapBakeShowcase {
                     p.uv1.iter().map(|u| [u.x, u.y]).collect::<Vec<_>>(),
                     p.idx.clone(),
                     p.xf,
+                    p.atlas_w,
+                    p.atlas_h,
                 )
             };
             let gbuf = rasterize_texel_gbuffer(
@@ -176,8 +197,8 @@ impl LightmapBakeShowcase {
                     indices: &idx,
                     model: xf,
                 },
-                ATLAS,
-                ATLAS,
+                aw,
+                ah,
             );
             let bake = bake_lightmap_directional(
                 device,
@@ -211,26 +232,45 @@ impl LightmapBakeShowcase {
             if !self.pieces[i].baked || self.pieces[i].raw_irradiance.is_empty() {
                 continue;
             }
-            let albedo = self.pieces[i].albedo;
-            let cleaned = if self.denoise {
-                clean(
+            let (aw, ah) = (self.pieces[i].atlas_w, self.pieces[i].atlas_h);
+            // Denoise is optional (the toggle), but dilation is not: it fills the
+            // empty chart gutter so bilinear sampling at a chart edge never reads
+            // the black border. Always dilate, so denoise-off still has clean
+            // chart edges rather than black seam lines.
+            let denoised = if self.denoise {
+                denoise(
                     &self.pieces[i].raw_irradiance,
                     &self.pieces[i].gbuf_pos,
                     &self.pieces[i].gbuf_nrm,
-                    ATLAS,
-                    ATLAS,
+                    aw,
+                    ah,
                     &DenoiseParams::default(),
-                    3,
                 )
             } else {
                 self.pieces[i].raw_irradiance.clone()
             };
+            // Stitch cross-chart seams: make the two sides of every chart cut
+            // agree so the boundary stops showing as a thin line, then dilate the
+            // corrected charts into the gutter.
+            let uv1: Vec<[f32; 2]> = self.pieces[i].uv1.iter().map(|u| [u.x, u.y]).collect();
+            let stitched = stitch(
+                &denoised,
+                aw,
+                ah,
+                &StitchGeometry {
+                    positions: &self.pieces[i].pos,
+                    uv1: &uv1,
+                    indices: &self.pieces[i].idx,
+                },
+                &StitchParams::default(),
+            );
+            let cleaned = dilate(&stitched, aw, ah, 6);
             // Encode into the neutral directional lightmap (exercises the encoder
             // and yields the directionality stat); the display samples the
             // radiance channel.
             let lm = encode(
-                ATLAS,
-                ATLAS,
+                aw,
+                ah,
                 &cleaned,
                 Some(&self.pieces[i].raw_direction),
                 &self.pieces[i].gbuf_nrm,
@@ -244,11 +284,27 @@ impl LightmapBakeShowcase {
                     }
                 }
             }
-            let texels = irradiance_to_srgb(lm.radiance(), albedo);
+            // Upload linear diffuse radiance (incident irradiance / pi) through
+            // the HDR path. The material keeps the true albedo, so Replace mode
+            // (base_colour * lm.rgb) gives albedo * E/pi. No albedo baked in, no
+            // exposure applied here: the renderer's HDR pipeline tonemaps once for
+            // display. (The old 8-bit sRGB upload pre-tonemapped, so the render
+            // path tonemapped it a second time.)
+            let inv_pi = 1.0 / std::f32::consts::PI;
+            let mut radiance = vec![0.0f32; lm.radiance().len() * 4];
+            for (t, px) in lm.radiance().iter().enumerate() {
+                if px[3] <= 0.5 {
+                    continue;
+                }
+                radiance[t * 4] = px[0] * inv_pi;
+                radiance[t * 4 + 1] = px[1] * inv_pi;
+                radiance[t * 4 + 2] = px[2] * inv_pi;
+                radiance[t * 4 + 3] = 1.0;
+            }
             let tex = ctx
                 .session
                 .resources_mut()
-                .upload_texture(device, queue, ATLAS, ATLAS, &texels)
+                .upload_texture_hdr(device, queue, aw, ah, &radiance)
                 .unwrap();
             self.pieces[i].tex = Some(tex);
         }
@@ -293,25 +349,25 @@ impl LightmapBakeShowcase {
                 // honoured reliably by the shadow pass.
                 key.cast_shadows = true;
                 l.lights = vec![key];
-                l.hemisphere_intensity = 0.35;
+                // Low ambient so the realtime shadow (when the toggle is on) is
+                // not washed out by fill light.
+                l.hemisphere_intensity = 0.18;
                 l.sky_colour = [0.6, 0.64, 0.72];
                 l.ground_colour = [0.2, 0.2, 0.22];
                 // Shadow rendering persists on the shared session across
                 // showcases, so set it explicitly rather than assuming a prior
-                // showcase left it on.
+                // showcase left it on. Fit the shadow frustum to this room (auto
+                // is 20, looser than the scene needs).
                 l.shadows_enabled = true;
+                l.shadow_extent_override = Some(13.0);
             }
         }
 
         for p in &self.pieces {
-            // Baked surfaces render white in baked mode (their lightmap carries
-            // the colour) and their true albedo in realtime mode.
-            let base = if p.baked && baked_mode {
-                [1.0, 1.0, 1.0]
-            } else {
-                p.albedo
-            };
-            let mut mat = Material::pbr(base, 0.0, 0.9);
+            // Every piece keeps its true albedo: the baked lightmap now stores
+            // material-independent incident radiance (E/pi), and Replace mode
+            // multiplies it by the material's base_colour (albedo).
+            let mut mat = Material::pbr(p.albedo, 0.0, 0.9);
             mat.backface_policy = BackfacePolicy::Identical;
             let id = session.scene_mut().add(Some(p.mesh), p.xf, mat);
             // Per-object cast-shadows: the shadow pass skips items with this off,
@@ -428,11 +484,15 @@ impl Showcase for LightmapBakeShowcase {
             },
             &viewport_lib_bake::UnwrapOptions {
                 resolution: ATLAS,
+                // Generous inter-chart padding so dilation can fill the gutter and
+                // bilinear sampling at a chart edge never reads across the seam.
+                padding: 6,
                 ..Default::default()
             },
         )
         .expect("unwrap torus");
         self.torus_charts = unwrapped.chart_count;
+        self.torus_atlas = (unwrapped.width, unwrapped.height);
         let torus_mesh = build_mesh(
             ctx,
             &unwrapped.positions,
@@ -452,6 +512,8 @@ impl Showcase for LightmapBakeShowcase {
                 .iter()
                 .map(|u| Vec2::new(u[0], u[1]))
                 .collect(),
+            atlas_w: unwrapped.width,
+            atlas_h: unwrapped.height,
             xf: torus_xf,
             albedo: TORUS_ALBEDO,
             baked: true,
@@ -615,7 +677,10 @@ impl Showcase for LightmapBakeShowcase {
         ui.add_space(6.0);
         ui.label(egui::RichText::new("Bake stats").strong());
         ui.label(format!("Torus charts: {}", self.torus_charts));
-        ui.label(format!("Atlas: {ATLAS} x {ATLAS}"));
+        ui.label(format!(
+            "Torus atlas: {} x {}",
+            self.torus_atlas.0, self.torus_atlas.1
+        ));
         ui.label(format!("Samples: {}", self.baked_at.unwrap_or(0)));
         ui.label(format!("Bake time: {} ms", self.bake_ms));
         ui.label(format!("Mean directionality: {:.2}", self.directionality));
@@ -651,6 +716,10 @@ fn make_piece(
         nrm: mesh.normals.clone(),
         idx: mesh.indices.clone(),
         uv1,
+        // Non-unwrapped pieces (the floor) use their own [0,1] plane UVs, one
+        // chart, so any square atlas resolution works.
+        atlas_w: ATLAS,
+        atlas_h: ATLAS,
         xf,
         albedo,
         baked,
@@ -699,25 +768,4 @@ fn to_rgba4(rgba: &[f32]) -> Vec<[f32; 4]> {
     rgba.chunks_exact(4)
         .map(|c| [c[0], c[1], c[2], c[3]])
         .collect()
-}
-
-/// Turn incident irradiance into an sRGB RGBA8 lightmap texture: radiosity
-/// (`albedo * E / pi`), Reinhard tonemap, gamma. Empty texels go black.
-fn irradiance_to_srgb(radiance: &[[f32; 4]], albedo: [f32; 3]) -> Vec<u8> {
-    const EXPOSURE: f32 = 0.85;
-    let inv_pi = 1.0 / std::f32::consts::PI;
-    let mut out = vec![0u8; radiance.len() * 4];
-    for (i, px) in radiance.iter().enumerate() {
-        if px[3] <= 0.5 {
-            out[i * 4 + 3] = 255;
-            continue;
-        }
-        for c in 0..3 {
-            let lin = px[c] * albedo[c] * inv_pi * EXPOSURE;
-            let tone = lin / (1.0 + lin);
-            out[i * 4 + c] = (tone.powf(1.0 / 2.2).clamp(0.0, 1.0) * 255.0) as u8;
-        }
-        out[i * 4 + 3] = 255;
-    }
-    out
 }
