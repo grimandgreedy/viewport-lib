@@ -200,6 +200,15 @@ impl ViewportSession {
         self.viewport_size = size;
     }
 
+    /// The logical viewport size in points, as last set by
+    /// [`begin_frame`](Self::begin_frame) or
+    /// [`set_viewport_size`](Self::set_viewport_size). Useful for overlay UI that
+    /// places itself relative to the viewport edges (clamping a panel, corner
+    /// anchoring).
+    pub fn viewport_size(&self) -> [f32; 2] {
+        self.viewport_size
+    }
+
     /// Set the physical pixels per logical pixel (e.g. `ui.ctx().pixels_per_point()`).
     ///
     /// [`viewport_size`](Self::set_viewport_size) stays in logical units; this

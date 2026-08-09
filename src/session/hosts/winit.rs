@@ -126,6 +126,7 @@ pub struct FrameCtx<'a> {
     pub time: f32,
     device: &'a crate::gpu::Device,
     queue: &'a crate::gpu::Queue,
+    viewport_size: [f32; 2],
     overlays: OverlayFrame,
     injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
     events: Vec<ViewportEvent>,
@@ -142,6 +143,17 @@ impl FrameCtx<'_> {
     /// Seconds since the app started.
     pub fn time(&self) -> f32 {
         self.time
+    }
+
+    /// The logical viewport size in points for this frame.
+    ///
+    /// This is the current frame's size, freshly computed from the surface size
+    /// and DPI scale, so it is correct even on a frame where a resize just landed.
+    /// Overlay UI drawn from the callback uses it to place itself relative to the
+    /// viewport edges: clamping a panel on screen, flipping a submenu near an edge,
+    /// or anchoring to a corner or the centre.
+    pub fn viewport_size(&self) -> [f32; 2] {
+        self.viewport_size
     }
 
     /// The wgpu device the runner created.
@@ -469,6 +481,15 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                 self.last_frame = now;
                 let time = (now - self.start).as_secs_f32();
 
+                // Sync the session to the live surface size and DPI before the
+                // callback runs, so a callback that reads viewport_size or picks
+                // (pick_gpu and friends project through this size) sees this
+                // frame's value even when a resize just landed, not last frame's.
+                // It also has to happen before assembly so the renderer's internal
+                // depth/HDR targets match the swapchain texture.
+                state.session.set_viewport_size([w, h]);
+                state.session.set_pixels_per_point(scale);
+
                 // Resolve accumulated input before the callback so a callback
                 // reading action_frame() (for click-to-pick and the like) sees
                 // this frame's input, not the previous frame's. update_orbit
@@ -482,6 +503,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                     time,
                     device: &state.device,
                     queue: &state.queue,
+                    viewport_size: [w, h],
                     overlays: OverlayFrame::default(),
                     injects: Vec::new(),
                     events: std::mem::take(&mut self.events),
@@ -497,11 +519,6 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
                     ..
                 } = ctx;
 
-                // Sync to the live surface size before assembly so the renderer's
-                // internal depth/HDR targets match the swapchain texture even when
-                // a resize landed since the last begin_frame.
-                state.session.set_viewport_size([w, h]);
-                state.session.set_pixels_per_point(scale);
                 state.session.step_runtime(dt);
                 // Assembly clears frame.overlays, so install the callback's
                 // overlays and injects here, against the assembled frame.
