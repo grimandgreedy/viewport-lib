@@ -6,7 +6,7 @@ The big themes this release are baked lighting, custom fragment shading, and vie
 
 ### Features
 
-- **Viewport Runners** - `ViewportApp` (feature `app`) owns the window and event loop; `ViewportSession` handle embedded frame assembly. A basic viewport in a handful of lines instead of a few hundred.
+- **Viewport Runners** - `ViewportApp` (feature `app`) owns the window and event loop; `ViewportSession` handles embedded frame assembly. A basic viewport in a handful of lines instead of a few hundred.
 - **Material plugins** - `register_material_plugin` registers named WGSL shading hooks (`shade_surface`, `shade_light`, `shade_ambient`, `recolor`); a material opts in with `Material::shading_plugin`. Plugin draws keep shadows, AO, normal maps, IBL, and alpha modes. Per-material params and textures ride variants; `warm_material_plugin_pipelines` pays the pipeline cost up front. Reference plugins (toon, rim, detail layer, parallax relief, dissolve) live in `examples/plugins/`.
 - **Foreground composite pass** - `SceneFrame::foreground_items` draws items over the finished scene against a cleared depth buffer (first-person weapon, always-on-top gizmo, HUD prop), with an optional override projection for a close-held field of view. HDR and owned-encoder LDR paths only.
 - **Baked lighting (lightmaps)** - compute bounced light, soft shadows, and colour bleed offline into textures. Built in: UV unwrapping, path-traced solve, denoise, seam cleanup, HDR output, and directional lightmaps. A whole scene bakes in one call and packs into a handful of shared textures; bakes are deterministic.
