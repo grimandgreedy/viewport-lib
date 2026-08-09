@@ -127,10 +127,10 @@ pub mod raytrace;
 #[cfg(feature = "bake")]
 pub mod bake;
 
-/// [`ViewportInstance`](session::ViewportInstance): a host object that owns the
-/// per-frame wiring (renderer, scene, camera, input) so consumers do not write
-/// it by hand.
-pub mod session;
+/// Ready-made ways to run a viewport: [`ViewportInstance`](runners::ViewportInstance),
+/// the runner you drive from your own loop, and [`ViewportApp`](runners::viewport_app::ViewportApp),
+/// the runner that owns the window and event loop for you.
+pub mod runners;
 
 // ---------------------------------------------------------------------------
 // Module re-exports : preserve old `viewport_lib::foo::Bar` paths.
@@ -276,10 +276,10 @@ pub use renderer::{
 };
 pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 
-pub use session::{ExtraId, ViewportInstance};
+pub use runners::{ExtraId, ViewportInstance};
 
 #[cfg(feature = "app")]
-pub use session::hosts::{AppConfig, FrameCtx, RedrawMode, ViewportApp};
+pub use runners::viewport_app::{AppConfig, FrameCtx, RedrawMode, ViewportApp};
 
 pub use quantities::{
     edge_one_form_to_glyphs, face_intrinsic_to_glyphs, polyline_edge_vectors_to_glyphs,

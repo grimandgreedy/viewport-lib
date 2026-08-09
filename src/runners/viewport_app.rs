@@ -14,7 +14,7 @@ use ::winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::interaction::input::adapters::from_winit;
 use crate::interaction::input::{ViewportContext, ViewportEvent};
-use crate::session::ViewportInstance;
+use crate::runners::ViewportInstance;
 use crate::{FrameData, OrbitCameraController, OverlayFrame};
 
 /// When the runner asks for the next frame.
@@ -270,8 +270,7 @@ impl std::ops::DerefMut for FrameCtx<'_> {
 /// A fullscreen winit application driving a [`ViewportInstance`].
 ///
 /// ```rust,ignore
-/// use viewport_lib::session::hosts::{AppConfig, ViewportApp};
-/// use viewport_lib::{Material, primitives};
+/// use viewport_lib::{AppConfig, Material, ViewportApp, primitives};
 ///
 /// let mut cube = None;
 /// ViewportApp::new(AppConfig::default().with_title("demo"))
@@ -316,7 +315,7 @@ impl ViewportApp {
     /// Blocks until the window closes.
     pub fn run(self, callback: impl FnMut(&mut FrameCtx) + 'static) {
         let event_loop = EventLoop::new().expect("event loop");
-        let mut runner = Runner {
+        let mut handler = AppHandler {
             config: self.config,
             setup: self.setup,
             callback,
@@ -326,7 +325,7 @@ impl ViewportApp {
             last_frame: Instant::now(),
             start: Instant::now(),
         };
-        event_loop.run_app(&mut runner).expect("run app");
+        event_loop.run_app(&mut handler).expect("run app");
     }
 }
 
@@ -344,7 +343,7 @@ struct RunState {
     hovered: bool,
 }
 
-struct Runner<F> {
+struct AppHandler<F> {
     config: AppConfig,
     setup: Option<Box<dyn FnOnce(&mut ViewportInstance, &crate::gpu::Device)>>,
     callback: F,
@@ -357,7 +356,7 @@ struct Runner<F> {
     start: Instant,
 }
 
-impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
+impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
             return;

@@ -25,8 +25,10 @@ mod settings;
 
 pub use extras::ExtraId;
 
-/// Host integrations that own the window and event loop (feature-gated).
-pub mod hosts;
+/// The standalone winit runner: [`ViewportApp`](viewport_app::ViewportApp) owns
+/// the window and event loop (feature-gated behind `app`).
+#[cfg(feature = "app")]
+pub mod viewport_app;
 
 use crate::camera::Camera;
 use crate::interaction::input::{ActionFrame, BindingPreset, ViewportContext, ViewportEvent};
