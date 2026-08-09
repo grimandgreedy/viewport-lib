@@ -17,18 +17,18 @@
   </tr>
 </table>
 
-`viewport-lib` covers rendering, cameras, and post-processing. Your application owns the window, event loop, and tool state.
-
-
 ## Core features
 
-- **Geometry**: mesh, point cloud, polyline, volume, glyph, and streamtube rendering
-- **Lighting**: directional, point, and spot lights; shadow maps;
-- **Materials**: PBR and Blinn-Phong shading, normal maps, transparency
-- **Scene tools**: clip planes, section views, scalar colouring, and colourmaps
-- **Camera**: arcball orbit, orthographic projection, view presets, smooth animation, and frame-to-selection
-- **Interaction**: CPU/GPU picking, rectangle selection, transform gizmos, and snapping
-- **Overlays**: labels, scalar bar, rulers, and axes indicator
+- **Objects**:
+    - Lib Items: tri-meshes, point volumes, scatter volumes, volume meshes (tet-, pyramid-, hex-meshes), point clouds, Gaussian splats, glyphs and tensor glyphs, polylines, tubes, ribbons, streamtubes, sprites, decals, implicit and marching-cubes surfaces.
+    - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels, scalar bars, rulers, axes indicators; support for colours, glow, textures, animations and much more.
+- **Lighting**: directional, point, and spot lights; cascaded, point-light, and contact shadows; image-based lighting from environment maps; baked lightmaps.
+- **Materials & effects**: Blinn-Phong, and matcap shading; normal and AO maps, emissive, and transparency; bloom, SSAO, depth of field, and tone mapping; runtime WGSL shading hooks and GPU deformers
+- **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable key/mouse bindings; view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection and transform gizmos with snapping
+- **Sciviz**: scalar colouring with colourmaps, isolines, on-surface vector-field flow (LIC), clip planes, and volume slices
+- **Integration**: drop a viewport into any wgpu app (eframe/egui, winit, iced, Slint, bevy) through event adapters.
+- **Performance**: GPU-driven frustum culling and mesh instancing; async streaming uploads with VRAM budgeting; mipmapped and block-compressed textures.
+- **Extensibility**: plugins that hook into the frame loop for CPU simulation and animation, GPU compute and post-process passes, new item types with their own pipelines, per-vertex mesh deformation (animation, regular motion), and custom material shading.
 
 
 ## Examples
@@ -53,17 +53,17 @@ Note: the feature flags are there so that when you run them you don't have to pu
 
 ## Quick start
 
-A viewport is created through a runner: an object that runs its per-frame work. There are two, differing in how much of the app they own, and the right one comes down to who owns the window and event loop:
+A viewport is created and managed via a runner. There are two primary runners that we maintain and ship, but for intensive applications you are encouraged to make your own. The runner is an object that manages the viewport's per-frame work.
 
-- **`ViewportApp`**: the runner that owns the window, the run loop, and the input for you. The simplest, and it works like bevy or most other 3d renderers.
-- **`ViewportInstance`**: the runner you drive yourself. You own the loop and the input, redraw each frame, and route each event to either the viewport's input controller or your GUI.
-- **Custom runner**: For fine-grained control of wgpu device features or split viewports, or performance optimisation, you can create your own runner to drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two runners do internally. Most of the older examples still implement a direct setup of the Effects frame, Scene frame, etc. Look at, e.g., the `eframe_multi_viewport` or `wgpu_leg_agnostic` examples.
+- **`ViewportApp`**: owns the window and the run loop. The simplest and easiest way to get started. It works like bevy and most other 3d renderers.
+- **`ViewportInstance`**: the runner you drive yourself. You own the loop and the input, redraw when you want, and route each event to either the viewport's input controller or your GUI. This is the right fit when you are embedding a viewport into an existing application which already owns the run-loop. 
+- **Custom runner**: For fine-grained control of wgpu device features or split viewports, or performance optimisation, you can create your own runner to drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two runners do internally. Most of the older examples still implement their own runner. Look at, e.g., the `eframe_multi_viewport` or `wgpu_leg_agnostic` examples.
 
 Native events reach either runner as a `ViewportEvent`, translated by an adapter (`from_winit`, `from_egui`).
 
 ### `ViewportApp`
 
-`ViewportApp` owns the window and event loop, so you only write scene setup and a per-frame closure. Good for a standalone tool.
+`ViewportApp` owns the window and event loop, so you only write scene setup and a per-frame closure.
 
 ```rust
 use viewport_lib::{AppConfig, Material, ViewportApp, primitives};
