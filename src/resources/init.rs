@@ -539,6 +539,19 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 18: dominant-direction atlas for directional lightmaps
+                // (FRAGMENT, filterable). The 1x1 fallback is bound and ignored
+                // unless object.lightmap_directional is set.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 18,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 

@@ -23,6 +23,17 @@ pub enum LightmapData {
         /// Baked incoming radiance, sampled by UV1.
         radiance: TextureId,
     },
+    /// A radiance texture plus a per-texel dominant light direction, so a normal
+    /// map responds to where the baked light came from. `direction` holds the
+    /// unit dominant direction in `xyz` (world space) and a directionality factor
+    /// in `w` (`0` = ambient, `1` = a single direction); upload it linear
+    /// (`upload_texture_hdr`) so the signed direction survives.
+    DominantDirection {
+        /// Baked incoming radiance, sampled by UV1.
+        radiance: TextureId,
+        /// Per-texel dominant direction + directionality, sampled by UV1.
+        direction: TextureId,
+    },
     /// A single-channel occlusion factor, read from the red channel. Pairs with
     /// [`LightmapMode::AmbientOcclusion`].
     AmbientOcclusion {
@@ -32,10 +43,21 @@ pub enum LightmapData {
 }
 
 impl LightmapData {
+    /// The primary (radiance / occlusion) texture bound at binding 17.
     pub(crate) fn texture_id(self) -> TextureId {
         match self {
             LightmapData::NonDirectional { radiance } => radiance,
+            LightmapData::DominantDirection { radiance, .. } => radiance,
             LightmapData::AmbientOcclusion { occlusion } => occlusion,
+        }
+    }
+
+    /// The dominant-direction texture (bound at binding 18), if this is a
+    /// directional lightmap.
+    pub(crate) fn direction_texture_id(self) -> Option<TextureId> {
+        match self {
+            LightmapData::DominantDirection { direction, .. } => Some(direction),
+            _ => None,
         }
     }
 }
@@ -73,6 +95,9 @@ pub(crate) struct MeshLightmap {
     pub(crate) uv1_buffer: crate::gpu::Buffer,
     /// The baked texture, bound at group 1 binding 17.
     pub(crate) texture_id: TextureId,
+    /// The dominant-direction atlas, bound at group 1 binding 18. `Some` only for
+    /// a directional lightmap; drives the shader's `lightmap_directional` flag.
+    pub(crate) direction_texture_id: Option<TextureId>,
     /// Shader mode code (see [`LightmapMode::to_shader`]).
     pub(crate) mode: u32,
 }

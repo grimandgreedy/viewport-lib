@@ -1102,7 +1102,14 @@ impl DeviceResources {
         // The last two slots track GPU position/normal override (re)bind events.
         // Bumped by `set_*_override_buffer` / `clear_*_override`, so a fresh
         // override forces a bind-group rebuild here.
-        let (pos_override_gen, nrm_override_gen, has_extension_attr, lightmap_gen, lightmap_tex_id) = {
+        let (
+            pos_override_gen,
+            nrm_override_gen,
+            has_extension_attr,
+            lightmap_gen,
+            lightmap_tex_id,
+            lightmap_dir_tex_id,
+        ) = {
             let Some(mesh) = self.mesh_store.get(mesh_id) else {
                 return;
             };
@@ -1112,6 +1119,7 @@ impl DeviceResources {
                 mesh.extension_attr_buffer.is_some() as u64,
                 mesh.lightmap_gen,
                 mesh.lightmap.as_ref().map(|lm| lm.texture_id),
+                mesh.lightmap.as_ref().and_then(|lm| lm.direction_texture_id),
             )
         };
 
@@ -1170,6 +1178,12 @@ impl DeviceResources {
         // a caller-supplied id, so it is looked up here before the mutable mesh
         // borrow below.
         let lightmap_view = match lightmap_tex_id {
+            Some(id) if self.content.textures.get(id).is_some() => {
+                &self.content.textures.get(id).unwrap().view
+            }
+            _ => &self.fallback_texture.view,
+        };
+        let lightmap_dir_view = match lightmap_dir_tex_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
@@ -1320,6 +1334,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 17,
                     resource: crate::gpu::BindingResource::TextureView(lightmap_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 18,
+                    resource: crate::gpu::BindingResource::TextureView(lightmap_dir_view),
                 },
             ],
         });
@@ -1496,6 +1514,13 @@ impl DeviceResources {
                 }
                 _ => &self.fallback_texture.view,
             };
+        let lightmap_dir_view: &crate::gpu::TextureView =
+            match mesh.lightmap.as_ref().and_then(|lm| lm.direction_texture_id) {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.fallback_texture.view,
+            };
 
         let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
             Some(id) if self.content.textures.get(id).is_some() => {
@@ -1581,6 +1606,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 17,
                     resource: crate::gpu::BindingResource::TextureView(lightmap_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 18,
+                    resource: crate::gpu::BindingResource::TextureView(lightmap_dir_view),
                 },
             ],
         });

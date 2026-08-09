@@ -415,6 +415,97 @@ fn capture_hdr_preserves_values_above_one() {
     assert_eq!(frame.effects.post_process.enabled, orig_pp_enabled);
 }
 
+/// A directional (dominant-direction) lightmap must make a normal-mapped surface
+/// respond to the baked light direction: tilting the pixel normal toward the
+/// baked dominant direction brightens the baked term, tilting away dims it. A
+/// flat quad (geometric normal +Z) is lit by a uniform radiance atlas plus a
+/// dominant direction of (0.6, 0, 0.8); one render tilts the normal-mapped normal
+/// toward +X (into the light), the other toward -X (away).
+#[test]
+fn directional_lightmap_responds_to_normal() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Quad in the XY plane facing +Z, tangent +X, with UV0 for normal mapping.
+    let mut quad = MeshData::default();
+    quad.positions = vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]];
+    quad.normals = vec![[0.0, 0.0, 1.0]; 4];
+    quad.uvs = Some(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    quad.tangents = Some(vec![[1.0, 0.0, 0.0, 1.0]; 4]);
+    quad.indices = vec![0, 1, 2, 0, 2, 3];
+    let mesh = renderer.resources_mut().upload_mesh_data(&device, &quad).unwrap();
+    let uv1 = vec![glam::Vec2::new(0.5, 0.5); 4];
+
+    // Uniform radiance 1.0, dominant direction (0.6,0,0.8) world, directionality 1.
+    let radiance = renderer
+        .resources_mut()
+        .upload_texture_hdr(&device, &queue, 2, 2, &[1.0f32; 2 * 2 * 4])
+        .unwrap();
+    let dir_rgba: Vec<f32> = std::iter::repeat([0.6f32, 0.0, 0.8, 1.0]).take(2 * 2).flatten().collect();
+    let direction = renderer
+        .resources_mut()
+        .upload_texture_hdr(&device, &queue, 2, 2, &dir_rgba)
+        .unwrap();
+    renderer
+        .resources_mut()
+        .set_lightmap(
+            &device,
+            mesh,
+            &uv1,
+            viewport_lib::resources::LightmapData::DominantDirection { radiance, direction },
+            viewport_lib::resources::LightmapMode::Replace,
+        )
+        .unwrap();
+
+    // Tangent-space normal maps: (0.6,0,0.8) tilts world N toward +X (into the
+    // light); (-0.6,0,0.8) tilts toward -X. Encoded n*0.5+0.5 in 8-bit.
+    let enc = |x: f32, y: f32, z: f32| {
+        [
+            ((x * 0.5 + 0.5) * 255.0) as u8,
+            ((y * 0.5 + 0.5) * 255.0) as u8,
+            ((z * 0.5 + 0.5) * 255.0) as u8,
+            255,
+        ]
+    };
+    let toward: Vec<u8> = std::iter::repeat(enc(0.6, 0.0, 0.8)).take(2 * 2).flatten().collect();
+    let away: Vec<u8> = std::iter::repeat(enc(-0.6, 0.0, 0.8)).take(2 * 2).flatten().collect();
+    let nm_toward = renderer.resources_mut().upload_normal_map(&device, &queue, 2, 2, &toward).unwrap();
+    let nm_away = renderer.resources_mut().upload_normal_map(&device, &queue, 2, 2, &away).unwrap();
+
+    let peak_with = |renderer: &mut ViewportRenderer, nm| -> f32 {
+        let cam = Camera::default();
+        let mut frame = FrameData::default();
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.lights = Vec::new();
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.material.base_colour = [1.0, 1.0, 1.0];
+        item.material.normal_map_id = Some(nm);
+        item.material.normal_strength = 1.0;
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        let mut face_cam = RenderCamera::from_camera(&cam);
+        face_cam.aspect = 1.0;
+        let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
+        // Sample the centre pixel (on the quad) rather than the global peak, which
+        // would pick up the background clear when the quad is dim.
+        let c = ((32 * 64 + 32) * 4) as usize;
+        captured.rgba[c].max(captured.rgba[c + 1]).max(captured.rgba[c + 2])
+    };
+
+    let peak_toward = peak_with(&mut renderer, nm_toward);
+    let peak_away = peak_with(&mut renderer, nm_away);
+    println!("directional lightmap: toward={peak_toward:.3} away={peak_away:.3}");
+    assert!(
+        peak_toward > peak_away * 1.8,
+        "normal facing the baked light ({peak_toward}) should be much brighter than facing away ({peak_away})"
+    );
+}
+
 /// A baked lightmap with radiance above 1.0 must survive to the HDR render path.
 /// The 8-bit `upload_texture` path clamps at upload (sRGB, [0,1]); the
 /// `upload_texture_hdr` (`Rgba16Float`) path must not. Both are rendered in

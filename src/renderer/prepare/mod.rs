@@ -700,6 +700,12 @@ impl ViewportRenderer {
                             &resources.fallback_texture.view,
                         ),
                     },
+                    crate::gpu::BindGroupEntry {
+                        binding: 18,
+                        resource: crate::gpu::BindingResource::TextureView(
+                            &resources.fallback_texture.view,
+                        ),
+                    },
                 ],
             });
             self.mesh_uniforms.tvm_wireframe_buf = Some(buf);

@@ -162,7 +162,11 @@ pub(super) fn build_object_uniform(
             .get(item.mesh_id)
             .and_then(|mesh| mesh.lightmap.as_ref())
             .map_or(0, |lm| lm.mode),
-        _pad_lp: 0,
+        lightmap_directional: resources
+            .mesh_store
+            .get(item.mesh_id)
+            .and_then(|mesh| mesh.lightmap.as_ref())
+            .map_or(0, |lm| lm.direction_texture_id.is_some() as u32),
     }
 }
 
@@ -383,7 +387,7 @@ impl ViewportRenderer {
                         has_light_probe: 0,
                         light_probe_index: 0,
                         lightmap_mode: 0,
-                        _pad_lp: 0,
+                        lightmap_directional: 0,
                     };
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         queue.write_buffer(
@@ -687,6 +691,12 @@ impl ViewportRenderer {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 17,
+                            resource: crate::gpu::BindingResource::TextureView(
+                                &resources.fallback_texture.view,
+                            ),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 18,
                             resource: crate::gpu::BindingResource::TextureView(
                                 &resources.fallback_texture.view,
                             ),

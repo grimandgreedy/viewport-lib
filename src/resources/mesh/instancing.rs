@@ -1535,7 +1535,10 @@ pub(crate) struct ObjectUniform {
     /// Read by the non-instanced lit shaders to fold the group 1 binding 17
     /// lightmap texture into the ambient term.
     pub(crate) lightmap_mode: u32, //   4 bytes, offset 328
-    pub(crate) _pad_lp: u32,         //   4 bytes, offset 332
+    /// 1 when a dominant-direction atlas is bound at binding 18, so the shader
+    /// applies the directional normal response; 0 for a flat lightmap. (Reuses
+    /// the former tail padding, so the 336-byte layout is unchanged.)
+    pub(crate) lightmap_directional: u32, //   4 bytes, offset 332
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 336);

@@ -99,7 +99,7 @@ struct Object {
     has_light_probe: u32,                  // offset 320 : 1 = sample light_probe_sh for indirect diffuse
     light_probe_index: u32,                // offset 324 : base block index into light_probe_sh
     lightmap_mode: u32,                    // offset 328 : 0 none, 1 Replace, 2 Add, 3 AmbientOcclusion
-    _pad_lp: u32,                          // offset 332 : align to 336
+    lightmap_directional: u32,             // offset 332 : 1 = sample the binding-18 direction atlas
 };
 
 struct ClipVolumeEntry {
@@ -159,6 +159,15 @@ struct ClipVolumeUB {
 @group(1) @binding(15) var<storage, read> extension_attr_buffer: array<vec4<f32>>;
 // Baked lightmap texture, sampled with the binding-2 material sampler.
 @group(1) @binding(17) var lightmap_tex: texture_2d<f32>;
+// Dominant-direction atlas for a directional lightmap (see mesh.wgsl).
+@group(1) @binding(18) var lightmap_dir_tex: texture_2d<f32>;
+
+fn lightmap_directional_factor(uv: vec2<f32>, n_pix: vec3<f32>, n_geo: vec3<f32>) -> f32 {
+    let d = textureSampleLevel(lightmap_dir_tex, obj_sampler, uv, 0.0);
+    let ndl_pix = max(dot(normalize(n_pix), d.xyz), 0.0);
+    let ndl_geo = max(dot(normalize(n_geo), d.xyz), 0.0);
+    return mix(1.0, ndl_pix / max(ndl_geo, 0.1), d.w);
+}
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -643,7 +652,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // base mip: derivative-based selection over tightly-packed atlas charts
         // reads as blocky bands on the mesh.
         if object.lightmap_mode != 0u {
-            let lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            if object.lightmap_directional == 1u {
+                let f = lightmap_directional_factor(in.lightmap_uv, N, in.world_normal);
+                lm = vec4<f32>(lm.rgb * f, lm.a);
+            }
             ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
@@ -680,7 +693,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // Baked lightmap: replace, add, or occlude the ambient term. Force the
         // base mip (see the ambient branch above).
         if object.lightmap_mode != 0u {
-            let lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            if object.lightmap_directional == 1u {
+                let f = lightmap_directional_factor(in.lightmap_uv, N, in.world_normal);
+                lm = vec4<f32>(lm.rgb * f, lm.a);
+            }
             hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);

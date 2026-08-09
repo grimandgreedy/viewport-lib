@@ -117,7 +117,7 @@ struct Object {
     has_light_probe: u32,                  // offset 320 : 1 = sample light_probe_sh for indirect diffuse
     light_probe_index: u32,                // offset 324 : base block index into light_probe_sh
     lightmap_mode: u32,                    // offset 328 : 0 none, 1 Replace, 2 Add, 3 AmbientOcclusion
-    _pad_lp: u32,                          // offset 332 : align to 336
+    lightmap_directional: u32,             // offset 332 : 1 = sample the binding-18 direction atlas
 };
 
 struct ClipVolumeEntry {
@@ -191,6 +191,22 @@ struct ClipVolumeUB {
 // on object.lightmap_mode. Textures use a separate Metal table, so this is a
 // fresh binding. The 1x1 fallback is bound when no lightmap is set.
 @group(1) @binding(17) var lightmap_tex: texture_2d<f32>;
+// Dominant-direction atlas for a directional lightmap: xyz = unit incoming
+// direction (world space), w = directionality. Gated on object.lightmap_directional;
+// the 1x1 fallback is bound (and ignored) for flat lightmaps.
+@group(1) @binding(18) var lightmap_dir_tex: texture_2d<f32>;
+
+// Directional-lightmap response: scale the baked radiance by how the shading
+// normal (post normal-map) faces the baked dominant light, relative to the
+// geometric normal the bake integrated against. Returns 1 when they match (flat
+// or non-normal-mapped surface -> baked value reproduced exactly), and diverges
+// only where a normal map perturbs the normal, weighted by directionality (w).
+fn lightmap_directional_factor(uv: vec2<f32>, n_pix: vec3<f32>, n_geo: vec3<f32>) -> f32 {
+    let d = textureSampleLevel(lightmap_dir_tex, obj_sampler, uv, 0.0);
+    let ndl_pix = max(dot(normalize(n_pix), d.xyz), 0.0);
+    let ndl_geo = max(dot(normalize(n_geo), d.xyz), 0.0);
+    return mix(1.0, ndl_pix / max(ndl_geo, 0.1), d.w);
+}
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -806,7 +822,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // selection would snap to a coarse level and show the atlas texels as
         // blocky bands on the mesh. The atlas has no detail to lose at range.
         if object.lightmap_mode != 0u {
-            let lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            if object.lightmap_directional == 1u {
+                let f = lightmap_directional_factor(in.lightmap_uv, N, in.world_normal);
+                lm = vec4<f32>(lm.rgb * f, lm.a);
+            }
             ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
@@ -864,7 +884,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // base mip explicitly (see the ambient branch above): derivative-based
         // mip selection over tightly-packed atlas charts reads as blocky bands.
         if object.lightmap_mode != 0u {
-            let lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            var lm = textureSampleLevel(lightmap_tex, obj_sampler, in.lightmap_uv, 0.0);
+            if object.lightmap_directional == 1u {
+                let f = lightmap_directional_factor(in.lightmap_uv, N, in.world_normal);
+                lm = vec4<f32>(lm.rgb * f, lm.a);
+            }
             hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);

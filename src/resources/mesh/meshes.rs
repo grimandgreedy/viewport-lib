@@ -988,6 +988,7 @@ impl DeviceResources {
         mesh.lightmap = Some(crate::resources::lightmap::MeshLightmap {
             uv1_buffer,
             texture_id: data.texture_id(),
+            direction_texture_id: data.direction_texture_id(),
             mode: mode.to_shader(),
         });
         // The gen bump forces the object bind-group rebuild that swaps the
@@ -2658,7 +2659,7 @@ impl DeviceResources {
             has_light_probe: 0,
             light_probe_index: 0,
             lightmap_mode: 0,
-            _pad_lp: 0,
+            lightmap_directional: 0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2749,6 +2750,10 @@ impl DeviceResources {
                     binding: 17,
                     resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: 18,
+                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
+                },
             ],
         });
 
@@ -2804,7 +2809,7 @@ impl DeviceResources {
             has_light_probe: 0,
             light_probe_index: 0,
             lightmap_mode: 0,
-            _pad_lp: 0,
+            lightmap_directional: 0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),
@@ -2890,6 +2895,10 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 17,
+                    resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 18,
                     resource: crate::gpu::BindingResource::TextureView(fallback_albedo_view),
                 },
             ],
