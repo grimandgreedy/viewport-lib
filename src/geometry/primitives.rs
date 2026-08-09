@@ -295,6 +295,54 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
     }
 }
 
+/// Box-unwrap UVs for the shared 24-vertex cube / cuboid layout: each of the six
+/// faces gets its own tile in a 3×2 atlas, so a texture (or a paint stroke) maps
+/// to each face independently rather than repeating identically across all six
+/// (as the overlapping `[0,1]²` UVs of [`cube`] / [`cuboid`] do).
+///
+/// A small inset keeps each face's UVs a texel or so inside its tile border, so
+/// bilinear filtering at a tile edge does not bleed one face's colour into its
+/// neighbour's.
+fn box_unwrap_uvs() -> Vec<[f32; 2]> {
+    // Roughly one texel of a 512-map; large enough to stop cross-face bleed at
+    // common resolutions, small enough not to visibly crop a face.
+    const INSET: f32 = 1.0 / 512.0;
+    (0..6u32)
+        .flat_map(|f| {
+            let (col, row) = (f % 3, f / 3);
+            let u0 = col as f32 / 3.0 + INSET;
+            let u1 = (col + 1) as f32 / 3.0 - INSET;
+            let v0 = row as f32 / 2.0 + INSET;
+            let v1 = (row + 1) as f32 / 2.0 - INSET;
+            // Same per-face corner order as the wrapped layout: [0,0] [1,0] [1,1] [0,1].
+            [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
+        })
+        .collect()
+}
+
+/// Unit cube with a **box-unwrap** UV layout ([`box_unwrap_uvs`]).
+///
+/// Geometry is identical to [`cube`]; only the UVs differ. Where [`cube`]'s six
+/// faces share one `[0,1]²` square (so a texture repeats identically on every
+/// face), each face here owns a distinct atlas tile, making per-face texturing
+/// and painting independent.
+pub fn cube_unwrapped(size: f32) -> MeshData {
+    MeshData {
+        uvs: Some(box_unwrap_uvs()),
+        ..cube(size)
+    }
+}
+
+/// Rectangular box with a **box-unwrap** UV layout: the [`cuboid`] counterpart of
+/// [`cube_unwrapped`]. Geometry matches [`cuboid`]; each face owns its own atlas
+/// tile so faces texture / paint independently.
+pub fn cuboid_unwrapped(width: f32, height: f32, depth: f32) -> MeshData {
+    MeshData {
+        uvs: Some(box_unwrap_uvs()),
+        ..cuboid(width, height, depth)
+    }
+}
+
 /// Cone with tip at +Z and base at -Z, centered at the origin.
 ///
 /// `radius` : base radius. `height` : total height. `sectors` : circumference subdivisions (minimum 3).
@@ -1594,6 +1642,48 @@ mod tests {
     #[test]
     fn cube_normals_unit_length() {
         assert_normals_unit_length("cube", &cube(1.0));
+    }
+
+    #[test]
+    fn wrapped_cube_shares_one_uv_square_across_faces() {
+        // The overlapping layout: every face's four UVs are the same [0,1] quad.
+        let uvs = cube(1.0).uvs.unwrap();
+        for face in 0..6 {
+            assert_eq!(&uvs[face * 4..face * 4 + 4], &uvs[0..4]);
+        }
+    }
+
+    #[test]
+    fn unwrapped_cube_gives_each_face_a_distinct_tile() {
+        // The box unwrap: each face's UVs fall inside a unique 3×2 atlas cell, so
+        // no two faces share texels (the point of per-face painting).
+        let m = cube_unwrapped(1.0);
+        assert_eq!(m.uvs.as_ref().map(Vec::len), Some(24));
+        let uvs = m.uvs.unwrap();
+        let mut cells = Vec::new();
+        for face in 0..6 {
+            let quad = &uvs[face * 4..face * 4 + 4];
+            // Every vertex of a face lands in the same cell.
+            let cell = |uv: &[f32; 2]| ((uv[0] * 3.0) as u32, (uv[1] * 2.0) as u32);
+            let c = cell(&quad[0]);
+            for uv in quad {
+                assert_eq!(cell(uv), c, "face {face} spans more than one atlas cell");
+            }
+            cells.push(c);
+        }
+        cells.sort();
+        cells.dedup();
+        assert_eq!(cells.len(), 6, "faces must occupy six distinct tiles");
+    }
+
+    #[test]
+    fn unwrapped_cube_keeps_cube_geometry() {
+        // Only UVs change: positions / normals / indices match the wrapped cube.
+        let wrapped = cube(2.0);
+        let unwrapped = cube_unwrapped(2.0);
+        assert_eq!(wrapped.positions, unwrapped.positions);
+        assert_eq!(wrapped.normals, unwrapped.normals);
+        assert_eq!(wrapped.indices, unwrapped.indices);
     }
 
     // ---- sphere ----
