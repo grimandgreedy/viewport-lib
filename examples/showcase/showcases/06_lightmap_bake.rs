@@ -12,14 +12,15 @@
 //! unwrap across several atlas pages and loads as a texture array with a
 //! per-vertex page index; the rest are single-page HDR radiance.
 //!
-//! The top chip switches **Baked GI** against **Realtime only** : the same room
-//! lit by one realtime light with flat ambient. Baked adds the soft contact
-//! shadows under the objects, the red/green colour bleed onto the floor and the
-//! objects, and the ambient occlusion in the torus' inner ring : indirect light
-//! no single realtime light reproduces. The side panel re-bakes at different
-//! sample counts, toggles the denoiser (watch the noise return), shows the baked
-//! atlas on a floating panel, and reports how many pages the multi-page hero
-//! spilled into.
+//! The top chip switches three modes. **Baked GI** lights the bake with a
+//! directional key. **Emissive GI** swaps that for a glowing ceiling panel, so the
+//! room is lit entirely by an area light the bake finds with area-light next-event
+//! estimation (low-noise soft shading and soft contact shadows a directional light
+//! cannot give). **Realtime only** is the flat comparison: the same room under one
+//! realtime light with flat ambient, no bounce or baked occlusion. The side panel
+//! re-bakes at different sample counts, toggles the denoiser (watch the noise
+//! return), shows the baked atlas on a floating panel, and reports how many pages
+//! the multi-page hero spilled into.
 
 use eframe::egui;
 use glam::{Mat3, Mat4, Vec2, Vec3};
@@ -56,6 +57,22 @@ const BACK: [f32; 3] = [0.75, 0.75, 0.78];
 const SPHERE_ALBEDO: [f32; 3] = [0.78, 0.80, 0.85];
 const BOX_ALBEDO: [f32; 3] = [0.80, 0.72, 0.55];
 const KNOT_ALBEDO: [f32; 3] = [0.72, 0.58, 0.82];
+
+/// Modes. Baked GI and Emissive GI both path-trace a lightmap; they differ only in
+/// the light source the bake integrates against. Realtime is the flat comparison.
+const BAKED_MODE: usize = 0;
+const EMISSIVE_MODE: usize = 1;
+const REALTIME_MODE: usize = 2;
+
+/// Emissive GI mode replaces the directional key with a glowing ceiling panel, so
+/// the room is lit entirely by an area light: soft, directionless illumination and
+/// soft contact shadows the directional key cannot produce. Tuned for the HDR
+/// display path (linear radiance, tonemapped once).
+const PANEL_RADIANCE: [f32; 3] = [6.0, 5.8, 5.2];
+/// The panel geometry: a horizontal quad near the ceiling, centred over the room.
+fn panel_xf() -> Mat4 {
+    Mat4::from_translation(Vec3::new(0.0, 0.0, 6.4))
+}
 
 /// One surface in the room. `pos`/`nrm`/`idx` are the local geometry (kept so the
 /// bake can transform it to world space and rasterise its texel G-buffer); `uv1`
@@ -114,7 +131,7 @@ struct Piece {
 }
 
 pub struct LightmapBakeShowcase {
-    /// 0 = baked GI, 1 = realtime only.
+    /// 0 = baked GI (directional), 1 = emissive GI (area light), 2 = realtime only.
     mode: usize,
     shown: Option<usize>,
     built: bool,
@@ -154,6 +171,11 @@ pub struct LightmapBakeShowcase {
     bake_ms: u32,
     directionality: f32,
     request_rebake: bool,
+    /// The glowing ceiling panel shown (and emitting) in Emissive GI mode.
+    emissive_panel: Option<MeshId>,
+    /// Which mode's scene the cached bake was traced against (Baked vs Emissive
+    /// integrate different lights), so a switch between them forces a re-trace.
+    baked_kind: Option<usize>,
 }
 
 impl LightmapBakeShowcase {
@@ -186,7 +208,14 @@ impl LightmapBakeShowcase {
             bake_ms: 0,
             directionality: 0.0,
             request_rebake: false,
+            emissive_panel: None,
+            baked_kind: None,
         }
+    }
+
+    /// True in the two baked modes (Baked GI, Emissive GI), false for Realtime.
+    fn baked_mode(&self) -> bool {
+        self.mode != REALTIME_MODE
     }
 
     /// Build the ray-traced scene every bake integrates against: all pieces in
@@ -211,12 +240,30 @@ impl LightmapBakeShowcase {
                 },
             );
         }
-        // Tuned for the HDR display path: the baked radiance feeds the renderer's
-        // tonemapper once (linear `Rgba16Float` upload).
-        scene.add_light(RtLight::Directional {
-            direction: LIGHT_DIR.normalize().to_array(),
-            colour: [2.1, 2.05, 1.9],
-        });
+        if self.mode == EMISSIVE_MODE {
+            // Emissive GI: no analytic light. A glowing ceiling panel is the only
+            // source, found by the bake's area-light NEE (LM-emis). Added as an
+            // emissive mesh so it both lights the room and occludes.
+            let panel = panel_mesh();
+            let (wp, wn) = world_geo(&panel.positions, &panel.normals, panel_xf());
+            scene.add_mesh(
+                &wp,
+                &panel.indices,
+                Some(&wn),
+                RtMaterial {
+                    base_colour: [0.0, 0.0, 0.0],
+                    emissive: PANEL_RADIANCE,
+                    ..RtMaterial::default()
+                },
+            );
+        } else {
+            // Baked GI: a directional key. Tuned for the HDR display path: the baked
+            // radiance feeds the renderer's tonemapper once (linear upload).
+            scene.add_light(RtLight::Directional {
+                direction: LIGHT_DIR.normalize().to_array(),
+                colour: [2.1, 2.05, 1.9],
+            });
+        }
         scene
     }
 
@@ -593,7 +640,7 @@ impl LightmapBakeShowcase {
         }
         self.atlas_node = None;
 
-        let baked_mode = self.mode == 0;
+        let baked_mode = self.baked_mode();
 
         // Lighting: baked mode leans on the lightmaps (runtime lights off, dim
         // ambient for the walls); realtime mode lights everything with one key
@@ -651,6 +698,24 @@ impl LightmapBakeShowcase {
             ap.cast_shadows = self.realtime_shadows;
             session.scene_mut().set_appearance(id, ap);
             self.nodes.push(id);
+        }
+
+        // Emissive GI: show the glowing ceiling panel that lit the bake. It carries
+        // the same radiance as the emitter in the trace scene (emissive material,
+        // no lightmap), so the source of the soft lighting is visible. Not a shadow
+        // caster or receiver: it is the light, not lit geometry.
+        if self.mode == EMISSIVE_MODE {
+            if let Some(panel) = self.emissive_panel {
+                let mut mat = Material::pbr([0.0, 0.0, 0.0], 0.0, 1.0);
+                mat.emissive = PANEL_RADIANCE;
+                mat.backface_policy = BackfacePolicy::Identical;
+                let id = session.scene_mut().add(Some(panel), panel_xf(), mat);
+                let mut ap = ItemSettings::default();
+                ap.cast_shadows = false;
+                ap.receive_shadows = false;
+                session.scene_mut().set_appearance(id, ap);
+                self.nodes.push(id);
+            }
         }
 
         // The baked atlas, mounted flat on the back wall like a poster so it
@@ -715,7 +780,7 @@ impl LightmapBakeShowcase {
         if self.applied == Some(state) {
             return;
         }
-        let baked_mode = self.mode == 0;
+        let baked_mode = self.baked_mode();
         let device = ctx.device;
 
         // The atlas poster shows whichever baked atlas the page selector picks: a
@@ -932,6 +997,15 @@ impl Showcase for LightmapBakeShowcase {
                 .unwrap(),
         );
 
+        // The Emissive-mode ceiling light mesh (shown as a glowing quad in that
+        // mode).
+        self.emissive_panel = Some(
+            ctx.session
+                .resources_mut()
+                .upload_mesh_data(ctx.device, &panel_mesh())
+                .unwrap(),
+        );
+
         ctx.session.viewport_frame_mut().show_grid = false;
         ctx.session.camera_mut().distance = 30.0;
         ctx.session.camera_mut().orientation = glam::Quat::from_rotation_x(0.5);
@@ -946,12 +1020,15 @@ impl Showcase for LightmapBakeShowcase {
             self.shown = Some(self.mode);
         }
 
-        if self.mode == 0 {
-            // Re-trace on first entry, a rebake request, or a sample-count change;
-            // re-encode only (cheap, no tracing) when the denoiser is toggled.
+        if self.baked_mode() {
+            // Re-trace on first entry, a rebake request, a sample-count change, or a
+            // switch between Baked and Emissive (they integrate different lights, so
+            // the cached bake is stale); re-encode only (cheap, no tracing) when the
+            // denoiser is toggled.
             let need_trace = self.request_rebake
                 || self.baked_at.is_none()
-                || self.baked_at != Some(self.samples);
+                || self.baked_at != Some(self.samples)
+                || self.baked_kind != Some(self.mode);
             if need_trace {
                 self.request_rebake = false;
                 let t0 = std::time::Instant::now();
@@ -960,6 +1037,7 @@ impl Showcase for LightmapBakeShowcase {
                 self.bake_ms = t0.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
                 self.need_reencode = false;
                 self.built = true;
+                self.baked_kind = Some(self.mode);
             } else if self.need_reencode {
                 self.need_reencode = false;
                 self.encode_all(ctx);
@@ -972,7 +1050,7 @@ impl Showcase for LightmapBakeShowcase {
 
     fn description(&self) -> &str {
         match self.mode {
-            0 => {
+            BAKED_MODE => {
                 "Baked GI: torus, sphere, cuboid, and a finely tessellated multi-page torus on a \
                  floor, all path-traced offline : unwrap, texel G-buffer, GI solve, denoise, \
                  seam-stitch, encode. HDR radiance, soft contact shadows, red/green colour bleed, \
@@ -983,10 +1061,17 @@ impl Showcase for LightmapBakeShowcase {
                  UV offset), so the scene bakes into a handful of atlases, not one per mesh (see \
                  Bake stats)."
             }
+            EMISSIVE_MODE => {
+                "Emissive GI: the directional key is replaced by a glowing ceiling panel, so the \
+                 whole room is lit by an area light. The bake finds it with area-light next-event \
+                 estimation, so it stays low-noise even at few samples : soft, directionless \
+                 shading and soft contact shadows a single directional light cannot produce. Same \
+                 unwrap, atlas, and encode path as Baked GI."
+            }
             _ => {
                 "Realtime only: the same room lit by one realtime light and flat ambient. \
-                 No bounce, no colour bleed, no baked occlusion : switch to Baked GI to see \
-                 what the offline solve adds."
+                 No bounce, no colour bleed, no baked occlusion : switch to Baked GI or Emissive \
+                 GI to see what the offline solve adds."
             }
         }
     }
@@ -996,7 +1081,9 @@ impl Showcase for LightmapBakeShowcase {
     }
 
     fn top_overlay(&mut self, ui: &mut egui::Ui) {
-        if let Some(i) = crate::ui::segmented(ui, self.mode, &["Baked GI", "Realtime only"]) {
+        if let Some(i) =
+            crate::ui::segmented(ui, self.mode, &["Baked GI", "Emissive GI", "Realtime only"])
+        {
             self.mode = i;
         }
     }
@@ -1010,7 +1097,7 @@ impl Showcase for LightmapBakeShowcase {
         );
         ui.add_space(8.0);
 
-        ui.add_enabled_ui(self.mode == 0, |ui| {
+        ui.add_enabled_ui(self.baked_mode(), |ui| {
             ui.label("Samples per texel:");
             ui.add(egui::Slider::new(&mut self.samples, 16..=512));
             if ui.button("Rebake").clicked() {
@@ -1437,6 +1524,13 @@ fn dilate_masked(
         cov = ncov;
     }
     cur
+}
+
+/// The Emissive-mode ceiling light: a horizontal quad. One mesh definition, used
+/// both as the emissive occluder in the trace scene and as the glowing node in the
+/// rendered scene, so the two stay in sync.
+fn panel_mesh() -> MeshData {
+    primitives::plane(6.0, 4.0)
 }
 
 /// Transform local positions and normals into world space for the trace scene.
