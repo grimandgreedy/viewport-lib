@@ -77,6 +77,30 @@ fn mean_covered_rgb(img: &RtImage) -> [f64; 3] {
     [sum[0] / n as f64, sum[1] / n as f64, sum[2] / n as f64]
 }
 
+/// Coefficient of variation (std / mean) of luminance over covered texels. When
+/// every texel shades the same surface point, this is the per-estimate noise.
+fn coeff_of_variation(img: &RtImage) -> f64 {
+    let mut vals = Vec::new();
+    let px = (img.width * img.height) as usize;
+    for i in 0..px {
+        if img.rgba[i * 4 + 3] > 0.5 {
+            let l = 0.2126 * img.rgba[i * 4] as f64
+                + 0.7152 * img.rgba[i * 4 + 1] as f64
+                + 0.0722 * img.rgba[i * 4 + 2] as f64;
+            vals.push(l);
+        }
+    }
+    if vals.is_empty() {
+        return 0.0;
+    }
+    let mean = vals.iter().sum::<f64>() / vals.len() as f64;
+    if mean <= 1e-9 {
+        return 0.0;
+    }
+    let var = vals.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / vals.len() as f64;
+    var.sqrt() / mean
+}
+
 fn settings(samples: u32) -> RtSettings {
     RtSettings {
         samples,
@@ -329,6 +353,71 @@ fn empty_scene_bakes_black() {
     assert_eq!(img.width, 16);
     assert_eq!(img.height, 16);
     assert!(img.rgba.iter().all(|&c| c == 0.0));
+}
+
+/// A small bright emissive panel is found by area-light next-event estimation, not
+/// just chance BSDF bounces, so it lights a diffuse floor with low noise even at a
+/// few samples - and the low-sample mean matches the converged mean (unbiased). The
+/// panel is the only light (black sky, no analytic lights), so this isolates the
+/// emissive NEE path.
+#[test]
+fn emissive_panel_lights_the_floor_with_low_noise() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut scene = RtScene::new();
+    scene.set_sky([0.0; 3], [0.0; 3]);
+    add_floor(&mut scene, 10.0, RtMaterial::default());
+    // A 1x1 bright emissive panel two units above the origin. Small and distant
+    // enough that cosine-sampled bounces rarely find it: BSDF-only would be very
+    // noisy, area-light NEE is not.
+    let s = 0.5;
+    let z = 2.0;
+    let panel = [
+        Vec3::new(-s, -s, z),
+        Vec3::new(s, -s, z),
+        Vec3::new(s, s, z),
+        Vec3::new(-s, s, z),
+    ];
+    scene.add_mesh(
+        &panel,
+        &[0u32, 1, 2, 0, 2, 3],
+        Some(&[-Vec3::Z; 4]),
+        RtMaterial {
+            emissive: [40.0, 40.0, 40.0],
+            ..RtMaterial::default()
+        },
+    );
+
+    let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let surf = TexelSurfaces {
+        width: 32,
+        height: 32,
+        world_pos: &pos,
+        world_normal: &nrm,
+    };
+    let low = bake_lightmap(&device, &queue, &scene, &surf, &settings(16));
+    let hi = bake_lightmap(&device, &queue, &scene, &surf, &settings(256));
+
+    let ml = mean_covered_rgb(&low);
+    let mh = mean_covered_rgb(&hi);
+    assert!(ml[0] > 0.02, "floor should be lit by the panel, got {ml:?}");
+    // Unbiased: the few-sample mean agrees with the converged mean.
+    for c in 0..3 {
+        let rel = (ml[c] - mh[c]).abs() / mh[c].max(1e-6);
+        assert!(
+            rel < 0.15,
+            "emissive NEE should be unbiased: 16-spp {ml:?} vs 256-spp {mh:?}"
+        );
+    }
+    // Low noise: every texel is the same point, so the spread across texels is the
+    // per-estimate noise. NEE keeps it small at 16 spp.
+    let cov = coeff_of_variation(&low);
+    assert!(
+        cov < 0.3,
+        "emissive NEE should be low-noise at 16 spp, got CoV = {cov}"
+    );
 }
 
 /// The bake is deterministic: baking the same scene and surfaces twice with the

@@ -60,6 +60,7 @@ struct Frame {
     dims: vec4<u32>,      // width, height, num_lights, max_bounces
     params: vec4<u32>,    // samples_per_frame, sample_base, frame_seed, has_env
     env_dist: vec4<f32>,  // env-IS: width, height, integral, enabled
+    emit: vec4<u32>,      // area-light NEE: count, offset into env_tables, _, _
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -546,19 +547,76 @@ fn env_nee(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32
     return bsdf_cos * env_rad * (w / es.pdf);
 }
 
+// The triangle index of the `i`-th emissive triangle, read from the tail of the
+// env_tables buffer (frame.emit.y is the offset; indices are stored as their u32
+// bit pattern reinterpreted as f32, so bitcast recovers them exactly).
+fn emitter_tri(i: u32) -> u32 {
+    return bitcast<u32>(env_tables[frame.emit.y + i]);
+}
+
+// One area-light next-event-estimation sample at an opaque surface: pick an
+// emissive triangle uniformly, sample a point on it, shadow-test the segment, and
+// return the radiance for unit throughput. Emissive geometry is otherwise found
+// only by chance BSDF bounces, so small bright emitters are noisy without this;
+// the matching BSDF-sampled emitter hit is dropped in trace_path (counted only on
+// delta/camera arrivals), so the two do not double count. Emitters are treated as
+// two-sided. Returns zero when the scene has no emitters.
+fn sample_emitters(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+    let count = frame.emit.x;
+    if count == 0u { return vec3<f32>(0.0); }
+
+    let ei = min(u32(rand(rng) * f32(count)), count - 1u);
+    let tri = tris[emitter_tri(ei)];
+
+    // Uniform point on the triangle in barycentric coordinates.
+    let su = sqrt(rand(rng));
+    let b1 = 1.0 - su;
+    let b2 = rand(rng) * su;
+    let lp = tri.p0 * (1.0 - b1 - b2) + tri.p1 * b1 + tri.p2 * b2;
+
+    let e1 = tri.p1 - tri.p0;
+    let e2 = tri.p2 - tri.p0;
+    let cr = cross(e1, e2);
+    let area2 = length(cr);
+    if area2 < 1.0e-12 { return vec3<f32>(0.0); }
+    let ng_l = cr / area2;
+
+    var to = lp - pos;
+    let dist2 = dot(to, to);
+    let dist = sqrt(dist2);
+    if dist < 1.0e-4 { return vec3<f32>(0.0); }
+    let wi = to / dist;
+    if dot(n, wi) <= 0.0 { return vec3<f32>(0.0); }
+    let cos_l = abs(dot(ng_l, wi));
+    if cos_l < 1.0e-4 { return vec3<f32>(0.0); }
+    if any_hit(pos + n * EPS, wi, dist - 1.0e-3) { return vec3<f32>(0.0); }
+
+    let le = materials[tri.mat].emissive;
+    // Estimator: (f * cos_surface * Le) / pdf_sa, with the solid-angle pdf of
+    // uniform-over-emitters, uniform-on-triangle sampling
+    //   pdf_sa = dist^2 / (count * area * cos_light),  area = area2 / 2.
+    let bsdf_cos = pbr_light_contrib(n, v, wi, le, m.base, m.metallic, m.roughness, f0);
+    let inv_pdf = f32(count) * (0.5 * area2) * cos_l / dist2;
+    return bsdf_cos * inv_pdf;
+}
+
 // ----- Path integrator -----
 
-fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>, mis0: f32) -> vec3<f32> {
     var ro = ro_in;
     var rd = rd_in;
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
     let max_bounces = frame.dims.w;
     // Pdf the last bounce sampled `rd` with, for MIS-weighting an environment hit
-    // reached by BSDF sampling. Negative marks a delta / non-MIS bounce (the
-    // camera ray, or a transmission event): those take the environment at full
-    // weight, since env NEE did not also sample it.
-    var mis_bsdf_pdf = -1.0;
+    // reached by BSDF sampling and for gating emitter emission that area-light NEE
+    // already sampled. Negative marks a delta / non-NEE'd bounce (a pinhole camera
+    // ray, or a transmission event): those take emission and the environment at
+    // full weight. `mis0` sets the value for the primary ray: -1 for the camera
+    // (a delta ray, so a directly-viewed emitter counts), 0 for the bake (its
+    // primary is a cosine BSDF sample whose emitter hit is covered by the texel's
+    // emitter NEE, so it must be gated).
+    var mis_bsdf_pdf = mis0;
 
     for (var bounce = 0u; bounce < max_bounces; bounce = bounce + 1u) {
         let h = closest_hit(ro, rd);
@@ -575,9 +633,15 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> ve
         }
 
         let m = materials[h.mat];
-        // Emissive surfaces are found by BSDF sampling only (not NEE'd), so add
-        // once with no double counting.
-        radiance = radiance + throughput * m.emissive;
+        // Emissive surfaces: counted on a delta or camera arrival (mis_bsdf_pdf
+        // < 0), where no area-light NEE sampled them. Opaque bounces reach
+        // emitters through sample_emitters below instead, so counting the
+        // BSDF-sampled hit here too would double count. With no emitters in the
+        // scene m.emissive is zero and the gate falls back to counting always, so
+        // scenes without emissive geometry are unchanged.
+        if mis_bsdf_pdf < 0.0 || frame.emit.x == 0u {
+            radiance = radiance + throughput * m.emissive;
+        }
 
         let n = h.ns;
         let v = -rd;
@@ -590,6 +654,9 @@ fn trace_path(ro_in: vec3<f32>, rd_in: vec3<f32>, rng: ptr<function, u32>) -> ve
         radiance = radiance + throughput * direct_light(h.pos, n, v, m, f0) * opacity;
         // Environment NEE (importance-sampled), same opaque-only scaling.
         radiance = radiance + throughput * env_nee(h.pos, n, v, m, f0, rng) * opacity;
+        // Area-light NEE toward emissive geometry, same opaque-only scaling. Paired
+        // with the delta-gated emission above so an emitter is counted once.
+        radiance = radiance + throughput * sample_emitters(h.pos, n, v, m, f0, rng) * opacity;
 
         // Choose the interaction: a dielectric transmission event through a
         // sampled microfacet, or the opaque reflection lobes. Metals never
@@ -724,7 +791,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var sum = vec3<f32>(0.0);
     for (var s = 0u; s < spp; s = s + 1u) {
         let rd = camera_ray(vec2<f32>(f32(gid.x), f32(gid.y)), &rng);
-        let c = trace_path(frame.cam_pos.xyz, rd, &rng);
+        let c = trace_path(frame.cam_pos.xyz, rd, &rng, -1.0);
         // Reject non-finite samples (NaN via self-inequality, Inf via the bound):
         // a degenerate path from a pdf underflow carries no real energy but would
         // otherwise poison the pixel's running mean.
@@ -794,6 +861,48 @@ fn texel_direct(pos: vec3<f32>, n: vec3<f32>) -> DirectLighting {
     return DirectLighting(e, d);
 }
 
+// One area-light NEE sample for the bake: like sample_emitters, but accumulates
+// incident irradiance (no BRDF, since the bake stores material-independent
+// irradiance and a later stage applies albedo). Sampling an emitter directly from
+// the texel keeps small bright emitters low-noise; the bake's primary cosine ray
+// is gated (mis0 = 0 in trace_path) so its emitter hit does not also count.
+fn texel_emitter_nee(pos: vec3<f32>, n: vec3<f32>, rng: ptr<function, u32>) -> DirectLighting {
+    let count = frame.emit.x;
+    if count == 0u { return DirectLighting(vec3<f32>(0.0), vec3<f32>(0.0)); }
+
+    let ei = min(u32(rand(rng) * f32(count)), count - 1u);
+    let tri = tris[emitter_tri(ei)];
+
+    let su = sqrt(rand(rng));
+    let b1 = 1.0 - su;
+    let b2 = rand(rng) * su;
+    let lp = tri.p0 * (1.0 - b1 - b2) + tri.p1 * b1 + tri.p2 * b2;
+
+    let e1 = tri.p1 - tri.p0;
+    let e2 = tri.p2 - tri.p0;
+    let cr = cross(e1, e2);
+    let area2 = length(cr);
+    if area2 < 1.0e-12 { return DirectLighting(vec3<f32>(0.0), vec3<f32>(0.0)); }
+    let ng_l = cr / area2;
+
+    var to = lp - pos;
+    let dist2 = dot(to, to);
+    let dist = sqrt(dist2);
+    if dist < 1.0e-4 { return DirectLighting(vec3<f32>(0.0), vec3<f32>(0.0)); }
+    let wi = to / dist;
+    let ndl = dot(n, wi);
+    if ndl <= 0.0 { return DirectLighting(vec3<f32>(0.0), vec3<f32>(0.0)); }
+    let cos_l = abs(dot(ng_l, wi));
+    if cos_l < 1.0e-4 { return DirectLighting(vec3<f32>(0.0), vec3<f32>(0.0)); }
+    if any_hit(pos + n * EPS, wi, dist - 1.0e-3) { return DirectLighting(vec3<f32>(0.0), vec3<f32>(0.0)); }
+
+    // E = Le * cos_surface / pdf_sa, pdf_sa = dist^2 / (count * area * cos_light).
+    let le = materials[tri.mat].emissive;
+    let inv_pdf = f32(count) * (0.5 * area2) * cos_l / dist2;
+    let contrib = le * ndl * inv_pdf;
+    return DirectLighting(contrib, wi * luminance(contrib));
+}
+
 // One invocation per atlas texel. Reads the surface point behind the texel from
 // the G-buffer, sums direct irradiance from the analytic lights, and estimates
 // indirect + environment irradiance by cosine-sampling the hemisphere: for a
@@ -831,14 +940,18 @@ fn bake_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var sum = vec3<f32>(0.0);
     var dir_sum = vec3<f32>(0.0);
     for (var s = 0u; s < spp; s = s + 1u) {
+        // Area-light NEE toward emissive geometry, sampled per iteration. The
+        // primary ray below is gated (mis0 = 0) so a cosine ray that happens to
+        // hit the same emitter does not double count.
+        let en = texel_emitter_nee(pos, n, &rng);
         let dir = cosine_sample(n, &rng);
-        let li = trace_path(pos + n * EPS, dir, &rng);
+        let li = trace_path(pos + n * EPS, dir, &rng, 0.0);
         let indirect = PI * li;
-        let c = direct.e + indirect;
+        let c = direct.e + en.e + indirect;
         // Reject non-finite samples (NaN and Inf), as in the camera kernel.
         if all(c == c) && max(c.x, max(c.y, c.z)) < 1.0e30 {
             sum = sum + c;
-            dir_sum = dir_sum + direct.d + dir * luminance(indirect);
+            dir_sum = dir_sum + direct.d + en.d + dir * luminance(indirect);
         }
     }
 

@@ -441,6 +441,9 @@ struct FrameUniform {
     // enabled). `enabled` is 0 for the hemisphere sky (no distribution built),
     // in which case the integrator falls back to BSDF-only environment sampling.
     env_dist: [f32; 4],
+    // Area-light NEE metadata: (emitter count, offset of the emitter index list
+    // in the env_tables buffer, 0, 0). Count 0 disables area-light sampling.
+    emit: [u32; 4],
 }
 
 #[repr(C)]
@@ -511,8 +514,12 @@ pub struct Tracer {
     // CDFs, marginal CDF) are concatenated into one storage buffer to stay under
     // the 8-storage-buffer default limit; the shader slices it by w/h. A small
     // fallback stands in for the hemisphere-sky case, gated by `env_dist[3]`.
+    // The emissive-triangle index list for area-light NEE is appended to the same
+    // buffer (again to stay under the storage-buffer limit); `emit` records its
+    // (count, offset) so the shader reads it from the tail.
     env_tables_buf: crate::gpu::Buffer,
     env_dist: [f32; 4],
+    emit: [u32; 4],
     num_lights: u32,
     sky_top: [f32; 3],
     sky_bottom: [f32; 3],
@@ -787,6 +794,24 @@ impl Tracer {
             }
             None => (vec![0.0f32; 4], [0.0; 4]),
         };
+
+        // Append the emissive-triangle index list to the env-tables buffer, so
+        // area-light NEE has no separate storage buffer (the pipelines are already
+        // at the 8-buffer limit). An emitter is any (reordered) triangle whose
+        // material emits; the index is stored as its u32 bit pattern reinterpreted
+        // as f32, and the shader bitcasts it back. `emit` = (count, offset).
+        let mut env_tables = env_tables;
+        let emit_offset = env_tables.len() as u32;
+        let mut emitter_count = 0u32;
+        for (ti, t) in gpu_tris.iter().enumerate() {
+            let e = gpu_mats[t.mat as usize].emissive;
+            if e[0] + e[1] + e[2] > 0.0 {
+                env_tables.push(f32::from_bits(ti as u32));
+                emitter_count += 1;
+            }
+        }
+        let emit = [emitter_count, emit_offset, 0, 0];
+
         let env_tables_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("rt_env_tables"),
             contents: bytemuck::cast_slice(&env_tables),
@@ -933,6 +958,7 @@ impl Tracer {
             has_env,
             env_tables_buf,
             env_dist,
+            emit,
             num_lights,
             sky_top: scene.sky_top,
             sky_bottom: scene.sky_bottom,
@@ -1082,6 +1108,7 @@ impl Tracer {
             dims: [width, height, self.num_lights, settings.max_bounces.max(1)],
             params: [0, 0, 0, 0],
             env_dist: self.env_dist,
+            emit: self.emit,
         };
 
         // Dispatch `settings.samples` more samples in batches, so no single
@@ -1350,6 +1377,7 @@ impl Tracer {
             // The bake path samples the environment on miss only; it does not use
             // the importance-sampling tables, so leave the metadata disabled.
             env_dist: [0.0; 4],
+            emit: self.emit,
         };
 
         // Batch the samples so no single dispatch runs long enough to risk a GPU
