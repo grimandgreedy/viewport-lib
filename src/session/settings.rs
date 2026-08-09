@@ -3,14 +3,14 @@
 //! `effects` and `viewport` are settings: edits through these accessors persist
 //! across frames because assembly never overwrites those sub-frames. Overlays
 //! and hand-assembled scene items are per-frame: push them through
-//! [`frame_data_mut`](ViewportSession::frame_data_mut) after the per-frame update
+//! [`frame_data_mut`](ViewportInstance::frame_data_mut) after the per-frame update
 //! and before rendering, since assembly rebuilds the scene sub-frame and clears
 //! overlays each frame.
 
-use super::ViewportSession;
+use super::ViewportInstance;
 use crate::{EffectsFrame, FrameData, ViewportFrame};
 
-impl ViewportSession {
+impl ViewportInstance {
     /// Persistent global effects: lighting, post-process, clip objects, ground
     /// plane. Edits persist across frames.
     pub fn effects_mut(&mut self) -> &mut EffectsFrame {

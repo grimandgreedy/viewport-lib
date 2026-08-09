@@ -9,16 +9,16 @@
 //!
 //! Each retained item is cloned into the frame each assembly (the same cost as
 //! re-pushing it by hand). For data that changes every frame, prefer the
-//! per-frame injection closure ([`update_orbit_with`](ViewportSession::update_orbit_with))
+//! per-frame injection closure ([`update_orbit_with`](ViewportInstance::update_orbit_with))
 //! instead; for large static data, upload it through
-//! [`resources_mut`](ViewportSession::resources_mut) and retain a lightweight
+//! [`resources_mut`](ViewportInstance::resources_mut) and retain a lightweight
 //! reference item via the per-frame path.
 
-use super::ViewportSession;
+use super::ViewportInstance;
 use crate::{GaussianSplatItem, GlyphItem, PointCloudItem, VolumeItem};
 
 /// Handle to a retained scene extra, returned by the `add_*` methods and passed
-/// to [`remove_extra`](ViewportSession::remove_extra).
+/// to [`remove_extra`](ViewportInstance::remove_extra).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExtraId(u64);
 
@@ -31,7 +31,7 @@ pub(super) enum SceneExtra {
     GaussianSplat(GaussianSplatItem),
 }
 
-impl ViewportSession {
+impl ViewportInstance {
     /// Retain a point cloud, re-injected into the scene each frame. Returns a
     /// handle for [`remove_extra`](Self::remove_extra).
     pub fn add_point_cloud(&mut self, item: PointCloudItem) -> ExtraId {

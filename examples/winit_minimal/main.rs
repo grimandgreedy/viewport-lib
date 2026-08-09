@@ -1,7 +1,7 @@
 //! Minimal viewport-lib example using the built-in winit runner.
 //!
 //! `ViewportApp` owns the window, the wgpu device, and the event loop, and
-//! drives a `ViewportSession` each frame. Orbit navigation (left/middle drag),
+//! drives a `ViewportInstance` each frame. Orbit navigation (left/middle drag),
 //! pan (right drag), and zoom (scroll) work with no per-event code here: the
 //! runner translates winit events and drives the camera. Compare the hand-written
 //! event loop in `examples/winit_viewport` for the full-control version.

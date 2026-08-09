@@ -127,7 +127,7 @@ pub mod raytrace;
 #[cfg(feature = "bake")]
 pub mod bake;
 
-/// [`ViewportSession`](session::ViewportSession): a host object that owns the
+/// [`ViewportInstance`](session::ViewportInstance): a host object that owns the
 /// per-frame wiring (renderer, scene, camera, input) so consumers do not write
 /// it by hand.
 pub mod session;
@@ -276,7 +276,7 @@ pub use renderer::{
 };
 pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 
-pub use session::{ExtraId, ViewportSession};
+pub use session::{ExtraId, ViewportInstance};
 
 #[cfg(feature = "app")]
 pub use session::hosts::{AppConfig, FrameCtx, RedrawMode, ViewportApp};

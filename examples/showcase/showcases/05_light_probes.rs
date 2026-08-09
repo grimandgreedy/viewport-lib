@@ -528,7 +528,7 @@ impl IndirectLightingShowcase {
 
     /// Tear down the current scene nodes and build the active mode's geometry,
     /// leaving the renderer indirect-light state to be (re)applied in `update`.
-    fn rebuild(&mut self, session: &mut viewport_lib::ViewportSession) {
+    fn rebuild(&mut self, session: &mut viewport_lib::ViewportInstance) {
         if !self.nodes.is_empty() {
             let ids = std::mem::take(&mut self.nodes);
             session.scene_mut().remove_many(&ids);

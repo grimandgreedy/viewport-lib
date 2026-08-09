@@ -1,6 +1,6 @@
 //! Frame assembly and the camera-driving entry points.
 
-use super::ViewportSession;
+use super::ViewportInstance;
 use crate::interaction::input::ViewportContext;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode, compute_gizmo_scale};
 use crate::interaction::manipulation::{ManipResult, ManipulationContext, ManipulationKind};
@@ -9,7 +9,7 @@ use crate::{
     CameraFrame, FrameData, InteractionFrame, OrbitCameraController, OverlayFrame, SceneFrame,
 };
 
-impl ViewportSession {
+impl ViewportInstance {
     /// Resolve input, drive the camera with `orbit`, run manipulation, and
     /// assemble the frame. Returns the assembled [`FrameData`].
     ///

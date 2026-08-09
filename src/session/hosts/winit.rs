@@ -1,7 +1,7 @@
-//! [`ViewportApp`]: a fullscreen winit runner over a [`ViewportSession`].
+//! [`ViewportApp`]: a fullscreen winit runner over a [`ViewportInstance`].
 //!
 //! This owns the window, the wgpu bring-up, and the event loop, and drives a
-//! [`ViewportSession`] each frame. It is the standalone-application path: the
+//! [`ViewportInstance`] each frame. It is the standalone-application path: the
 //! wiring that every hand-written winit example repeats lives here once.
 
 use std::sync::Arc;
@@ -12,9 +12,9 @@ use ::winit::event::WindowEvent;
 use ::winit::event_loop::{ActiveEventLoop, EventLoop};
 use ::winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::interaction::input::{ViewportContext, ViewportEvent};
 use crate::interaction::input::adapters::from_winit;
-use crate::session::ViewportSession;
+use crate::interaction::input::{ViewportContext, ViewportEvent};
+use crate::session::ViewportInstance;
 use crate::{FrameData, OrbitCameraController, OverlayFrame};
 
 /// When the runner asks for the next frame.
@@ -113,13 +113,13 @@ impl AppConfig {
 ///
 /// The callback runs before the frame is assembled, and assembly clears the
 /// overlay frame, so overlays pushed directly through
-/// [`frame_data_mut`](ViewportSession::frame_data_mut) would be wiped before
+/// [`frame_data_mut`](ViewportInstance::frame_data_mut) would be wiped before
 /// render. Use [`overlays_mut`](Self::overlays_mut) (or [`inject`](Self::inject)
 /// for other per-frame, non-mesh items): the runner applies them after assembly
 /// and before render, at the same point the session's `update_orbit_with` seam
 /// runs.
 pub struct FrameCtx<'a> {
-    session: &'a mut ViewportSession,
+    session: &'a mut ViewportInstance,
     /// Seconds since the previous frame.
     pub dt: f32,
     /// Seconds since the app started.
@@ -159,10 +159,10 @@ impl FrameCtx<'_> {
     /// The wgpu device the runner created.
     ///
     /// For per-frame work that needs the device: GPU picking
-    /// ([`pick_gpu`](ViewportSession::pick_gpu),
-    /// [`pick_rect_gpu`](ViewportSession::pick_rect_gpu),
-    /// [`pick_begin`](ViewportSession::pick_begin)) or a mesh upload through
-    /// [`resources_mut`](ViewportSession::resources_mut). Those methods also take
+    /// ([`pick_gpu`](ViewportInstance::pick_gpu),
+    /// [`pick_rect_gpu`](ViewportInstance::pick_rect_gpu),
+    /// [`pick_begin`](ViewportInstance::pick_begin)) or a mesh upload through
+    /// [`resources_mut`](ViewportInstance::resources_mut). Those methods also take
     /// `&mut self` on the session, which the callback reaches by deref, so borrow
     /// the handle first (a wgpu `Device` is a cheap `Arc`-backed clone):
     ///
@@ -223,7 +223,7 @@ impl FrameCtx<'_> {
     ///
     /// The runner already feeds these to the session (so orbit navigation and
     /// bound actions work), and resolves them into
-    /// [`action_frame`](ViewportSession::action_frame), which stays the
+    /// [`action_frame`](ViewportInstance::action_frame), which stays the
     /// convenient path for the cursor, left click, and camera. This is the raw
     /// stream on top of that, for input the resolved frame does not surface:
     /// the secondary and middle mouse buttons, and individual keys such as the
@@ -254,20 +254,20 @@ impl FrameCtx<'_> {
 }
 
 impl std::ops::Deref for FrameCtx<'_> {
-    type Target = ViewportSession;
+    type Target = ViewportInstance;
 
-    fn deref(&self) -> &ViewportSession {
+    fn deref(&self) -> &ViewportInstance {
         self.session
     }
 }
 
 impl std::ops::DerefMut for FrameCtx<'_> {
-    fn deref_mut(&mut self) -> &mut ViewportSession {
+    fn deref_mut(&mut self) -> &mut ViewportInstance {
         self.session
     }
 }
 
-/// A fullscreen winit application driving a [`ViewportSession`].
+/// A fullscreen winit application driving a [`ViewportInstance`].
 ///
 /// ```rust,ignore
 /// use viewport_lib::session::hosts::{AppConfig, ViewportApp};
@@ -289,7 +289,7 @@ impl std::ops::DerefMut for FrameCtx<'_> {
 /// ```
 pub struct ViewportApp {
     config: AppConfig,
-    setup: Option<Box<dyn FnOnce(&mut ViewportSession, &crate::gpu::Device)>>,
+    setup: Option<Box<dyn FnOnce(&mut ViewportInstance, &crate::gpu::Device)>>,
 }
 
 impl ViewportApp {
@@ -306,7 +306,7 @@ impl ViewportApp {
     /// runtime.
     pub fn setup(
         mut self,
-        setup: impl FnOnce(&mut ViewportSession, &crate::gpu::Device) + 'static,
+        setup: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
     ) -> Self {
         self.setup = Some(Box::new(setup));
         self
@@ -336,7 +336,7 @@ struct RunState {
     device: crate::gpu::Device,
     queue: crate::gpu::Queue,
     surface_config: crate::gpu::SurfaceConfiguration,
-    session: ViewportSession,
+    session: ViewportInstance,
     /// Window has keyboard focus. Tracked from `WindowEvent::Focused`.
     focused: bool,
     /// Cursor is over the window. Tracked from `CursorEntered`/`CursorLeft`; the
@@ -346,7 +346,7 @@ struct RunState {
 
 struct Runner<F> {
     config: AppConfig,
-    setup: Option<Box<dyn FnOnce(&mut ViewportSession, &crate::gpu::Device)>>,
+    setup: Option<Box<dyn FnOnce(&mut ViewportInstance, &crate::gpu::Device)>>,
     callback: F,
     state: Option<RunState>,
     orbit: OrbitCameraController,
@@ -414,7 +414,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for Runner<F> {
         };
         surface.configure(&device, &surface_config);
 
-        let mut session = ViewportSession::new(&device, format);
+        let mut session = ViewportInstance::new(&device, format);
         if let Some(setup) = self.setup.take() {
             setup(&mut session, &device);
         }

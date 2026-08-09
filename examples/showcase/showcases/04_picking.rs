@@ -189,7 +189,7 @@ impl PickingShowcase {
 
     /// Clear every selection channel (object outline, injected-item selected
     /// flags, sub-object set).
-    fn clear_selection(&mut self, session: &mut viewport_lib::ViewportSession) {
+    fn clear_selection(&mut self, session: &mut viewport_lib::ViewportInstance) {
         session.selection_mut().clear();
         self.selected_objects.clear();
         self.sub.clear();
@@ -199,7 +199,7 @@ impl PickingShowcase {
     /// the mesh (via the session selection) or flag the injected item.
     fn record(
         &mut self,
-        session: &mut viewport_lib::ViewportSession,
+        session: &mut viewport_lib::ViewportInstance,
         id: u64,
         sub: Option<SubObjectRef>,
     ) {
@@ -216,7 +216,7 @@ impl PickingShowcase {
 
     /// Push every injected (non-scene-node) item into the frame, flagging the
     /// selected ones. They must be in the frame for both rendering and picking.
-    fn inject_items(&self, session: &mut viewport_lib::ViewportSession) {
+    fn inject_items(&self, session: &mut viewport_lib::ViewportInstance) {
         let sel = |id: u64| self.selected_objects.contains(&id);
         let fd = session.frame_data_mut();
 

@@ -1,4 +1,4 @@
-//! Minimal embedded viewport-lib example using eframe / egui and `ViewportSession`.
+//! Minimal embedded viewport-lib example using eframe / egui and `ViewportInstance`.
 //!
 //! The session renders into an app-owned offscreen texture, which egui displays
 //! as an image. This keeps the whole session model (renderer, scene, camera,
@@ -18,7 +18,7 @@ use eframe::{egui, wgpu};
 use viewport_lib::input::adapters::from_egui;
 use viewport_lib::{
     Material, Modifiers, NodeId, OrbitCameraController, ViewportContext, ViewportEvent,
-    ViewportSession, primitives,
+    ViewportInstance, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -33,7 +33,7 @@ fn main() -> eframe::Result {
                 .wgpu_render_state
                 .as_ref()
                 .expect("wgpu backend required");
-            let mut session = ViewportSession::new(&rs.device, rs.target_format);
+            let mut session = ViewportInstance::new(&rs.device, rs.target_format);
 
             let sphere = session
                 .resources_mut()
@@ -85,7 +85,7 @@ struct Target {
 }
 
 struct App {
-    session: ViewportSession,
+    session: ViewportInstance,
     orbit: OrbitCameraController,
     cube_id: NodeId,
     target: Option<Target>,

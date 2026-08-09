@@ -2,7 +2,7 @@
 //! the "what kind of material" axes side by side. Rows: shading models, custom
 //! WGSL plugins, textures, a PBR metallic/roughness sweep, and matcaps.
 //!
-//! Also a stress-test of `ViewportSession`: materials, lights, texture/matcap
+//! Also a stress-test of `ViewportInstance`: materials, lights, texture/matcap
 //! uploads, and `MaterialPlugin` registration all route through `scene_mut()`,
 //! `resources_mut()`, and `effects_mut()`.
 
@@ -13,7 +13,7 @@ use glam::{Mat4, Vec3};
 use viewport_lib::{
     AlphaMode, BackfacePattern, BackfacePolicy, BuiltinMatcap, ClipObject, ItemSettings, LightKind,
     LightSource, MatcapId, Material, MeshData, MeshId, NodeId, ParamVis, ParamVisMode,
-    PatternConfig, ShadingModel, TextureId, ViewportSession, primitives,
+    PatternConfig, ShadingModel, TextureId, ViewportInstance, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -102,7 +102,7 @@ impl MaterialsShowcase {
     /// camera-facing half is cut away and the interior back faces are visible.
     /// The plane sits at that row's equator; other rows are further back in Y
     /// and stay inside the preserved half-space.
-    fn apply_clip(&self, session: &mut ViewportSession) {
+    fn apply_clip(&self, session: &mut ViewportInstance) {
         let effects = session.effects_mut();
         if self.active == 1 {
             let rows = self.sets[self.active].len() as f32;

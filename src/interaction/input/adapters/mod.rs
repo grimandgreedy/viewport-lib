@@ -4,7 +4,7 @@
 //! [`ViewportEvent`](super::ViewportEvent) (buttons, wheel units, modifiers,
 //! click-vs-drag) is otherwise identical and was previously copy-pasted per
 //! example. These adapters are feature-gated per framework and are usable on
-//! their own, without a [`ViewportSession`](crate::session::ViewportSession).
+//! their own, without a [`ViewportInstance`](crate::session::ViewportInstance).
 
 #[cfg(feature = "winit-adapter")]
 mod winit;

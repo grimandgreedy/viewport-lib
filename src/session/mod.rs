@@ -1,21 +1,21 @@
-//! [`ViewportSession`]: a host object that owns the per-frame wiring.
+//! [`ViewportInstance`]: a host object that owns the per-frame wiring.
 //!
 //! The library deliberately stops at [`FrameData`]: the host owns the window,
 //! the event loop, and tool state. That leaves every consumer writing the same
 //! setup: translate native events, resolve input, drive the camera, assemble a
-//! [`FrameData`], render. `ViewportSession` bundles that wiring behind one object
+//! [`FrameData`], render. `ViewportInstance` bundles that wiring behind one object
 //! while leaving the advanced surface reachable through accessors
-//! ([`resources_mut`](ViewportSession::resources_mut),
-//! [`runtime_mut`](ViewportSession::runtime_mut),
-//! [`renderer_mut`](ViewportSession::renderer_mut)), so a program can start small
+//! ([`resources_mut`](ViewportInstance::resources_mut),
+//! [`runtime_mut`](ViewportInstance::runtime_mut),
+//! [`renderer_mut`](ViewportInstance::renderer_mut)), so a program can start small
 //! and grow into plugins and custom passes without a rewrite.
 //!
 //! The session owns the renderer, scene, selection, camera, and the input
 //! resolver. It does not own the `device`/`queue` (the host framework creates
 //! those, and the wgpu version must match the host's), and it does not weld in a
-//! camera-motion policy: [`update_orbit`](ViewportSession::update_orbit) is the
-//! batteries-included path, and [`resolve`](ViewportSession::resolve) +
-//! [`camera_mut`](ViewportSession::camera_mut) + [`frame`](ViewportSession::frame)
+//! camera-motion policy: [`update_orbit`](ViewportInstance::update_orbit) is the
+//! batteries-included path, and [`resolve`](ViewportInstance::resolve) +
+//! [`camera_mut`](ViewportInstance::camera_mut) + [`frame`](ViewportInstance::frame)
 //! let any controller drive the camera instead.
 
 mod assemble;
@@ -46,7 +46,7 @@ use crate::{FrameData, InteractionFrame, ViewportInput, ViewportRenderer};
 /// [`update_orbit`](Self::update_orbit) (or the manual camera path), then submit
 /// with [`render`](Self::render) (owned surface) or
 /// [`prepare`](Self::prepare) + [`paint`](Self::paint) (render-pass host).
-pub struct ViewportSession {
+pub struct ViewportInstance {
     renderer: ViewportRenderer,
     scene: Scene,
     selection: Selection,
@@ -82,7 +82,7 @@ pub struct ViewportSession {
     next_extra_id: u64,
 }
 
-impl ViewportSession {
+impl ViewportInstance {
     /// Create a session for a renderer targeting `target_format`.
     ///
     /// The `device` is used to build the renderer's pipelines; the session does
@@ -112,7 +112,7 @@ impl ViewportSession {
             }
             if !missing.is_empty() {
                 tracing::warn!(
-                    "ViewportSession: device is missing recommended features: {}. If your \
+                    "ViewportInstance: device is missing recommended features: {}. If your \
                      adapter supports them, request \
                      ViewportRenderer::recommended_device_features(adapter) in your device \
                      descriptor.",
@@ -360,7 +360,7 @@ mod tests {
             return;
         };
         let format = crate::gpu::TextureFormat::Bgra8UnormSrgb;
-        let mut session = ViewportSession::new(&device, format);
+        let mut session = ViewportInstance::new(&device, format);
 
         let cube = session
             .resources_mut()
@@ -411,7 +411,7 @@ mod tests {
             eprintln!("skipping pointer_state_drives_click_detection: no GPU adapter");
             return;
         };
-        let mut session = ViewportSession::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mut session = ViewportInstance::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         session.begin_frame(ctx());
         session.handle_event(ViewportEvent::PointerMoved {
             position: glam::Vec2::new(40.0, 40.0),
@@ -442,7 +442,7 @@ mod tests {
             eprintln!("skipping retained_extras_and_injection: no GPU adapter");
             return;
         };
-        let mut session = ViewportSession::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mut session = ViewportInstance::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         session.begin_frame(ctx());
         let mut orbit = OrbitCameraController::viewport_all();
 

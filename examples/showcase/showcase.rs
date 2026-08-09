@@ -1,18 +1,18 @@
 //! The showcase framework: a trait each showcase implements, plus the context
 //! objects the host passes in. The host (`main.rs`) owns the window, the
-//! `ViewportSession`, and the offscreen texture; each showcase owns its own
+//! `ViewportInstance`, and the offscreen texture; each showcase owns its own
 //! scene contents, camera controllers, and interaction logic, so a showcase is
 //! self-contained in one file.
 
 use eframe::{egui, wgpu};
-use viewport_lib::{ViewportContext, ViewportSession};
+use viewport_lib::{ViewportContext, ViewportInstance};
 
 use crate::camera::{CameraRig, MoveKeys};
 
 /// Passed to [`Showcase::setup`]: the session plus the device, for uploading
 /// meshes and building the initial scene.
 pub struct SetupCtx<'a> {
-    pub session: &'a mut ViewportSession,
+    pub session: &'a mut ViewportInstance,
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
 }
@@ -20,7 +20,7 @@ pub struct SetupCtx<'a> {
 /// Passed to [`Showcase::update`] each frame. Read timing and raw key presses
 /// here; drive the camera and interaction through `session`.
 pub struct ShowcaseCtx<'a> {
-    pub session: &'a mut ViewportSession,
+    pub session: &'a mut ViewportInstance,
     /// The shared orbit/fly camera, owned by the host and retained across
     /// showcases. Drive it with [`drive_camera`](Self::drive_camera).
     camera: &'a mut CameraRig,
@@ -46,7 +46,7 @@ pub struct ShowcaseCtx<'a> {
 impl<'a> ShowcaseCtx<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        session: &'a mut ViewportSession,
+        session: &'a mut ViewportInstance,
         camera: &'a mut CameraRig,
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
@@ -148,7 +148,7 @@ pub trait Showcase {
 /// Reset the shared session between showcases: drop all scene nodes, clear the
 /// selection, and clear retained extras. The session, renderer, and camera are
 /// reused; the next showcase's `setup` rebuilds the scene.
-pub fn reset_session(session: &mut ViewportSession) {
+pub fn reset_session(session: &mut ViewportInstance) {
     let ids: Vec<_> = session.scene().nodes().map(|n| n.id()).collect();
     session.scene_mut().remove_many(&ids);
     session.selection_mut().clear();

@@ -125,7 +125,7 @@ pub struct LightmapBakeShowcase {
     denoise: bool,
     baked_at: Option<u32>,
     need_reencode: bool,
-    applied: Option<(usize, bool)>,
+    applied: Option<(usize, bool, usize)>,
     /// Realtime shadow casting (Realtime-only mode). Off by default so the
     /// realtime view is flat and the bake's contribution is unambiguous.
     realtime_shadows: bool,
@@ -133,6 +133,9 @@ pub struct LightmapBakeShowcase {
     atlas_mesh: Option<MeshId>,
     atlas_uv: Vec<Vec2>,
     show_atlas: bool,
+    /// Which baked atlas the poster shows: an index into `atlas_sources()` (scene
+    /// atlas pages, the cuboid's atlas, the multi-page torus's pages).
+    atlas_view: usize,
     atlas_node: Option<NodeId>,
     // Stats for the panel.
     torus_charts: u32,
@@ -170,6 +173,7 @@ impl LightmapBakeShowcase {
             atlas_mesh: None,
             atlas_uv: Vec::new(),
             show_atlas: false,
+            atlas_view: 0,
             atlas_node: None,
             torus_charts: 0,
             torus_atlas: (ATLAS, ATLAS),
@@ -185,14 +189,11 @@ impl LightmapBakeShowcase {
         }
     }
 
-    /// Trace the shared room and, for each baked piece, path-trace its lightmap
-    /// and cache the raw irradiance + direction atlases (no denoise/encode yet).
-    fn trace_all(&mut self, ctx: &mut ShowcaseCtx) {
-        let device = ctx.device;
-        let queue = ctx.queue;
-
-        // The scene every bake traces against: all pieces in world space, plus a
-        // key light and a soft sky. The coloured walls are what bleed.
+    /// Build the ray-traced scene every bake integrates against: all pieces in
+    /// world space (occluders), a key light, and a soft sky. Shared by the
+    /// per-piece bake and the scene-atlas `bake_scene_prepared` call, so both see
+    /// the same occluders and lighting.
+    fn build_rt_scene(&self) -> RtScene {
         let mut scene = RtScene::new();
         // A dim sky keeps the shadow and colour bleed high-contrast; the key
         // light does the lighting.
@@ -210,13 +211,25 @@ impl LightmapBakeShowcase {
                 },
             );
         }
-        // Tuned for the HDR display path: the baked radiance now feeds the
-        // renderer's tonemapper once (linear `Rgba16Float` upload), so the key is
-        // dimmer than the old value that was sized for a pre-tonemapped upload.
+        // Tuned for the HDR display path: the baked radiance feeds the renderer's
+        // tonemapper once (linear `Rgba16Float` upload).
         scene.add_light(RtLight::Directional {
             direction: LIGHT_DIR.normalize().to_array(),
             colour: [2.1, 2.05, 1.9],
         });
+        scene
+    }
+
+    /// Trace the shared room and, for each baked piece, path-trace its lightmap
+    /// and cache the raw irradiance + direction atlases (no denoise/encode yet).
+    fn trace_all(&mut self, ctx: &mut ShowcaseCtx) {
+        let device = ctx.device;
+        let queue = ctx.queue;
+
+        // The scene every bake traces against: all pieces in world space (every
+        // piece is an occluder, including the scene-atlas heroes), plus a key light
+        // and a soft sky.
+        let scene = self.build_rt_scene();
 
         let settings = RtSettings {
             samples: self.samples,
@@ -224,7 +237,9 @@ impl LightmapBakeShowcase {
             denoise: false,
         };
         for i in 0..self.pieces.len() {
-            if !self.pieces[i].baked {
+            // Scene-atlas heroes are baked in one `bake_scene_prepared` call in
+            // encode_all (which owns their gbuffer + GI), not here.
+            if !self.pieces[i].baked || self.pieces[i].scene_atlas {
                 continue;
             }
             let (pos, nrm, uv1, idx, pages, xf, aw, ah, atlas_count) = {
@@ -304,11 +319,10 @@ impl LightmapBakeShowcase {
         let queue = ctx.queue;
         let mut directionality_sum = 0.0f64;
         let mut directionality_n = 0u64;
-        // Scene-atlas pieces defer their upload: their finished radiance is
-        // collected here, then packed into one shared atlas after the loop.
-        // Each entry is (piece index, atlas width, atlas height, radiance RGBA).
-        let mut scene_bufs: Vec<(usize, u32, u32, Vec<f32>)> = Vec::new();
         for i in 0..self.pieces.len() {
+            // Scene-atlas heroes are skipped here; they are baked together below
+            // via bake_scene_prepared. Non-scene pieces (whose raw was cached by
+            // trace_all) run the per-page cleanup + upload path.
             if !self.pieces[i].baked || self.pieces[i].raw_irradiance.is_empty() {
                 continue;
             }
@@ -453,13 +467,6 @@ impl LightmapBakeShowcase {
                 }
             }
 
-            // Scene-atlas pieces (single-page, non-directional) do not upload their
-            // own texture: their radiance is packed into a shared atlas below.
-            if self.pieces[i].scene_atlas {
-                scene_bufs.push((i, aw, ah, layers));
-                continue;
-            }
-
             // Single texture for single-page pieces; an N-layer texture array for
             // the multi-page hero, which set_lightmap_paged then samples per vertex.
             let res = ctx.session.resources_mut();
@@ -474,54 +481,97 @@ impl LightmapBakeShowcase {
             self.pieces[i].dir_tex = dir_tex;
         }
 
-        // Pack the deferred scene-atlas pieces into shared pages, blit each into
-        // its rectangle, and upload one texture array. Each piece then binds that
-        // shared atlas via `set_scene_lightmap` with its packed layer + scale/bias.
-        // This is the "bake a level into a handful of atlases" path, and it puts
-        // the whole scene-atlas pipeline (packer -> blit -> shared array ->
-        // set_scene_lightmap) under the live renderer, not just a headless test.
-        if !scene_bufs.is_empty() {
-            let items: Vec<viewport_lib_bake::SceneAtlasItem> = scene_bufs
+        // Scene-atlas heroes: bake them all in one `bake_scene_prepared` call. Its
+        // injected passes run the renderer's texel G-buffer + GI solve (against the
+        // same occluder scene), then the orchestrator denoises, stitches, encodes,
+        // packs into one shared atlas, and returns a placement per object. This
+        // runs the whole one-call scene bake under the live renderer, exercising the
+        // real GPU-passes path rather than the headless mock.
+        let scene_pieces: Vec<usize> = (0..self.pieces.len())
+            .filter(|&i| self.pieces[i].scene_atlas && self.pieces[i].baked)
+            .collect();
+        if !scene_pieces.is_empty() {
+            // Owned, already-unwrapped geometry for each hero; PreparedObject
+            // borrows it.
+            let owned: Vec<(
+                Vec<[f32; 3]>,
+                Vec<[f32; 3]>,
+                Vec<[f32; 2]>,
+                Vec<u32>,
+                u32,
+                u32,
+                [[f32; 4]; 4],
+            )> = scene_pieces
                 .iter()
-                .map(|&(_, w, h, _)| viewport_lib_bake::SceneAtlasItem {
-                    width: w,
-                    height: h,
+                .map(|&i| {
+                    let p = &self.pieces[i];
+                    (
+                        p.pos.clone(),
+                        p.nrm.clone(),
+                        p.uv1.iter().map(|u| [u.x, u.y]).collect(),
+                        p.idx.clone(),
+                        p.atlas_w,
+                        p.atlas_h,
+                        p.xf.to_cols_array_2d(),
+                    )
                 })
                 .collect();
+            let prepared: Vec<viewport_lib_bake::PreparedObject> = owned
+                .iter()
+                .map(
+                    |(pos, nrm, uv1, idx, w, h, model)| viewport_lib_bake::PreparedObject {
+                        positions: pos,
+                        normals: nrm,
+                        uv1,
+                        indices: idx,
+                        width: *w,
+                        height: *h,
+                        model: *model,
+                    },
+                )
+                .collect();
+            let rt = self.build_rt_scene();
+            let mut passes = ScenePasses {
+                device,
+                queue,
+                scene: &rt,
+                settings: RtSettings {
+                    samples: self.samples,
+                    max_bounces: 4,
+                    denoise: false,
+                },
+            };
             // 1024 fits each hero's atlas (the torus packs to ~980), so no rect is
-            // clamped; the objects still spill to a second page, which the shared
-            // texture array handles.
-            let page = 1024u32;
-            let layout = viewport_lib_bake::pack_scene_atlas(&items, page, 8);
-            let mut pages = vec![0.0f32; (page * page) as usize * 4 * layout.layers as usize];
-            for (k, (_, w, h, buf)) in scene_bufs.iter().enumerate() {
-                let pl = layout.placements[k];
-                let bw = (*w).min(pl.width);
-                let bh = (*h).min(pl.height);
-                for row in 0..bh {
-                    for col in 0..bw {
-                        let s = ((row * w + col) * 4) as usize;
-                        let d = (((pl.layer * page * page) + (pl.y + row) * page + (pl.x + col))
-                            * 4) as usize;
-                        pages[d..d + 4].copy_from_slice(&buf[s..s + 4]);
-                    }
-                }
-            }
+            // clamped; objects still spill to a second page, which the array handles.
+            let opts = viewport_lib_bake::SceneBakeOptions {
+                page_size: 1024,
+                padding: 8,
+                denoise: self.denoise,
+                ..Default::default()
+            };
+            let bake = viewport_lib_bake::bake_scene_prepared(&prepared, &mut passes, &opts);
             let tex = ctx
                 .session
                 .resources_mut()
-                .upload_texture_hdr_layers(device, queue, page, page, layout.layers, &pages)
+                .upload_texture_hdr_layers(
+                    device,
+                    queue,
+                    bake.page_size,
+                    bake.page_size,
+                    bake.layers,
+                    &bake.radiance,
+                )
                 .unwrap();
             self.scene_atlas_tex = Some(tex);
-            self.scene_objects = scene_bufs.len() as u32;
-            self.scene_pages = layout.layers;
-            self.scene_page_size = page;
-            for (k, &(pi, _, _, _)) in scene_bufs.iter().enumerate() {
-                let pl = layout.placements[k];
-                self.pieces[pi].tex = Some(tex);
-                self.pieces[pi].dir_tex = None;
-                self.pieces[pi].scene_scale_bias = pl.scale_bias;
-                self.pieces[pi].scene_layer = pl.layer;
+            self.scene_objects = scene_pieces.len() as u32;
+            self.scene_pages = bake.layers;
+            self.scene_page_size = bake.page_size;
+            for (k, &i) in scene_pieces.iter().enumerate() {
+                let pl = bake.placements[k];
+                self.pieces[i].tex = Some(tex);
+                self.pieces[i].dir_tex = None;
+                self.pieces[i].scene_scale_bias = pl.scale_bias;
+                self.pieces[i].scene_layer = pl.layer;
             }
         }
         self.directionality = if directionality_n > 0 {
@@ -534,7 +584,7 @@ impl LightmapBakeShowcase {
     }
 
     /// Build (or rebuild) the scene nodes for the current mode.
-    fn rebuild(&mut self, session: &mut viewport_lib::ViewportSession) {
+    fn rebuild(&mut self, session: &mut viewport_lib::ViewportInstance) {
         if !self.nodes.is_empty() {
             let ids = std::mem::take(&mut self.nodes);
             session.scene_mut().remove_many(&ids);
@@ -624,24 +674,55 @@ impl LightmapBakeShowcase {
         self.applied = None;
     }
 
+    /// Every baked atlas the poster can show, as `(texture, layer, label)`: each
+    /// page of the shared scene atlas, then each non-scene baked piece's own
+    /// texture (the cuboid's directional atlas, and every page of the multi-page
+    /// torus). The panel's page selector indexes this list.
+    fn atlas_sources(&self) -> Vec<(TextureId, u32, String)> {
+        let mut v = Vec::new();
+        if let Some(tex) = self.scene_atlas_tex {
+            for layer in 0..self.scene_pages.max(1) {
+                v.push((tex, layer, format!("Scene atlas p{layer}")));
+            }
+        }
+        for p in &self.pieces {
+            if !p.baked || p.scene_atlas {
+                continue;
+            }
+            let Some(tex) = p.tex else { continue };
+            let pages = p.atlas_count.max(1);
+            if pages > 1 {
+                for layer in 0..pages {
+                    v.push((tex, layer, format!("Multi-page p{layer}")));
+                }
+            } else {
+                let label = if p.normal_tex.is_some() {
+                    "Cuboid (directional)".to_string()
+                } else {
+                    "Object".to_string()
+                };
+                v.push((tex, 0, label));
+            }
+        }
+        v
+    }
+
     /// Attach or clear the baked lightmaps to match the current mode.
     fn apply_lightmaps(&mut self, ctx: &mut ShowcaseCtx) {
-        let state = (self.mode, self.show_atlas);
+        let state = (self.mode, self.show_atlas, self.atlas_view);
         if self.applied == Some(state) {
             return;
         }
         let baked_mode = self.mode == 0;
         let device = ctx.device;
 
-        // The atlas panel shows the shared scene atlas (page 0) when scene atlasing
-        // is on, so the poster reads as "here is the whole packed scene", falling
-        // back to the torus' own texture otherwise.
-        let torus_tex = self.scene_atlas_tex.or_else(|| {
-            self.pieces
-                .iter()
-                .find(|p| p.baked && p.albedo == TORUS_ALBEDO)
-                .and_then(|p| p.tex)
-        });
+        // The atlas poster shows whichever baked atlas the page selector picks: a
+        // scene-atlas page, the cuboid's directional atlas, or a page of the
+        // multi-page torus. Each source is a (texture, layer) pair sampled full-quad.
+        let sources = self.atlas_sources();
+        let poster = sources
+            .get(self.atlas_view.min(sources.len().saturating_sub(1)))
+            .map(|&(tex, layer, _)| (tex, layer));
 
         let res = ctx.session.resources_mut();
         for p in &self.pieces {
@@ -699,13 +780,16 @@ impl LightmapBakeShowcase {
                 }
             }
         }
-        if let (Some(atlas), Some(tex)) = (self.atlas_mesh, torus_tex) {
+        if let (Some(atlas), Some((tex, layer))) = (self.atlas_mesh, poster) {
             if baked_mode && self.show_atlas {
-                let _ = res.set_lightmap(
+                // Sample the chosen atlas layer full-quad (identity scale/bias).
+                let _ = res.set_scene_lightmap(
                     device,
                     atlas,
                     &self.atlas_uv,
-                    LightmapData::NonDirectional { radiance: tex },
+                    tex,
+                    layer,
+                    [1.0, 1.0, 0.0, 0.0],
                     LightmapMode::Replace,
                 );
             } else {
@@ -941,6 +1025,29 @@ impl Showcase for LightmapBakeShowcase {
             {
                 self.shown = None; // force a scene rebuild to add/remove the panel
             }
+            if self.show_atlas {
+                // Page selector: the poster shows one baked atlas layer at a time
+                // (scene-atlas pages, the cuboid's atlas, the multi-page torus's
+                // pages). Labels are collected first so the combo can mutate state.
+                let labels: Vec<String> = self
+                    .atlas_sources()
+                    .into_iter()
+                    .map(|(_, _, l)| l)
+                    .collect();
+                if !labels.is_empty() {
+                    let cur = self.atlas_view.min(labels.len() - 1);
+                    egui::ComboBox::from_label("Atlas page")
+                        .selected_text(labels[cur].clone())
+                        .show_ui(ui, |ui| {
+                            for (i, label) in labels.iter().enumerate() {
+                                if ui.selectable_label(cur == i, label).clicked() {
+                                    self.atlas_view = i;
+                                    self.applied = None; // re-bind the poster
+                                }
+                            }
+                        });
+                }
+            }
         });
 
         ui.add_space(10.0);
@@ -983,6 +1090,64 @@ impl Showcase for LightmapBakeShowcase {
             "Denoise off shows the raw Monte-Carlo noise; the atlas panel shows the \
              torus' baked lightmap in UV space.",
         );
+    }
+}
+
+/// Injected GPU passes for `bake_scene_prepared`: the renderer's texel G-buffer
+/// rasteriser and GI solve, run against a fixed occluder scene. The orchestrator
+/// in viewport-lib-bake owns the CPU steps (denoise, stitch, encode, pack) and
+/// calls these two for the GPU work, so the bake crate stays GPU-free.
+struct ScenePasses<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    scene: &'a RtScene,
+    settings: RtSettings,
+}
+
+impl viewport_lib_bake::SceneBakePasses for ScenePasses<'_> {
+    fn texel_gbuffer(
+        &mut self,
+        geom: &viewport_lib_bake::BakeGeometry<'_>,
+        width: u32,
+        height: u32,
+    ) -> viewport_lib_bake::TexelGbuffer {
+        let g = rasterize_texel_gbuffer(
+            self.device,
+            self.queue,
+            &TexelGeometry {
+                positions: geom.positions,
+                normals: geom.normals,
+                uv1: geom.uv1,
+                indices: geom.indices,
+                model: Mat4::from_cols_array_2d(&geom.model),
+            },
+            width,
+            height,
+        );
+        viewport_lib_bake::TexelGbuffer {
+            width: g.width,
+            height: g.height,
+            world_pos: g.world_pos,
+            world_normal: g.world_normal,
+        }
+    }
+
+    fn solve_gi(&mut self, gbuffer: &viewport_lib_bake::TexelGbuffer) -> viewport_lib_bake::GiBake {
+        let bake = bake_lightmap_directional(
+            self.device,
+            self.queue,
+            self.scene,
+            &TexelSurfaces {
+                width: gbuffer.width,
+                height: gbuffer.height,
+                world_pos: &gbuffer.world_pos,
+                world_normal: &gbuffer.world_normal,
+            },
+            &self.settings,
+        );
+        viewport_lib_bake::GiBake {
+            irradiance: bake.irradiance,
+        }
     }
 }
 

@@ -8,7 +8,7 @@
 use eframe::egui;
 use glam::Vec3;
 use viewport_lib::{
-    Action, FirstPersonCameraController, OrbitCameraController, ViewportContext, ViewportSession,
+    Action, FirstPersonCameraController, OrbitCameraController, ViewportContext, ViewportInstance,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -58,7 +58,7 @@ impl CameraRig {
     /// to the session's manipulation while a G/R/S drag owns the pointer.
     pub fn drive(
         &mut self,
-        session: &mut ViewportSession,
+        session: &mut ViewportInstance,
         dt: f32,
         view_ctx: ViewportContext,
         toggle: bool,

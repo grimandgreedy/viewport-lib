@@ -1,7 +1,7 @@
-//! Modular viewport-lib showcase, built on `ViewportSession` + eframe.
+//! Modular viewport-lib showcase, built on `ViewportInstance` + eframe.
 //!
 //! The host here is deliberately small: it owns the window, one shared
-//! `ViewportSession`, and an offscreen texture egui displays as an image. Each
+//! `ViewportInstance`, and an offscreen texture egui displays as an image. Each
 //! showcase (see `showcases/`) is self-contained in its own file and owns its
 //! scene, camera controllers, and interaction. Pick a showcase from the side
 //! panel; the host resets the scene and calls the new one's `setup`.
@@ -16,7 +16,7 @@ mod ui;
 use eframe::{egui, wgpu};
 use viewport_lib::input::adapters::from_egui;
 use viewport_lib::{
-    ManipulationController, Modifiers, ViewportContext, ViewportEvent, ViewportSession,
+    ManipulationController, Modifiers, ViewportContext, ViewportEvent, ViewportInstance,
 };
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -58,7 +58,7 @@ fn main() -> eframe::Result {
                 .expect("wgpu backend required");
             // One session, shared across showcases; manipulation is always
             // attached (idle when nothing is selected).
-            let mut session = ViewportSession::new(&rs.device, rs.target_format)
+            let mut session = ViewportInstance::new(&rs.device, rs.target_format)
                 .with_manipulation(ManipulationController::new());
 
             let mut list = showcases::all();
@@ -90,7 +90,7 @@ struct Target {
 }
 
 struct App {
-    session: ViewportSession,
+    session: ViewportInstance,
     camera: camera::CameraRig,
     list: Vec<Box<dyn Showcase>>,
     active: usize,

@@ -1,17 +1,17 @@
 //! Render forwards and picking.
 //!
 //! Both render shapes are exposed because the split is dictated by who owns the
-//! surface, not by feature richness: [`render`](ViewportSession::render) for a
+//! surface, not by feature richness: [`render`](ViewportInstance::render) for a
 //! host that owns the swapchain view (winit, iced), and
-//! [`prepare`](ViewportSession::prepare) + [`paint`](ViewportSession::paint) for
+//! [`prepare`](ViewportInstance::prepare) + [`paint`](ViewportInstance::paint) for
 //! a host that only hands you a render pass (eframe). HDR versus LDR is dispatched
 //! internally by the underlying paths off `effects.post_process.enabled`; the
 //! caller never chooses a method by path.
 
-use super::ViewportSession;
+use super::ViewportInstance;
 use crate::{PickBackend, PickHit, PickMask, PickPoll, PickRectResult};
 
-impl ViewportSession {
+impl ViewportInstance {
     /// Render the assembled frame into `view` and return the command buffer for
     /// the host to submit. For a host that owns the swapchain texture view.
     pub fn render(
