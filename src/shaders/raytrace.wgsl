@@ -967,3 +967,80 @@ fn bake_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     accum[idx] = vec4<f32>(result, cov);
     accum_dir[idx] = vec4<f32>(dir_result, cov);
 }
+
+// Jitter a direction within a small cone of half-angle ~`radius`, for soft
+// shadowmask penumbras (a directional light gets an angular size).
+fn jitter_dir(l: vec3<f32>, radius: f32, rng: ptr<function, u32>) -> vec3<f32> {
+    let up = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(l.z) > 0.9);
+    let t = normalize(cross(l, up));
+    let b = cross(l, t);
+    let r = radius * sqrt(rand(rng));
+    let a = 2.0 * PI * rand(rng);
+    return normalize(l + t * (r * cos(a)) + b * (r * sin(a)));
+}
+
+// Shadowmask bake: one invocation per atlas texel writes the per-light visibility
+// (0 = fully shadowed by static geometry, 1 = fully lit) of up to four analytic
+// lights into the four RGBA channels. Sampled with a small jitter so the shadow
+// edge has a soft penumbra. A renderer combines this baked static-occluder shadow
+// with a realtime shadow map (dynamic occluders) by taking the minimum, keeping
+// the light itself fully dynamic. Channels beyond the light count stay 1 (no
+// shadow), so an unmapped light is never spuriously darkened.
+@compute @workgroup_size(8, 8, 1)
+fn shadowmask_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let w = frame.dims.x;
+    let h = frame.dims.y;
+    if gid.x >= w || gid.y >= h { return; }
+    let idx = gid.y * w + gid.x;
+
+    let sample_base = frame.params.y;
+    let cov = texel_surf[idx].w;
+    if cov <= 0.0 {
+        if sample_base == 0u {
+            accum[idx] = vec4<f32>(0.0);
+        }
+        return;
+    }
+
+    let pos = texel_surf[idx].xyz;
+    let n = normalize(texel_surf[w * h + idx].xyz);
+    let spp = frame.params.x;
+    var rng = init_rng(idx, frame.params.z);
+    let nl = min(frame.dims.z, 4u);
+
+    var vis = vec4<f32>(0.0);
+    for (var s = 0u; s < spp; s = s + 1u) {
+        for (var li = 0u; li < nl; li = li + 1u) {
+            let lt = lights[li];
+            var l: vec3<f32>;
+            var max_t = T_MAX;
+            if lt.data.w < 0.5 {
+                l = jitter_dir(normalize(lt.data.xyz), 0.03, &rng);
+            } else {
+                let to = lt.data.xyz - pos;
+                let dist = length(to);
+                l = to / dist;
+                max_t = dist - EPS;
+            }
+            // Facing away or occluded by static geometry counts as shadowed.
+            if dot(n, l) > 0.0 && !any_hit(pos + n * EPS, l, max_t) {
+                vis[li] = vis[li] + 1.0;
+            }
+        }
+    }
+
+    let inv = 1.0 / f32(spp);
+    // Lit fallback (1) for channels without a light, so they never shadow.
+    var lit_default = vec4<f32>(1.0);
+    for (var li = 0u; li < nl; li = li + 1u) {
+        lit_default[li] = vis[li] * inv;
+    }
+    var result = lit_default;
+    if sample_base > 0u {
+        let total = f32(sample_base) + f32(spp);
+        for (var li = 0u; li < nl; li = li + 1u) {
+            result[li] = (accum[idx][li] * f32(sample_base) + vis[li]) / total;
+        }
+    }
+    accum[idx] = result;
+}

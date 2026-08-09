@@ -494,6 +494,9 @@ pub struct Tracer {
     // ray-gen front-end (bindings 10/11) instead of the camera. Compiled from
     // the same module as `pipeline`.
     bake_pipeline: crate::gpu::ComputePipeline,
+    // Per-light static-occluder visibility bake (`shadowmask_main`), reusing the
+    // bake bind-group layout. Writes up to four lights' visibility to RGBA.
+    shadowmask_pipeline: crate::gpu::ComputePipeline,
     bake_bgl: crate::gpu::BindGroupLayout,
     denoise_pipeline: crate::gpu::ComputePipeline,
     denoise_bgl: crate::gpu::BindGroupLayout,
@@ -910,6 +913,14 @@ impl Tracer {
             &shader,
             "bake_main",
         );
+        // Shadowmask bake: same layout and module, different entry point.
+        let shadowmask_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "rt_shadowmask_pipeline",
+            &bake_layout,
+            &shader,
+            "shadowmask_main",
+        );
 
         // Denoiser pipeline, compiled once and reused across settled frames.
         let denoise_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
@@ -944,6 +955,7 @@ impl Tracer {
             pipeline,
             bgl,
             bake_pipeline,
+            shadowmask_pipeline,
             bake_bgl,
             denoise_pipeline,
             denoise_bgl,
@@ -1419,6 +1431,159 @@ impl Tracer {
         let direction = readback_f32(device, queue, &accum_dir_buf, bytes);
         Some((irradiance, direction))
     }
+
+    /// Bake a per-light static-occluder shadowmask atlas.
+    ///
+    /// For each texel, stores the visibility (0 = shadowed by static geometry,
+    /// 1 = lit) of up to the scene's first four analytic lights, one per RGBA
+    /// channel, sampled with a soft penumbra. A renderer combines this baked
+    /// static shadow with a realtime shadow map (dynamic occluders) by taking the
+    /// minimum, so the lights stay fully dynamic while static-static shadows come
+    /// from the bake at any distance (Unity Shadowmask parity). Channels past the
+    /// light count are left at 1 (lit), so an unmapped light is never darkened.
+    ///
+    /// Returns an [`RtImage`] sized to the atlas (RGBA visibility); empty texels
+    /// (`world_pos.w <= 0`) are 0. Returns a black atlas if the scene has no
+    /// geometry or the surface slices are the wrong length.
+    pub fn bake_shadowmask(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        surfaces: &TexelSurfaces,
+        settings: &RtSettings,
+    ) -> RtImage {
+        let width = surfaces.width.max(1);
+        let height = surfaces.height.max(1);
+        match self.run_shadowmask(device, queue, surfaces, settings) {
+            Some(rgba) => RtImage {
+                width,
+                height,
+                rgba,
+            },
+            None => RtImage {
+                width,
+                height,
+                rgba: vec![0.0; (width * height * 4) as usize],
+            },
+        }
+    }
+
+    /// Run the shadowmask bake and read back the RGBA visibility atlas. Shares the
+    /// bake bind-group layout (the unused bindings are bound but not read by
+    /// `shadowmask_main`). Returns `None` when the scene has no geometry or the
+    /// surface slices do not match `width * height`.
+    fn run_shadowmask(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        surfaces: &TexelSurfaces,
+        settings: &RtSettings,
+    ) -> Option<Vec<f32>> {
+        let width = surfaces.width.max(1);
+        let height = surfaces.height.max(1);
+        let texels = (width * height) as usize;
+        if !self.has_geometry
+            || surfaces.world_pos.len() != texels
+            || surfaces.world_normal.len() != texels
+        {
+            return None;
+        }
+
+        let bytes = (texels as u64) * 16;
+        let mut texel_surf: Vec<[f32; 4]> = Vec::with_capacity(texels * 2);
+        texel_surf.extend_from_slice(surfaces.world_pos);
+        texel_surf.extend_from_slice(surfaces.world_normal);
+        let surf_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("rt_shadowmask_texel_surf"),
+            contents: bytemuck::cast_slice(&texel_surf),
+            usage: crate::gpu::BufferUsages::STORAGE,
+        });
+        let storage_out = |label: &str| {
+            device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some(label),
+                size: bytes,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            })
+        };
+        // accum (5) holds the visibility output; accum_dir (12) is unused by the
+        // shadowmask kernel but the shared bake layout requires it bound.
+        let accum_buf = storage_out("rt_shadowmask_accum");
+        let accum_dir_buf = storage_out("rt_shadowmask_unused");
+        #[allow(unused_mut)]
+        let mut entries = vec![
+            bg_entry(0, &self.frame_buf),
+            bg_entry(1, &self.node_buf),
+            bg_entry(2, &self.tri_buf),
+            bg_entry(3, &self.mat_buf),
+            bg_entry(4, &self.light_buf),
+            bg_entry(5, &accum_buf),
+            crate::gpu::BindGroupEntry {
+                binding: 8,
+                resource: crate::gpu::BindingResource::TextureView(&self.env_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 9,
+                resource: crate::gpu::BindingResource::Sampler(&self.env_sampler),
+            },
+            bg_entry(10, &surf_buf),
+            bg_entry(12, &accum_dir_buf),
+            bg_entry(14, &self.env_tables_buf),
+        ];
+        #[cfg(feature = "raytrace-hardware")]
+        if let Some(hw) = &self.hw {
+            entries.push(crate::gpu::BindGroupEntry {
+                binding: 13,
+                resource: hw.tlas.as_binding(),
+            });
+        }
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("rt_shadowmask_bg"),
+            layout: &self.bake_bgl,
+            entries: &entries,
+        });
+
+        let base_frame = FrameUniform {
+            inv_view_proj: Mat4::IDENTITY.to_cols_array(),
+            cam_pos: [0.0; 4],
+            sky_top: [0.0; 4],
+            sky_bottom: [0.0; 4],
+            dims: [width, height, self.num_lights, 1],
+            params: [0, 0, 0, 0],
+            env_dist: [0.0; 4],
+            emit: [0, 0, 0, 0],
+        };
+
+        const BATCH: u32 = 16;
+        let gx = width.div_ceil(8);
+        let gy = height.div_ceil(8);
+        let target = settings.samples.max(1);
+        let mut done = 0u32;
+        while done < target {
+            let this_batch = (target - done).min(BATCH);
+            let mut fu = base_frame;
+            fu.params = [this_batch, done, frame_seed(done, settings.seed), 0];
+            queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
+
+            let mut encoder =
+                device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                    label: Some("rt_shadowmask_encoder"),
+                });
+            {
+                let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+                    label: Some("rt_shadowmask_pass"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&self.shadowmask_pipeline);
+                cpass.set_bind_group(0, &bind_group, &[]);
+                cpass.dispatch_workgroups(gx, gy, 1);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+            done += this_batch;
+        }
+
+        Some(readback_f32(device, queue, &accum_buf, bytes))
+    }
 }
 
 /// Copy a storage buffer to a staging buffer and read it back as `f32`.
@@ -1480,6 +1645,18 @@ pub fn bake_lightmap_directional(
     settings: &RtSettings,
 ) -> DirectionalBake {
     Tracer::new(device, queue, scene).bake_directional(device, queue, surfaces, settings)
+}
+
+/// Bake a per-light static-occluder shadowmask atlas from per-texel surfaces.
+/// Builds a tracer for `scene` and runs [`Tracer::bake_shadowmask`].
+pub fn bake_shadowmask(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    scene: &RtScene,
+    surfaces: &TexelSurfaces,
+    settings: &RtSettings,
+) -> RtImage {
+    Tracer::new(device, queue, scene).bake_shadowmask(device, queue, surfaces, settings)
 }
 
 /// Run the edge-aware a-trous denoiser over `accum` and return the buffer that

@@ -13,7 +13,7 @@
 use glam::Vec3;
 use viewport_lib::raytrace::{
     RtImage, RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap,
-    bake_lightmap_directional,
+    bake_lightmap_directional, bake_shadowmask,
 };
 
 fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Queue)> {
@@ -417,6 +417,76 @@ fn emissive_panel_lights_the_floor_with_low_noise() {
     assert!(
         cov < 0.3,
         "emissive NEE should be low-noise at 16 spp, got CoV = {cov}"
+    );
+}
+
+/// The shadowmask bake writes per-light static-occluder visibility into the RGBA
+/// channels: a texel shadowed from light 0 reads ~0 in the red channel, an
+/// unoccluded texel reads ~1, and channels without a light stay lit (1).
+#[test]
+fn shadowmask_bakes_per_light_visibility() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut scene = RtScene::new();
+    scene.set_sky([0.0; 3], [0.0; 3]);
+    add_floor(&mut scene, 20.0, RtMaterial::default());
+    // An occluder 2 units above the origin, blocking the straight-up light there.
+    let occ = [
+        Vec3::new(-1.5, -1.5, 2.0),
+        Vec3::new(1.5, -1.5, 2.0),
+        Vec3::new(1.5, 1.5, 2.0),
+        Vec3::new(-1.5, 1.5, 2.0),
+    ];
+    scene.add_mesh(
+        &occ,
+        &[0u32, 1, 2, 0, 2, 3],
+        Some(&[Vec3::Z; 4]),
+        RtMaterial::default(),
+    );
+    scene.add_light(RtLight::Directional {
+        direction: [0.0, 0.0, 1.0], // straight up, toward the light
+        colour: [1.0, 1.0, 1.0],
+    });
+
+    let bake_at = |p: [f32; 3]| {
+        let (pos, nrm) = uniform_surfaces(16, 16, p, [0.0, 0.0, 1.0]);
+        let surf = TexelSurfaces {
+            width: 16,
+            height: 16,
+            world_pos: &pos,
+            world_normal: &nrm,
+        };
+        bake_shadowmask(&device, &queue, &scene, &surf, &settings(64))
+    };
+    let channel_mean = |img: &RtImage, c: usize| {
+        let mut s = 0.0f64;
+        let n = (img.width * img.height) as usize;
+        for px in img.rgba.chunks_exact(4) {
+            s += px[c] as f64;
+        }
+        (s / n as f64) as f32
+    };
+
+    let shadowed = bake_at([0.0, 0.0, 0.0]); // under the occluder
+    let lit = bake_at([6.0, 0.0, 0.0]); // in the open, past the occluder
+
+    assert!(
+        channel_mean(&shadowed, 0) < 0.1,
+        "occluded texel should read shadowed in light 0's channel, got {}",
+        channel_mean(&shadowed, 0)
+    );
+    assert!(
+        channel_mean(&lit, 0) > 0.9,
+        "open texel should read lit in light 0's channel, got {}",
+        channel_mean(&lit, 0)
+    );
+    // Only one light in the scene, so channel 1 (no light) stays fully lit.
+    assert!(
+        (channel_mean(&lit, 1) - 1.0).abs() < 0.01,
+        "an unmapped light channel should stay lit (1), got {}",
+        channel_mean(&lit, 1)
     );
 }
 
