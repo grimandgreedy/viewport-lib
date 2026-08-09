@@ -37,6 +37,9 @@ struct InstanceData {
     alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
     emissive: vec3<f32>,                  // unused here; keeps stride matching the mesh instanced buffer
     _pad_emissive: f32,
+    has_light_probe: u32,                 // unused here; keeps stride matching the mesh instanced buffer
+    light_probe_index: u32,
+    _pad_lp: vec2<u32>,
 };
 
 @group(0) @binding(0) var<uniform> light: Light;
