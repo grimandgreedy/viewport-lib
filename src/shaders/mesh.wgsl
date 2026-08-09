@@ -779,6 +779,13 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             // </viewport-shade-slot:shadow>
             // <viewport-shade-slot:light>
             radiance *= shadow_factor;
+            // Subtractive lightmap: the main directional light (index 0) is baked
+            // into the lightmap, so suppress its realtime direct here to avoid
+            // double counting. Its shadow (sampled above) still darkens the baked
+            // term in apply_lightmap below.
+            if object.lightmap_mode == 4u && i == 0u {
+                radiance = vec3<f32>(0.0);
+            }
             Lo += pbr_light_contrib(N, V, L, radiance, base_colour,
                                     metallic, roughness, F0);
             // </viewport-shade-slot:light>
@@ -842,7 +849,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
-            ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
+            ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode, last_shadow_sample.factor);
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // </viewport-shade-slot:ambient>
@@ -880,7 +887,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             let diffuse_contrib  = object.diffuse  * n_dot_l * shadow;
             let specular_contrib = object.specular * pow(n_dot_h, object.shininess) * shadow;
 
-            total_colour_contrib += (diffuse_contrib + specular_contrib) * ev.radiance;
+            // Subtractive lightmap: the main directional light is baked in, so skip
+            // its realtime direct (its shadow still darkens the baked term below).
+            if !(object.lightmap_mode == 4u && i == 0u) {
+                total_colour_contrib += (diffuse_contrib + specular_contrib) * ev.radiance;
+            }
         }
 
         let ambient_contrib = object.ambient;
@@ -909,7 +920,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
-            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);
+            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode, last_shadow_sample.factor);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
 

@@ -618,7 +618,12 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             // </viewport-shade-slot:backface-cull>
             // Transparent surfaces do not cast/receive shadows (no CSM sampling).
             // <viewport-shade-slot:light>
-            Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
+            // Subtractive lightmap: the main directional light is baked in, so
+            // suppress its realtime direct to avoid double counting (transparent
+            // surfaces have no realtime shadow to add back).
+            if !(object.lightmap_mode == 4u && i == 0u) {
+                Lo += pbr_light_contrib(N, V, L, radiance, base_colour, metallic, roughness, F0);
+            }
             // </viewport-shade-slot:light>
         }
         dbg_direct_lum = dot(Lo, lum_weights);
@@ -672,7 +677,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
-            ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode);
+            ambient = apply_lightmap(ambient, base_colour, ao_factor, lm, object.lightmap_mode, 1.0);
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // </viewport-shade-slot:ambient>
@@ -718,7 +723,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
                 let f = lightmap_directional_factor(lm_uv, lm_page, N, in.world_normal);
                 lm = vec4<f32>(lm.rgb * f, lm.a);
             }
-            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode);
+            hemi_rgb = apply_lightmap(hemi_rgb, base_colour, ao_factor, lm, object.lightmap_mode, 1.0);
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
         let lit_rgb = hemi_rgb + direct_rgb;

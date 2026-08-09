@@ -284,16 +284,26 @@ fn ibl_ambient_layer_grad(
     return IblContrib(diffuse_ibl, specular_ibl);
 }
 
+// Subtractive mode: how far a fully realtime-shadowed texel is darkened. A dark
+// dynamic shadow keeps this fraction of the baked lighting (an ambient floor), so
+// the shadow reads without crushing to black. Lit texels keep the full bake.
+const SUBTRACTIVE_SHADOW_FLOOR: f32 = 0.35;
+
 /// Fold a baked lightmap sample into the ambient term. `lm` is the raw texture
 /// sample (rgb radiance, or r for occlusion) and `mode` selects the blend:
 /// 1 = Replace the indirect diffuse with the baked radiance, 2 = Add it on top,
-/// 3 = treat the red channel as an occlusion factor over the ambient term. The
+/// 3 = treat the red channel as an occlusion factor over the ambient term,
+/// 4 = Subtractive (the baked radiance is the full lighting, darkened by the main
+/// light's realtime shadow `main_shadow` so dynamic occluders cast onto it). The
 /// caller gates on `mode != 0`.
-fn apply_lightmap(ambient: vec3<f32>, base_colour: vec3<f32>, ao: f32, lm: vec4<f32>, mode: u32) -> vec3<f32> {
+fn apply_lightmap(ambient: vec3<f32>, base_colour: vec3<f32>, ao: f32, lm: vec4<f32>, mode: u32, main_shadow: f32) -> vec3<f32> {
     if mode == 1u {
         return base_colour * lm.rgb * ao;
     } else if mode == 2u {
         return ambient + base_colour * lm.rgb;
+    } else if mode == 4u {
+        let shade = mix(SUBTRACTIVE_SHADOW_FLOOR, 1.0, clamp(main_shadow, 0.0, 1.0));
+        return base_colour * lm.rgb * ao * shade;
     }
     return ambient * lm.r;
 }

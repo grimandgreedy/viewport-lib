@@ -73,16 +73,24 @@ pub enum LightmapMode {
     /// The baked value is a monochrome occlusion factor that multiplies the
     /// ambient term. Pairs with [`LightmapData::AmbientOcclusion`].
     AmbientOcclusion,
+    /// Mixed lighting for static receivers: the baked radiance is the full baked
+    /// lighting (direct + indirect), so the main directional light's realtime
+    /// direct is suppressed here to avoid double counting. That light's realtime
+    /// shadow still darkens the baked term, so dynamic objects cast shadows onto
+    /// the baked surface (Unity Subtractive / Unreal stationary-light parity).
+    /// Non-lightmapped (dynamic) meshes are lit fully in realtime as usual.
+    Subtractive,
 }
 
 impl LightmapMode {
-    /// Shader mode code: 1 = Replace, 2 = Add, 3 = AmbientOcclusion. 0 (no
-    /// registration) skips the branch entirely.
+    /// Shader mode code: 1 = Replace, 2 = Add, 3 = AmbientOcclusion,
+    /// 4 = Subtractive. 0 (no registration) skips the branch entirely.
     pub(crate) fn to_shader(self) -> u32 {
         match self {
             LightmapMode::Replace => 1,
             LightmapMode::Add => 2,
             LightmapMode::AmbientOcclusion => 3,
+            LightmapMode::Subtractive => 4,
         }
     }
 }
