@@ -267,6 +267,47 @@ impl std::ops::DerefMut for FrameCtx<'_> {
     }
 }
 
+/// What the input handler installed with [`ViewportApp::with_input`] receives:
+/// the raw events buffered since the last frame plus the instance (via deref).
+///
+/// Forward the events the viewport should act on with [`forward`](Self::forward)
+/// and drop the ones your UI consumed. Reach the camera, scene, and input state
+/// through the deref to [`ViewportInstance`] (for example
+/// [`camera_mut`](ViewportInstance::camera_mut) to drive your own controller).
+pub struct InputCtx<'a> {
+    session: &'a mut ViewportInstance,
+    events: &'a [ViewportEvent],
+}
+
+impl InputCtx<'_> {
+    /// The input events that arrived since the last frame, in order. These have
+    /// not been sent to the viewport: forward the ones it should process with
+    /// [`forward`](Self::forward).
+    pub fn events(&self) -> &[ViewportEvent] {
+        self.events
+    }
+
+    /// Send one event to the viewport's input so it drives picking, selection,
+    /// and manipulation this frame. Skip an event to keep it from the viewport.
+    pub fn forward(&mut self, event: ViewportEvent) {
+        self.session.handle_event(event);
+    }
+}
+
+impl std::ops::Deref for InputCtx<'_> {
+    type Target = ViewportInstance;
+
+    fn deref(&self) -> &ViewportInstance {
+        self.session
+    }
+}
+
+impl std::ops::DerefMut for InputCtx<'_> {
+    fn deref_mut(&mut self) -> &mut ViewportInstance {
+        self.session
+    }
+}
+
 /// A fullscreen winit application driving a [`ViewportInstance`].
 ///
 /// ```rust,ignore
@@ -289,7 +330,11 @@ impl std::ops::DerefMut for FrameCtx<'_> {
 pub struct ViewportApp {
     config: AppConfig,
     setup: Option<Box<dyn FnOnce(&mut ViewportInstance, &crate::gpu::Device)>>,
+    input: Option<InputHandler>,
 }
+
+/// The per-frame input handler installed with [`ViewportApp::with_input`].
+type InputHandler = Box<dyn FnMut(&mut InputCtx)>;
 
 impl ViewportApp {
     /// Create a runner with the given window configuration.
@@ -297,7 +342,44 @@ impl ViewportApp {
         Self {
             config,
             setup: None,
+            input: None,
         }
+    }
+
+    /// Handle raw input yourself before it reaches the viewport.
+    ///
+    /// By default the runner feeds every event to the instance and drives a
+    /// built-in orbit controller, so the callback sees input only after the
+    /// viewport has already acted on it. Install a handler to take that over: the
+    /// runner stops auto-feeding events and stops driving orbit, and instead calls
+    /// this handler once per frame with the events buffered since the last frame
+    /// plus mutable access to the instance (via deref). Forward the events the
+    /// viewport should process with [`InputCtx::forward`], drop the ones your UI
+    /// consumed, and drive your own camera controller against
+    /// [`camera_mut`](ViewportInstance::camera_mut).
+    ///
+    /// This is the same control a hand-written [`ViewportInstance`] loop has, with
+    /// the runner still owning the window, the wgpu bring-up, and the render loop.
+    ///
+    /// ```rust,ignore
+    /// let mut orbit = OrbitCameraController::viewport_all();
+    /// ViewportApp::new(config)
+    ///     .with_input(move |ictx| {
+    ///         for ev in ictx.events() {
+    ///             if menu.borrow().is_open() && menu.borrow().hits(ev) {
+    ///                 menu.borrow_mut().handle(ev); // consume: do not forward
+    ///                 continue;
+    ///             }
+    ///             orbit.push_event(ev.clone());     // navigation
+    ///             ictx.forward(ev.clone());         // viewport picking/selection
+    ///         }
+    ///         orbit.apply_to_camera(ictx.camera_mut());
+    ///     })
+    ///     .run(move |ctx| { /* overlays */ });
+    /// ```
+    pub fn with_input(mut self, handler: impl FnMut(&mut InputCtx) + 'static) -> Self {
+        self.input = Some(Box::new(handler));
+        self
     }
 
     /// Register a one-time setup callback, run after the instance is created with
@@ -319,6 +401,7 @@ impl ViewportApp {
             config: self.config,
             setup: self.setup,
             callback,
+            input: self.input,
             state: None,
             orbit: OrbitCameraController::viewport_all(),
             events: Vec::new(),
@@ -347,6 +430,9 @@ struct AppHandler<F> {
     config: AppConfig,
     setup: Option<Box<dyn FnOnce(&mut ViewportInstance, &crate::gpu::Device)>>,
     callback: F,
+    /// Installed by [`ViewportApp::with_input`]. When set, the runner stops
+    /// auto-feeding events and driving orbit; the handler owns the input step.
+    input: Option<InputHandler>,
     state: Option<RunState>,
     orbit: OrbitCameraController,
     /// Events translated since the last frame, handed to the callback via
@@ -489,6 +575,18 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 state.session.set_viewport_size([w, h]);
                 state.session.set_pixels_per_point(scale);
 
+                // An installed input handler owns this frame's input: it forwards
+                // the events the viewport should see and drives its own camera.
+                // Run it before resolve so the forwarded events land in this
+                // frame's ActionFrame.
+                if let Some(handler) = self.input.as_mut() {
+                    let mut ictx = InputCtx {
+                        session: &mut state.session,
+                        events: &self.events,
+                    };
+                    handler(&mut ictx);
+                }
+
                 // Resolve accumulated input before the callback so a callback
                 // reading action_frame() (for click-to-pick and the like) sees
                 // this frame's input, not the previous frame's. update_orbit
@@ -520,15 +618,31 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
 
                 state.session.step_runtime(dt);
                 // Assembly clears frame.overlays, so install the callback's
-                // overlays and injects here, against the assembled frame.
-                state
-                    .session
-                    .update_orbit_with(&mut self.orbit, move |frame| {
+                // overlays and injects here, against the assembled frame. With an
+                // input handler the app already drove the camera, so assemble
+                // without touching it; otherwise drive the built-in orbit.
+                if self.input.is_some() {
+                    let vctx = ViewportContext {
+                        hovered: state.hovered,
+                        focused: state.focused,
+                        viewport_size: [w, h],
+                    };
+                    state.session.frame_with(vctx, move |frame| {
                         frame.overlays = overlays;
                         for inject in injects {
                             inject(frame);
                         }
                     });
+                } else {
+                    state
+                        .session
+                        .update_orbit_with(&mut self.orbit, move |frame| {
+                            frame.overlays = overlays;
+                            for inject in injects {
+                                inject(frame);
+                            }
+                        });
+                }
 
                 let frame = match state.surface.get_current_texture() {
                     Ok(f) => f,
@@ -586,13 +700,144 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             other => {
                 let scale = state.window.scale_factor() as f32;
                 if let Some(ev) = from_winit(&other, scale) {
-                    // Feed the resolver (orbit / bound actions) and buffer the
-                    // raw event for the callback to read via `FrameCtx::events`.
-                    state.session.handle_event(ev.clone());
+                    // Without an input handler, feed the resolver directly (orbit /
+                    // bound actions) so navigation works out of the box. With one,
+                    // the handler owns forwarding, so only buffer the raw event; it
+                    // decides each frame what the viewport should see.
+                    if self.input.is_none() {
+                        state.session.handle_event(ev.clone());
+                    }
                     self.events.push(ev);
                     state.window.request_redraw();
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::input::{ButtonState, MouseButton, ScrollUnits, ViewportContext};
+
+    fn headless_instance() -> Option<ViewportInstance> {
+        let instance = crate::gpu::default_instance();
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
+        .ok()?;
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+                label: Some("input_ctx_tests"),
+                ..Default::default()
+            }))
+            .ok()?;
+        Some(ViewportInstance::new(
+            &device,
+            crate::gpu::TextureFormat::Bgra8UnormSrgb,
+        ))
+    }
+
+    // The core guarantee of the input handler: only the events it forwards reach
+    // the viewport. A withheld event (here a scroll) leaves no trace in the
+    // resolved frame, so a UI that consumes input keeps it off the viewport.
+    #[test]
+    fn input_ctx_forwards_only_selected_events() {
+        let Some(mut session) = headless_instance() else {
+            eprintln!("skipping input_ctx_forwards_only_selected_events: no GPU adapter");
+            return;
+        };
+        session.begin_frame(ViewportContext {
+            hovered: true,
+            focused: true,
+            viewport_size: [256.0, 256.0],
+        });
+
+        // Buffered this frame: a click (move + press + release) and a scroll.
+        let events = vec![
+            ViewportEvent::PointerMoved {
+                position: glam::Vec2::new(40.0, 40.0),
+            },
+            ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Pressed,
+            },
+            ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Released,
+            },
+            ViewportEvent::Wheel {
+                delta: glam::Vec2::new(0.0, 5.0),
+                units: ScrollUnits::Lines,
+            },
+        ];
+
+        {
+            let mut ictx = InputCtx {
+                session: &mut session,
+                events: &events,
+            };
+            assert_eq!(ictx.events().len(), 4);
+            // Forward the click, withhold the scroll (the last event).
+            for ev in events[..3].iter().cloned() {
+                ictx.forward(ev);
+            }
+        }
+
+        let action = session.resolve();
+        assert!(action.pointer.clicked, "forwarded click should resolve");
+        assert_eq!(
+            action.navigation.zoom, 0.0,
+            "withheld scroll must not reach the viewport"
+        );
+    }
+
+    // With no forwarding at all, the viewport sees nothing: the same buffered
+    // events produce an idle frame. This is a menu-open frame that swallows input.
+    #[test]
+    fn input_ctx_dropping_all_events_leaves_viewport_idle() {
+        let Some(mut session) = headless_instance() else {
+            eprintln!(
+                "skipping input_ctx_dropping_all_events_leaves_viewport_idle: no GPU adapter"
+            );
+            return;
+        };
+        session.begin_frame(ViewportContext {
+            hovered: true,
+            focused: true,
+            viewport_size: [256.0, 256.0],
+        });
+
+        let events = vec![
+            ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Pressed,
+            },
+            ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ButtonState::Released,
+            },
+            ViewportEvent::Wheel {
+                delta: glam::Vec2::new(0.0, 5.0),
+                units: ScrollUnits::Lines,
+            },
+        ];
+
+        {
+            let mut ictx = InputCtx {
+                session: &mut session,
+                events: &events,
+            };
+            // Forward nothing: the app consumed every event.
+            let _ = &mut ictx;
+        }
+
+        let action = session.resolve();
+        assert!(!action.pointer.clicked, "no forwarded click");
+        assert_eq!(action.navigation.zoom, 0.0, "no forwarded scroll");
     }
 }

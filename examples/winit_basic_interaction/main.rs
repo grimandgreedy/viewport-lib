@@ -1,7 +1,8 @@
-//! Basic interaction with the ViewportApp runner: overlays, GPU picking, exit.
+//! Basic interaction with the ViewportApp runner: overlays, GPU picking, exit,
+//! and an input handler that stops the viewport reacting to input under the UI.
 //!
-//! Everything here happens inside the single `run` closure, using what
-//! `FrameCtx` exposes beyond the session it derefs to:
+//! The `run` closure draws overlays and handles clicks, using what `FrameCtx`
+//! exposes beyond the session it derefs to:
 //!
 //! - `ctx.overlays_mut()` draws a title, a live pick readout, and a quit button.
 //!   Assembly clears the overlay frame each frame, so these are re-pushed every
@@ -11,13 +12,20 @@
 //! - Input is resolved before the callback, so `ctx.action_frame().pointer`
 //!   reports the click on the same frame it lands.
 //! - Clicking the quit button calls `ctx.request_exit()`.
+//!
+//! Navigation is handled by `with_input` rather than the built-in orbit. The
+//! handler drives its own `OrbitCameraController` and, while the pointer is over
+//! the quit button, withholds navigation so the wheel does not zoom and a drag
+//! does not orbit under the button. Clicks are always forwarded so the button and
+//! picking still work. This is the general seam a context menu or any modal
+//! overlay uses to capture input.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use viewport_lib::{
-    AppConfig, LabelAnchor, LabelItem, Material, OverlayFill, OverlayShape, OverlayShapeItem,
-    PickMask, ViewportApp, primitives,
+    AppConfig, LabelAnchor, LabelItem, Material, OrbitCameraController, OverlayFill, OverlayShape,
+    OverlayShapeItem, PickMask, ViewportApp, ViewportContext, ViewportEvent, primitives,
 };
 
 // Quit button rectangle in logical pixels (top-left corner of the window).
@@ -63,6 +71,35 @@ fn main() {
         );
 
         session.camera_mut().distance = 8.0;
+    })
+    // Drive navigation ourselves so we can suppress it under the UI. The runner
+    // stops auto-feeding events and driving orbit; this handler owns the input.
+    .with_input({
+        let mut orbit = OrbitCameraController::viewport_all();
+        let mut cursor = glam::Vec2::ZERO;
+        move |ictx| {
+            let size = ictx.viewport_size();
+            orbit.begin_frame(ViewportContext {
+                hovered: true,
+                focused: true,
+                viewport_size: size,
+            });
+            // Cloned so we can forward (which borrows the instance) while reading.
+            for ev in ictx.events().to_vec() {
+                if let ViewportEvent::PointerMoved { position } = ev {
+                    cursor = position;
+                }
+                // The viewport always sees the event: picking and click detection
+                // in the run callback read the resolved frame.
+                ictx.forward(ev.clone());
+                // Navigate only when the pointer is not over the quit button, so
+                // the wheel and drags do not move the camera under the UI.
+                if !quit_button_hit(cursor) {
+                    orbit.push_event(ev);
+                }
+            }
+            orbit.apply_to_camera(ictx.camera_mut());
+        }
     })
     .run(move |ctx| {
         // Handle this frame's click first: quit button, otherwise GPU pick.
