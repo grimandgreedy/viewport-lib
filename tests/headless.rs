@@ -807,6 +807,130 @@ fn scene_lightmap_addresses_shared_atlas_per_object() {
     );
 }
 
+/// End-to-end scene atlasing: `viewport_lib_bake::pack_scene_atlas` assigns each
+/// object a rectangle in a shared page, the objects' baked atlases are blitted
+/// into those rectangles, and the placement's `scale_bias`/`layer` drive
+/// `set_scene_lightmap`. This ties the bake-side packer to the runtime: if the
+/// packer's `scale_bias` disagreed with where the blit put each object, an object
+/// would sample its neighbour's rectangle. Two objects (dim + bright) are packed
+/// into one page; each must read back its own value.
+#[test]
+fn packed_scene_atlas_round_trips_through_the_packer() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_a = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let mesh_b = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let vcount = box_mesh().positions.len();
+    let uv1 = vec![glam::Vec2::new(0.5, 0.5); vcount];
+
+    // Each object's own baked atlas: a solid value so sampling anywhere in its
+    // rectangle returns it. A dim, B bright.
+    let obj_w = 64u32;
+    let obj_h = 64u32;
+    let atlas_a = vec![[0.25f32, 0.25, 0.25, 1.0]; (obj_w * obj_h) as usize];
+    let atlas_b = vec![[4.0f32, 4.0, 4.0, 1.0]; (obj_w * obj_h) as usize];
+
+    // Pack both into one shared page and blit each into its rectangle.
+    let layout = viewport_lib_bake::pack_scene_atlas(
+        &[
+            viewport_lib_bake::SceneAtlasItem {
+                width: obj_w,
+                height: obj_h,
+            },
+            viewport_lib_bake::SceneAtlasItem {
+                width: obj_w,
+                height: obj_h,
+            },
+        ],
+        256,
+        4,
+    );
+    let page = layout.page_size;
+    let mut pages = vec![0.0f32; (page * page * layout.layers) as usize * 4];
+    let blit = |pages: &mut [f32], src: &[[f32; 4]], p: &viewport_lib_bake::ScenePlacement| {
+        for row in 0..p.height {
+            for col in 0..p.width {
+                let s = (row * p.width + col) as usize;
+                let d = ((p.layer * page * page) + (p.y + row) * page + (p.x + col)) as usize * 4;
+                pages[d] = src[s][0];
+                pages[d + 1] = src[s][1];
+                pages[d + 2] = src[s][2];
+                pages[d + 3] = src[s][3];
+            }
+        }
+    };
+    blit(&mut pages, &atlas_a, &layout.placements[0]);
+    blit(&mut pages, &atlas_b, &layout.placements[1]);
+
+    let shared = renderer
+        .resources_mut()
+        .upload_texture_hdr_layers(&device, &queue, page, page, layout.layers, &pages)
+        .unwrap();
+
+    for (mesh, p) in [
+        (mesh_a, layout.placements[0]),
+        (mesh_b, layout.placements[1]),
+    ] {
+        renderer
+            .resources_mut()
+            .set_scene_lightmap(
+                &device,
+                mesh,
+                &uv1,
+                shared,
+                p.layer,
+                p.scale_bias,
+                viewport_lib::resources::LightmapMode::Replace,
+            )
+            .unwrap();
+    }
+
+    let peak_of = |renderer: &mut ViewportRenderer, mesh| -> f32 {
+        let cam = Camera::default();
+        let mut frame = FrameData::default();
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.lighting.lights = Vec::new();
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+        item.material.base_colour = [1.0, 1.0, 1.0];
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        let mut face_cam = RenderCamera::from_camera(&cam);
+        face_cam.aspect = 1.0;
+        let captured = renderer.capture_hdr(&device, &queue, &mut frame, face_cam, 64);
+        captured
+            .rgba
+            .chunks_exact(4)
+            .flat_map(|px| [px[0], px[1], px[2]])
+            .fold(0.0f32, f32::max)
+    };
+
+    let peak_a = peak_of(&mut renderer, mesh_a);
+    let peak_b = peak_of(&mut renderer, mesh_b);
+    println!(
+        "packed scene atlas: A={peak_a:.3} B={peak_b:.3} (layers={})",
+        layout.layers
+    );
+    assert!(
+        peak_a < 1.0,
+        "packed object A should read its dim rect (~0.25), got {peak_a}"
+    );
+    assert!(
+        peak_b > 3.0,
+        "packed object B should read its bright rect (~4.0), got {peak_b}"
+    );
+}
+
 /// `capture_equirect` must resolve the six faces into a panorama whose
 /// direction mapping matches the shader consumer: a bright emissive box placed
 /// along +X, viewed from the origin, has to land near the equirect centre

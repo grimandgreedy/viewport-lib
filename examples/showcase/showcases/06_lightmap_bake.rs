@@ -95,8 +95,18 @@ struct Piece {
     raw_direction: Vec<Vec<[f32; 4]>>,
     gbuf_pos: Vec<Vec<[f32; 4]>>,
     gbuf_nrm: Vec<Vec<[f32; 4]>>,
+    /// When true, this piece does not get its own lightmap texture: its baked
+    /// atlas is packed into a shared scene atlas and it is bound with
+    /// `set_scene_lightmap` using `scene_layer` + `scene_scale_bias`. Used for the
+    /// single-page non-directional heroes to demonstrate scene-level atlasing.
+    scene_atlas: bool,
+    /// Placement in the shared scene atlas (page layer + sub-rect transform), set
+    /// by the packer during encode. Identity/0 until then.
+    scene_scale_bias: [f32; 4],
+    scene_layer: u32,
     /// Baked radiance atlas (linear HDR), sampled at binding 17. A single texture
-    /// for single-page pieces, or an N-layer texture array for the multi-page hero.
+    /// for single-page pieces, an N-layer array for the multi-page hero, or the
+    /// shared scene atlas for `scene_atlas` pieces.
     tex: Option<TextureId>,
     /// Baked dominant-direction atlas (linear HDR), sampled at binding 18. Set
     /// only for normal-mapped pieces, which want the directional response.
@@ -132,6 +142,12 @@ pub struct LightmapBakeShowcase {
     /// Atlas pages the multi-page hero spilled into, and its per-page size.
     knot_pages: u32,
     knot_atlas: (u32, u32),
+    /// The shared scene atlas the floor/torus/sphere pack into, and stats about
+    /// it (how many objects, how many pages, page size).
+    scene_atlas_tex: Option<TextureId>,
+    scene_objects: u32,
+    scene_pages: u32,
+    scene_page_size: u32,
     bake_ms: u32,
     directionality: f32,
     request_rebake: bool,
@@ -159,6 +175,10 @@ impl LightmapBakeShowcase {
             torus_atlas: (ATLAS, ATLAS),
             knot_pages: 1,
             knot_atlas: (ATLAS, ATLAS),
+            scene_atlas_tex: None,
+            scene_objects: 0,
+            scene_pages: 0,
+            scene_page_size: 0,
             bake_ms: 0,
             directionality: 0.0,
             request_rebake: false,
@@ -284,6 +304,10 @@ impl LightmapBakeShowcase {
         let queue = ctx.queue;
         let mut directionality_sum = 0.0f64;
         let mut directionality_n = 0u64;
+        // Scene-atlas pieces defer their upload: their finished radiance is
+        // collected here, then packed into one shared atlas after the loop.
+        // Each entry is (piece index, atlas width, atlas height, radiance RGBA).
+        let mut scene_bufs: Vec<(usize, u32, u32, Vec<f32>)> = Vec::new();
         for i in 0..self.pieces.len() {
             if !self.pieces[i].baked || self.pieces[i].raw_irradiance.is_empty() {
                 continue;
@@ -429,6 +453,13 @@ impl LightmapBakeShowcase {
                 }
             }
 
+            // Scene-atlas pieces (single-page, non-directional) do not upload their
+            // own texture: their radiance is packed into a shared atlas below.
+            if self.pieces[i].scene_atlas {
+                scene_bufs.push((i, aw, ah, layers));
+                continue;
+            }
+
             // Single texture for single-page pieces; an N-layer texture array for
             // the multi-page hero, which set_lightmap_paged then samples per vertex.
             let res = ctx.session.resources_mut();
@@ -441,6 +472,57 @@ impl LightmapBakeShowcase {
             };
             self.pieces[i].tex = Some(tex);
             self.pieces[i].dir_tex = dir_tex;
+        }
+
+        // Pack the deferred scene-atlas pieces into shared pages, blit each into
+        // its rectangle, and upload one texture array. Each piece then binds that
+        // shared atlas via `set_scene_lightmap` with its packed layer + scale/bias.
+        // This is the "bake a level into a handful of atlases" path, and it puts
+        // the whole scene-atlas pipeline (packer -> blit -> shared array ->
+        // set_scene_lightmap) under the live renderer, not just a headless test.
+        if !scene_bufs.is_empty() {
+            let items: Vec<viewport_lib_bake::SceneAtlasItem> = scene_bufs
+                .iter()
+                .map(|&(_, w, h, _)| viewport_lib_bake::SceneAtlasItem {
+                    width: w,
+                    height: h,
+                })
+                .collect();
+            // 1024 fits each hero's atlas (the torus packs to ~980), so no rect is
+            // clamped; the objects still spill to a second page, which the shared
+            // texture array handles.
+            let page = 1024u32;
+            let layout = viewport_lib_bake::pack_scene_atlas(&items, page, 8);
+            let mut pages = vec![0.0f32; (page * page) as usize * 4 * layout.layers as usize];
+            for (k, (_, w, h, buf)) in scene_bufs.iter().enumerate() {
+                let pl = layout.placements[k];
+                let bw = (*w).min(pl.width);
+                let bh = (*h).min(pl.height);
+                for row in 0..bh {
+                    for col in 0..bw {
+                        let s = ((row * w + col) * 4) as usize;
+                        let d = (((pl.layer * page * page) + (pl.y + row) * page + (pl.x + col))
+                            * 4) as usize;
+                        pages[d..d + 4].copy_from_slice(&buf[s..s + 4]);
+                    }
+                }
+            }
+            let tex = ctx
+                .session
+                .resources_mut()
+                .upload_texture_hdr_layers(device, queue, page, page, layout.layers, &pages)
+                .unwrap();
+            self.scene_atlas_tex = Some(tex);
+            self.scene_objects = scene_bufs.len() as u32;
+            self.scene_pages = layout.layers;
+            self.scene_page_size = page;
+            for (k, &(pi, _, _, _)) in scene_bufs.iter().enumerate() {
+                let pl = layout.placements[k];
+                self.pieces[pi].tex = Some(tex);
+                self.pieces[pi].dir_tex = None;
+                self.pieces[pi].scene_scale_bias = pl.scale_bias;
+                self.pieces[pi].scene_layer = pl.layer;
+            }
         }
         self.directionality = if directionality_n > 0 {
             (directionality_sum / directionality_n as f64) as f32
@@ -551,12 +633,15 @@ impl LightmapBakeShowcase {
         let baked_mode = self.mode == 0;
         let device = ctx.device;
 
-        // The atlas panel samples the torus' radiance texture across a full quad.
-        let torus_tex = self
-            .pieces
-            .iter()
-            .find(|p| p.baked && p.albedo == TORUS_ALBEDO)
-            .and_then(|p| p.tex);
+        // The atlas panel shows the shared scene atlas (page 0) when scene atlasing
+        // is on, so the poster reads as "here is the whole packed scene", falling
+        // back to the torus' own texture otherwise.
+        let torus_tex = self.scene_atlas_tex.or_else(|| {
+            self.pieces
+                .iter()
+                .find(|p| p.baked && p.albedo == TORUS_ALBEDO)
+                .and_then(|p| p.tex)
+        });
 
         let res = ctx.session.resources_mut();
         for p in &self.pieces {
@@ -565,29 +650,48 @@ impl LightmapBakeShowcase {
             }
             match (baked_mode, p.tex) {
                 (true, Some(tex)) => {
-                    // Directional when a dominant-direction atlas was baked (the
-                    // normal-mapped pieces), flat otherwise.
-                    let data = match p.dir_tex {
-                        Some(direction) => LightmapData::DominantDirection {
-                            radiance: tex,
-                            direction,
-                        },
-                        None => LightmapData::NonDirectional { radiance: tex },
-                    };
-                    if p.atlas_count > 1 {
-                        // Multi-page: the lightmap is a texture array; each vertex
-                        // carries the atlas page it was packed onto.
-                        let _ = res.set_lightmap_paged(
+                    if p.scene_atlas {
+                        // Scene atlas: many objects share `tex`; this object samples
+                        // its packed layer + sub-rect.
+                        let _ = res.set_scene_lightmap(
                             device,
                             p.mesh,
                             &p.uv1,
-                            &p.pages,
-                            data,
+                            tex,
+                            p.scene_layer,
+                            p.scene_scale_bias,
                             LightmapMode::Replace,
                         );
                     } else {
-                        let _ =
-                            res.set_lightmap(device, p.mesh, &p.uv1, data, LightmapMode::Replace);
+                        // Directional when a dominant-direction atlas was baked (the
+                        // normal-mapped pieces), flat otherwise.
+                        let data = match p.dir_tex {
+                            Some(direction) => LightmapData::DominantDirection {
+                                radiance: tex,
+                                direction,
+                            },
+                            None => LightmapData::NonDirectional { radiance: tex },
+                        };
+                        if p.atlas_count > 1 {
+                            // Multi-page: the lightmap is a texture array; each vertex
+                            // carries the atlas page it was packed onto.
+                            let _ = res.set_lightmap_paged(
+                                device,
+                                p.mesh,
+                                &p.uv1,
+                                &p.pages,
+                                data,
+                                LightmapMode::Replace,
+                            );
+                        } else {
+                            let _ = res.set_lightmap(
+                                device,
+                                p.mesh,
+                                &p.uv1,
+                                data,
+                                LightmapMode::Replace,
+                            );
+                        }
                     }
                 }
                 _ => {
@@ -627,9 +731,16 @@ impl Showcase for LightmapBakeShowcase {
 
         let mut pieces = Vec::new();
 
-        // Floor.
+        // Floor. The floor, torus, and sphere are the non-directional single-page
+        // heroes; instead of each getting its own lightmap texture they are packed
+        // into one shared scene atlas (see `encode_all`), so the render exercises
+        // the scene-atlas load path (`set_scene_lightmap`) rather than one texture
+        // per mesh. The directional cuboid and the multi-page torus keep their own
+        // atlases (they use paths a shared atlas does not cover here).
         let floor = primitives::plane(20.0, 14.0);
-        pieces.push(make_piece(ctx, &floor, Mat4::IDENTITY, FLOOR_ALBEDO, true));
+        let mut floor_piece = make_piece(ctx, &floor, Mat4::IDENTITY, FLOOR_ALBEDO, true);
+        floor_piece.scene_atlas = true;
+        pieces.push(floor_piece);
 
         // A procedural bump normal map for the directional-lightmap demo.
         let bump = make_bump_normal_map(ctx, 512, 4.0);
@@ -642,7 +753,7 @@ impl Showcase for LightmapBakeShowcase {
         // the sphere) because its per-face charts meet at real geometric edges, so
         // the directional atlas has no smooth-surface seams to show.
         let torus = primitives::torus(1.9, 0.7, 64, 32);
-        let (torus_piece, torus_charts) = unwrap_piece(
+        let (mut torus_piece, torus_charts) = unwrap_piece(
             ctx,
             &torus,
             Mat4::from_translation(Vec3::new(0.0, 1.0, 1.1)) * Mat4::from_rotation_x(0.35),
@@ -651,19 +762,21 @@ impl Showcase for LightmapBakeShowcase {
         );
         self.torus_charts = torus_charts;
         self.torus_atlas = (torus_piece.atlas_w, torus_piece.atlas_h);
+        torus_piece.scene_atlas = true;
         pieces.push(torus_piece);
 
         // Icosphere, not a UV sphere: a UV sphere's pole collapses many triangles
         // to one point with degenerate UVs, leaving an uncovered (black) texel
         // patch at the pole. The icosphere has uniform triangles and no pole.
         let sphere = primitives::icosphere(1.5, 4);
-        let (sphere_piece, _) = unwrap_piece(
+        let (mut sphere_piece, _) = unwrap_piece(
             ctx,
             &sphere,
             Mat4::from_translation(Vec3::new(-4.6, -1.5, 1.5)),
             SPHERE_ALBEDO,
             None,
         );
+        sphere_piece.scene_atlas = true;
         pieces.push(sphere_piece);
 
         let box_mesh = primitives::cuboid(2.4, 2.4, 2.4);
@@ -779,7 +892,10 @@ impl Showcase for LightmapBakeShowcase {
                  seam-stitch, encode. HDR radiance, soft contact shadows, red/green colour bleed, \
                  and inter-object occlusion are baked in. The cuboid has a directional lightmap so \
                  its bump normal map catches the baked light direction; the front torus spilled its \
-                 unwrap across several atlas pages and loads as a texture array (see Bake stats)."
+                 unwrap across several atlas pages and loads as a texture array; and the floor, \
+                 large torus, and sphere are packed into one shared scene atlas (per-object layer + \
+                 UV offset), so the scene bakes into a handful of atlases, not one per mesh (see \
+                 Bake stats)."
             }
             _ => {
                 "Realtime only: the same room lit by one realtime light and flat ambient. \
@@ -855,6 +971,10 @@ impl Showcase for LightmapBakeShowcase {
             "Multi-page hero: {} pages ({} x {} each)",
             self.knot_pages, self.knot_atlas.0, self.knot_atlas.1
         ));
+        ui.label(format!(
+            "Scene atlas: {} objects in {} page(s) ({}^2)",
+            self.scene_objects, self.scene_pages, self.scene_page_size
+        ));
         ui.label(format!("Samples: {}", self.baked_at.unwrap_or(0)));
         ui.label(format!("Bake time: {} ms", self.bake_ms));
         ui.label(format!("Mean directionality: {:.2}", self.directionality));
@@ -904,6 +1024,9 @@ fn make_piece(
         raw_direction: Vec::new(),
         gbuf_pos: Vec::new(),
         gbuf_nrm: Vec::new(),
+        scene_atlas: false,
+        scene_scale_bias: [1.0, 1.0, 0.0, 0.0],
+        scene_layer: 0,
         tex: None,
         dir_tex: None,
     }
@@ -989,6 +1112,9 @@ fn build_piece_from_unwrap(
         raw_direction: Vec::new(),
         gbuf_pos: Vec::new(),
         gbuf_nrm: Vec::new(),
+        scene_atlas: false,
+        scene_scale_bias: [1.0, 1.0, 0.0, 0.0],
+        scene_layer: 0,
         tex: None,
         dir_tex: None,
     };
