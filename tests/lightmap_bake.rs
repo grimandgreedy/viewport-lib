@@ -82,6 +82,7 @@ fn settings(samples: u32) -> RtSettings {
         samples,
         max_bounces: 4,
         denoise: false,
+        seed: 0,
     }
 }
 
@@ -328,4 +329,101 @@ fn empty_scene_bakes_black() {
     assert_eq!(img.width, 16);
     assert_eq!(img.height, 16);
     assert!(img.rgba.iter().all(|&c| c == 0.0));
+}
+
+/// The bake is deterministic: baking the same scene and surfaces twice with the
+/// same settings produces a bit-for-bit identical atlas. This is the contract the
+/// lightmapper's regression tests rely on - a change that perturbs the output is a
+/// real change to diff, not RNG drift between runs. The scene mixes a sky, a
+/// direct light, and an occluder so the stochastic parts (shadow rays, cosine-
+/// sampled indirect, environment) are all exercised.
+#[test]
+fn bake_is_bit_for_bit_reproducible() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut scene = RtScene::new();
+    scene.set_sky([0.1, 0.12, 0.16], [0.2, 0.24, 0.32]);
+    add_floor(&mut scene, 5.0, RtMaterial::default());
+    scene.add_light(RtLight::Directional {
+        direction: [0.3, 0.2, 0.9],
+        colour: [2.0, 1.9, 1.7],
+    });
+    // A small occluder above the texels, so shadow rays actually miss/hit.
+    let occ = [
+        Vec3::new(-1.0, -1.0, 1.5),
+        Vec3::new(1.0, -1.0, 1.5),
+        Vec3::new(1.0, 1.0, 1.5),
+        Vec3::new(-1.0, 1.0, 1.5),
+    ];
+    scene.add_mesh(
+        &occ,
+        &[0u32, 1, 2, 0, 2, 3],
+        Some(&[Vec3::Z; 4]),
+        RtMaterial::default(),
+    );
+
+    let (pos, nrm) = uniform_surfaces(48, 48, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let surf = TexelSurfaces {
+        width: 48,
+        height: 48,
+        world_pos: &pos,
+        world_normal: &nrm,
+    };
+    let a = bake_lightmap(&device, &queue, &scene, &surf, &settings(64));
+    let b = bake_lightmap(&device, &queue, &scene, &surf, &settings(64));
+    assert_eq!(
+        a.rgba, b.rgba,
+        "two bakes of the same scene must be bit-for-bit identical"
+    );
+}
+
+/// The seed knob draws an independent sample stream: two different seeds give
+/// different per-texel noise (so the determinism above is a fixed stream, not a
+/// stuck RNG) but converge to the same signal (both are unbiased estimators).
+#[test]
+fn different_seeds_vary_the_noise_but_not_the_signal() {
+    let Some((device, queue)) = device_queue() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut scene = RtScene::new();
+    scene.set_sky([0.2, 0.24, 0.3], [0.4, 0.44, 0.52]);
+    add_floor(&mut scene, 5.0, RtMaterial::default());
+    scene.add_light(RtLight::Directional {
+        direction: [0.2, 0.1, 0.95],
+        colour: [1.5, 1.5, 1.5],
+    });
+
+    let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let surf = TexelSurfaces {
+        width: 32,
+        height: 32,
+        world_pos: &pos,
+        world_normal: &nrm,
+    };
+
+    let s0 = RtSettings {
+        samples: 32,
+        max_bounces: 4,
+        denoise: false,
+        seed: 0,
+    };
+    let s1 = RtSettings { seed: 1, ..s0 };
+    let a = bake_lightmap(&device, &queue, &scene, &surf, &s0);
+    let b = bake_lightmap(&device, &queue, &scene, &surf, &s1);
+
+    // Different stream: the two atlases must not be identical.
+    assert_ne!(a.rgba, b.rgba, "a different seed should change the noise");
+
+    // Same signal: the means agree within Monte-Carlo error at this sample count.
+    let ma = mean_covered_rgb(&a);
+    let mb = mean_covered_rgb(&b);
+    for c in 0..3 {
+        assert!(
+            (ma[c] - mb[c]).abs() < 0.05,
+            "seeds should converge to the same mean, got {ma:?} vs {mb:?}"
+        );
+    }
 }

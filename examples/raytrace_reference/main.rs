@@ -188,6 +188,7 @@ fn main() {
                 samples,
                 max_bounces: 8,
                 denoise,
+                seed: 0,
             },
         );
         let path = format!("{name}.ppm");

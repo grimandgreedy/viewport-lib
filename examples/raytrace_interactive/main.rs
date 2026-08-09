@@ -243,6 +243,7 @@ impl AppState {
                 samples: 6,
                 max_bounces: 4,
                 denoise: true,
+                seed: 0,
             };
             (
                 self.tracer
@@ -258,6 +259,7 @@ impl AppState {
                 samples: CHUNK,
                 max_bounces: 8,
                 denoise: false,
+                seed: 0,
             };
             let img = self
                 .tracer

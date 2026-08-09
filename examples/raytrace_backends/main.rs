@@ -292,6 +292,7 @@ impl AppState {
                 samples: 6,
                 max_bounces: 4,
                 denoise: true,
+                seed: 0,
             };
             (
                 tracer.trace(&self.device, &self.queue, &camera, &settings),
@@ -306,6 +307,7 @@ impl AppState {
                 samples: CHUNK,
                 max_bounces: 8,
                 denoise: false,
+                seed: 0,
             };
             let img = tracer.accumulate(&self.device, &self.queue, &camera, &settings);
             let pending = tracer.accumulated_samples() < TARGET_SPP;

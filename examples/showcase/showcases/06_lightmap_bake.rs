@@ -235,6 +235,7 @@ impl LightmapBakeShowcase {
             samples: self.samples,
             max_bounces: 4,
             denoise: false,
+            seed: 0,
         };
         for i in 0..self.pieces.len() {
             // Scene-atlas heroes are baked in one `bake_scene_prepared` call in
@@ -539,6 +540,7 @@ impl LightmapBakeShowcase {
                     samples: self.samples,
                     max_bounces: 4,
                     denoise: false,
+                    seed: 0,
                 },
             };
             // 1024 fits each hero's atlas (the torus packs to ~980), so no rect is

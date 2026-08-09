@@ -258,6 +258,12 @@ pub struct RtSettings {
     /// readback. Cheap relative to tracing and useful for low-sample previews;
     /// leave off for a raw converged reference.
     pub denoise: bool,
+    /// Seed for the sample stream. A given seed makes the trace or bake
+    /// reproducible bit-for-bit on the same device; changing it draws an
+    /// independent set of samples (bake several seeds and average, or reseed to
+    /// shift the noise) without touching the converged result. `0` is the default
+    /// stream.
+    pub seed: u32,
 }
 
 impl Default for RtSettings {
@@ -266,6 +272,7 @@ impl Default for RtSettings {
             samples: 256,
             max_bounces: 8,
             denoise: false,
+            seed: 0,
         }
     }
 }
@@ -1096,7 +1103,7 @@ impl Tracer {
             fu.params = [
                 this_batch,
                 done,
-                done.wrapping_mul(2_654_435_761).wrapping_add(1),
+                frame_seed(done, settings.seed),
                 self.has_env as u32,
             ];
             queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
@@ -1358,7 +1365,7 @@ impl Tracer {
             fu.params = [
                 this_batch,
                 done,
-                done.wrapping_mul(2_654_435_761).wrapping_add(1),
+                frame_seed(done, settings.seed),
                 self.has_env as u32,
             ];
             queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
@@ -1585,6 +1592,17 @@ fn bg_entry(binding: u32, buffer: &crate::gpu::Buffer) -> crate::gpu::BindGroupE
         binding,
         resource: buffer.as_entire_binding(),
     }
+}
+
+/// The per-batch RNG seed handed to the shader (`frame.params.z`), keyed on the
+/// running sample count `done` so each batch draws a fresh set, and on the caller's
+/// `seed` so different seeds give independent streams. `seed == 0` reproduces the
+/// original stream exactly (the extra term vanishes), keeping the default bake
+/// bit-for-bit identical to before the knob existed.
+fn frame_seed(done: u32, seed: u32) -> u32 {
+    done.wrapping_mul(2_654_435_761)
+        .wrapping_add(seed.wrapping_mul(0x9E37_79B9))
+        .wrapping_add(1)
 }
 
 // The hardware kernel targets a ray-query device, which Metal (the dev platform)

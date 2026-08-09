@@ -91,6 +91,7 @@ fn output_is_finite() {
             samples: 16,
             max_bounces: 4,
             denoise: false,
+            seed: 0,
         },
     );
     assert_eq!(img.rgba.len(), 64 * 64 * 4);
@@ -125,6 +126,7 @@ fn lit_and_emissive_deposit_radiance() {
         samples: 24,
         max_bounces: 3,
         denoise: false,
+        seed: 0,
     };
     let black_sky = |s: &mut RtScene| s.set_sky([0.0; 3], [0.0; 3]);
 
@@ -222,6 +224,7 @@ fn transmission_lets_the_background_through() {
         samples: 32,
         max_bounces: 4,
         denoise: false,
+        seed: 0,
     };
 
     // Clear glass with no bending (ior = 1) so rays pass straight to the sky.
@@ -287,6 +290,7 @@ fn denoise_reduces_noise_and_preserves_mean() {
             samples: 4,
             max_bounces: 3,
             denoise: false,
+            seed: 0,
         },
     );
     let denoised = trace(
@@ -298,6 +302,7 @@ fn denoise_reduces_noise_and_preserves_mean() {
             samples: 4,
             max_bounces: 3,
             denoise: true,
+            seed: 0,
         },
     );
 
@@ -344,6 +349,7 @@ fn tracer_reuse_across_cameras_and_sizes() {
         samples: 16,
         max_bounces: 3,
         denoise: false,
+        seed: 0,
     };
 
     let mut tracer = Tracer::new(&device, &queue, &scene);
@@ -376,6 +382,7 @@ fn environment_lights_the_scene() {
         samples: 32,
         max_bounces: 3,
         denoise: false,
+        seed: 0,
     };
 
     // 4x2 equirect; `fill` is the constant linear radiance in every texel.
@@ -430,6 +437,7 @@ fn progressive_accumulation_converges() {
         samples: 8,
         max_bounces: 3,
         denoise: false,
+        seed: 0,
     };
 
     let mut tracer = Tracer::new(&device, &queue, &scene);
@@ -502,6 +510,7 @@ fn env_importance_sampling_matches_analytic_uniform_env() {
         samples: 96,
         max_bounces: 3,
         denoise: false,
+        seed: 0,
     };
     let mut scene = RtScene::new();
     scene.set_sky([0.0; 3], [0.0; 3]);
@@ -539,6 +548,7 @@ fn env_importance_sampling_keeps_concentrated_source_low_noise() {
         samples: 64,
         max_bounces: 2,
         denoise: false,
+        seed: 0,
     };
     let mut scene = RtScene::new();
     scene.set_sky([0.0; 3], [0.0; 3]);

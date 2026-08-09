@@ -514,6 +514,7 @@ impl IndirectLightingShowcase {
                 samples: 160,
                 max_bounces: 4,
                 denoise: false,
+                seed: 0,
             },
         );
 
