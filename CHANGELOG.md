@@ -66,6 +66,10 @@ share that mesh's slice window. The GPU Wave showcase drives sliced
 position/normal overrides out of one pooled compute-written buffer and
 renders its buoys through an external instance set.
 
+### Improvements
+
+- `DeviceResources::measure_overlay_text` returns the width, height, and ascent a `LabelItem` would draw, for laying out overlay UI.
+
 ### Fixes
 
 - On the wgpu 29 leg, the built-in pick shaders that read

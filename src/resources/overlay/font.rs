@@ -69,6 +69,26 @@ pub(crate) struct GlyphQuad {
     pub uv_max: [f32; 2],
 }
 
+/// Metrics for an overlay text run, matching how a [`LabelItem`] with the same
+/// text, size, and font would be laid out.
+///
+/// All values are in logical pixels. Use these to size and align overlay-based
+/// UI (panel widths, right-aligned columns, per-row hit rectangles, vertical
+/// centring) before drawing the text with a `LabelItem`.
+///
+/// [`LabelItem`]: crate::renderer::types::LabelItem
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextMetrics {
+    /// Total advance width of the run in logical pixels. For multi-line text
+    /// (embedded `\n`) this is the width of the widest line.
+    pub width: f32,
+    /// Total height in logical pixels: one line height per line.
+    pub height: f32,
+    /// Distance from the top of the run to the first baseline, in logical
+    /// pixels. Use for baseline-accurate vertical placement.
+    pub ascent: f32,
+}
+
 /// Layout result for a single-line text string.
 #[derive(Debug, Clone)]
 pub(crate) struct TextLayout {
@@ -398,6 +418,67 @@ impl GlyphAtlas {
             .unwrap_or(font_size * 0.8)
     }
 
+    /// Measure a text run without rasterizing or uploading any glyphs.
+    ///
+    /// Returns the same `width` and `height` that [`layout_text`] would produce
+    /// for the same `text`, `font_size`, and `font`, plus the ascent. This is a
+    /// pure read of the font metrics: no atlas mutation and no `device`, so it
+    /// can be called with only `&self`.
+    ///
+    /// `ppp` does not appear here because it cancels out: `layout_text` lays out
+    /// at `font_size * ppp` and scales the result back by `1 / ppp`, and font
+    /// advances and line metrics scale linearly with size, so the logical width
+    /// and height are independent of `ppp`. This measures at `font_size`
+    /// directly, matching the drawn result.
+    ///
+    /// [`layout_text`]: Self::layout_text
+    pub fn measure_text(
+        &self,
+        text: &str,
+        font_size: f32,
+        font: Option<FontHandle>,
+    ) -> TextMetrics {
+        let font_index = font.map_or(0, |h| h.0);
+        let fd = &self.fonts[font_index];
+
+        let line_height = fd
+            .horizontal_line_metrics(font_size)
+            .map(|m| m.ascent - m.descent + m.line_gap)
+            .unwrap_or(font_size * 1.2);
+
+        // Mirror the advance/kern accumulation in `layout_text`, skipping only
+        // the glyph rasterization (which is all that path needs a device for).
+        let mut pen_x: f32 = 0.0;
+        let mut pen_y: f32 = 0.0;
+        let mut max_width: f32 = 0.0;
+        let mut prev_glyph: Option<u16> = None;
+        for ch in text.chars() {
+            if ch == '\n' {
+                max_width = max_width.max(pen_x);
+                pen_x = 0.0;
+                pen_y += line_height;
+                prev_glyph = None;
+                continue;
+            }
+
+            let glyph_index = fd.lookup_glyph_index(ch);
+            if let Some(prev) = prev_glyph {
+                if let Some(kern) = fd.horizontal_kern_indexed(prev, glyph_index, font_size) {
+                    pen_x += kern;
+                }
+            }
+            prev_glyph = Some(glyph_index);
+            pen_x += fd.metrics_indexed(glyph_index, font_size).advance_width;
+        }
+        max_width = max_width.max(pen_x);
+
+        TextMetrics {
+            width: max_width,
+            height: pen_y + line_height,
+            ascent: self.font_ascent(font_index, font_size),
+        }
+    }
+
     /// Upload new glyph data to the GPU if any glyphs were rasterized since
     /// the last upload.
     pub fn upload_if_dirty(&mut self, queue: &crate::gpu::Queue) {
@@ -590,5 +671,27 @@ impl crate::resources::DeviceResources {
     /// The font bytes must be a valid TrueType (`.ttf`) file.
     pub fn upload_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle, FontError> {
         self.content.glyph_atlas.upload_font(ttf_bytes)
+    }
+
+    /// Measure a text run as it would be laid out for a [`LabelItem`], returning
+    /// its [`TextMetrics`] in logical pixels.
+    ///
+    /// Pass the same `text`, `font_size`, and `font` you would give the
+    /// `LabelItem`; `font` is `None` for the built-in default font. The result
+    /// matches the drawn width and height, so it can size and align overlay UI
+    /// (panel widths, right-aligned columns, per-row hit rectangles) without
+    /// re-parsing the font. Embedded `\n` is measured as multiple lines.
+    ///
+    /// This only reads font metrics: no glyphs are rasterized or uploaded, so it
+    /// takes `&self` and needs no `device`.
+    ///
+    /// [`LabelItem`]: crate::renderer::types::LabelItem
+    pub fn measure_overlay_text(
+        &self,
+        text: &str,
+        font_size: f32,
+        font: Option<FontHandle>,
+    ) -> TextMetrics {
+        self.content.glyph_atlas.measure_text(text, font_size, font)
     }
 }

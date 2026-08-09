@@ -296,7 +296,8 @@ pub use resources::{
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, ComputeFilterResult,
     DeviceResources, FontError, FontHandle, FrameBudget, GpuImplicitItem, GpuImplicitOptions,
     GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, JobId, MatcapId, McVolumeId,
-    MeshData, ProgressHandle, ResidentBytes, TextureId, TextureMemoryStats, UploadStatus, VolumeId,
+    MeshData, ProgressHandle, ResidentBytes, TextMetrics, TextureId, TextureMemoryStats,
+    UploadStatus, VolumeId,
     VramBudget, lerp_attributes, supports_texture_format, vram_budget,
 };
 pub use resources::{

@@ -48,7 +48,7 @@ pub use self::mesh_sidecar::shade::{
     MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
     ShadingHookDesc, ShadingHookId,
 };
-pub use self::overlay::font::{FontError, FontHandle};
+pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub use self::plugin_builders::{
     HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT,
     PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
