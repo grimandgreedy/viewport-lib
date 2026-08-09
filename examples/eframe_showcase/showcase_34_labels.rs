@@ -212,7 +212,7 @@ impl App {
                     .with_background(true)
                     .with_background_colour([0.1, 0.1, 0.2, 0.0])
                     .with_border_radius(4.0)
-                    .with_anchor_align(LabelAnchor::Center)
+                    .with_anchor_align(LabelAnchor::Middle)
                     .with_z_order(200),
             );
 
@@ -225,7 +225,7 @@ impl App {
                     .with_background(true)
                     .with_background_colour([0.0, 0.0, 0.0, 0.65])
                     .with_border_radius(3.0)
-                    .with_anchor_align(LabelAnchor::Center)
+                    .with_anchor_align(LabelAnchor::Middle)
                     .with_z_order(200),
             );
         }
@@ -256,9 +256,9 @@ impl App {
         out.push(heading(y, "anchor_align:"));
         y += 16.0;
         for (i, (align, name)) in [
-            (LabelAnchor::Leading, "Leading"),
-            (LabelAnchor::Center, "Center"),
-            (LabelAnchor::Trailing, "Trailing"),
+            (LabelAnchor::Left, "Left"),
+            (LabelAnchor::Middle, "Middle"),
+            (LabelAnchor::Right, "Right"),
         ]
         .iter()
         .enumerate()
@@ -444,7 +444,7 @@ pub(crate) fn controls_labels(app: &mut App, ui: &mut eframe::egui::Ui) {
 
     ui.separator();
     ui.label("Feature rows (left side):");
-    ui.label("  anchor_align: Leading/Center/Trailing");
+    ui.label("  anchor_align: Left/Middle/Right");
     ui.label("  opacity: 100% -> 25%");
     ui.label("  offset: pixel nudge from anchor");
     ui.label("  max_width: word wrapping");

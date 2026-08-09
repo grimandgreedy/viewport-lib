@@ -2,13 +2,26 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LabelAnchor {
-    /// Text positioned to the right of the anchor (default).
+    /// Left edge of the text sits at the anchor; text extends right (default).
     #[default]
-    Leading,
+    Left,
     /// Text centered horizontally on the anchor.
-    Center,
-    /// Text positioned to the left of the anchor.
-    Trailing,
+    Middle,
+    /// Right edge of the text sits at the anchor; text extends left.
+    Right,
+}
+
+/// Vertical alignment of a label relative to its anchor point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum LabelAnchorY {
+    /// Top edge of the text sits at the anchor.
+    Top,
+    /// Text centered vertically on the anchor (default).
+    #[default]
+    Middle,
+    /// Bottom edge of the text sits at the anchor.
+    Bottom,
 }
 
 /// A text label rendered as a screen-space overlay.
@@ -75,9 +88,14 @@ pub struct LabelItem {
     /// Horizontal alignment of the label text relative to its anchor.
     pub anchor_align: LabelAnchor,
 
+    /// Vertical alignment of the label text relative to its anchor. Default:
+    /// `Middle`, which centers the text on the anchor. Use `Top` to place the
+    /// top edge of the text at the anchor when laying out screen-space UI.
+    pub anchor_align_y: LabelAnchorY,
+
     /// Gap in logical pixels between the anchor and the near edge of the text,
-    /// applied in the anchor-facing direction: `Leading` text is pushed this far
-    /// right of the anchor, `Trailing` text this far left. `Center` is
+    /// applied in the anchor-facing direction: `Left` text is pushed this far
+    /// right of the anchor, `Right` text this far left. `Middle` is
     /// unaffected. Default: `6.0`, which keeps text clear of a leader line.
     /// Set to `0.0` for anchor-exact placement when laying out screen-space UI.
     pub anchor_padding: f32,
@@ -122,7 +140,8 @@ impl Default for LabelItem {
             padding: 3.0,
             leader_line: false,
             leader_colour: [1.0, 1.0, 1.0, 0.6],
-            anchor_align: LabelAnchor::Leading,
+            anchor_align: LabelAnchor::Left,
+            anchor_align_y: LabelAnchorY::Middle,
             anchor_padding: 6.0,
             offset: [0.0, 0.0],
             opacity: 1.0,
@@ -208,6 +227,13 @@ impl LabelItem {
     /// Set the horizontal alignment of the text relative to its anchor.
     pub fn with_anchor_align(mut self, anchor_align: LabelAnchor) -> Self {
         self.anchor_align = anchor_align;
+        self
+    }
+
+    /// Set the vertical alignment of the text relative to its anchor. Defaults
+    /// to `Middle`; pass `Top` to place the top edge of the text at the anchor.
+    pub fn with_anchor_align_y(mut self, anchor_align_y: LabelAnchorY) -> Self {
+        self.anchor_align_y = anchor_align_y;
         self
     }
 

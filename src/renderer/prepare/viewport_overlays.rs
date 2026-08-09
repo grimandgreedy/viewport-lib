@@ -179,15 +179,21 @@ impl ViewportRenderer {
                         .font_ascent(font_index, label.font_size);
 
                     let align_offset = match label.anchor_align {
-                        crate::renderer::types::LabelAnchor::Leading => label.anchor_padding,
-                        crate::renderer::types::LabelAnchor::Center => -layout.total_width * 0.5,
-                        crate::renderer::types::LabelAnchor::Trailing => {
+                        crate::renderer::types::LabelAnchor::Left => label.anchor_padding,
+                        crate::renderer::types::LabelAnchor::Middle => -layout.total_width * 0.5,
+                        crate::renderer::types::LabelAnchor::Right => {
                             -layout.total_width - label.anchor_padding
                         }
                     };
 
+                    let align_offset_y = match label.anchor_align_y {
+                        crate::renderer::types::LabelAnchorY::Top => 0.0,
+                        crate::renderer::types::LabelAnchorY::Middle => -layout.height * 0.5,
+                        crate::renderer::types::LabelAnchorY::Bottom => -layout.height,
+                    };
+
                     let text_x = anchor_px[0] + align_offset + label.offset[0];
-                    let text_y = anchor_px[1] - layout.height * 0.5 + label.offset[1];
+                    let text_y = anchor_px[1] + align_offset_y + label.offset[1];
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 

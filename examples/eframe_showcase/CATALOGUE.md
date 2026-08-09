@@ -402,7 +402,7 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 **Demos:** Exploded gearbox assembly (11 box parts) with one world-anchored `LabelItem` per part. Plus a column of feature-demo rows exercising every `LabelItem` knob (anchor alignment, opacity, pixel offset, max-width wrapping, border radius, padding, font size, z-order overlap), a centred title, and a bottom legend.
 
-**Uses:** `LabelItem`, `LabelAnchor::{Leading,Center,Trailing}`.
+**Uses:** `LabelItem`, `LabelAnchor::{Left,Middle,Right}`.
 
 **Sidebar:** 3 checkboxes (Part labels / Feature demos / Title + legend); descriptive text.
 
