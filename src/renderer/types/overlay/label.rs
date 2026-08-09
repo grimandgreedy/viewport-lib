@@ -75,6 +75,13 @@ pub struct LabelItem {
     /// Horizontal alignment of the label text relative to its anchor.
     pub anchor_align: LabelAnchor,
 
+    /// Gap in logical pixels between the anchor and the near edge of the text,
+    /// applied in the anchor-facing direction: `Leading` text is pushed this far
+    /// right of the anchor, `Trailing` text this far left. `Center` is
+    /// unaffected. Default: `6.0`, which keeps text clear of a leader line.
+    /// Set to `0.0` for anchor-exact placement when laying out screen-space UI.
+    pub anchor_padding: f32,
+
     /// Pixel offset applied after anchor resolution and alignment.
     /// Useful for nudging a label away from its anchor without moving the
     /// leader line endpoint.  Default: `[0.0, 0.0]`.
@@ -116,6 +123,7 @@ impl Default for LabelItem {
             leader_line: false,
             leader_colour: [1.0, 1.0, 1.0, 0.6],
             anchor_align: LabelAnchor::Leading,
+            anchor_padding: 6.0,
             offset: [0.0, 0.0],
             opacity: 1.0,
             max_width: None,
@@ -200,6 +208,13 @@ impl LabelItem {
     /// Set the horizontal alignment of the text relative to its anchor.
     pub fn with_anchor_align(mut self, anchor_align: LabelAnchor) -> Self {
         self.anchor_align = anchor_align;
+        self
+    }
+
+    /// Set the gap between the anchor and the near edge of the text. Defaults to
+    /// `6.0`; pass `0.0` for anchor-exact placement in screen-space UI.
+    pub fn with_anchor_padding(mut self, anchor_padding: f32) -> Self {
+        self.anchor_padding = anchor_padding;
         self
     }
 

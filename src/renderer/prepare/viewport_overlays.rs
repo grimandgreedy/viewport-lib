@@ -179,9 +179,11 @@ impl ViewportRenderer {
                         .font_ascent(font_index, label.font_size);
 
                     let align_offset = match label.anchor_align {
-                        crate::renderer::types::LabelAnchor::Leading => 6.0,
+                        crate::renderer::types::LabelAnchor::Leading => label.anchor_padding,
                         crate::renderer::types::LabelAnchor::Center => -layout.total_width * 0.5,
-                        crate::renderer::types::LabelAnchor::Trailing => -layout.total_width - 6.0,
+                        crate::renderer::types::LabelAnchor::Trailing => {
+                            -layout.total_width - label.anchor_padding
+                        }
                     };
 
                     let text_x = anchor_px[0] + align_offset + label.offset[0];
