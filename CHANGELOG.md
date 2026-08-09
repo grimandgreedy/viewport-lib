@@ -4,6 +4,10 @@
 
 ### Features
 
+#### Fewer lines to a running viewport
+
+New wrappers get a basic viewport on screen in a handful of lines instead of a few hundred. `ViewportApp` (feature `app`) owns the window and event loop and runs a standalone app from a setup and a per-frame closure. For embedded viewports, `OrbitSession` bundles a session with default orbit camera controls, and `ViewportSession` handles the frame assembly when you bring your own camera or tool wiring. All of them expose the renderer, resources, and runtime, so starting simple does not limit what you can reach later.
+
 #### Sub-object GPU picking for item-type plugins
 
 Plugin items can now resolve faces, vertices, and edges through the GPU pick
@@ -86,7 +90,7 @@ renders its buoys through an external instance set.
 
 ## [0.20.0]
 
-A release in two halves: custom fragment shading and many-light performance. Materials can now select runtime-registered WGSL shading hooks, so custom BRDFs, toon looks, shader-graph-style surface authoring, and per-vertex-driven effects no longer require forking the mesh shaders; a consumer that registers no plugin renders byte-identically. On the performance side, the release focuses on scenes with many lights. A game-scale test scene (3251 instances, 251 point lights) went from 2.3 to 10.5 fps facing its densest area, and from 30 to 79 fps looking away, on an RTX 3080. GPU frame timing also now measures the whole frame instead of just the main pass. Upgrade notes are in `docs/migration-guides/v0.20.0-render-performance.md`.
+A release in two halves: custom fragment shading and many-light performance. Materials can now select runtime-registered WGSL shading hooks, so custom BRDFs, toon looks, shader-graph-style surface authoring, and per-vertex-driven effects no longer require forking the mesh shaders; a consumer that registers no plugin renders byte-identically. On the performance side, the release focuses on scenes with many lights. A game-scale test scene (3251 instances, 251 point lights) went from 2.3 to 10.5 fps facing its densest area, and from 30 to 79 fps looking away, on an RTX 3080. GPU frame timing also now measures the whole frame instead of just the main pass.
 
 ### Features
 
@@ -409,7 +413,8 @@ The transparent pass also drops its colormap-at-upload coupling: changing the co
 
 #### Per-vertex deformation as a single mechanism
 
-Skinning, wind, displacement, morph targets, ocean surfaces, and similar effects now register against one extension point. A plugin supplies a short WGSL body and per-vertex data; the body runs in every mesh draw (solid, transparent, instanced, shadow, outline) so the deformed mesh casts a deformed shadow and tracks a deformed selection outline. The previous parallel pipelines for skinning and vertex displacement are gone in favour of this one path. Up to four host deformers can be registered at once. See `docs/overviews/plugin-types.md` for the recipe.
+
+Skinning, wind, displacement, morph targets, ocean surfaces, and similar effects now register against one extension point. A plugin supplies a short WGSL body and per-vertex data; the body runs in every mesh draw (solid, transparent, instanced, shadow, outline) so the deformed mesh casts a deformed shadow and tracks a deformed selection outline. The previous parallel pipelines for skinning and vertex displacement are gone in favour of this one path. Up to four host deformers can be registered at once.
 
 #### GPU particle systems
 
@@ -456,7 +461,7 @@ A new screen-space polyline overlay primitive: a list of waypoints, a thickness,
 
 ### Improvements
 
-- The built-in plugins (animation, constraints, physics, skeletal animation, skinning) moved to one top-level module: `viewport_lib::plugins`. Each plugin reaches its API through its own subpath, mirroring how an external plugin crate is consumed. GPU skinning is now opt-in: hosts call `SkinningPlugin::install` once at startup before uploading skin data; hosts without skinned content pay nothing for it. Skinning uploads happen through the plugin handle (`attach_weights`, `attach_palette`) rather than methods on the renderer. The old paths are gone in this release; see `docs/migration-guides/v0.18.0-plugins-module-and-opt-in-skinning.md` for a complete mapping. The same pattern applies elsewhere: plugin-specific outputs (physics contacts, skinning updates, camera commands) now flow through the runtime's generic typed event bus rather than dedicated fields, so external plugins get the same surface as built-ins.
+- The built-in plugins (animation, constraints, physics, skeletal animation, skinning) moved to one top-level module: `viewport_lib::plugins`. Each plugin reaches its API through its own subpath, mirroring how an external plugin crate is consumed. GPU skinning is now opt-in: hosts call `SkinningPlugin::install` once at startup before uploading skin data; hosts without skinned content pay nothing for it. Skinning uploads happen through the plugin handle (`attach_weights`, `attach_palette`) rather than methods on the renderer.The same pattern applies elsewhere: plugin-specific outputs (physics contacts, skinning updates, camera commands) now flow through the runtime's generic typed event bus rather than dedicated fields, so external plugins get the same surface as built-ins.
 - Ribbons can sample a texture, multiplied into the resolved ribbon colour. Useful for lightning, slash arcs, laser beams, and similar effects. Per-vertex `u` coordinates are optional; when empty they derive from cumulative arc length so the texture stretches evenly across each strip.
 - Sprites can carry per-instance soft-particle fade distances. Mixed-size batches (large smoke puffs next to small embers) can vary the fade per instance instead of sharing one value.
 
@@ -525,7 +530,7 @@ Plugins can ship a new kind of scene item without forking the lib. New categorie
 
 ### Removed
 
-- Legacy async texture API: `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead. See `docs/migration-guides/upload-job-system.md`.
+- Legacy async texture API: `upload_texture_async`, `PendingTextureId`, `is_upload_ready`, `promote_texture`, and the bespoke staging-buffer pool that backed them. Use `begin_upload_texture` + `upload_result_texture` instead.
 
 
 ## [0.16.0]
@@ -878,7 +883,7 @@ Fixed: GPU position and normal overrides were silently ignored on most scenes `s
 
 ### Features
 - new `ViewportGpuResources` method that writes positions and normals directly into an existing mesh's GPU vertex buffer without reallocating. Use this for deforming meshes where topology is stable across frames: the index buffer, edge buffer, and bind groups are all reused. The normal line visualization buffer is also updated in place if present (`write_mesh_positions_normals`).
-- `prepare_ldr_dyn_res` / `paint_dyn_res_blit`: new `ViewportRenderer` methods for integrating dynamic resolution into frameworks where the surface render pass is externally owned. `prepare_ldr_dyn_res` encodes the scaled scene pass into the pre-pass command encoder; `paint_dyn_res_blit` upscales the result inside the surface pass. See the Rendering Variants table in `docs/overviews/src-architecture.md`.
+- `prepare_ldr_dyn_res` / `paint_dyn_res_blit`: new `ViewportRenderer` methods for integrating dynamic resolution into frameworks where the surface render pass is externally owned. `prepare_ldr_dyn_res` encodes the scaled scene pass into the pre-pass command encoder; `paint_dyn_res_blit` upscales the result inside the surface pass.
 
 ### Performance
 - `replace_mesh_data` now detects when the new vertex and index counts match the existing mesh (and no attributes are being updated) and writes to the existing GPU buffers in place instead of allocating new ones. For repeated updates of topology-stable meshes this eliminates the GPU memory allocation cycle entirely.
