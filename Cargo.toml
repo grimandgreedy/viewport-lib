@@ -54,7 +54,7 @@ slint = { version = "~1.17", features = ["unstable-wgpu-29", "renderer-femtovg-w
 # renders straight into a Bevy GPU texture on Bevy's own device with no CPU copy.
 bevy = { version = "0.19", optional = true }
 # Model/scene import (glTF, STL, VTK, HDF5, ...). Heavy; only showcase 45 uses it.
-viewport-lib-io = { version = "0.2.0", path = "../viewport-lib-io", optional = true }
+viewport-lib-io = { version = "0.3.0", path = "../viewport-lib-io", optional = true }
 
 # --- Optional host integrations for `session` (consumer-facing, not example-only) ---
 # `winit`/`pollster` power the `app` fullscreen runner and the `from_winit` event
@@ -131,7 +131,7 @@ pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The lightmap-bake showcase runs the full offline lightmapper: this crate's
 # unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Example-only.
-viewport-lib-bake = { path = "../viewport-lib-bake" }
+viewport-lib-lightbake = { path = "../viewport-lib-lightbake" }
 
 
 

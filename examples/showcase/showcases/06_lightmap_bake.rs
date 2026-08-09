@@ -36,9 +36,9 @@ use viewport_lib::{
     BackfacePolicy, ItemSettings, LightKind, LightSource, Material, MeshData, MeshId, NodeId,
     ShadowFilter, primitives,
 };
-use viewport_lib_bake::denoise::{DenoiseParams, denoise, dilate};
-use viewport_lib_bake::encode::{Encoding, encode};
-use viewport_lib_bake::stitch::{StitchGeometry, StitchParams, stitch};
+use viewport_lib_lightbake::denoise::{DenoiseParams, denoise, dilate};
+use viewport_lib_lightbake::encode::{Encoding, encode};
+use viewport_lib_lightbake::stitch::{StitchGeometry, StitchParams, stitch};
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -587,10 +587,10 @@ impl LightmapBakeShowcase {
                     )
                 })
                 .collect();
-            let prepared: Vec<viewport_lib_bake::PreparedObject> = owned
+            let prepared: Vec<viewport_lib_lightbake::PreparedObject> = owned
                 .iter()
                 .map(
-                    |(pos, nrm, uv1, idx, w, h, model)| viewport_lib_bake::PreparedObject {
+                    |(pos, nrm, uv1, idx, w, h, model)| viewport_lib_lightbake::PreparedObject {
                         positions: pos,
                         normals: nrm,
                         uv1,
@@ -615,13 +615,13 @@ impl LightmapBakeShowcase {
             };
             // 1024 fits each hero's atlas (the torus packs to ~980), so no rect is
             // clamped; objects still spill to a second page, which the array handles.
-            let opts = viewport_lib_bake::SceneBakeOptions {
+            let opts = viewport_lib_lightbake::SceneBakeOptions {
                 page_size: 1024,
                 padding: 8,
                 denoise: self.denoise,
                 ..Default::default()
             };
-            let bake = viewport_lib_bake::bake_scene_prepared(&prepared, &mut passes, &opts);
+            let bake = viewport_lib_lightbake::bake_scene_prepared(&prepared, &mut passes, &opts);
             let tex = ctx
                 .session
                 .resources_mut()
@@ -1270,7 +1270,7 @@ impl Showcase for LightmapBakeShowcase {
 
 /// Injected GPU passes for `bake_scene_prepared`: the renderer's texel G-buffer
 /// rasteriser and GI solve, run against a fixed occluder scene. The orchestrator
-/// in viewport-lib-bake owns the CPU steps (denoise, stitch, encode, pack) and
+/// in viewport-lib-lightbake owns the CPU steps (denoise, stitch, encode, pack) and
 /// calls these two for the GPU work, so the bake crate stays GPU-free.
 struct ScenePasses<'a> {
     device: &'a wgpu::Device,
@@ -1279,13 +1279,13 @@ struct ScenePasses<'a> {
     settings: RtSettings,
 }
 
-impl viewport_lib_bake::SceneBakePasses for ScenePasses<'_> {
+impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
     fn texel_gbuffer(
         &mut self,
-        geom: &viewport_lib_bake::BakeGeometry<'_>,
+        geom: &viewport_lib_lightbake::BakeGeometry<'_>,
         width: u32,
         height: u32,
-    ) -> viewport_lib_bake::TexelGbuffer {
+    ) -> viewport_lib_lightbake::TexelGbuffer {
         let g = rasterize_texel_gbuffer(
             self.device,
             self.queue,
@@ -1299,7 +1299,7 @@ impl viewport_lib_bake::SceneBakePasses for ScenePasses<'_> {
             width,
             height,
         );
-        viewport_lib_bake::TexelGbuffer {
+        viewport_lib_lightbake::TexelGbuffer {
             width: g.width,
             height: g.height,
             world_pos: g.world_pos,
@@ -1307,7 +1307,7 @@ impl viewport_lib_bake::SceneBakePasses for ScenePasses<'_> {
         }
     }
 
-    fn solve_gi(&mut self, gbuffer: &viewport_lib_bake::TexelGbuffer) -> viewport_lib_bake::GiBake {
+    fn solve_gi(&mut self, gbuffer: &viewport_lib_lightbake::TexelGbuffer) -> viewport_lib_lightbake::GiBake {
         let bake = bake_lightmap_directional(
             self.device,
             self.queue,
@@ -1320,7 +1320,7 @@ impl viewport_lib_bake::SceneBakePasses for ScenePasses<'_> {
             },
             &self.settings,
         );
-        viewport_lib_bake::GiBake {
+        viewport_lib_lightbake::GiBake {
             irradiance: bake.irradiance,
         }
     }
@@ -1381,14 +1381,14 @@ fn do_unwrap(
     mesh: &MeshData,
     resolution: u32,
     texels_per_unit: f32,
-) -> viewport_lib_bake::UnwrapResult {
-    viewport_lib_bake::unwrap(
-        &viewport_lib_bake::UnwrapInput {
+) -> viewport_lib_lightbake::UnwrapResult {
+    viewport_lib_lightbake::unwrap(
+        &viewport_lib_lightbake::UnwrapInput {
             positions: &mesh.positions,
             normals: Some(&mesh.normals),
             indices: &mesh.indices,
         },
-        &viewport_lib_bake::UnwrapOptions {
+        &viewport_lib_lightbake::UnwrapOptions {
             resolution,
             texels_per_unit,
             padding: 6,
@@ -1407,7 +1407,7 @@ fn build_piece_from_unwrap(
     xf: Mat4,
     albedo: [f32; 3],
     normal_tex: Option<TextureId>,
-    unwrapped: viewport_lib_bake::UnwrapResult,
+    unwrapped: viewport_lib_lightbake::UnwrapResult,
 ) -> (Piece, u32) {
     let charts = unwrapped.chart_count;
     // Carry the art UV0 onto the re-indexed mesh (gathered by xref) so normal

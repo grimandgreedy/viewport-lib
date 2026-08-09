@@ -905,7 +905,7 @@ fn scene_lightmap_addresses_shared_atlas_per_object() {
     );
 }
 
-/// End-to-end scene atlasing: `viewport_lib_bake::pack_scene_atlas` assigns each
+/// End-to-end scene atlasing: `viewport_lib_lightbake::pack_scene_atlas` assigns each
 /// object a rectangle in a shared page, the objects' baked atlases are blitted
 /// into those rectangles, and the placement's `scale_bias`/`layer` drive
 /// `set_scene_lightmap`. This ties the bake-side packer to the runtime: if the
@@ -938,13 +938,13 @@ fn packed_scene_atlas_round_trips_through_the_packer() {
     let atlas_b = vec![[4.0f32, 4.0, 4.0, 1.0]; (obj_w * obj_h) as usize];
 
     // Pack both into one shared page and blit each into its rectangle.
-    let layout = viewport_lib_bake::pack_scene_atlas(
+    let layout = viewport_lib_lightbake::pack_scene_atlas(
         &[
-            viewport_lib_bake::SceneAtlasItem {
+            viewport_lib_lightbake::SceneAtlasItem {
                 width: obj_w,
                 height: obj_h,
             },
-            viewport_lib_bake::SceneAtlasItem {
+            viewport_lib_lightbake::SceneAtlasItem {
                 width: obj_w,
                 height: obj_h,
             },
@@ -954,7 +954,7 @@ fn packed_scene_atlas_round_trips_through_the_packer() {
     );
     let page = layout.page_size;
     let mut pages = vec![0.0f32; (page * page * layout.layers) as usize * 4];
-    let blit = |pages: &mut [f32], src: &[[f32; 4]], p: &viewport_lib_bake::ScenePlacement| {
+    let blit = |pages: &mut [f32], src: &[[f32; 4]], p: &viewport_lib_lightbake::ScenePlacement| {
         for row in 0..p.height {
             for col in 0..p.width {
                 let s = (row * p.width + col) as usize;
