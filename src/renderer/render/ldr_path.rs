@@ -122,6 +122,7 @@ impl ViewportRenderer {
                 Some(slot),
                 &self.mesh_uniforms.wireframe_bind_groups,
                 &self.mesh_uniforms.bind_groups,
+                &self.mesh_uniforms.submesh_bind_groups,
                 scene_items,
                 // The cached bundle was recorded from `prepared_surfaces` (the
                 // surface submission, with the opaque volume-mesh boundaries
@@ -373,8 +374,14 @@ impl ViewportRenderer {
                         false,
                         false,
                         solid_pl,
+                        &resources.solid_two_sided_pipeline,
                         &resources.transparent_pipeline,
                         &resources.wireframe_pipeline,
+                        // Foreground items draw through the positional
+                        // foreground_objects cache, which has no per-range
+                        // entries; they render with the single item material.
+                        None,
+                        None,
                     );
                 }
             }

@@ -291,6 +291,7 @@ impl ViewportRenderer {
             for slot in mesh_uniforms.bind_groups.iter_mut() {
                 *slot = None;
             }
+            mesh_uniforms.submesh_bind_groups.clear();
             // Counts how many per-object items this frame have shared each
             // pick_id, so items with a duplicate pick_id (or the shared
             // PickId::NONE default) get distinct cache entries instead of
@@ -464,6 +465,7 @@ impl ViewportRenderer {
                     let key = PerObjectKey {
                         pick_id: pick,
                         occurrence,
+                        submesh: 0,
                     };
                     let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
                     let entry = mesh_uniforms.cache.entry(key).or_insert_with(|| {
@@ -548,6 +550,91 @@ impl ViewportRenderer {
                     // before the disjoint `bind_groups` field is written.
                     let slot_bg = entry.bind_group.clone();
                     mesh_uniforms.bind_groups[item_idx] = slot_bg;
+
+                    // Items drawn with per-submesh materials additionally get
+                    // one cache entry per range, so each range draws with its
+                    // own uniform and texture bind group. The whole-mesh entry
+                    // above is still built: wireframe mode, normal lines, and
+                    // the shared-uniform sync all use it.
+                    let range_mats: Option<Vec<crate::scene::material::Material>> = resources
+                        .mesh_store
+                        .get(item.mesh_id)
+                        .and_then(|m| super::mesh_material::active_submesh_materials(item, m))
+                        .map(|mats| mats.to_vec());
+                    if let Some(mats) = range_mats {
+                        let mut range_item = item.clone();
+                        range_item.submesh_materials = None;
+                        let mut range_bgs: Vec<Option<crate::gpu::BindGroup>> =
+                            Vec::with_capacity(mats.len());
+                        for (r, mat) in mats.into_iter().enumerate() {
+                            range_item.material = mat;
+                            let range_uniform = build_object_uniform(
+                                resources,
+                                &range_item,
+                                frame.viewport.wireframe_mode,
+                                probe_indices[item_idx],
+                            );
+                            let key = PerObjectKey {
+                                pick_id: pick,
+                                occurrence,
+                                submesh: r as u32 + 1,
+                            };
+                            let entry = mesh_uniforms.cache.entry(key).or_insert_with(|| {
+                                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                                    label: Some("per_item_object_uniform"),
+                                    size: uniform_size,
+                                    usage: crate::gpu::BufferUsages::UNIFORM
+                                        | crate::gpu::BufferUsages::COPY_DST,
+                                    mapped_at_creation: false,
+                                });
+                                crate::renderer::per_object_state::PerObjectCacheEntry {
+                                    uniform_buf: buf,
+                                    bind_group: None,
+                                    cache_key: 0,
+                                    last_uniform: None,
+                                    last_frame: frame_index,
+                                }
+                            });
+                            entry.last_frame = frame_index;
+                            let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
+                                bytemuck::bytes_of(u) != bytemuck::bytes_of(&range_uniform)
+                            });
+                            if uniform_changed {
+                                queue.write_buffer(
+                                    &entry.uniform_buf,
+                                    0,
+                                    bytemuck::cast_slice(&[range_uniform]),
+                                );
+                                entry.last_uniform = Some(range_uniform);
+                                resources.frame_upload_bytes += uniform_size;
+                            }
+                            let prev_key = entry.bind_group.as_ref().map(|_| entry.cache_key);
+                            let built = resources.build_per_item_object_bind_group(
+                                device,
+                                item.mesh_id,
+                                &entry.uniform_buf,
+                                range_item.material.texture_id,
+                                range_item.material.normal_map_id,
+                                range_item.material.ao_map_id,
+                                item.colourmap_id,
+                                item.active_attribute.as_ref().map(|a| a.name.as_str()),
+                                range_item.material.matcap_id(),
+                                item.warp_attribute.as_deref(),
+                                range_item.material.metallic_roughness_texture_id,
+                                range_item.material.emissive_texture_id,
+                                prev_key,
+                            );
+                            if let Some((bg, key)) = built {
+                                bind_groups_built += 1;
+                                entry.bind_group = Some(bg);
+                                entry.cache_key = key;
+                            }
+                            range_bgs.push(entry.bind_group.clone());
+                        }
+                        mesh_uniforms
+                            .submesh_bind_groups
+                            .insert(item_idx, range_bgs);
+                    }
                 }
             }
         }

@@ -78,6 +78,65 @@ pub(crate) fn backface_needs_per_object(item: &SceneRenderItem) -> bool {
     item.material.is_two_sided() && transparent
 }
 
+/// The per-range materials to draw `item` with, when it requests them and
+/// they line up with the mesh's ranges. `None` means the item draws the
+/// whole mesh with its single `material`: either it never set
+/// `submesh_materials`, the mesh has no ranges, or the two disagree on
+/// count (the mismatch falls back rather than guessing an assignment).
+pub(crate) fn active_submesh_materials<'a>(
+    item: &'a SceneRenderItem,
+    mesh: &crate::resources::GpuMesh,
+) -> Option<&'a [crate::scene::material::Material]> {
+    let mats = item.submesh_materials.as_deref()?;
+    if mesh.submeshes.is_empty() || mats.len() != mesh.submeshes.len() {
+        if !mesh.submeshes.is_empty() {
+            tracing::debug!(
+                mesh_index = item.mesh_id.index(),
+                materials = mats.len(),
+                ranges = mesh.submeshes.len(),
+                "submesh_materials count does not match the mesh's ranges; \
+                 drawing with the item material"
+            );
+        }
+        return None;
+    }
+    Some(mats)
+}
+
+/// Whether any of the item's draws belong in the opaque scene pass. For a
+/// per-range item that is any opaque-material range; otherwise it is the
+/// usual whole-item opacity/blend check.
+pub(crate) fn has_opaque_draws(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
+    if item.settings.opacity < 1.0 {
+        return false;
+    }
+    match resources
+        .mesh_store
+        .get(item.mesh_id)
+        .and_then(|m| active_submesh_materials(item, m))
+    {
+        Some(mats) => mats.iter().any(|m| !m.is_blend()),
+        None => !item.material.is_blend(),
+    }
+}
+
+/// Whether any of the item's draws belong in the transparent pass (OIT on
+/// the HDR path). The complement of [`has_opaque_draws`] per range: a
+/// per-range item can be in both passes at once.
+pub(crate) fn has_transparent_draws(item: &SceneRenderItem, resources: &DeviceResources) -> bool {
+    if item.settings.opacity < 1.0 {
+        return true;
+    }
+    match resources
+        .mesh_store
+        .get(item.mesh_id)
+        .and_then(|m| active_submesh_materials(item, m))
+    {
+        Some(mats) => mats.iter().any(|m| m.is_blend()),
+        None => item.material.is_blend(),
+    }
+}
+
 pub(super) struct CommonMaterial {
     pub(super) model: [[f32; 4]; 4],
     pub(super) colour: [f32; 4],

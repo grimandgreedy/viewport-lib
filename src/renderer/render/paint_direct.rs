@@ -41,6 +41,7 @@ impl ViewportRenderer {
             vp_slot,
             &self.mesh_uniforms.wireframe_bind_groups,
             &self.mesh_uniforms.bind_groups,
+            &self.mesh_uniforms.submesh_bind_groups,
             &self.prepared_surfaces,
             self.per_object_bundle.as_ref()
         );

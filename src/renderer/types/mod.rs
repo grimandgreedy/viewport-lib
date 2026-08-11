@@ -193,7 +193,7 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $scene_items:expr, $po_bundle:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $submesh_bgs:expr, $scene_items:expr, $po_bundle:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
@@ -210,6 +210,12 @@ macro_rules! emit_draw_calls {
         // a per-item ObjectUniform buffer with the mesh's real textures/LUT/matcap.
         // Items routed through the instanced path have None here and use mesh.object_bind_group.
         let per_item_object_bind_groups: &[Option<crate::gpu::BindGroup>] = $per_item_bgs;
+        // Per-range bind groups for items drawn with per-submesh materials,
+        // keyed by item position. Empty for frames without range items.
+        let submesh_bind_groups: &std::collections::HashMap<
+            usize,
+            Vec<Option<crate::gpu::BindGroup>>,
+        > = $submesh_bgs;
 
         // The LOD-resolved surface items from prepare: each item's mesh is the
         // level chosen for its on-screen size, and culled items are hidden.
@@ -450,6 +456,67 @@ macro_rules! emit_draw_calls {
                                     // cached geometry state no longer holds.
                                     cur_geometry = None;
                                 }
+                            } else if let Some((mats, bgs)) =
+                                crate::renderer::prepare::active_submesh_materials(item, mesh)
+                                    .zip(submesh_bind_groups.get(&item_idx))
+                            {
+                                // One draw per range. The LDR path draws blend
+                                // ranges inline with the transparent pipeline,
+                                // matching how it draws blended items.
+                                if cur_geometry != Some((item.mesh_id, false)) {
+                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_index_buffer(
+                                        mesh.index_buffer.slice(..),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    cur_geometry = Some((item.mesh_id, false));
+                                }
+                                for (r, (mat, range)) in
+                                    mats.iter().zip(&mesh.submeshes).enumerate()
+                                {
+                                    let blended_r =
+                                        item.settings.opacity < 1.0 || mat.is_blend();
+                                    let plug_r =
+                                        resources.material_plugin_draw(mat.shading_plugin);
+                                    let pl: &crate::gpu::RenderPipeline =
+                                        if let Some((pp, _)) = plug_r {
+                                            if blended_r {
+                                                &pp.ldr.transparent
+                                            } else if mat.is_two_sided() {
+                                                &pp.ldr.solid_two_sided
+                                            } else {
+                                                &pp.ldr.solid
+                                            }
+                                        } else if blended_r {
+                                            &resources.transparent_pipeline
+                                        } else if mat.is_two_sided() {
+                                            &resources.solid_two_sided_pipeline
+                                        } else {
+                                            &resources.solid_pipeline
+                                        };
+                                    if cur_pipeline != Some(pl as *const _) {
+                                        render_pass.set_pipeline(pl);
+                                        cur_pipeline = Some(pl as *const _);
+                                    }
+                                    let bg = bgs
+                                        .get(r)
+                                        .and_then(|b| b.as_ref())
+                                        .unwrap_or_else(|| {
+                                            per_item_object_bind_groups
+                                                .get(item_idx)
+                                                .and_then(|opt| opt.as_ref())
+                                                .unwrap_or(&mesh.object_bind_group)
+                                        });
+                                    render_pass.set_bind_group(1, bg, &[]);
+                                    if let Some((_, mat_bg)) = plug_r {
+                                        bind_material_group!(render_pass, mat_bg);
+                                    }
+                                    render_pass.draw_indexed(
+                                        range.first_index..range.first_index + range.index_count,
+                                        0,
+                                        0..1,
+                                    );
+                                }
                             } else {
                                 if cur_geometry != Some((item.mesh_id, false)) {
                                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -595,17 +662,16 @@ macro_rules! emit_draw_calls {
                             let filter_result = compute_filter_results
                                 .iter()
                                 .find(|r| r.mesh_id == item.mesh_id);
-                            set_pipeline_cached!($pipeline);
-                            set_deform_cached!(deform_bg);
-                            if let Some(fr) = filter_result {
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(
-                                    fr.index_buffer.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
-                                cur_geometry = None;
+                            let ranges = if filter_result.is_none() {
+                                // A compute-filtered index buffer is compacted,
+                                // so the mesh's ranges no longer address it.
+                                crate::renderer::prepare::active_submesh_materials(item, mesh)
+                                    .zip(submesh_bind_groups.get(&item_idx))
                             } else {
+                                None
+                            };
+                            if let Some((mats, bgs)) = ranges {
+                                set_deform_cached!(deform_bg);
                                 if cur_geometry != Some((item.mesh_id, false)) {
                                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                     render_pass.set_index_buffer(
@@ -614,7 +680,72 @@ macro_rules! emit_draw_calls {
                                     );
                                     cur_geometry = Some((item.mesh_id, false));
                                 }
-                                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                                for (r, (mat, range)) in
+                                    mats.iter().zip(&mesh.submeshes).enumerate()
+                                {
+                                    let blended_r =
+                                        item.settings.opacity < 1.0 || mat.is_blend();
+                                    let plug_r =
+                                        resources.material_plugin_draw(mat.shading_plugin);
+                                    let pl: &crate::gpu::RenderPipeline =
+                                        if let Some((pp, _)) = plug_r {
+                                            if blended_r {
+                                                &pp.ldr.transparent
+                                            } else if mat.is_two_sided() {
+                                                &pp.ldr.solid_two_sided
+                                            } else {
+                                                &pp.ldr.solid
+                                            }
+                                        } else if blended_r {
+                                            &resources.transparent_pipeline
+                                        } else if mat.is_two_sided() {
+                                            &resources.solid_two_sided_pipeline
+                                        } else {
+                                            &resources.solid_pipeline
+                                        };
+                                    set_pipeline_cached!(pl);
+                                    let bg = bgs
+                                        .get(r)
+                                        .and_then(|b| b.as_ref())
+                                        .unwrap_or_else(|| {
+                                            per_item_object_bind_groups
+                                                .get(item_idx)
+                                                .and_then(|opt| opt.as_ref())
+                                                .unwrap_or(&mesh.object_bind_group)
+                                        });
+                                    render_pass.set_bind_group(1, bg, &[]);
+                                    if let Some((_, mat_bg)) = plug_r {
+                                        bind_material_group!(render_pass, mat_bg);
+                                    }
+                                    render_pass.draw_indexed(
+                                        range.first_index..range.first_index + range.index_count,
+                                        0,
+                                        0..1,
+                                    );
+                                }
+                            } else {
+                                set_pipeline_cached!($pipeline);
+                                set_deform_cached!(deform_bg);
+                                if let Some(fr) = filter_result {
+                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_index_buffer(
+                                        fr.index_buffer.slice(..),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+                                    cur_geometry = None;
+                                } else {
+                                    if cur_geometry != Some((item.mesh_id, false)) {
+                                        render_pass
+                                            .set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                        render_pass.set_index_buffer(
+                                            mesh.index_buffer.slice(..),
+                                            crate::gpu::IndexFormat::Uint32,
+                                        );
+                                        cur_geometry = Some((item.mesh_id, false));
+                                    }
+                                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                                }
                             }
                         }
 

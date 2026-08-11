@@ -19,7 +19,10 @@ mod wireframe;
 
 use math::*;
 use mesh_material::*;
-pub(crate) use mesh_material::{backface_needs_per_object, is_instanceable};
+pub(crate) use mesh_material::{
+    active_submesh_materials, backface_needs_per_object, has_opaque_draws, has_transparent_draws,
+    is_instanceable,
+};
 use overlay_geometry::*;
 use projection::*;
 use wireframe::*;

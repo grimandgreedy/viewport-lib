@@ -25,6 +25,10 @@ pub(crate) struct PerObjectKey {
     pub(crate) pick_id: u64,
     /// How many earlier items this frame shared the same `pick_id`.
     pub(crate) occurrence: u32,
+    /// Which draw resource of the item this entry backs: 0 is the whole-mesh
+    /// entry every item has; `r + 1` is the entry for submesh range `r` of an
+    /// item drawn with per-range materials.
+    pub(crate) submesh: u32,
 }
 
 /// One cached per-object draw resource.
@@ -126,6 +130,12 @@ pub(crate) struct PerObjectState {
     /// in the frame's item list. Populated from `cache` each frame (cheap
     /// reference-counted clones) so the render path can index by item slot.
     pub(crate) bind_groups: Vec<Option<crate::gpu::BindGroup>>,
+    /// Per-range bind groups for items drawn with per-submesh materials,
+    /// keyed by the item's position in the frame's item list. Only items
+    /// whose `submesh_materials` matches their mesh's range count get an
+    /// entry; everything else draws through `bind_groups`. Rebuilt each
+    /// frame like `bind_groups`.
+    pub(crate) submesh_bind_groups: HashMap<usize, Vec<Option<crate::gpu::BindGroup>>>,
     /// Per-item uniform buffers used in wireframe mode.
     pub(crate) wireframe_uniform_bufs: Vec<crate::gpu::Buffer>,
     /// Per-item bind groups pairing wireframe uniforms with fallback textures.
@@ -144,6 +154,7 @@ impl PerObjectState {
             cache: HashMap::new(),
             free_epoch: 0,
             bind_groups: Vec::new(),
+            submesh_bind_groups: HashMap::new(),
             wireframe_uniform_bufs: Vec::new(),
             wireframe_bind_groups: Vec::new(),
             tvm_wireframe_draws: Vec::new(),

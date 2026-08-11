@@ -75,6 +75,13 @@ fn decal_scissor(model: &glam::Mat4, view_proj: &glam::Mat4, vp_w: u32, vp_h: u3
 /// selects the material-plugin pipeline family; the built-in pipelines are
 /// passed in by the caller. Shared by the HDR scene pass and the HDR/LDR
 /// foreground passes; group 0 must already be bound by the caller.
+///
+/// `submesh_bgs` carries the per-range bind groups for an item drawn with
+/// per-submesh materials; with it set the indexed path issues one draw per
+/// range. `submesh_transparent` filters which ranges draw: `Some(false)`
+/// draws only opaque-material ranges (the HDR scene pass, whose transparent
+/// ranges go to OIT), `Some(true)` only blend ranges, `None` all of them
+/// (foreground passes, which draw transparency inline).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_mesh_item(
     resources: &DeviceResources,
@@ -85,8 +92,11 @@ pub(super) fn draw_mesh_item(
     wireframe_mode: bool,
     hdr: bool,
     solid_pl: &crate::gpu::RenderPipeline,
+    solid_two_sided_pl: &crate::gpu::RenderPipeline,
     trans_pl: &crate::gpu::RenderPipeline,
     wf_pl: &crate::gpu::RenderPipeline,
+    submesh_bgs: Option<&[Option<crate::gpu::BindGroup>]>,
+    submesh_transparent: Option<bool>,
 ) {
     let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
         return;
@@ -147,30 +157,81 @@ pub(super) fn draw_mesh_item(
         let filter = compute_filter_results
             .iter()
             .find(|r| r.mesh_id == item.mesh_id);
-        let pl = if let Some((pp, _)) = plug {
-            if item.settings.opacity < 1.0 {
-                &pp.hdr.transparent
-            } else if item.material.is_two_sided() {
-                &pp.hdr.solid_two_sided
-            } else {
-                &pp.hdr.solid
-            }
-        } else if item.settings.opacity < 1.0 {
-            trans_pl
+        let ranges = if filter.is_none() {
+            // A compute-filtered index buffer is compacted, so the mesh's
+            // ranges no longer address it; the filter branch below draws the
+            // whole filtered mesh with the item material instead.
+            crate::renderer::prepare::active_submesh_materials(item, mesh).zip(submesh_bgs)
         } else {
-            solid_pl
+            None
         };
-        render_pass.set_pipeline(pl);
-        bind_deform_group!(render_pass, resources, deform_bg);
-        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-        if let Some(fr) = filter {
-            render_pass
-                .set_index_buffer(fr.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
-        } else {
+        if let Some((mats, bgs)) = ranges {
+            bind_deform_group!(render_pass, resources, deform_bg);
+            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
             render_pass
                 .set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            for (r, (mat, range)) in mats.iter().zip(&mesh.submeshes).enumerate() {
+                let is_trans = item.settings.opacity < 1.0 || mat.is_blend();
+                if let Some(want) = submesh_transparent {
+                    if is_trans != want {
+                        continue;
+                    }
+                }
+                let plug_r = resources.material_plugin_draw(mat.shading_plugin);
+                let pl = if let Some((pp, _)) = plug_r {
+                    match (hdr, is_trans, mat.is_two_sided()) {
+                        (true, true, _) => &pp.hdr.transparent,
+                        (true, false, true) => &pp.hdr.solid_two_sided,
+                        (true, false, false) => &pp.hdr.solid,
+                        (false, true, _) => &pp.ldr.transparent,
+                        (false, false, true) => &pp.ldr.solid_two_sided,
+                        (false, false, false) => &pp.ldr.solid,
+                    }
+                } else if is_trans {
+                    trans_pl
+                } else if mat.is_two_sided() {
+                    solid_two_sided_pl
+                } else {
+                    solid_pl
+                };
+                render_pass.set_pipeline(pl);
+                let bg = bgs.get(r).and_then(|b| b.as_ref()).unwrap_or(obj_bg);
+                render_pass.set_bind_group(1, bg, &[]);
+                if let Some((_, mat_bg)) = plug_r {
+                    bind_material_group!(render_pass, mat_bg);
+                }
+                render_pass.draw_indexed(
+                    range.first_index..range.first_index + range.index_count,
+                    0,
+                    0..1,
+                );
+            }
+        } else {
+            let pl = if let Some((pp, _)) = plug {
+                if item.settings.opacity < 1.0 {
+                    &pp.hdr.transparent
+                } else if item.material.is_two_sided() {
+                    &pp.hdr.solid_two_sided
+                } else {
+                    &pp.hdr.solid
+                }
+            } else if item.settings.opacity < 1.0 {
+                trans_pl
+            } else {
+                solid_pl
+            };
+            render_pass.set_pipeline(pl);
+            bind_deform_group!(render_pass, resources, deform_bg);
+            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            if let Some(fr) = filter {
+                render_pass
+                    .set_index_buffer(fr.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+            } else {
+                render_pass
+                    .set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
         }
     }
     if item.show_normals {
@@ -413,9 +474,10 @@ impl ViewportRenderer {
             {
                 self.instancing.batches.iter().any(|b| b.is_transparent)
             } else {
-                scene_items
-                    .iter()
-                    .any(|i| !i.settings.hidden && i.settings.opacity < 1.0)
+                scene_items.iter().any(|i| {
+                    !i.settings.hidden
+                        && crate::renderer::prepare::has_transparent_draws(i, &self.resources)
+                })
             } || frame
                 .scene
                 .volume_meshes
@@ -845,7 +907,7 @@ impl ViewportRenderer {
                         // transparency throughout.
                         for (item_idx, item) in
                             excluded_items.iter().copied().filter(|(_, item)| {
-                                item.settings.opacity >= 1.0 && !item.material.is_blend()
+                                crate::renderer::prepare::has_opaque_draws(item, resources)
                             })
                         {
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -885,12 +947,56 @@ impl ViewportRenderer {
                             let filter = compute_filter_results
                                 .iter()
                                 .find(|r| r.mesh_id == item.mesh_id);
+                            let ranges = if filter.is_none() {
+                                crate::renderer::prepare::active_submesh_materials(item, mesh)
+                                    .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx))
+                            } else {
+                                None
+                            };
                             if let Some(fr) = filter {
                                 render_pass.set_index_buffer(
                                     fr.index_buffer.slice(..),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+                            } else if let Some((mats, bgs)) = ranges {
+                                // One draw per opaque-material range; blend
+                                // ranges go to the OIT pass with the other
+                                // transparent excluded items.
+                                render_pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                for (r, (mat, range)) in
+                                    mats.iter().zip(&mesh.submeshes).enumerate()
+                                {
+                                    if mat.is_blend() {
+                                        continue;
+                                    }
+                                    let plug_r = resources.material_plugin_draw(mat.shading_plugin);
+                                    let pl = if let Some((pp, _)) = plug_r {
+                                        if mat.is_two_sided() {
+                                            &pp.hdr.solid_two_sided
+                                        } else {
+                                            &pp.hdr.solid
+                                        }
+                                    } else if mat.is_two_sided() {
+                                        hdr_solid_two_sided
+                                    } else {
+                                        hdr_solid
+                                    };
+                                    render_pass.set_pipeline(pl);
+                                    let bg = bgs.get(r).and_then(|b| b.as_ref()).unwrap_or(obj_bg);
+                                    render_pass.set_bind_group(1, bg, &[]);
+                                    if let Some((_, mat_bg)) = plug_r {
+                                        bind_material_group!(render_pass, mat_bg);
+                                    }
+                                    render_pass.draw_indexed(
+                                        range.first_index..range.first_index + range.index_count,
+                                        0,
+                                        0..1,
+                                    );
+                                }
                             } else {
                                 render_pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
@@ -956,9 +1062,15 @@ impl ViewportRenderer {
                         {
                             continue;
                         }
-                        if item.settings.opacity < 1.0 || item.material.is_blend() {
+                        // A per-submesh-material item can hold both opaque and
+                        // blend ranges, so it may appear in both lists: its
+                        // opaque ranges draw here, its blend ranges in OIT.
+                        if crate::renderer::prepare::has_transparent_draws(item, resources) {
                             transparent.push((idx, item));
-                        } else if bundle_hit.is_none() {
+                        }
+                        if bundle_hit.is_none()
+                            && crate::renderer::prepare::has_opaque_draws(item, resources)
+                        {
                             opaque.push((idx, item));
                         }
                     }
@@ -1012,8 +1124,14 @@ impl ViewportRenderer {
                                 frame.viewport.wireframe_mode,
                                 true,
                                 solid_pl,
+                                hdr_solid_two_sided,
                                 hdr_trans,
                                 hdr_wf,
+                                self.mesh_uniforms
+                                    .submesh_bind_groups
+                                    .get(item_idx)
+                                    .map(|v| v.as_slice()),
+                                Some(false),
                             );
                         }
                     }
@@ -2251,7 +2369,7 @@ impl ViewportRenderer {
                         // A transparent item that is not instanceable is drawn per-object
                         // in the OIT pass below; if any exists the pass must run.
                         !i.settings.hidden
-                            && (i.settings.opacity < 1.0 || i.material.is_blend())
+                            && crate::renderer::prepare::has_transparent_draws(i, &self.resources)
                             && !crate::renderer::prepare::is_instanceable(
                                 i,
                                 &self.resources,
@@ -2260,7 +2378,8 @@ impl ViewportRenderer {
                     })
             } else {
                 scene_items.iter().any(|i| {
-                    !i.settings.hidden && (i.settings.opacity < 1.0 || i.material.is_blend())
+                    !i.settings.hidden
+                        && crate::renderer::prepare::has_transparent_draws(i, &self.resources)
                 })
             } || frame
                 .scene
@@ -2434,7 +2553,10 @@ impl ViewportRenderer {
                         let mut plugin_pipeline_active = false;
                         for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
-                                || (item.settings.opacity >= 1.0 && !item.material.is_blend())
+                                || !crate::renderer::prepare::has_transparent_draws(
+                                    item,
+                                    &self.resources,
+                                )
                             {
                                 continue;
                             }
@@ -2450,6 +2572,56 @@ impl ViewportRenderer {
                             let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                                 continue;
                             };
+                            let deform_bg = self
+                                .resources
+                                .deform
+                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                            let obj_bg = self
+                                .mesh_uniforms
+                                .bind_groups
+                                .get(item_idx)
+                                .and_then(|opt| opt.as_ref())
+                                .unwrap_or(&mesh.object_bind_group);
+                            bind_deform_group!(oit_pass, self.resources, deform_bg);
+                            oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            oit_pass.set_index_buffer(
+                                mesh.index_buffer.slice(..),
+                                crate::gpu::IndexFormat::Uint32,
+                            );
+                            if let Some((mats, bgs)) =
+                                crate::renderer::prepare::active_submesh_materials(item, mesh)
+                                    .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx))
+                            {
+                                // Blend-material ranges only; the item's opaque
+                                // ranges drew in the scene pass.
+                                for (r, (mat, range)) in
+                                    mats.iter().zip(&mesh.submeshes).enumerate()
+                                {
+                                    if item.settings.opacity >= 1.0 && !mat.is_blend() {
+                                        continue;
+                                    }
+                                    match self.resources.material_plugin_draw(mat.shading_plugin) {
+                                        Some((pp, mat_bg)) => {
+                                            oit_pass.set_pipeline(&pp.oit);
+                                            bind_material_group!(oit_pass, mat_bg);
+                                            plugin_pipeline_active = true;
+                                        }
+                                        None if plugin_pipeline_active => {
+                                            oit_pass.set_pipeline(pipeline);
+                                            plugin_pipeline_active = false;
+                                        }
+                                        None => {}
+                                    }
+                                    let bg = bgs.get(r).and_then(|b| b.as_ref()).unwrap_or(obj_bg);
+                                    oit_pass.set_bind_group(1, bg, &[]);
+                                    oit_pass.draw_indexed(
+                                        range.first_index..range.first_index + range.index_count,
+                                        0,
+                                        0..1,
+                                    );
+                                }
+                                continue;
+                            }
                             match self
                                 .resources
                                 .material_plugin_draw(item.material.shading_plugin)
@@ -2465,23 +2637,7 @@ impl ViewportRenderer {
                                 }
                                 None => {}
                             }
-                            let deform_bg = self
-                                .resources
-                                .deform
-                                .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                            let obj_bg = self
-                                .mesh_uniforms
-                                .bind_groups
-                                .get(item_idx)
-                                .and_then(|opt| opt.as_ref())
-                                .unwrap_or(&mesh.object_bind_group);
                             oit_pass.set_bind_group(1, obj_bg, &[]);
-                            bind_deform_group!(oit_pass, self.resources, deform_bg);
-                            oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            oit_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
                             oit_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                         }
                     }
@@ -2490,13 +2646,64 @@ impl ViewportRenderer {
                     let mut plugin_pipeline_active = false;
                     for (item_idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden
-                            || (item.settings.opacity >= 1.0 && !item.material.is_blend())
+                            || !crate::renderer::prepare::has_transparent_draws(
+                                item,
+                                &self.resources,
+                            )
                         {
                             continue;
                         }
                         let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
                             continue;
                         };
+                        let deform_bg = self
+                            .resources
+                            .deform
+                            .instance_bind_group_for(item.mesh_id, item.deform_instance);
+                        let obj_bg = self
+                            .mesh_uniforms
+                            .bind_groups
+                            .get(item_idx)
+                            .and_then(|opt| opt.as_ref())
+                            .unwrap_or(&mesh.object_bind_group);
+                        bind_deform_group!(oit_pass, self.resources, deform_bg);
+                        oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        oit_pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            crate::gpu::IndexFormat::Uint32,
+                        );
+                        if let Some((mats, bgs)) =
+                            crate::renderer::prepare::active_submesh_materials(item, mesh)
+                                .zip(self.mesh_uniforms.submesh_bind_groups.get(&item_idx))
+                        {
+                            // Blend-material ranges only; the item's opaque
+                            // ranges drew in the scene pass.
+                            for (r, (mat, range)) in mats.iter().zip(&mesh.submeshes).enumerate() {
+                                if item.settings.opacity >= 1.0 && !mat.is_blend() {
+                                    continue;
+                                }
+                                match self.resources.material_plugin_draw(mat.shading_plugin) {
+                                    Some((pp, mat_bg)) => {
+                                        oit_pass.set_pipeline(&pp.oit);
+                                        bind_material_group!(oit_pass, mat_bg);
+                                        plugin_pipeline_active = true;
+                                    }
+                                    None if plugin_pipeline_active => {
+                                        oit_pass.set_pipeline(pipeline);
+                                        plugin_pipeline_active = false;
+                                    }
+                                    None => {}
+                                }
+                                let bg = bgs.get(r).and_then(|b| b.as_ref()).unwrap_or(obj_bg);
+                                oit_pass.set_bind_group(1, bg, &[]);
+                                oit_pass.draw_indexed(
+                                    range.first_index..range.first_index + range.index_count,
+                                    0,
+                                    0..1,
+                                );
+                            }
+                            continue;
+                        }
                         match self
                             .resources
                             .material_plugin_draw(item.material.shading_plugin)
@@ -2512,23 +2719,7 @@ impl ViewportRenderer {
                             }
                             None => {}
                         }
-                        let deform_bg = self
-                            .resources
-                            .deform
-                            .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                        let obj_bg = self
-                            .mesh_uniforms
-                            .bind_groups
-                            .get(item_idx)
-                            .and_then(|opt| opt.as_ref())
-                            .unwrap_or(&mesh.object_bind_group);
                         oit_pass.set_bind_group(1, obj_bg, &[]);
-                        bind_deform_group!(oit_pass, self.resources, deform_bg);
-                        oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        oit_pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
                         oit_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                     }
                 }
@@ -3357,8 +3548,14 @@ impl ViewportRenderer {
                 false,
                 true,
                 solid_pl,
+                hdr_solid_two_sided,
                 hdr_trans,
                 hdr_wf,
+                // Foreground items draw through the positional
+                // foreground_objects cache, which has no per-range entries;
+                // they render with the single item material.
+                None,
+                None,
             );
         }
 
