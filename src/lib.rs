@@ -307,9 +307,9 @@ pub use resources::{
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, ComputeFilterResult,
     DeviceResources, EnvironmentMapId, EnvironmentZone, FontError, FontHandle, FrameBudget,
     GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive,
-    JobId, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes, TextMetrics, TextureId,
-    TextureMemoryStats, UploadStatus, VolumeId, VramBudget, lerp_attributes,
-    supports_texture_format, vram_budget,
+    JobId, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange,
+    TextMetrics, TextureId, TextureMemoryStats, UploadStatus, VolumeId, VramBudget,
+    lerp_attributes, supports_texture_format, vram_budget,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,

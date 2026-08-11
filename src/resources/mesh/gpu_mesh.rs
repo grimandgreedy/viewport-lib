@@ -14,6 +14,10 @@ pub struct GpuMesh {
     pub index_buffer: crate::gpu::Buffer,
     /// Number of indices in the triangle index buffer.
     pub index_count: u32,
+    /// Material ranges partitioning the index buffer, from
+    /// `MeshData::submeshes`. Empty for single-material meshes, which draw
+    /// the full `0..index_count` range.
+    pub submeshes: Vec<crate::resources::mesh::meshes::SubmeshRange>,
     /// Edge index buffer (deduplicated pairs, for wireframe LineList
     /// rendering). Built on the first frame something renders this mesh as
     /// wireframe, not at upload time.

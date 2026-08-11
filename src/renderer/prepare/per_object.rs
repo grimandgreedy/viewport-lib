@@ -905,6 +905,10 @@ impl ViewportRenderer {
                     // Material-plugin items need a per-item pipeline and a
                     // group-3 bind the bundle recorder does not capture.
                     || item.material.shading_plugin.is_some()
+                    // Per-submesh materials need one draw and one bind group
+                    // per index range; the bundle records a single
+                    // full-range draw per mesh.
+                    || item.submesh_materials.is_some()
                 {
                     break 'plan None;
                 }

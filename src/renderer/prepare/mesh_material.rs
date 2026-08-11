@@ -15,8 +15,8 @@ use super::*;
 /// instanced shader has no warp support), uses a styled back-face policy
 /// (`DifferentColour`/`Tint`/`Pattern`, which need per-item back-face state), a
 /// matcap, or param-vis, has a pending compute-filter result (which needs a
-/// per-item index buffer), has per-instance deform data, or its mesh has a
-/// position/normal override buffer bound. `Cull` and `Identical` back-face
+/// per-item index buffer), carries per-submesh materials, has per-instance
+/// deform data, or its mesh has a position/normal override buffer bound. `Cull` and `Identical` back-face
 /// policies both render through the instanced path: `Identical` batches use the
 /// two-sided (`cull_mode: None`) instanced pipeline.
 pub(crate) fn is_instanceable(
@@ -41,6 +41,10 @@ pub(crate) fn is_instanceable(
         // emissive texture. An emissive-textured material must stay per-object so
         // the factor is modulated by the texture instead of applied flat.
         && item.material.emissive_texture_id.is_none()
+        // Per-submesh materials mean one draw per index range, each with its
+        // own object bind group; the instanced path draws the whole mesh in
+        // one call with batch-level textures, so range items stay per-object.
+        && item.submesh_materials.is_none()
         && resources.mesh_store.get(item.mesh_id).is_some()
         && !compute_filter_results
             .iter()

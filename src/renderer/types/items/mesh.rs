@@ -42,6 +42,15 @@ pub struct SceneRenderItem {
     pub show_normals: bool,
     /// Per-object material (colour, shading coefficients, texture).
     pub material: Material,
+    /// One material per submesh range of the mesh, indexed to match
+    /// `MeshData::submeshes` at upload time.
+    ///
+    /// `None` draws every range (or the whole mesh, if it has no ranges)
+    /// with `material`. When set, the renderer issues one draw per range
+    /// with the matching material; a length mismatch against the mesh's
+    /// range count falls back to `material` for the whole mesh. Items with
+    /// this set are drawn per-object (no instancing).
+    pub submesh_materials: Option<Vec<Material>>,
     /// Named scalar attribute to colour by. `None` = use material base colour.
     pub active_attribute: Option<crate::resources::AttributeRef>,
     /// Explicit scalar range `(min, max)`. `None` = use auto-range computed at upload time.
@@ -124,6 +133,7 @@ impl Default for SceneRenderItem {
             settings: ItemSettings::default(),
             show_normals: false,
             material: Material::default(),
+            submesh_materials: None,
             active_attribute: None,
             scalar_range: None,
             colourmap_id: None,

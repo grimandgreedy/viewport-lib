@@ -260,6 +260,7 @@ impl DeviceResources {
         mesh.cpu_positions = Some(cpu_positions);
         mesh.cpu_normals = Some(cpu_normals);
         mesh.cpu_indices = Some(cpu_indices);
+        mesh.submeshes = data.submeshes.clone();
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
                 device,
@@ -465,6 +466,7 @@ impl DeviceResources {
                             mesh.cpu_positions = Some(cpu_positions);
                             mesh.cpu_normals = Some(cpu_normals);
                             mesh.cpu_indices = Some(cpu_indices);
+                            mesh.submeshes = data.submeshes.clone();
                             let (
                                 attr_bufs,
                                 attr_ranges,
@@ -1326,6 +1328,7 @@ impl DeviceResources {
                 mesh.cpu_positions = Some(data.positions.clone());
                 mesh.cpu_normals = Some(data.normals.clone());
                 mesh.cpu_indices = Some(data.indices.clone());
+                mesh.submeshes = data.submeshes.clone();
                 mesh.content_rev += 1;
 
                 self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
@@ -1366,6 +1369,7 @@ impl DeviceResources {
         new_mesh.cpu_positions = Some(data.positions.clone());
         new_mesh.cpu_normals = Some(data.normals.clone());
         new_mesh.cpu_indices = Some(data.indices.clone());
+        new_mesh.submeshes = data.submeshes.clone();
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
                 device,
@@ -2415,6 +2419,17 @@ impl DeviceResources {
                 });
             }
         }
+        let index_count = data.indices.len() as u64;
+        for range in &data.submeshes {
+            let end = range.first_index as u64 + range.index_count as u64;
+            if end > index_count {
+                return Err(crate::error::ViewportError::SubmeshRangeOutOfBounds {
+                    first_index: range.first_index,
+                    range_count: range.index_count,
+                    index_count: data.indices.len(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -3051,6 +3066,7 @@ impl DeviceResources {
             vertex_buffer,
             index_buffer,
             index_count,
+            submeshes: Vec::new(),
             // Wireframe edges are built lazily on first use; the indices are
             // retained so any mesh can materialise them.
             edge_index_buffer: None,
@@ -3725,7 +3741,7 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod override_tests {
-    use super::OverrideBufferSlice;
+    use super::{OverrideBufferSlice, SubmeshRange};
     use crate::DeviceResources;
     use crate::geometry::primitives;
 
@@ -3943,6 +3959,95 @@ mod override_tests {
             "gen must advance past the old mesh's so the rebuilt bind group \
              picks up the carried buffer"
         );
+    }
+
+    #[test]
+    fn submesh_range_past_index_buffer_rejected() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut plane = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let index_count = plane.indices.len() as u32;
+        plane.submeshes = vec![SubmeshRange {
+            first_index: 3,
+            index_count,
+        }];
+        let err = resources.upload_mesh_data(&device, &plane);
+        assert!(matches!(
+            err,
+            Err(crate::error::ViewportError::SubmeshRangeOutOfBounds { first_index: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn submesh_ranges_stored_on_upload_and_replace() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut plane = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let index_count = plane.indices.len() as u32;
+        let ranges = vec![
+            SubmeshRange {
+                first_index: 0,
+                index_count: 3,
+            },
+            SubmeshRange {
+                first_index: 3,
+                index_count: index_count - 3,
+            },
+        ];
+        plane.submeshes = ranges.clone();
+        let mesh_id = resources.upload_mesh_data(&device, &plane).unwrap();
+        assert_eq!(resources.mesh_store.get(mesh_id).unwrap().submeshes, ranges);
+
+        // Same topology takes the in-place path; ranges must still update.
+        plane.submeshes = vec![SubmeshRange {
+            first_index: 0,
+            index_count,
+        }];
+        resources
+            .replace_mesh_data(&device, &queue, mesh_id, &plane)
+            .unwrap();
+        assert_eq!(
+            resources.mesh_store.get(mesh_id).unwrap().submeshes,
+            plane.submeshes
+        );
+    }
+
+    #[test]
+    fn lod_group_rejects_submesh_range_count_mismatch() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut ranged = primitives::grid_plane(1.0, 1.0, 3, 3);
+        ranged.submeshes = vec![
+            SubmeshRange {
+                first_index: 0,
+                index_count: 3,
+            },
+            SubmeshRange {
+                first_index: 3,
+                index_count: 3,
+            },
+        ];
+        let level0 = resources.upload_mesh_data(&device, &ranged).unwrap();
+        let plain = primitives::grid_plane(1.0, 1.0, 2, 2);
+        let level1 = resources.upload_mesh_data(&device, &plain).unwrap();
+
+        let err = resources.register_lod_group(&[level0, level1], &[0.5, 0.1]);
+        assert!(matches!(
+            err,
+            Err(crate::error::ViewportError::LodLevelIncompatible { level: 1, .. })
+        ));
     }
 
     #[test]
@@ -4520,6 +4625,22 @@ mod c4_volume_mesh_tests {
     }
 }
 
+/// A contiguous run of the index buffer drawn with its own material.
+///
+/// Ranges partition a mesh so different parts of it can bind different
+/// materials: `SceneRenderItem::submesh_materials[i]` supplies the material
+/// for `submeshes[i]`. The caller must sort triangles by material before
+/// building ranges, so each material's indices form one contiguous run.
+/// Asset importers normally do this at import time; viewport-lib does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SubmeshRange {
+    /// First index in the mesh's index buffer.
+    pub first_index: u32,
+    /// Number of indices in the range (a multiple of 3 for triangle lists).
+    pub index_count: u32,
+}
+
 /// Raw mesh data for upload to the GPU. Framework-agnostic representation.
 #[derive(Clone)]
 #[non_exhaustive]
@@ -4558,6 +4679,14 @@ pub struct MeshData {
     /// `None`, entries beyond the slice length, and meshes drawn without a
     /// reading plugin all resolve to `vec4(0.0)`.
     pub extension_attributes: Option<Vec<[f32; 4]>>,
+    /// Optional material ranges partitioning the index buffer.
+    ///
+    /// Empty means the whole mesh draws with the item's single material,
+    /// which is the behaviour for meshes that do not need ranges. When
+    /// non-empty, an item can bind one material per range via
+    /// `SceneRenderItem::submesh_materials`. See [`SubmeshRange`] for the
+    /// index-sorting contract.
+    pub submeshes: Vec<SubmeshRange>,
 }
 
 impl Default for MeshData {
@@ -4571,6 +4700,7 @@ impl Default for MeshData {
             vertex_colours: None,
             attributes: std::collections::HashMap::new(),
             extension_attributes: None,
+            submeshes: Vec::new(),
         }
     }
 }

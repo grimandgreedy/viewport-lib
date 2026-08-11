@@ -532,6 +532,7 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
             vertex_colours: None,
             attributes,
             extension_attributes: None,
+            submeshes: Vec::new(),
         },
         face_to_cell,
     )
@@ -1175,6 +1176,7 @@ pub fn extract_clipped_volume_faces(
             vertex_colours: None,
             attributes,
             extension_attributes: None,
+            submeshes: Vec::new(),
         },
         face_to_cell,
     )

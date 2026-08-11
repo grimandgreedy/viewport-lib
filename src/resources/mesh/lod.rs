@@ -238,8 +238,9 @@ impl crate::resources::DeviceResources {
     /// height. The thresholds must strictly decrease.
     ///
     /// All levels must be drawable the same way: they need the same named
-    /// attributes and the same deformer attachment, otherwise switching to a
-    /// level would silently change or drop coloring, warp, or skinning. That is
+    /// attributes, the same deformer attachment, and the same submesh range
+    /// count, otherwise switching to a level would silently change or drop
+    /// coloring, warp, skinning, or per-range material assignment. That is
     /// checked here so a mismatch fails at registration instead of at render
     /// time.
     ///
@@ -251,8 +252,8 @@ impl crate::resources::DeviceResources {
     /// - [`ViewportError::SlotEmpty`] if a mesh id is not in the store.
     /// - [`ViewportError::LodThresholdsNotDescending`] if a threshold is not
     ///   smaller than the previous one.
-    /// - [`ViewportError::LodLevelIncompatible`] if a level's attribute set or
-    ///   deform attachment differs from level 0.
+    /// - [`ViewportError::LodLevelIncompatible`] if a level's attribute set,
+    ///   deform attachment, or submesh range count differs from level 0.
     pub fn register_lod_group(
         &mut self,
         levels: &[MeshId],
@@ -353,11 +354,12 @@ impl crate::resources::DeviceResources {
     }
 
     /// Check that every level draws the same way as level 0: same named
-    /// attributes and same deformer attachment.
+    /// attributes, same deformer attachment, same submesh range count.
     fn validate_lod_compatibility(&self, levels: &[MeshId]) -> ViewportResult<()> {
         let base = levels[0];
         let base_attrs = self.mesh_attribute_names(base);
         let base_deformed = self.deform.meshes.contains_key(&base);
+        let base_submeshes = self.mesh_store.get(base).map_or(0, |m| m.submeshes.len());
 
         for (i, &mesh) in levels.iter().enumerate().skip(1) {
             let attrs = self.mesh_attribute_names(mesh);
@@ -382,6 +384,18 @@ impl crate::resources::DeviceResources {
                 return Err(ViewportError::LodLevelIncompatible {
                     level: i,
                     reason: reason.to_string(),
+                });
+            }
+            // A level swap must not change which material applies where:
+            // `SceneRenderItem::submesh_materials` is indexed by range, so
+            // every level needs the same range count as level 0.
+            let submeshes = self.mesh_store.get(mesh).map_or(0, |m| m.submeshes.len());
+            if submeshes != base_submeshes {
+                return Err(ViewportError::LodLevelIncompatible {
+                    level: i,
+                    reason: format!(
+                        "has {submeshes} submesh ranges but level 0 has {base_submeshes}"
+                    ),
                 });
             }
         }

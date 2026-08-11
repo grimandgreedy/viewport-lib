@@ -123,6 +123,20 @@ pub enum ViewportError {
         vertex_count: usize,
     },
 
+    /// A submesh range extends past the end of the mesh's index buffer.
+    #[error(
+        "submesh range {first_index}..{} exceeds index count {index_count}",
+        *first_index as u64 + *range_count as u64
+    )]
+    SubmeshRangeOutOfBounds {
+        /// First index of the offending range.
+        first_index: u32,
+        /// Number of indices in the offending range.
+        range_count: u32,
+        /// Total number of indices in the mesh.
+        index_count: usize,
+    },
+
     /// Volume scalar data length does not match the declared grid dimensions.
     #[error("volume data length {actual} does not match dims {dims:?} (expected {expected})")]
     VolumeDataLengthMismatch {
