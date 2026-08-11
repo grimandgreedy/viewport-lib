@@ -6572,3 +6572,60 @@ fn submesh_materials_split_across_hdr_and_oit() {
         "blend range (green) did not draw in the OIT pass"
     );
 }
+
+/// The `Scene` path must carry per-submesh materials end to end: set on the
+/// node via `set_submesh_materials`, populated by `collect_render_items`,
+/// and drawn one range per material.
+#[test]
+fn scene_submesh_materials_reach_render_items_and_draw() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = two_range_quad(renderer.resources_mut(), &device);
+
+    let mut red = Material::default();
+    red.base_colour = [1.0, 0.0, 0.0];
+    let mut green = Material::default();
+    green.base_colour = [0.0, 1.0, 0.0];
+
+    let mut scene = Scene::new();
+    let mut base = Material::default();
+    base.base_colour = [0.0, 0.0, 1.0];
+    let node = scene.add(Some(mesh_id), glam::Mat4::IDENTITY, base);
+    let mut settings = ItemSettings::default();
+    settings.unlit = true;
+    scene.set_appearance(node, settings);
+    scene.set_submesh_materials(node, Some(vec![red, green]));
+    assert!(scene.node(node).unwrap().submesh_materials().is_some());
+
+    let items = scene.collect_render_items(&Selection::new());
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].submesh_materials.as_ref().map(|m| m.len()),
+        Some(2),
+        "collect_render_items must carry the node's submesh materials"
+    );
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+
+    let pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert!(count_reddish(&pixels) > 0, "range 0 (red) did not draw");
+    assert!(count_greenish(&pixels) > 0, "range 1 (green) did not draw");
+
+    // Clearing restores the single-material draw.
+    scene.set_submesh_materials(node, None);
+    let items = scene.collect_render_items(&Selection::new());
+    assert!(items[0].submesh_materials.is_none());
+}

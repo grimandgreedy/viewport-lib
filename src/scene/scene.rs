@@ -75,6 +75,10 @@ pub struct SceneNode {
     name: String,
     mesh_id: Option<MeshId>,
     material: Material,
+    /// One material per submesh range of the node's mesh, or `None` to draw
+    /// the whole mesh with `material`. See
+    /// [`SceneRenderItem::submesh_materials`](crate::renderer::SceneRenderItem::submesh_materials).
+    submesh_materials: Option<Vec<Material>>,
     appearance: crate::scene::material::ItemSettings,
     visible: bool,
     show_normals: bool,
@@ -129,6 +133,13 @@ impl SceneNode {
     /// Material parameters (colour, shading, texture) for this node.
     pub fn material(&self) -> &Material {
         &self.material
+    }
+
+    /// Per-submesh-range materials, or `None` when the node draws its whole
+    /// mesh with [`material`](Self::material). Set via
+    /// [`Scene::set_submesh_materials`].
+    pub fn submesh_materials(&self) -> Option<&[Material]> {
+        self.submesh_materials.as_deref()
     }
 
     /// Per-node appearance overrides (hidden, unlit, opacity, wireframe).
@@ -398,6 +409,7 @@ impl Scene {
             name: name.to_string(),
             mesh_id,
             material,
+            submesh_materials: None,
             appearance: crate::scene::material::ItemSettings::default(),
             visible: true,
             show_normals: false,
@@ -632,6 +644,17 @@ impl Scene {
     pub fn set_material(&mut self, id: NodeId, material: Material) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.material = material;
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Set per-submesh-range materials for a node, one per range of the
+    /// mesh's `MeshData::submeshes`. `None` (the default) draws the whole
+    /// mesh with the node's single material, as does a count mismatch
+    /// against the mesh's ranges.
+    pub fn set_submesh_materials(&mut self, id: NodeId, materials: Option<Vec<Material>>) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.submesh_materials = materials;
         }
         self.version = self.version.wrapping_add(1);
     }
@@ -1038,7 +1061,7 @@ impl Scene {
                 settings: item_settings,
                 show_normals: node.show_normals,
                 material: node.material,
-                submesh_materials: None,
+                submesh_materials: node.submesh_materials.clone(),
                 active_attribute: None,
                 scalar_range: None,
                 colourmap_id: None,
@@ -1128,7 +1151,7 @@ impl Scene {
                     settings: item_settings,
                     show_normals: node.show_normals,
                     material: node.material,
-                    submesh_materials: None,
+                    submesh_materials: node.submesh_materials.clone(),
                     active_attribute: None,
                     scalar_range: None,
                     colourmap_id: None,
@@ -1188,7 +1211,7 @@ impl Scene {
                     settings: item_settings,
                     show_normals: node.show_normals,
                     material: node.material,
-                    submesh_materials: None,
+                    submesh_materials: node.submesh_materials.clone(),
                     active_attribute: None,
                     scalar_range: None,
                     colourmap_id: None,
@@ -1235,6 +1258,7 @@ impl Scene {
             name: String::new(),
             mesh_id: None,
             material: crate::scene::material::Material::default(),
+            submesh_materials: None,
             appearance: crate::scene::material::ItemSettings::default(),
             visible: true,
             show_normals: false,
