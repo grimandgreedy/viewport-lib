@@ -3962,6 +3962,72 @@ mod override_tests {
     }
 
     #[test]
+    fn sort_triangles_into_submeshes_groups_and_permutes() {
+        use crate::resources::AttributeData;
+
+        // Four triangles over six vertices, materials interleaved 2,1,2,1.
+        let mut data = super::MeshData::default();
+        data.positions = vec![[0.0, 0.0, 0.0]; 6];
+        data.normals = vec![[0.0, 0.0, 1.0]; 6];
+        data.indices = vec![0, 1, 2, 1, 2, 3, 2, 3, 4, 3, 4, 5];
+        data.attributes.insert(
+            "face_val".to_string(),
+            AttributeData::Face(vec![10.0, 11.0, 12.0, 13.0]),
+        );
+        data.attributes.insert(
+            "corner_val".to_string(),
+            AttributeData::Corner((0..12).map(|i| i as f32).collect()),
+        );
+
+        let ids = data.sort_triangles_into_submeshes(&[2, 1, 2, 1]).unwrap();
+
+        // Distinct ids ascending; stable order within each material.
+        assert_eq!(ids, vec![1, 2]);
+        assert_eq!(
+            data.submeshes,
+            vec![
+                super::SubmeshRange {
+                    first_index: 0,
+                    index_count: 6
+                },
+                super::SubmeshRange {
+                    first_index: 6,
+                    index_count: 6
+                },
+            ]
+        );
+        // Material 1 = original triangles 1, 3; material 2 = triangles 0, 2.
+        assert_eq!(data.indices, vec![1, 2, 3, 3, 4, 5, 0, 1, 2, 2, 3, 4]);
+        let Some(AttributeData::Face(face)) = data.attributes.get("face_val") else {
+            panic!("face attribute lost");
+        };
+        assert_eq!(face, &vec![11.0, 13.0, 10.0, 12.0]);
+        let Some(AttributeData::Corner(corner)) = data.attributes.get("corner_val") else {
+            panic!("corner attribute lost");
+        };
+        assert_eq!(
+            corner,
+            &vec![3.0, 4.0, 5.0, 9.0, 10.0, 11.0, 0.0, 1.0, 2.0, 6.0, 7.0, 8.0]
+        );
+    }
+
+    #[test]
+    fn sort_triangles_into_submeshes_rejects_count_mismatch() {
+        let mut data = super::MeshData::default();
+        data.positions = vec![[0.0, 0.0, 0.0]; 3];
+        data.normals = vec![[0.0, 0.0, 1.0]; 3];
+        data.indices = vec![0, 1, 2];
+        let err = data.sort_triangles_into_submeshes(&[0, 1]);
+        assert!(matches!(
+            err,
+            Err(crate::error::ViewportError::SubmeshTriangleCountMismatch {
+                triangles: 1,
+                material_ids: 2,
+            })
+        ));
+    }
+
+    #[test]
     fn submesh_range_past_index_buffer_rejected() {
         let Some((device, _queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");
@@ -4631,7 +4697,13 @@ mod c4_volume_mesh_tests {
 /// materials: `SceneRenderItem::submesh_materials[i]` supplies the material
 /// for `submeshes[i]`. The caller must sort triangles by material before
 /// building ranges, so each material's indices form one contiguous run.
-/// Asset importers normally do this at import time; viewport-lib does not.
+/// Asset importers normally do this at import time; for interleaved input,
+/// [`MeshData::sort_triangles_into_submeshes`] does the sort and builds the
+/// ranges.
+///
+/// Ranges are expected to partition the index buffer. Overlapping ranges
+/// are not rejected, but the overlapped triangles draw once per range that
+/// covers them; gaps simply never draw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SubmeshRange {
@@ -4709,6 +4781,95 @@ impl MeshData {
     /// Compute the local-space AABB from vertex positions.
     pub fn compute_aabb(&self) -> crate::scene::aabb::Aabb {
         crate::scene::aabb::Aabb::from_positions(&self.positions)
+    }
+
+    /// Sort triangles into contiguous per-material runs and fill `submeshes`.
+    ///
+    /// `triangle_materials[t]` is the material id of triangle `t` (the
+    /// triangle at `indices[3t..3t+3]`). Triangles are stable-sorted by
+    /// material id, the index buffer is rewritten in that order, and
+    /// per-triangle attributes (`Cell`, `Face`, `FaceColour`, `Edge`,
+    /// `Halfedge`, `Corner`) are permuted alongside so they keep addressing
+    /// the same triangles. Per-vertex data is untouched.
+    ///
+    /// One range per distinct material id is written to `submeshes`, ordered
+    /// by ascending id. Returns the distinct ids in that same order, so a
+    /// caller with sparse or unordered ids can line up
+    /// `SceneRenderItem::submesh_materials[i]` with the returned `ids[i]`.
+    ///
+    /// Importers that already emit per-material contiguous indices do not
+    /// need this; it exists for meshes whose triangles arrive interleaved.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewportError::SubmeshTriangleCountMismatch`](crate::error::ViewportError::SubmeshTriangleCountMismatch)
+    /// if `triangle_materials.len() != indices.len() / 3` (or the index
+    /// count is not a multiple of 3).
+    pub fn sort_triangles_into_submeshes(
+        &mut self,
+        triangle_materials: &[u32],
+    ) -> crate::error::ViewportResult<Vec<u32>> {
+        let tri_count = self.indices.len() / 3;
+        if self.indices.len() % 3 != 0 || triangle_materials.len() != tri_count {
+            return Err(crate::error::ViewportError::SubmeshTriangleCountMismatch {
+                triangles: tri_count,
+                material_ids: triangle_materials.len(),
+            });
+        }
+
+        let mut order: Vec<u32> = (0..tri_count as u32).collect();
+        order.sort_by_key(|&t| triangle_materials[t as usize]);
+
+        let old_indices = std::mem::take(&mut self.indices);
+        self.indices = Vec::with_capacity(old_indices.len());
+        for &t in &order {
+            let base = t as usize * 3;
+            self.indices.extend_from_slice(&old_indices[base..base + 3]);
+        }
+
+        // Per-triangle attribute data must follow its triangle to the new
+        // position. Only permute channels whose length matches; a wrong
+        // length is caught by upload validation, not silently reshuffled.
+        fn permute<T: Copy>(values: &mut Vec<T>, order: &[u32], per_tri: usize) {
+            if values.len() != order.len() * per_tri {
+                return;
+            }
+            let old = std::mem::take(values);
+            values.reserve(old.len());
+            for &t in order {
+                let base = t as usize * per_tri;
+                values.extend_from_slice(&old[base..base + per_tri]);
+            }
+        }
+        for data in self.attributes.values_mut() {
+            match data {
+                AttributeData::Cell(v) | AttributeData::Face(v) => permute(v, &order, 1),
+                AttributeData::FaceColour(v) => permute(v, &order, 1),
+                AttributeData::Edge(v) | AttributeData::Halfedge(v) | AttributeData::Corner(v) => {
+                    permute(v, &order, 3)
+                }
+                AttributeData::Vertex(_) | AttributeData::VertexVector(_) => {}
+            }
+        }
+
+        self.submeshes.clear();
+        let mut ids = Vec::new();
+        let mut run_start = 0usize;
+        for i in 0..order.len() {
+            let id = triangle_materials[order[i] as usize];
+            let next_differs = order
+                .get(i + 1)
+                .map_or(true, |&t| triangle_materials[t as usize] != id);
+            if next_differs {
+                self.submeshes.push(SubmeshRange {
+                    first_index: run_start as u32 * 3,
+                    index_count: (i + 1 - run_start) as u32 * 3,
+                });
+                ids.push(id);
+                run_start = i + 1;
+            }
+        }
+        Ok(ids)
     }
 }
 

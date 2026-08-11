@@ -737,14 +737,16 @@ impl ViewportRenderer {
                     }
                 }
                 // Items outside the batches still issue one draw each through
-                // the per-object path; count them so `draw_calls` and
-                // `triangles_submitted` cover both paths.
+                // the per-object path (one per range for per-submesh-material
+                // items); count them so `draw_calls` and `triangles_submitted`
+                // cover both paths.
                 for (item, inst) in scene_items.iter().zip(instanceable.iter()) {
                     if item.settings.hidden || *inst {
                         continue;
                     }
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        draw_calls += 1;
+                        draw_calls += active_submesh_materials(item, mesh)
+                            .map_or(1, |mats| mats.len() as u32);
                         triangles += (mesh.index_count / 3) as u64;
                     }
                 }
@@ -754,7 +756,8 @@ impl ViewportRenderer {
                         continue;
                     }
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                        draw_calls += 1;
+                        draw_calls += active_submesh_materials(item, mesh)
+                            .map_or(1, |mats| mats.len() as u32);
                         triangles += (mesh.index_count / 3) as u64;
                     }
                 }

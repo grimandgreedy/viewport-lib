@@ -123,6 +123,17 @@ pub enum ViewportError {
         vertex_count: usize,
     },
 
+    /// The per-triangle material list handed to
+    /// `MeshData::sort_triangles_into_submeshes` does not have one entry per
+    /// triangle of the index buffer.
+    #[error("triangle material list has {material_ids} entries for {triangles} triangles")]
+    SubmeshTriangleCountMismatch {
+        /// Number of triangles in the mesh (`indices.len() / 3`).
+        triangles: usize,
+        /// Number of material ids provided.
+        material_ids: usize,
+    },
+
     /// A submesh range extends past the end of the mesh's index buffer.
     #[error(
         "submesh range {first_index}..{} exceeds index count {index_count}",
