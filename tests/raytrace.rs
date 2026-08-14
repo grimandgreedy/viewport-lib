@@ -7,7 +7,7 @@
 
 #![cfg(feature = "raytrace")]
 
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 use viewport_lib::raytrace::{
     RtBackend, RtCamera, RtLight, RtMaterial, RtScene, RtSettings, Tracer, pick_backend, trace,
 };
@@ -185,6 +185,108 @@ fn lit_and_emissive_deposit_radiance() {
     assert!(
         emis_l > lit_l,
         "emissive quad ({emis_l}) should be brightest; lit was {lit_l}"
+    );
+}
+
+/// RT-6: instancing a mesh must render identically to a scene where every copy
+/// is baked into its own world-space geometry, while storing the mesh's
+/// triangles only once. Scene A registers one quad and places it under several
+/// transforms (translations plus a rotation, to exercise the object-space ray
+/// transform and the normal transform); scene B expands each placement into
+/// world-space triangles the old single-level way. The two images must match,
+/// and A's stored triangle count must stay one quad regardless of instance
+/// count.
+#[test]
+fn instancing_matches_expanded_scene() {
+    let Some((device, queue)) = device_queue() else {
+        return;
+    };
+    // A quad facing -Y (toward the camera), in object space.
+    let s = 0.5;
+    let obj_p = [
+        Vec3::new(-s, 0.0, -s),
+        Vec3::new(s, 0.0, -s),
+        Vec3::new(s, 0.0, s),
+        Vec3::new(-s, 0.0, s),
+    ];
+    let obj_n = [Vec3::new(0.0, -1.0, 0.0); 4];
+    let idx = [0u32, 1, 2, 0, 2, 3];
+    let material = RtMaterial {
+        base_colour: [0.7, 0.5, 0.3],
+        ..RtMaterial::default()
+    };
+
+    // A spread of placements, including a rotation so the linear part of the
+    // transform is not identity.
+    let transforms = [
+        Mat4::from_translation(Vec3::new(-1.1, 0.0, -1.1)),
+        Mat4::from_translation(Vec3::new(1.1, 0.0, -1.1)),
+        Mat4::from_translation(Vec3::new(-1.1, 0.0, 1.1)),
+        Mat4::from_translation(Vec3::new(1.1, 0.3, 1.1))
+            * Mat4::from_rotation_x(0.5)
+            * Mat4::from_scale(Vec3::splat(0.8)),
+    ];
+
+    let light = RtLight::Directional {
+        direction: [0.2, -0.5, 1.0],
+        colour: [3.0, 3.0, 3.0],
+    };
+
+    // Scene A: one registered mesh, instanced.
+    let mut inst_scene = RtScene::new();
+    inst_scene.set_sky([0.05, 0.05, 0.08], [0.02, 0.02, 0.02]);
+    let mesh = inst_scene.add_mesh_geometry(&obj_p, &idx, Some(&obj_n), material);
+    for t in &transforms {
+        inst_scene.add_instance(mesh, *t);
+    }
+    inst_scene.add_light(light);
+
+    // Scene B: every placement baked into world-space geometry.
+    let mut expanded = RtScene::new();
+    expanded.set_sky([0.05, 0.05, 0.08], [0.02, 0.02, 0.02]);
+    for t in &transforms {
+        let nm = Mat3::from_mat4(*t).inverse().transpose();
+        let wp: Vec<Vec3> = obj_p.iter().map(|&v| t.transform_point3(v)).collect();
+        let wn: Vec<Vec3> = obj_n.iter().map(|&n| (nm * n).normalize()).collect();
+        expanded.add_mesh(&wp, &idx, Some(&wn), material);
+    }
+    expanded.add_light(light);
+
+    // The instanced scene stores the quad once, but reports every instance.
+    assert_eq!(inst_scene.unique_triangle_count(), 2);
+    assert_eq!(inst_scene.instance_count(), transforms.len());
+    assert_eq!(
+        inst_scene.triangle_count(),
+        expanded.triangle_count(),
+        "instanced and expanded scenes must have the same total triangle count"
+    );
+
+    let cam = camera(64, 64);
+    let settings = RtSettings {
+        samples: 16,
+        max_bounces: 3,
+        denoise: false,
+        seed: 0,
+    };
+    let a = trace(&device, &queue, &inst_scene, &cam, &settings);
+    let b = trace(&device, &queue, &expanded, &cam, &settings);
+
+    assert_eq!((a.width, a.height), (b.width, b.height));
+    let mut diff = 0.0f64;
+    let mut mag = 0.0f64;
+    for (x, y) in a.rgba.iter().zip(b.rgba.iter()) {
+        diff += (*x - *y).abs() as f64;
+        mag += *x as f64;
+    }
+    let rel = diff / mag.max(1e-6);
+    assert!(
+        rel < 0.02,
+        "instanced render diverged from the expanded render: relative error {rel:.4}"
+    );
+    assert!(
+        mean_luma(&a) > 0.02,
+        "instanced quads should be visibly lit, got {}",
+        mean_luma(&a)
     );
 }
 

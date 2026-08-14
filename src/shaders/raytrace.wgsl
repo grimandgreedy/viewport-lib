@@ -61,6 +61,7 @@ struct Frame {
     params: vec4<u32>,    // samples_per_frame, sample_base, frame_seed, has_env
     env_dist: vec4<f32>,  // env-IS: width, height, integral, enabled
     emit: vec4<u32>,      // area-light NEE: count, offset into env_tables, _, _
+    inst: vec4<u32>,      // two-level BVH: instance count, offset into env_tables, _, _
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -166,38 +167,57 @@ fn ray_triangle(o: vec3<f32>, d: vec3<f32>, p0: vec3<f32>, p1: vec3<f32>, p2: ve
     return true;
 }
 
-// closest_hit + any_hit walk the compute BVH below. The hardware backend
+// closest_hit + any_hit walk the two-level BVH below: a TLAS over instances,
+// then each instance's BLAS in object space (the ray is transformed by the
+// instance's world->object matrix; the object direction is left un-normalised so
+// the hit distance t is the same in both spaces). With no instances they fall
+// back to a single-level walk from node 0. The hardware backend
 // (raytrace-hardware) replaces this whole region, up to the matching close
-// marker, with a rayQuery kernel over an acceleration structure, keeping the
-// same Hit layout so all shading downstream is untouched.
+// marker, with a rayQuery kernel, keeping the same Hit layout so all shading
+// downstream is untouched.
 // <rt-traversal>
-fn closest_hit(o: vec3<f32>, d: vec3<f32>) -> Hit {
-    var h: Hit;
-    h.hit = false;
-    h.t = T_MAX;
+// Instance table accessors: 18 floats per instance in the env_tables tail
+// (frame.inst.y is the offset). 16 floats of world->object (column-major), then
+// the BLAS root node index and the triangle base, both bit-cast u32s.
+fn inst_w2o(i: u32) -> mat4x4<f32> {
+    let b = frame.inst.y + i * 18u;
+    return mat4x4<f32>(
+        vec4<f32>(env_tables[b + 0u], env_tables[b + 1u], env_tables[b + 2u], env_tables[b + 3u]),
+        vec4<f32>(env_tables[b + 4u], env_tables[b + 5u], env_tables[b + 6u], env_tables[b + 7u]),
+        vec4<f32>(env_tables[b + 8u], env_tables[b + 9u], env_tables[b + 10u], env_tables[b + 11u]),
+        vec4<f32>(env_tables[b + 12u], env_tables[b + 13u], env_tables[b + 14u], env_tables[b + 15u]),
+    );
+}
+fn inst_blas_base(i: u32) -> u32 { return bitcast<u32>(env_tables[frame.inst.y + i * 18u + 16u]); }
+
+struct BlasHit {
+    t: f32,
+    tri: u32,
+    uv: vec2<f32>,
+    hit: bool,
+}
+
+// Closest triangle in the BLAS rooted at `root`, for the (object-space) ray,
+// nearer than `tmax`.
+fn blas_closest(root: u32, o: vec3<f32>, d: vec3<f32>, tmax: f32) -> BlasHit {
+    var r: BlasHit;
+    r.hit = false;
+    r.t = tmax;
     let inv_d = 1.0 / d;
-
-    var best_t = T_MAX;
-    var best_tri = 0u;
-    var best_uv = vec2<f32>(0.0);
-
+    var best_t = tmax;
     var stack: array<u32, 32>;
     var sp = 0;
-    stack[0] = 0u;
+    stack[0] = root;
     sp = 1;
-
     loop {
         if sp <= 0 { break; }
         sp = sp - 1;
         let ni = stack[sp];
         let node = nodes[ni];
-
         if ray_box(o, inv_d, node.aabb_min, node.aabb_max, best_t) >= best_t {
             continue;
         }
-
         if node.count > 0u {
-            // Leaf.
             for (var i = 0u; i < node.count; i = i + 1u) {
                 let ti = node.left_first + i;
                 let tri = tris[ti];
@@ -206,13 +226,14 @@ fn closest_hit(o: vec3<f32>, d: vec3<f32>) -> Hit {
                 if ray_triangle(o, d, tri.p0, tri.p1, tri.p2, &tt, &uv) {
                     if tt < best_t {
                         best_t = tt;
-                        best_tri = ti;
-                        best_uv = uv;
+                        r.t = tt;
+                        r.tri = ti;
+                        r.uv = uv;
+                        r.hit = true;
                     }
                 }
             }
         } else {
-            // Interior: push both children, nearer one last so it pops first.
             let left = ni + 1u;
             let right = node.left_first;
             let dl = ray_box(o, inv_d, nodes[left].aabb_min, nodes[left].aabb_max, best_t);
@@ -226,12 +247,123 @@ fn closest_hit(o: vec3<f32>, d: vec3<f32>) -> Hit {
             }
         }
     }
+    return r;
+}
 
-    if best_t < T_MAX {
+// Any triangle in the BLAS rooted at `root` blocking the (object-space) ray
+// before `max_t`.
+fn blas_any(root: u32, o: vec3<f32>, d: vec3<f32>, max_t: f32) -> bool {
+    let inv_d = 1.0 / d;
+    var stack: array<u32, 32>;
+    var sp = 0;
+    stack[0] = root;
+    sp = 1;
+    loop {
+        if sp <= 0 { break; }
+        sp = sp - 1;
+        let ni = stack[sp];
+        let node = nodes[ni];
+        if ray_box(o, inv_d, node.aabb_min, node.aabb_max, max_t) >= max_t {
+            continue;
+        }
+        if node.count > 0u {
+            for (var i = 0u; i < node.count; i = i + 1u) {
+                let tri = tris[node.left_first + i];
+                var tt: f32;
+                var uv: vec2<f32>;
+                if ray_triangle(o, d, tri.p0, tri.p1, tri.p2, &tt, &uv) {
+                    if tt < max_t { return true; }
+                }
+            }
+        } else {
+            if sp < 31 { stack[sp] = ni + 1u; sp = sp + 1; }
+            if sp < 31 { stack[sp] = node.left_first; sp = sp + 1; }
+        }
+    }
+    return false;
+}
+
+fn closest_hit(o: vec3<f32>, d: vec3<f32>) -> Hit {
+    var h: Hit;
+    h.hit = false;
+    h.t = T_MAX;
+
+    let inst_count = frame.inst.x;
+    var best_t = T_MAX;
+    var best_tri = 0u;
+    var best_uv = vec2<f32>(0.0);
+    var best_inst = 0u;
+    var found = false;
+
+    if inst_count == 0u {
+        // Single-level world-space walk (empty scene / no instance table).
+        let r = blas_closest(0u, o, d, T_MAX);
+        if r.hit {
+            best_t = r.t;
+            best_tri = r.tri;
+            best_uv = r.uv;
+            found = true;
+        }
+    } else {
+        // TLAS walk; at a leaf, transform the ray into each instance's object
+        // space and descend its BLAS.
+        let inv_d = 1.0 / d;
+        var stack: array<u32, 32>;
+        var sp = 0;
+        stack[0] = 0u;
+        sp = 1;
+        loop {
+            if sp <= 0 { break; }
+            sp = sp - 1;
+            let ni = stack[sp];
+            let node = nodes[ni];
+            if ray_box(o, inv_d, node.aabb_min, node.aabb_max, best_t) >= best_t {
+                continue;
+            }
+            if node.count > 0u {
+                for (var i = 0u; i < node.count; i = i + 1u) {
+                    let ii = node.left_first + i;
+                    let w2o = inst_w2o(ii);
+                    let o_obj = (w2o * vec4<f32>(o, 1.0)).xyz;
+                    let d_obj = (w2o * vec4<f32>(d, 0.0)).xyz;
+                    let r = blas_closest(inst_blas_base(ii), o_obj, d_obj, best_t);
+                    if r.hit && r.t < best_t {
+                        best_t = r.t;
+                        best_tri = r.tri;
+                        best_uv = r.uv;
+                        best_inst = ii;
+                        found = true;
+                    }
+                }
+            } else {
+                let left = ni + 1u;
+                let right = node.left_first;
+                let dl = ray_box(o, inv_d, nodes[left].aabb_min, nodes[left].aabb_max, best_t);
+                let dr = ray_box(o, inv_d, nodes[right].aabb_min, nodes[right].aabb_max, best_t);
+                if dl <= dr {
+                    if dr < best_t && sp < 31 { stack[sp] = right; sp = sp + 1; }
+                    if dl < best_t && sp < 31 { stack[sp] = left; sp = sp + 1; }
+                } else {
+                    if dl < best_t && sp < 31 { stack[sp] = left; sp = sp + 1; }
+                    if dr < best_t && sp < 31 { stack[sp] = right; sp = sp + 1; }
+                }
+            }
+        }
+    }
+
+    if found {
         let tri = tris[best_tri];
         let w = 1.0 - best_uv.x - best_uv.y;
-        let ns = normalize(tri.n0 * w + tri.n1 * best_uv.x + tri.n2 * best_uv.y);
-        let ng = normalize(cross(tri.p1 - tri.p0, tri.p2 - tri.p0));
+        var ns = normalize(tri.n0 * w + tri.n1 * best_uv.x + tri.n2 * best_uv.y);
+        var ng = normalize(cross(tri.p1 - tri.p0, tri.p2 - tri.p0));
+        // Object -> world normals: multiply by the inverse-transpose of
+        // object->world, which is transpose(world->object)'s linear part.
+        if inst_count != 0u {
+            let w2o = inst_w2o(best_inst);
+            let nm = transpose(mat3x3<f32>(w2o[0].xyz, w2o[1].xyz, w2o[2].xyz));
+            ns = normalize(nm * ns);
+            ng = normalize(nm * ng);
+        }
         h.hit = true;
         h.t = best_t;
         h.pos = o + d * best_t;
@@ -248,6 +380,10 @@ fn closest_hit(o: vec3<f32>, d: vec3<f32>) -> Hit {
 }
 
 fn any_hit(o: vec3<f32>, d: vec3<f32>, max_t: f32) -> bool {
+    let inst_count = frame.inst.x;
+    if inst_count == 0u {
+        return blas_any(0u, o, d, max_t);
+    }
     let inv_d = 1.0 / d;
     var stack: array<u32, 32>;
     var sp = 0;
@@ -256,21 +392,20 @@ fn any_hit(o: vec3<f32>, d: vec3<f32>, max_t: f32) -> bool {
     loop {
         if sp <= 0 { break; }
         sp = sp - 1;
-        let node = nodes[stack[sp]];
+        let ni = stack[sp];
+        let node = nodes[ni];
         if ray_box(o, inv_d, node.aabb_min, node.aabb_max, max_t) >= max_t {
             continue;
         }
         if node.count > 0u {
             for (var i = 0u; i < node.count; i = i + 1u) {
-                let tri = tris[node.left_first + i];
-                var tt: f32;
-                var uv: vec2<f32>;
-                if ray_triangle(o, d, tri.p0, tri.p1, tri.p2, &tt, &uv) {
-                    if tt < max_t { return true; }
-                }
+                let ii = node.left_first + i;
+                let w2o = inst_w2o(ii);
+                let o_obj = (w2o * vec4<f32>(o, 1.0)).xyz;
+                let d_obj = (w2o * vec4<f32>(d, 0.0)).xyz;
+                if blas_any(inst_blas_base(ii), o_obj, d_obj, max_t) { return true; }
             }
         } else {
-            let ni = stack[sp];
             if sp < 31 { stack[sp] = ni + 1u; sp = sp + 1; }
             if sp < 31 { stack[sp] = node.left_first; sp = sp + 1; }
         }

@@ -28,13 +28,14 @@ struct Prim {
     index: u32,
 }
 
-/// Build a BVH over the given per-triangle world positions.
+/// Build a BVH over the given per-triangle positions (mesh-local for a BLAS, or
+/// world space for the legacy single-level tree).
 ///
 /// Returns the flat node array and the triangle ordering: `order[k]` is the
 /// original triangle index that occupies slot `k` in the reordered triangle
 /// array the leaves reference.
 pub(crate) fn build(tris: &[[Vec3; 3]]) -> (Vec<GpuNode>, Vec<u32>) {
-    let mut prims: Vec<Prim> = tris
+    let prims: Vec<Prim> = tris
         .iter()
         .enumerate()
         .map(|(i, t)| {
@@ -48,8 +49,30 @@ pub(crate) fn build(tris: &[[Vec3; 3]]) -> (Vec<GpuNode>, Vec<u32>) {
             }
         })
         .collect();
+    build_prims(prims, tris.len())
+}
 
-    let mut nodes: Vec<GpuNode> = Vec::with_capacity(tris.len().max(1) * 2);
+/// Build a BVH over a set of world-space AABBs. Used for the top-level structure
+/// (TLAS): one primitive per instance, its bounds the instance's world AABB.
+/// `order[k]` is the original instance index occupying leaf slot `k`.
+pub(crate) fn build_bounds(bounds: &[(Vec3, Vec3)]) -> (Vec<GpuNode>, Vec<u32>) {
+    let prims: Vec<Prim> = bounds
+        .iter()
+        .enumerate()
+        .map(|(i, &(bmin, bmax))| Prim {
+            centroid: (bmin + bmax) * 0.5,
+            bmin,
+            bmax,
+            index: i as u32,
+        })
+        .collect();
+    build_prims(prims, bounds.len())
+}
+
+/// Flatten a prepared primitive list into a node array + reordering. Shared by
+/// the triangle (BLAS) and bounds (TLAS) builders.
+fn build_prims(mut prims: Vec<Prim>, hint: usize) -> (Vec<GpuNode>, Vec<u32>) {
+    let mut nodes: Vec<GpuNode> = Vec::with_capacity(hint.max(1) * 2);
     if prims.is_empty() {
         nodes.push(GpuNode {
             aabb_min: [0.0; 3],
@@ -65,6 +88,22 @@ pub(crate) fn build(tris: &[[Vec3; 3]]) -> (Vec<GpuNode>, Vec<u32>) {
 
     let order = prims.iter().map(|p| p.index).collect();
     (nodes, order)
+}
+
+/// Shift a freshly built BLAS so it can be concatenated behind `node_base`
+/// other nodes with its triangles behind `tri_base` other triangles. An
+/// interior node's right-child index moves by `node_base` (its implicit
+/// self+1 left child shifts with it); a leaf's first-triangle slot moves by
+/// `tri_base`. The TLAS sits at the front of the combined array and needs no
+/// rebase.
+pub(crate) fn rebase(nodes: &mut [GpuNode], node_base: u32, tri_base: u32) {
+    for n in nodes.iter_mut() {
+        if n.count > 0 {
+            n.left_first += tri_base;
+        } else {
+            n.left_first += node_base;
+        }
+    }
 }
 
 fn node_bounds(prims: &[Prim], start: usize, end: usize) -> (Vec3, Vec3) {

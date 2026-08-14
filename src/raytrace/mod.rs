@@ -36,7 +36,7 @@ mod bvh;
 mod env_dist;
 
 use crate::gpu::util::DeviceExt;
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 
 /// Compose the hardware ray-query kernel from the compute megakernel source.
 ///
@@ -300,15 +300,44 @@ struct EnvMap {
 /// used on ray miss.
 #[derive(Default)]
 pub struct RtScene {
+    // World-space triangle soup: every instance expanded. The hardware backend
+    // and `triangle_count` read this; the software two-level backend uses the
+    // per-mesh geometry + instances below instead, so it stores each mesh once.
     tris: Vec<[Vec3; 3]>,
     normals: Vec<[Vec3; 3]>,
     tri_mat: Vec<u32>,
+    // Per-mesh object-space geometry (built once) and the instances that place
+    // it in the world. This is what the two-level BVH is built from: one BLAS
+    // per mesh, a TLAS over the instances.
+    meshes: Vec<MeshGeom>,
+    instances: Vec<InstanceDef>,
     materials: Vec<RtMaterial>,
     lights: Vec<RtLight>,
     sky_top: [f32; 3],
     sky_bottom: [f32; 3],
     env: Option<EnvMap>,
 }
+
+/// A registered mesh: object-space triangles and their bounds. Instanced by one
+/// or more [`InstanceDef`]s. Referenced by [`RtMeshId`].
+struct MeshGeom {
+    tris: Vec<[Vec3; 3]>,
+    normals: Vec<[Vec3; 3]>,
+    tri_mat: Vec<u32>,
+    bmin: Vec3,
+    bmax: Vec3,
+}
+
+/// One placement of a mesh: an object -> world transform.
+struct InstanceDef {
+    mesh: u32,
+    transform: Mat4,
+}
+
+/// Handle to a mesh registered with [`RtScene::add_mesh_geometry`], instanced
+/// with [`RtScene::add_instance`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RtMeshId(u32);
 
 impl RtScene {
     /// Empty scene with a mild default sky (used on ray miss).
@@ -324,6 +353,13 @@ impl RtScene {
     /// per-vertex (one per position) and interpolated for smooth shading;
     /// otherwise flat geometric normals are used. Every triangle gets the same
     /// `material`. Returns the material index assigned.
+    ///
+    /// This is the single-placement path: it registers the mesh and adds one
+    /// identity instance, so the given positions are taken as world space. To
+    /// place the same geometry many times cheaply, use
+    /// [`add_mesh_geometry`](Self::add_mesh_geometry) +
+    /// [`add_instance`](Self::add_instance), which stores the mesh once and
+    /// references it per instance.
     pub fn add_mesh(
         &mut self,
         positions: &[Vec3],
@@ -332,7 +368,52 @@ impl RtScene {
         material: RtMaterial,
     ) -> u32 {
         let mat_id = self.materials.len() as u32;
+        let mesh = self.register_mesh(positions, indices, normals, mat_id);
         self.materials.push(material);
+        self.push_instance(mesh, Mat4::IDENTITY);
+        mat_id
+    }
+
+    /// Register a reusable mesh in object space and return its handle. Nothing
+    /// is drawn until it is placed with [`add_instance`](Self::add_instance).
+    /// `normals` and `material` follow [`add_mesh`](Self::add_mesh); the
+    /// material index is assigned here and shared by every instance.
+    pub fn add_mesh_geometry(
+        &mut self,
+        positions: &[Vec3],
+        indices: &[u32],
+        normals: Option<&[Vec3]>,
+        material: RtMaterial,
+    ) -> RtMeshId {
+        let mat_id = self.materials.len() as u32;
+        let mesh = self.register_mesh(positions, indices, normals, mat_id);
+        self.materials.push(material);
+        RtMeshId(mesh)
+    }
+
+    /// Place a registered mesh in the world with an object -> world transform.
+    /// Instances of one mesh share its triangles and BLAS, so a scene with many
+    /// copies of a mesh pays for that mesh's triangles once, not per copy.
+    pub fn add_instance(&mut self, mesh: RtMeshId, transform: Mat4) {
+        self.push_instance(mesh.0, transform);
+    }
+
+    /// Register mesh geometry (object space) without a material push. Returns the
+    /// mesh index. Shared by `add_mesh` and `add_mesh_geometry`.
+    fn register_mesh(
+        &mut self,
+        positions: &[Vec3],
+        indices: &[u32],
+        normals: Option<&[Vec3]>,
+        mat_id: u32,
+    ) -> u32 {
+        let mut geom = MeshGeom {
+            tris: Vec::with_capacity(indices.len() / 3),
+            normals: Vec::with_capacity(indices.len() / 3),
+            tri_mat: Vec::with_capacity(indices.len() / 3),
+            bmin: Vec3::splat(f32::INFINITY),
+            bmax: Vec3::splat(f32::NEG_INFINITY),
+        };
         for tri in indices.chunks_exact(3) {
             let (i0, i1, i2) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
             let p = [positions[i0], positions[i1], positions[i2]];
@@ -343,11 +424,43 @@ impl RtScene {
                     [ng, ng, ng]
                 }
             };
-            self.tris.push(p);
-            self.normals.push(n);
-            self.tri_mat.push(mat_id);
+            for v in &p {
+                geom.bmin = geom.bmin.min(*v);
+                geom.bmax = geom.bmax.max(*v);
+            }
+            geom.tris.push(p);
+            geom.normals.push(n);
+            geom.tri_mat.push(mat_id);
         }
-        mat_id
+        let id = self.meshes.len() as u32;
+        self.meshes.push(geom);
+        id
+    }
+
+    /// Record an instance and expand its triangles into the world-space soup
+    /// (for the hardware backend and `triangle_count`). The two-level software
+    /// backend uses the mesh + instance directly and does not read the soup.
+    fn push_instance(&mut self, mesh: u32, transform: Mat4) {
+        let normal_mat = Mat3::from_mat4(transform).inverse().transpose();
+        {
+            let geom = &self.meshes[mesh as usize];
+            for (tri, tn) in geom.tris.iter().zip(geom.normals.iter()) {
+                let wp = [
+                    transform.transform_point3(tri[0]),
+                    transform.transform_point3(tri[1]),
+                    transform.transform_point3(tri[2]),
+                ];
+                let wn = [
+                    (normal_mat * tn[0]).normalize_or_zero(),
+                    (normal_mat * tn[1]).normalize_or_zero(),
+                    (normal_mat * tn[2]).normalize_or_zero(),
+                ];
+                self.tris.push(wp);
+                self.normals.push(wn);
+            }
+            self.tri_mat.extend_from_slice(&geom.tri_mat);
+        }
+        self.instances.push(InstanceDef { mesh, transform });
     }
 
     /// Add an analytic light.
@@ -379,9 +492,22 @@ impl RtScene {
         self.sky_bottom = bottom;
     }
 
-    /// Number of triangles.
+    /// Total triangles in the scene, counting every instance.
     pub fn triangle_count(&self) -> usize {
         self.tris.len()
+    }
+
+    /// Distinct triangles stored, counting each mesh once regardless of how many
+    /// times it is instanced. This is what the software two-level BVH uploads:
+    /// for a scene of many instances of one mesh it stays the mesh's triangle
+    /// count, where [`triangle_count`](Self::triangle_count) grows per instance.
+    pub fn unique_triangle_count(&self) -> usize {
+        self.meshes.iter().map(|m| m.tris.len()).sum()
+    }
+
+    /// Number of instances placed in the scene.
+    pub fn instance_count(&self) -> usize {
+        self.instances.len()
     }
 }
 
@@ -444,6 +570,10 @@ struct FrameUniform {
     // Area-light NEE metadata: (emitter count, offset of the emitter index list
     // in the env_tables buffer, 0, 0). Count 0 disables area-light sampling.
     emit: [u32; 4],
+    // Two-level BVH instance table metadata: (instance count, offset of the
+    // instance table in the env_tables buffer, 0, 0). Count 0 means a
+    // single-level world-space walk (hardware backend or empty scene).
+    inst: [u32; 4],
 }
 
 #[repr(C)]
@@ -523,6 +653,10 @@ pub struct Tracer {
     env_tables_buf: crate::gpu::Buffer,
     env_dist: [f32; 4],
     emit: [u32; 4],
+    // Instance table metadata (count, offset into env_tables). The two-level
+    // traversal reads per-instance transforms and BLAS/tri bases from the tail
+    // of the env_tables buffer. Zeroed for the hardware backend.
+    inst: [u32; 4],
     num_lights: u32,
     sky_top: [f32; 3],
     sky_bottom: [f32; 3],
@@ -551,6 +685,200 @@ struct TracerSized {
     bind_group: crate::gpu::BindGroup,
 }
 
+/// The CPU-side acceleration data uploaded to the GPU: the node array (a TLAS
+/// followed by the per-mesh BLASes for the two-level build, or a single flat
+/// BVH for the world-space soup), the reordered triangles the leaves point at,
+/// and the packed instance table.
+struct AccelBuild {
+    nodes: Vec<bvh::GpuNode>,
+    gpu_tris: Vec<GpuTri>,
+    /// Packed instance table in TLAS order: 16 floats of `world_to_object`
+    /// (column-major) then `blas_base` and `tri_base` as bit-cast u32s, 18
+    /// floats per instance. Empty for the world-space soup.
+    instances: Vec<f32>,
+    instance_count: u32,
+    /// Per `gpu_tris` slot: whether the triangle may be next-event sampled as an
+    /// emitter. False for triangles that only exist under a non-identity
+    /// instance transform, where the object-space index would sample the wrong
+    /// world position (those emitters are still found by BSDF sampling).
+    emitter_eligible: Vec<bool>,
+}
+
+fn mat4_is_identity(m: Mat4) -> bool {
+    (m - Mat4::IDENTITY).abs_diff_eq(Mat4::ZERO, 1e-6)
+}
+
+/// World-space AABB of a mesh's object-space box under `transform`: transform
+/// all eight corners and take their bounds.
+fn transform_aabb(transform: Mat4, bmin: Vec3, bmax: Vec3) -> (Vec3, Vec3) {
+    let mut mn = Vec3::splat(f32::INFINITY);
+    let mut mx = Vec3::splat(f32::NEG_INFINITY);
+    for i in 0..8 {
+        let c = Vec3::new(
+            if i & 1 == 0 { bmin.x } else { bmax.x },
+            if i & 2 == 0 { bmin.y } else { bmax.y },
+            if i & 4 == 0 { bmin.z } else { bmax.z },
+        );
+        let w = transform.transform_point3(c);
+        mn = mn.min(w);
+        mx = mx.max(w);
+    }
+    (mn, mx)
+}
+
+fn object_gpu_tri(g: &MeshGeom, k: usize) -> GpuTri {
+    let p = g.tris[k];
+    let n = g.normals[k];
+    GpuTri {
+        p0: p[0].to_array(),
+        mat: g.tri_mat[k],
+        p1: p[1].to_array(),
+        _p1: 0,
+        p2: p[2].to_array(),
+        _p2: 0,
+        n0: n[0].to_array(),
+        _n0: 0,
+        n1: n[1].to_array(),
+        _n1: 0,
+        n2: n[2].to_array(),
+        _n2: 0,
+    }
+}
+
+/// Build the two-level structure the software traversal walks: a BLAS per mesh
+/// (object space, stored once), a TLAS over the instances, and the instance
+/// table with each instance's `world_to_object` transform and BLAS/triangle
+/// bases. Instances of one mesh share its BLAS and triangles.
+fn build_two_level(scene: &RtScene) -> AccelBuild {
+    let mesh_count = scene.meshes.len();
+    let mut has_identity = vec![false; mesh_count];
+    for inst in &scene.instances {
+        if mat4_is_identity(inst.transform) {
+            has_identity[inst.mesh as usize] = true;
+        }
+    }
+
+    // Only instances of non-empty meshes participate: an empty mesh has no BLAS
+    // leaves to hit, and referencing its degenerate root would misdirect the
+    // walk.
+    let active: Vec<&InstanceDef> = scene
+        .instances
+        .iter()
+        .filter(|i| !scene.meshes[i.mesh as usize].tris.is_empty())
+        .collect();
+
+    // TLAS over the active instances' world AABBs. Its length fixes where the
+    // BLAS region starts in the combined node array.
+    let inst_bounds: Vec<(Vec3, Vec3)> = active
+        .iter()
+        .map(|i| {
+            let g = &scene.meshes[i.mesh as usize];
+            transform_aabb(i.transform, g.bmin, g.bmax)
+        })
+        .collect();
+    let (tlas_nodes, inst_order) = if inst_bounds.is_empty() {
+        (
+            vec![<bvh::GpuNode as bytemuck::Zeroable>::zeroed()],
+            Vec::new(),
+        )
+    } else {
+        bvh::build_bounds(&inst_bounds)
+    };
+    let tlas_len = tlas_nodes.len() as u32;
+
+    // Per-mesh BLAS + object-space triangles, concatenated behind the TLAS.
+    let mut gpu_tris: Vec<GpuTri> = Vec::new();
+    let mut blas_nodes: Vec<bvh::GpuNode> = Vec::new();
+    let mut emitter_eligible: Vec<bool> = Vec::new();
+    let mut mesh_blas_base = vec![0u32; mesh_count];
+    let mut mesh_tri_base = vec![0u32; mesh_count];
+    for (m, g) in scene.meshes.iter().enumerate() {
+        mesh_blas_base[m] = tlas_len + blas_nodes.len() as u32;
+        mesh_tri_base[m] = gpu_tris.len() as u32;
+        if g.tris.is_empty() {
+            continue;
+        }
+        let (mut nodes_m, order_m) = bvh::build(&g.tris);
+        bvh::rebase(&mut nodes_m, mesh_blas_base[m], mesh_tri_base[m]);
+        blas_nodes.extend_from_slice(&nodes_m);
+        for &k in &order_m {
+            gpu_tris.push(object_gpu_tri(g, k as usize));
+            emitter_eligible.push(has_identity[m]);
+        }
+    }
+
+    // Instance table, in the TLAS's instance order so a TLAS leaf's index range
+    // addresses it directly.
+    let mut instances: Vec<f32> = Vec::with_capacity(inst_order.len() * 18);
+    for &oi in &inst_order {
+        let inst = active[oi as usize];
+        let cols = inst.transform.inverse().to_cols_array();
+        instances.extend_from_slice(&cols);
+        instances.push(f32::from_bits(mesh_blas_base[inst.mesh as usize]));
+        instances.push(f32::from_bits(mesh_tri_base[inst.mesh as usize]));
+    }
+
+    let mut nodes = tlas_nodes;
+    nodes.extend_from_slice(&blas_nodes);
+
+    let (gpu_tris, emitter_eligible) = if gpu_tris.is_empty() {
+        (vec![<GpuTri as bytemuck::Zeroable>::zeroed()], vec![false])
+    } else {
+        (gpu_tris, emitter_eligible)
+    };
+
+    AccelBuild {
+        nodes,
+        gpu_tris,
+        instances,
+        instance_count: inst_order.len() as u32,
+        emitter_eligible,
+    }
+}
+
+/// Build the flat world-space triangle soup and single-level BVH the hardware
+/// (rayQuery) backend consumes. The instance table is empty: the hardware
+/// kernel traverses its own acceleration structure and reads `gpu_tris` in world
+/// space, exactly as before instancing existed.
+fn build_world_soup(scene: &RtScene) -> AccelBuild {
+    let (nodes, order) = bvh::build(&scene.tris);
+    let gpu_tris: Vec<GpuTri> = order
+        .iter()
+        .map(|&k| {
+            let k = k as usize;
+            let p = scene.tris[k];
+            let n = scene.normals[k];
+            GpuTri {
+                p0: p[0].to_array(),
+                mat: scene.tri_mat[k],
+                p1: p[1].to_array(),
+                _p1: 0,
+                p2: p[2].to_array(),
+                _p2: 0,
+                n0: n[0].to_array(),
+                _n0: 0,
+                n1: n[1].to_array(),
+                _n1: 0,
+                n2: n[2].to_array(),
+                _n2: 0,
+            }
+        })
+        .collect();
+    let (gpu_tris, emitter_eligible) = if gpu_tris.is_empty() {
+        (vec![<GpuTri as bytemuck::Zeroable>::zeroed()], vec![false])
+    } else {
+        let n = gpu_tris.len();
+        (gpu_tris, vec![true; n])
+    };
+    AccelBuild {
+        nodes,
+        gpu_tris,
+        instances: Vec::new(),
+        instance_count: 0,
+        emitter_eligible,
+    }
+}
+
 impl Tracer {
     /// Build the pipeline and upload `scene`, selecting the traversal backend
     /// with [`pick_backend`]. Cheap to keep around and re-trace.
@@ -571,51 +899,43 @@ impl Tracer {
         scene: &RtScene,
         backend: RtBackend,
     ) -> Self {
-        #[cfg(not(feature = "raytrace-hardware"))]
-        let _ = backend;
         let has_geometry = !scene.tris.is_empty();
 
-        // Build the BVH and the reordered triangle array it references. An empty
-        // scene still needs valid (single-element) buffers so the bind group and
-        // pipeline exist; trace() short-circuits to black before dispatching.
-        let (nodes, order) = bvh::build(&scene.tris);
-        let gpu_tris: Vec<GpuTri> = order
-            .iter()
-            .map(|&k| {
-                let k = k as usize;
-                let p = scene.tris[k];
-                let n = scene.normals[k];
-                GpuTri {
-                    p0: p[0].to_array(),
-                    mat: scene.tri_mat[k],
-                    p1: p[1].to_array(),
-                    _p1: 0,
-                    p2: p[2].to_array(),
-                    _p2: 0,
-                    n0: n[0].to_array(),
-                    _n0: 0,
-                    n1: n[1].to_array(),
-                    _n1: 0,
-                    n2: n[2].to_array(),
-                    _n2: 0,
-                }
-            })
-            .collect();
-        let gpu_tris = if gpu_tris.is_empty() {
-            vec![<GpuTri as bytemuck::Zeroable>::zeroed()]
-        } else {
-            gpu_tris
+        // The backend is decided up front because it changes which geometry
+        // representation is uploaded: the hardware path keeps the flat
+        // world-space soup its rayQuery kernel reads by primitive_index; the
+        // software path builds the two-level TLAS/BLAS structure so instances
+        // share their mesh's triangles.
+        #[cfg(feature = "raytrace-hardware")]
+        let use_hw = backend == RtBackend::Hardware
+            && device.features().contains(crate::gpu::RAY_QUERY_FEATURE)
+            && has_geometry;
+        #[cfg(not(feature = "raytrace-hardware"))]
+        let use_hw = {
+            let _ = backend;
+            false
         };
 
-        // Select the traversal backend and, for the hardware one, build the
-        // acceleration structure from the reordered triangles. The kernel, bind
-        // group layouts, and bind groups all follow `use_hw`: with no geometry or
-        // no ray-query device the software compute traversal is used unchanged.
+        // Build the acceleration data. An empty scene still yields valid
+        // single-element buffers so the bind group and pipeline exist; trace()
+        // short-circuits to black before dispatching.
+        let AccelBuild {
+            nodes,
+            gpu_tris,
+            instances,
+            instance_count,
+            emitter_eligible,
+        } = if use_hw {
+            build_world_soup(scene)
+        } else {
+            build_two_level(scene)
+        };
+
+        // For the hardware backend, build the acceleration structure from the
+        // (world-space) reordered triangles. The kernel, bind group layouts, and
+        // bind groups all follow `use_hw`.
         #[cfg(feature = "raytrace-hardware")]
-        let hw = if backend == RtBackend::Hardware
-            && device.features().contains(crate::gpu::RAY_QUERY_FEATURE)
-            && has_geometry
-        {
+        let hw = if use_hw {
             let mut positions = Vec::with_capacity(gpu_tris.len() * 3);
             for t in &gpu_tris {
                 positions.push(t.p0);
@@ -626,8 +946,6 @@ impl Tracer {
         } else {
             None
         };
-        #[cfg(feature = "raytrace-hardware")]
-        let use_hw = hw.is_some();
 
         let mut gpu_mats: Vec<GpuMaterial> = scene
             .materials
@@ -808,12 +1126,23 @@ impl Tracer {
         let mut emitter_count = 0u32;
         for (ti, t) in gpu_tris.iter().enumerate() {
             let e = gpu_mats[t.mat as usize].emissive;
-            if e[0] + e[1] + e[2] > 0.0 {
+            // Skip triangles that only exist under a non-identity instance: the
+            // object-space index would sample the wrong world position, so those
+            // emitters are left to BSDF sampling.
+            if e[0] + e[1] + e[2] > 0.0 && emitter_eligible.get(ti).copied().unwrap_or(true) {
                 env_tables.push(f32::from_bits(ti as u32));
                 emitter_count += 1;
             }
         }
         let emit = [emitter_count, emit_offset, 0, 0];
+
+        // Append the instance table to the same buffer (18 floats per instance),
+        // so the two-level traversal reads per-instance transforms and BLAS/tri
+        // bases without a new storage binding. `inst` = (count, offset). Empty
+        // for the hardware backend.
+        let inst_offset = env_tables.len() as u32;
+        env_tables.extend_from_slice(&instances);
+        let inst = [instance_count, inst_offset, 0, 0];
 
         let env_tables_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("rt_env_tables"),
@@ -971,6 +1300,7 @@ impl Tracer {
             env_tables_buf,
             env_dist,
             emit,
+            inst,
             num_lights,
             sky_top: scene.sky_top,
             sky_bottom: scene.sky_bottom,
@@ -1121,6 +1451,7 @@ impl Tracer {
             params: [0, 0, 0, 0],
             env_dist: self.env_dist,
             emit: self.emit,
+            inst: self.inst,
         };
 
         // Dispatch `settings.samples` more samples in batches, so no single
@@ -1390,6 +1721,7 @@ impl Tracer {
             // the importance-sampling tables, so leave the metadata disabled.
             env_dist: [0.0; 4],
             emit: self.emit,
+            inst: self.inst,
         };
 
         // Batch the samples so no single dispatch runs long enough to risk a GPU
@@ -1552,6 +1884,7 @@ impl Tracer {
             params: [0, 0, 0, 0],
             env_dist: [0.0; 4],
             emit: [0, 0, 0, 0],
+            inst: self.inst,
         };
 
         const BATCH: u32 = 16;
