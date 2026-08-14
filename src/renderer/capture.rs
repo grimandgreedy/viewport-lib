@@ -12,6 +12,7 @@
 //! path as `render_offscreen`, so it runs from a bake with no presentable frame.
 
 use super::*;
+use crate::gpu::util::DeviceExt;
 
 /// Linear HDR radiance read back from a capture: row-major `width * height`
 /// RGBA texels, four `f32` channels each.
@@ -25,6 +26,26 @@ pub struct CapturedHdr {
     /// alpha channel is scene coverage: 0.0 on background pixels (matching the
     /// HDR scene clear), > 0.0 where geometry or the skybox was drawn.
     pub rgba: Vec<f32>,
+}
+
+/// A capture that stays on the GPU: an `Rgba16Float` texture holding linear HDR
+/// radiance, with no CPU read back. This is the on-GPU counterpart of
+/// [`CapturedHdr`], produced by [`ViewportRenderer::capture_hdr_gpu`] and
+/// [`ViewportRenderer::capture_equirect_gpu`] for a capture -> resolve ->
+/// prefilter path that never leaves the GPU. Read it to the CPU with
+/// [`ViewportRenderer::read_captured_hdr`] when float pixels are wanted.
+#[derive(Debug)]
+pub struct CapturedHdrGpu {
+    /// Texture width in pixels.
+    pub width: u32,
+    /// Texture height in pixels.
+    pub height: u32,
+    /// The linear HDR radiance texture (`Rgba16Float`, one mip, `COPY_SRC` and
+    /// `TEXTURE_BINDING`). For a six-face capture this is the resolved equirect
+    /// panorama, `2 * height` wide by `height` tall.
+    pub texture: crate::gpu::Texture,
+    /// A default 2D view of `texture`, ready to bind or sample.
+    pub view: crate::gpu::TextureView,
 }
 
 impl ViewportRenderer {
@@ -52,7 +73,43 @@ impl ViewportRenderer {
         size: u32,
     ) -> CapturedHdr {
         let size = size.max(1);
+        self.render_capture_frame(device, queue, frame, camera, size);
 
+        // Read the HDR scene texture back from the per-viewport hdr_texture the
+        // render left it in.
+        let vp_idx = frame.camera.viewport_index;
+        let rgba = {
+            let slot = &self.viewport_slots[vp_idx];
+            let hdr = slot
+                .hdr
+                .as_ref()
+                .expect("HDR state exists after an HDR render");
+            Self::readback_rgba16f(device, queue, &hdr.hdr_texture, size, size)
+        };
+
+        CapturedHdr {
+            width: size,
+            height: size,
+            rgba,
+        }
+    }
+
+    /// Render one full HDR frame from `camera` at `size` x `size` into the
+    /// per-viewport `hdr_texture`, restoring the caller's frame and the
+    /// renderer's dynamic-resolution state before returning.
+    ///
+    /// Both the CPU readback ([`capture_hdr`](Self::capture_hdr)) and the
+    /// on-GPU copy path build on this: the pre-tonemap radiance is left in the
+    /// viewport's `hdr_texture`, which the caller reads back or copies out
+    /// before the next capture overwrites it.
+    fn render_capture_frame(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &mut FrameData,
+        camera: RenderCamera,
+        size: u32,
+    ) {
         // Snapshot every field the capture overrides so the caller's frame and
         // the renderer's dynamic-resolution state come back untouched.
         let saved_camera = std::mem::replace(&mut frame.camera.render_camera, camera);
@@ -95,30 +152,66 @@ impl ViewportRenderer {
         let cmd = self.render(device, queue, &dummy_view, frame);
         queue.submit(std::iter::once(cmd));
 
-        // Read the HDR scene texture back before restoring anything.
-        let vp_idx = frame.camera.viewport_index;
-        let rgba = {
-            let slot = &self.viewport_slots[vp_idx];
-            let hdr = slot
-                .hdr
-                .as_ref()
-                .expect("HDR state exists after an HDR render");
-            Self::readback_rgba16f(device, queue, &hdr.hdr_texture, size, size)
-        };
-
-        // Restore the caller's frame and renderer state.
+        // Restore the caller's frame and renderer state. The hdr_texture is
+        // untouched by this and holds the rendered radiance until the next
+        // capture.
         frame.camera.render_camera = saved_camera;
         frame.camera.viewport_size = saved_viewport_size;
         frame.camera.pixels_per_point = saved_ppp;
         frame.effects.post_process.enabled = saved_pp_enabled;
         frame.effects.post_process.ssaa_factor = saved_ssaa;
         self.current_render_scale = saved_scale;
+    }
 
-        CapturedHdr {
-            width: size,
-            height: size,
-            rgba,
-        }
+    /// Render one HDR face and copy it into `dst_layer` of `dst` (an
+    /// `Rgba16Float` texture of `size` x `size`), keeping the result on the GPU
+    /// instead of reading it back to the CPU.
+    fn copy_capture_face(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &mut FrameData,
+        camera: RenderCamera,
+        size: u32,
+        dst: &crate::gpu::Texture,
+        dst_layer: u32,
+    ) {
+        self.render_capture_frame(device, queue, frame, camera, size);
+
+        let vp_idx = frame.camera.viewport_index;
+        let slot = &self.viewport_slots[vp_idx];
+        let hdr = slot
+            .hdr
+            .as_ref()
+            .expect("HDR state exists after an HDR render");
+
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("capture_face_copy"),
+        });
+        encoder.copy_texture_to_texture(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &hdr.hdr_texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyTextureInfo {
+                texture: dst,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: dst_layer,
+                },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
     /// Capture the environment radiance around `position` as an equirectangular
@@ -228,6 +321,130 @@ impl ViewportRenderer {
         CapturedHdr {
             width: eq_w,
             height: eq_h,
+            rgba,
+        }
+    }
+
+    /// Render the lit scene from `camera` to an offscreen HDR target and return
+    /// it as a GPU texture, without reading it back to the CPU.
+    ///
+    /// The on-GPU counterpart of [`capture_hdr`](Self::capture_hdr): same full
+    /// HDR pipeline, same square `size` x `size` face, but the linear radiance
+    /// stays in a returned [`CapturedHdrGpu`] texture. Use this when the next
+    /// step is another GPU pass (the equirect resolve, a prefilter) and a CPU
+    /// round trip would be wasted. `frame` is restored on return.
+    pub fn capture_hdr_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &mut FrameData,
+        camera: RenderCamera,
+        size: u32,
+    ) -> CapturedHdrGpu {
+        let size = size.max(1);
+        let texture = new_hdr_target(device, "capture_hdr_gpu", size, size, 1, false);
+        self.copy_capture_face(device, queue, frame, camera, size, &texture, 0);
+        let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+        CapturedHdrGpu {
+            width: size,
+            height: size,
+            texture,
+            view,
+        }
+    }
+
+    /// Capture the environment radiance around `position` as an equirectangular
+    /// panorama, resolved on the GPU into a returned texture.
+    ///
+    /// The on-GPU counterpart of [`capture_equirect`](Self::capture_equirect):
+    /// it renders the same six 90-degree faces from `position`, but keeps them
+    /// in a GPU texture array and resolves them to equirect with a fragment
+    /// pass ([`cube_to_equirect.wgsl`]) instead of a CPU loop. The direction ->
+    /// UV mapping is identical, so the result samples the same as the CPU path
+    /// and as an environment loaded from a file. The panorama is
+    /// `2 * equirect_height` wide by `equirect_height` tall.
+    ///
+    /// `face_size` is the per-face render resolution; `frame` supplies the scene
+    /// and lighting and is restored on return. Near/far planes come from the
+    /// frame's current camera, matching `capture_equirect`.
+    pub fn capture_equirect_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &mut FrameData,
+        position: [f32; 3],
+        face_size: u32,
+        equirect_height: u32,
+    ) -> CapturedHdrGpu {
+        let face_size = face_size.max(1);
+        let eq_h = equirect_height.max(1);
+        let eq_w = eq_h * 2;
+        let eye = glam::Vec3::from(position);
+
+        let near = frame.camera.render_camera.near.max(1e-3);
+        let far = frame.camera.render_camera.far.max(near * 2.0);
+        let proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+
+        // Same six axis-aligned faces and up vectors as the CPU resolve, so the
+        // per-face projection convention matches exactly.
+        let faces: [(glam::Vec3, glam::Vec3); 6] = [
+            (glam::Vec3::X, glam::Vec3::Z),
+            (glam::Vec3::NEG_X, glam::Vec3::Z),
+            (glam::Vec3::Y, glam::Vec3::Z),
+            (glam::Vec3::NEG_Y, glam::Vec3::Z),
+            (glam::Vec3::Z, glam::Vec3::Y),
+            (glam::Vec3::NEG_Z, glam::Vec3::Y),
+        ];
+
+        // Six-layer face array, one layer rendered per face.
+        let face_array = new_hdr_target(device, "capture_faces", face_size, face_size, 6, false);
+
+        let mut uniform = ResolveUniform::zeroed();
+        uniform.eye = [eye.x, eye.y, eye.z, 0.0];
+        for (i, (dir, up)) in faces.into_iter().enumerate() {
+            let mut cam = RenderCamera::default();
+            cam.view = glam::Mat4::look_at_rh(eye, eye + dir, up);
+            cam.projection = proj;
+            cam.eye_position = position;
+            cam.forward = dir.to_array();
+            cam.near = near;
+            cam.far = far;
+            cam.fov = std::f32::consts::FRAC_PI_2;
+            cam.aspect = 1.0;
+            uniform.view_proj[i] = cam.view_proj().to_cols_array_2d();
+            uniform.forward[i] = [dir.x, dir.y, dir.z, 0.0];
+            self.copy_capture_face(device, queue, frame, cam, face_size, &face_array, i as u32);
+        }
+
+        let texture = resolve_faces_to_equirect(device, queue, &face_array, &uniform, eq_w, eq_h);
+        let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+        CapturedHdrGpu {
+            width: eq_w,
+            height: eq_h,
+            texture,
+            view,
+        }
+    }
+
+    /// Read a GPU capture back to CPU `f32` RGBA, the same layout
+    /// [`CapturedHdr`] carries. Useful to inspect or feed the CPU `&[f32]` IBL
+    /// entry once an on-GPU capture is in hand.
+    pub fn read_captured_hdr(
+        &self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        capture: &CapturedHdrGpu,
+    ) -> CapturedHdr {
+        let rgba = Self::readback_rgba16f(
+            device,
+            queue,
+            &capture.texture,
+            capture.width,
+            capture.height,
+        );
+        CapturedHdr {
+            width: capture.width,
+            height: capture.height,
             rgba,
         }
     }
@@ -491,4 +708,187 @@ fn sample_face_bilinear(face: &CapturedHdr, u: f32, v: f32) -> [f32; 4] {
         out[k] = top * (1.0 - ty) + bot * ty;
     }
     out
+}
+
+/// Create an `Rgba16Float` render/sample target. `layers` > 1 makes a 2D array
+/// (one layer per cube face). Usage always allows sampling and copies; the
+/// resolve output additionally needs `RENDER_ATTACHMENT`, requested via `render`.
+fn new_hdr_target(
+    device: &crate::gpu::Device,
+    label: &str,
+    width: u32,
+    height: u32,
+    layers: u32,
+    render: bool,
+) -> crate::gpu::Texture {
+    let mut usage = crate::gpu::TextureUsages::TEXTURE_BINDING
+        | crate::gpu::TextureUsages::COPY_DST
+        | crate::gpu::TextureUsages::COPY_SRC;
+    if render {
+        usage |= crate::gpu::TextureUsages::RENDER_ATTACHMENT;
+    }
+    device.create_texture(&crate::gpu::TextureDescriptor {
+        label: Some(label),
+        size: crate::gpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba16Float,
+        usage,
+        view_formats: &[],
+    })
+}
+
+/// The per-face matrices and eye the GPU resolve reads. Mirrors the `Resolve`
+/// uniform in `cube_to_equirect.wgsl`: six view-projection matrices, six
+/// forward directions, and the capture eye.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ResolveUniform {
+    view_proj: [[[f32; 4]; 4]; 6],
+    forward: [[f32; 4]; 6],
+    eye: [f32; 4],
+}
+
+impl ResolveUniform {
+    fn zeroed() -> Self {
+        bytemuck::Zeroable::zeroed()
+    }
+}
+
+/// Resolve six captured faces (a 6-layer `Rgba16Float` array) into an equirect
+/// panorama with a fullscreen fragment pass. The GPU counterpart of the CPU
+/// loop in [`ViewportRenderer::capture_equirect`].
+fn resolve_faces_to_equirect(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    faces: &crate::gpu::Texture,
+    uniform: &ResolveUniform,
+    eq_w: u32,
+    eq_h: u32,
+) -> crate::gpu::Texture {
+    let output = new_hdr_target(device, "capture_equirect_gpu", eq_w, eq_h, 1, true);
+    let output_view = output.create_view(&crate::gpu::TextureViewDescriptor::default());
+
+    let faces_view = faces.create_view(&crate::gpu::TextureViewDescriptor {
+        dimension: Some(crate::gpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    // Clamp-to-edge on both axes: a face UV never wraps, unlike a full equirect.
+    let sampler = device.create_sampler(&crate::gpu::SamplerDescriptor {
+        label: Some("capture_resolve_sampler"),
+        address_mode_u: crate::gpu::AddressMode::ClampToEdge,
+        address_mode_v: crate::gpu::AddressMode::ClampToEdge,
+        address_mode_w: crate::gpu::AddressMode::ClampToEdge,
+        mag_filter: crate::gpu::FilterMode::Linear,
+        min_filter: crate::gpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        label: Some("capture_resolve_uniform"),
+        contents: bytemuck::bytes_of(uniform),
+        usage: crate::gpu::BufferUsages::UNIFORM,
+    });
+
+    let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        label: Some("capture_resolve_bgl"),
+        entries: &[
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        label: Some("capture_resolve_bg"),
+        layout: &bgl,
+        entries: &[
+            crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: crate::gpu::BindingResource::TextureView(&faces_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 1,
+                resource: crate::gpu::BindingResource::Sampler(&sampler),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 2,
+                resource: uniform_buf.as_entire_binding(),
+            },
+        ],
+    });
+
+    let module = crate::resources::builders::wgsl_module(
+        device,
+        "cube_to_equirect",
+        crate::resources::builders::wgsl_source!("cube_to_equirect"),
+    );
+    let layout =
+        crate::resources::builders::pipeline_layout(device, "capture_resolve_layout", &[&bgl]);
+    let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+        device,
+        "capture_resolve_pipeline",
+        &layout,
+        &module,
+        crate::gpu::TextureFormat::Rgba16Float,
+        None,
+    );
+
+    let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+        label: Some("capture_resolve_encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+            #[cfg(feature = "wgpu29")]
+            multiview_mask: None,
+            label: Some("capture_resolve_pass"),
+            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                view: &output_view,
+                resolve_target: None,
+                ops: crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
+                    store: crate::gpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit(std::iter::once(encoder.finish()));
+
+    output
 }

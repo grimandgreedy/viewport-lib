@@ -1095,6 +1095,96 @@ fn capture_equirect_maps_direction_like_the_shader() {
     );
 }
 
+/// F1-gpu: the on-GPU cube -> equirect resolve must produce the same panorama
+/// as the CPU resolve. Both render the same six faces of the same scene; the
+/// GPU path keeps them in a texture array and resolves with a fragment pass,
+/// the CPU path loops in Rust. Aggregate radiance must agree (f16 rounding and
+/// hardware-vs-manual bilinear give small per-texel differences, so this checks
+/// the summed relative error, not exact bytes), and the bright emissive lobe
+/// must resolve to the same place.
+#[test]
+fn capture_equirect_gpu_matches_the_cpu_resolve() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let mut frame = FrameData::default();
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(2.0, 0.0, 0.0)).to_cols_array_2d();
+    item.material.emissive = [8.0, 8.0, 8.0];
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let eq_h = 64u32;
+    let cpu = renderer.capture_equirect(&device, &queue, &mut frame, [0.0, 0.0, 0.0], 128, eq_h);
+    let gpu_cap =
+        renderer.capture_equirect_gpu(&device, &queue, &mut frame, [0.0, 0.0, 0.0], 128, eq_h);
+    let gpu = renderer.read_captured_hdr(&device, &queue, &gpu_cap);
+
+    assert_eq!((gpu.width, gpu.height), (cpu.width, cpu.height));
+    assert_eq!((gpu.width, gpu.height), (eq_h * 2, eq_h));
+    assert_eq!(gpu.rgba.len(), cpu.rgba.len());
+
+    // Summed relative error over RGB. The bright emissive lobe dominates the
+    // sum, so a mismatched resolve (wrong face pick, flipped projection) would
+    // blow this up well past a few percent.
+    let mut diff = 0.0f64;
+    let mut mag = 0.0f64;
+    let texels = (cpu.width * cpu.height) as usize;
+    let (mut cpu_best, mut cpu_i) = (f32::NEG_INFINITY, 0usize);
+    let (mut gpu_best, mut gpu_i) = (f32::NEG_INFINITY, 0usize);
+    for i in 0..texels {
+        let o = i * 4;
+        let mut cl = 0.0f32;
+        let mut gl = 0.0f32;
+        for k in 0..3 {
+            let c = cpu.rgba[o + k];
+            let g = gpu.rgba[o + k];
+            diff += (c - g).abs() as f64;
+            mag += c.abs() as f64;
+            cl += c;
+            gl += g;
+        }
+        if cl > cpu_best {
+            cpu_best = cl;
+            cpu_i = i;
+        }
+        if gl > gpu_best {
+            gpu_best = gl;
+            gpu_i = i;
+        }
+    }
+    let rel = diff / mag.max(1e-6);
+    assert!(
+        rel < 0.05,
+        "GPU resolve diverged from the CPU resolve: relative error {rel:.4}"
+    );
+
+    // The brightest texel must land on the same equirect location (allow a
+    // one-texel slop for the bilinear difference).
+    let cx = (cpu_i as u32 % cpu.width) as i32;
+    let cy = (cpu_i as u32 / cpu.width) as i32;
+    let gx = (gpu_i as u32 % gpu.width) as i32;
+    let gy = (gpu_i as u32 / gpu.width) as i32;
+    assert!(
+        (cx - gx).abs() <= 1 && (cy - gy).abs() <= 1,
+        "brightest texel moved: cpu ({cx}, {cy}) vs gpu ({gx}, {gy})"
+    );
+    assert!(
+        gpu_best > 1.0,
+        "HDR emissive did not survive the GPU resolve"
+    );
+}
+
 /// LP-c consumption: an object marked `IndirectLightSource::LightProbe` must
 /// take its indirect diffuse from the uploaded SH field. A red-only probe with
 /// no direct lights makes a white PBR box render red, where global-IBL /
