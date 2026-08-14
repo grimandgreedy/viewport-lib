@@ -73,6 +73,7 @@ mod showcase_52_lod;
 mod showcase_53_vertex_colours;
 mod showcase_54_custom_shading;
 mod showcase_55_foreground_pass;
+mod showcase_56_submesh_materials;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -235,6 +236,7 @@ fn main() -> eframe::Result {
                 vcol_state: showcase_53_vertex_colours::VertexColourState::default(),
                 cs_state: showcase_54_custom_shading::CustomShadingState::default(),
                 fg_state: showcase_55_foreground_pass::ForegroundState::default(),
+                submesh_state: showcase_56_submesh_materials::SubmeshState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -304,6 +306,7 @@ enum ShowcaseMode {
     VertexColours,
     CustomShading,
     Foreground,
+    SubmeshMaterials,
 }
 
 impl ShowcaseMode {
@@ -364,6 +367,7 @@ impl ShowcaseMode {
             Self::VertexColours => "53: Vertex Colours & Painting",
             Self::CustomShading => "54: Custom Shading Plugins",
             Self::Foreground => "55: Foreground Composite Pass",
+            Self::SubmeshMaterials => "56: Submesh Materials",
         }
     }
 }
@@ -551,6 +555,7 @@ pub(crate) struct App {
     // --- Showcase 54 ---
     pub(crate) cs_state: showcase_54_custom_shading::CustomShadingState,
     pub(crate) fg_state: showcase_55_foreground_pass::ForegroundState,
+    pub(crate) submesh_state: showcase_56_submesh_materials::SubmeshState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -755,6 +760,7 @@ impl eframe::App for App {
                     ShowcaseMode::VertexColours,
                     ShowcaseMode::CustomShading,
                     ShowcaseMode::Foreground,
+                    ShowcaseMode::SubmeshMaterials,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1070,6 +1076,13 @@ impl eframe::App for App {
                 if self.mode == ShowcaseMode::Foreground {
                     let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
                     showcase_55_foreground_pass::update_foreground(self, dt);
+                    ctx.request_repaint();
+                }
+
+                // ----- Submesh rocket spin (Showcase 56) -----
+                if self.mode == ShowcaseMode::SubmeshMaterials && self.submesh_state.spin {
+                    let dt = ctx.input(|i| i.stable_dt.min(1.0 / 30.0));
+                    self.submesh_state.angle += dt * 0.5;
                     ctx.request_repaint();
                 }
 
@@ -1620,7 +1633,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 55] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 56] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1676,6 +1689,7 @@ impl App {
             ShowcaseMode::VertexColours,
             ShowcaseMode::CustomShading,
             ShowcaseMode::Foreground,
+            ShowcaseMode::SubmeshMaterials,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1815,6 +1829,7 @@ impl App {
             ShowcaseMode::VertexColours => !self.vcol_state.built,
             ShowcaseMode::CustomShading => !self.cs_state.built,
             ShowcaseMode::Foreground => !self.fg_state.built,
+            ShowcaseMode::SubmeshMaterials => !self.submesh_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2358,6 +2373,16 @@ impl App {
             ShowcaseMode::Foreground => {
                 self.build_foreground_scene(renderer);
             }
+            ShowcaseMode::SubmeshMaterials => {
+                showcase_56_submesh_materials::build_submesh_scene(self, renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::ZERO,
+                    distance: 14.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.2),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2471,6 +2496,9 @@ impl App {
                 showcase_54_custom_shading::controls_custom_shading(self, ui)
             }
             ShowcaseMode::Foreground => showcase_55_foreground_pass::controls_foreground(self, ui),
+            ShowcaseMode::SubmeshMaterials => {
+                showcase_56_submesh_materials::controls_submesh(self, ui)
+            }
         }
     }
 }
@@ -3367,6 +3395,17 @@ impl App {
             ShowcaseMode::Foreground => {
                 let items = showcase_55_foreground_pass::foreground_scene_items(self);
                 (items, Some(BG_COLOUR), App::foreground_lighting(), 0, 0)
+            }
+
+            ShowcaseMode::SubmeshMaterials => {
+                let items = showcase_56_submesh_materials::submesh_scene_items(self);
+                (
+                    items,
+                    Some(BG_COLOUR),
+                    showcase_56_submesh_materials::submesh_lighting(),
+                    0,
+                    0,
+                )
             }
         };
 
