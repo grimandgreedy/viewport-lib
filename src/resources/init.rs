@@ -2589,6 +2589,8 @@ impl DeviceResources {
             lic: crate::resources::postprocess::LicResources::default(),
             hdr_solid_pipeline: None,
             hdr_solid_two_sided_pipeline: None,
+            hdr_solid_nodiscard_pipeline: None,
+            hdr_solid_two_sided_nodiscard_pipeline: None,
             hdr_transparent_pipeline: None,
             hdr_wireframe_pipeline: None,
             hdr_overlay_pipeline: None,

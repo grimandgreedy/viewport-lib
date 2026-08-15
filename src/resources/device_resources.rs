@@ -845,6 +845,12 @@ pub struct DeviceResources {
     pub(crate) hdr_solid_pipeline: Option<crate::gpu::RenderPipeline>,
     /// HDR two-sided variant (cull_mode: None) for analytical surfaces.
     pub(crate) hdr_solid_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Discard-free twins of the per-object HDR solid pipelines (early-Z fast
+    /// path). Selected for plain-opaque per-object draws when the frame renders
+    /// no clip geometry, so occluded fragments are depth-rejected before
+    /// shading. The instanced paths carry their own nodiscard twins.
+    pub(crate) hdr_solid_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) hdr_solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) hdr_transparent_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) hdr_wireframe_pipeline: Option<crate::gpu::RenderPipeline>,
     /// HDR overlay pipeline (TriangleList, Rgba16Float, alpha blending) for cap fill in HDR path.

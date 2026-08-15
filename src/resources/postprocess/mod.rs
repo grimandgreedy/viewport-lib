@@ -977,15 +977,24 @@ impl DeviceResources {
                 &self.deform.registrations,
             )
         };
+        // Final composed HDR source, materialized so the discard-free twin can be
+        // stripped from the exact same source the normal module compiles.
+        let hdr_final_src = crate::resources::builders::builtin_hook_env(
+            crate::resources::builders::strip_debug_vis(hdr_mesh_source, self.debug_vis_shaders),
+        )
+        .into_owned();
         let hdr_shader = crate::resources::builders::wgsl_module(
             device,
             "mesh_shader_hdr",
-            crate::resources::builders::builtin_hook_env(
-                crate::resources::builders::strip_debug_vis(
-                    hdr_mesh_source,
-                    self.debug_vis_shaders,
-                ),
-            ),
+            hdr_final_src.clone(),
+        );
+        // Early-Z twin: identical shading with every `discard;` removed, valid
+        // only for draws that would not have discarded (see the per-object gate
+        // in hdr_path.rs).
+        let hdr_shader_nodiscard = crate::resources::builders::wgsl_module(
+            device,
+            "mesh_shader_hdr_nodiscard",
+            crate::resources::builders::strip_discards(&hdr_final_src),
         );
         let hdr_depth_stencil = crate::resources::builders::scene_depth_stencil(
             true,
@@ -1009,6 +1018,17 @@ impl DeviceResources {
         let hdr_solid_two_sided_pipeline = hdr.solid_two_sided;
         let hdr_transparent_pipeline = hdr.transparent;
         let hdr_wireframe_pipeline = hdr.wireframe;
+
+        // Discard-free solid twins for the early-Z fast path. Only .solid and
+        // .solid_two_sided are used; the transparent/wireframe twins are
+        // discarded (transparency and wireframe do not benefit from early-Z).
+        let hdr_nd = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
+            device,
+            &hdr_pipeline_layout,
+            &hdr_shader_nodiscard,
+        );
+        let hdr_solid_nodiscard_pipeline = hdr_nd.solid;
+        let hdr_solid_two_sided_nodiscard_pipeline = hdr_nd.solid_two_sided;
 
         let hdr_overlay_shader = crate::resources::builders::wgsl_module(
             device,
@@ -1291,6 +1311,8 @@ impl DeviceResources {
         self.oit.composite_pipeline = Some(oit_composite_pipeline);
         self.hdr_solid_pipeline = Some(hdr_solid_pipeline);
         self.hdr_solid_two_sided_pipeline = Some(hdr_solid_two_sided_pipeline);
+        self.hdr_solid_nodiscard_pipeline = Some(hdr_solid_nodiscard_pipeline);
+        self.hdr_solid_two_sided_nodiscard_pipeline = Some(hdr_solid_two_sided_nodiscard_pipeline);
         self.hdr_transparent_pipeline = Some(hdr_transparent_pipeline);
         self.hdr_wireframe_pipeline = Some(hdr_wireframe_pipeline);
         self.hdr_overlay_pipeline = Some(hdr_overlay_pipeline);

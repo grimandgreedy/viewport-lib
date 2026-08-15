@@ -900,6 +900,15 @@ impl ViewportRenderer {
                         &resources.hdr_solid_pipeline,
                         &resources.hdr_solid_two_sided_pipeline,
                     ) {
+                        // Clip geometry disables the discard-free early-Z twin
+                        // (the clip discards would be stripped). Computed here
+                        // because this per-object branch is the `else` of the
+                        // instanced path where the same check lives.
+                        let clipping_active = frame
+                            .effects
+                            .clip_objects
+                            .iter()
+                            .any(|o| o.enabled && o.clip_geometry);
                         // Only opaque excluded items are drawn in the scene pass; transparent
                         // excluded items go to the OIT pass below. LDR draws all excluded
                         // items inline (including transparent ones) using the transparent
@@ -914,11 +923,37 @@ impl ViewportRenderer {
                                 continue;
                             };
                             let plug = resources.material_plugin_draw(item.material.shading_plugin);
+                            // Early-Z fast path: a plain-opaque, single-material,
+                            // non-scalar item in a frame with no clip geometry can
+                            // never hit a `discard`, so draw it with the
+                            // discard-free twin and let hidden fragments be
+                            // depth-rejected before shading. Plugin, alpha-mask,
+                            // submesh-material, and scalar-attribute (NaN-discard)
+                            // draws keep the discarding pipeline.
+                            let no_discard = plug.is_none()
+                                && !clipping_active
+                                && matches!(
+                                    item.material.alpha_mode,
+                                    crate::scene::material::AlphaMode::Opaque
+                                )
+                                && item.active_attribute.is_none()
+                                && item.submesh_materials.is_none()
+                                && resources.hdr_solid_nodiscard_pipeline.is_some()
+                                && resources.hdr_solid_two_sided_nodiscard_pipeline.is_some();
                             let pipeline = if let Some((pp, _)) = plug {
                                 if item.material.is_two_sided() {
                                     &pp.hdr.solid_two_sided
                                 } else {
                                     &pp.hdr.solid
+                                }
+                            } else if no_discard {
+                                if item.material.is_two_sided() {
+                                    resources
+                                        .hdr_solid_two_sided_nodiscard_pipeline
+                                        .as_ref()
+                                        .unwrap()
+                                } else {
+                                    resources.hdr_solid_nodiscard_pipeline.as_ref().unwrap()
                                 }
                             } else if item.material.is_two_sided() {
                                 hdr_solid_two_sided
