@@ -1380,9 +1380,9 @@ impl ViewportRenderer {
         }
         // A derivative render (capture / bake) reads resident state: it must not
         // run a plugin's `&mut self` prepare, which would advance the plugin's
-        // own per-frame state, nor bump the plugin frame index. Plugin geometry
-        // still appears in a bake through the `&self` paint path, drawn from the
-        // buffers the last presented frame uploaded.
+        // own per-frame state, nor bump the plugin frame index. The draw passes
+        // are skipped in the same way (see `dispatch_plugin_paint`), so plugin
+        // geometry is absent from a bake rather than drawn stale.
         if !self.render_advances_state() {
             return Vec::new();
         }
@@ -1416,6 +1416,14 @@ impl ViewportRenderer {
         frame: &'rp FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        // A derivative render (capture / bake) does not draw plugin items. Their
+        // draw passes read visibility / LOD that `cull` sets against the
+        // presented camera (skipped here), so painting them would render stale,
+        // wrong-camera geometry into the bake. Plugin geometry is absent from
+        // bakes rather than partially present.
+        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -1478,6 +1486,10 @@ impl ViewportRenderer {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
             return;
         }
+        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
+        if !self.render_advances_state() {
+            return;
+        }
         let ctx = crate::plugin_api::PaintContext {
             camera,
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
@@ -1536,6 +1548,10 @@ impl ViewportRenderer {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
             return;
         }
+        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
+        if !self.render_advances_state() {
+            return;
+        }
         let ctx = crate::plugin_api::PaintContext {
             camera: &frame.camera.render_camera,
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
@@ -1566,6 +1582,10 @@ impl ViewportRenderer {
         light_view_proj: glam::Mat4,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
+        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::ShadowCastContext {
@@ -1643,6 +1663,10 @@ impl ViewportRenderer {
         frame: &'rp FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
+        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::OutlineMaskContext {

@@ -170,13 +170,21 @@ impl ViewportRenderer {
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
         // any registered completion callbacks fire on this thread.
-        match self.upload_budget {
-            Some(d) => self.resources.process_uploads_with_budget(
-                device,
-                queue,
-                crate::resources::FrameBudget::from_now(d),
-            ),
-            None => self.resources.process_uploads(device, queue),
+        //
+        // Only a presented frame pumps the pipeline. A derivative render (a
+        // capture / bake) reads the currently resident scene and must not
+        // advance promotions: doing so drains the one-cycle promotion window a
+        // consumer polls to fire a deferred bind, which strands the bind
+        // permanently (the runner clears its `finished` table every call).
+        if self.render_advances_state() {
+            match self.upload_budget {
+                Some(d) => self.resources.process_uploads_with_budget(
+                    device,
+                    queue,
+                    crate::resources::FrameBudget::from_now(d),
+                ),
+                None => self.resources.process_uploads(device, queue),
+            }
         }
 
         // GPU compute filtering.
@@ -1355,7 +1363,12 @@ impl ViewportRenderer {
         }
 
         self.last_prepare_instant = Some(prepare_start);
-        self.frame_counter = self.frame_counter.wrapping_add(1);
+        // Only a presented frame advances the counter. A derivative capture
+        // render must not perturb the presented frame's temporal phase (the
+        // counter drives scatter jitter and the pick cadence).
+        if self.render_advances_state() {
+            self.frame_counter = self.frame_counter.wrapping_add(1);
+        }
 
         let reported_render_scale = self.current_render_scale;
 

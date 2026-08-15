@@ -119,6 +119,16 @@ impl ViewportRenderer {
         let saved_ssaa = frame.effects.post_process.ssaa_factor;
         let saved_scale = self.current_render_scale;
 
+        // Mark this an auxiliary render for its duration: it reads the resident
+        // scene and must not advance shared per-frame state. `render_mode`
+        // suppresses the upload pump, the frame-counter bump, the HiZ prev-depth
+        // store, and item-type plugins' prepare / cull; `last_stats` is a
+        // multi-site value, so snapshot and restore it so the caller's
+        // `last_frame_stats()` keeps reflecting their presented frame.
+        let saved_render_mode = self.render_mode;
+        let saved_last_stats = self.last_stats;
+        self.render_mode = super::RenderMode::Derivative;
+
         // Force a clean, full-resolution HDR render. The HDR path is what raises
         // lit_clamp to f16::MAX, so radiance stays unclamped into the
         // Rgba16Float scene target. SSAA and dynamic resolution are off so the
@@ -161,6 +171,8 @@ impl ViewportRenderer {
         frame.effects.post_process.enabled = saved_pp_enabled;
         frame.effects.post_process.ssaa_factor = saved_ssaa;
         self.current_render_scale = saved_scale;
+        self.render_mode = saved_render_mode;
+        self.last_stats = saved_last_stats;
     }
 
     /// Render one HDR face and copy it into `dst_layer` of `dst` (an
@@ -972,4 +984,257 @@ fn resolve_faces_to_equirect(
     queue.submit(std::iter::once(encoder.finish()));
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::camera::Camera;
+    use crate::renderer::types::FrameData;
+    use crate::renderer::{
+        CameraFrame, RenderCamera, SceneFrame, SurfaceSubmission, ViewportRenderer,
+    };
+    use crate::resources::UploadStatus;
+
+    fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+        let instance = crate::gpu::default_instance();
+        let adapter = pollster::block_on(instance.request_adapter(
+            &crate::gpu::RequestAdapterOptions {
+                power_preference: crate::gpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        ))
+        .ok()?;
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+                label: Some("capture_tests"),
+                ..Default::default()
+            }))
+            .ok()?;
+        Some((device, queue))
+    }
+
+    fn empty_frame() -> FrameData {
+        let render_cam = RenderCamera::from_camera(&Camera::default());
+        let cf = CameraFrame::new(render_cam, [64.0, 64.0]);
+        let sf = SceneFrame::new(SurfaceSubmission::Flat(std::sync::Arc::from(Vec::new())));
+        FrameData::new(cf, sf)
+    }
+
+    // A derivative render (probe bake) must not pump the upload pipeline. If it
+    // did, it would promote and then reap the one-cycle promotion window a
+    // consumer polls, stranding a deferred bind permanently.
+    #[test]
+    fn capture_does_not_strand_a_pending_upload() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping capture_does_not_strand_a_pending_upload: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+
+        let job = renderer
+            .resources_mut()
+            .begin_upload_mesh_data(&device, crate::primitives::cube(1.0))
+            .unwrap();
+        assert!(
+            matches!(renderer.upload_status(job), UploadStatus::Pending { .. }),
+            "upload should be in flight before any presented drain"
+        );
+
+        // Bake before the upload promotes. With the derivative-render fix the
+        // capture leaves the pending job untouched.
+        let mut fd = empty_frame();
+        let _ = renderer.bake_light_probes(&device, &queue, &mut fd, &[[0.0, 0.0, 0.0]], 8, 8);
+        assert!(
+            matches!(renderer.upload_status(job), UploadStatus::Pending { .. }),
+            "capture must not advance or reap the pending upload"
+        );
+
+        // A presented drain still promotes it to Ready.
+        for _ in 0..16 {
+            renderer.resources_mut().process_uploads(&device, &queue);
+            if matches!(renderer.upload_status(job), UploadStatus::Ready) {
+                break;
+            }
+        }
+        assert!(matches!(renderer.upload_status(job), UploadStatus::Ready));
+    }
+
+    // A derivative render must not advance the frame counter, which drives the
+    // presented frame's temporal phase (scatter jitter, pick cadence).
+    #[test]
+    fn capture_does_not_advance_frame_counter() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping capture_does_not_advance_frame_counter: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+
+        let mut fd = empty_frame();
+        renderer.prepare(&device, &queue, &fd); // presented frame advances the counter
+        let before = renderer.frame_counter;
+
+        // Six face renders per probe; none should touch the counter.
+        let _ = renderer.bake_light_probes(&device, &queue, &mut fd, &[[0.0, 0.0, 0.0]], 8, 8);
+        assert_eq!(
+            renderer.frame_counter, before,
+            "capture must not advance the frame counter"
+        );
+    }
+
+    // Records how often each dispatched item-type plugin hook was called.
+    #[derive(Default)]
+    struct PluginCalls {
+        prepare: std::sync::atomic::AtomicUsize,
+        cull: std::sync::atomic::AtomicUsize,
+        paint: std::sync::atomic::AtomicUsize,
+    }
+
+    struct MockPlugin {
+        calls: std::sync::Arc<PluginCalls>,
+    }
+
+    impl crate::plugin_api::ItemTypePlugin for MockPlugin {
+        fn type_name(&self) -> &'static str {
+            "mock"
+        }
+        fn prepare(
+            &mut self,
+            _device: &crate::gpu::Device,
+            _queue: &crate::gpu::Queue,
+            _ctx: &crate::plugin_api::ItemFrameContext<'_>,
+            _items: &dyn crate::plugin_api::PluginItemCollection,
+        ) -> Vec<crate::gpu::CommandBuffer> {
+            self.calls
+                .prepare
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Vec::new()
+        }
+        fn cull(
+            &mut self,
+            _frustum: &crate::camera::frustum::Frustum,
+            _ctx: &crate::plugin_api::ItemFrameContext<'_>,
+            _items: &dyn crate::plugin_api::PluginItemCollection,
+        ) {
+            self.calls
+                .cull
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        fn paint<'a>(
+            &'a self,
+            _pass: &mut crate::gpu::RenderPass<'a>,
+            _ctx: &crate::plugin_api::PaintContext<'a>,
+            _items: &'a dyn crate::plugin_api::PluginItemCollection,
+        ) {
+            self.calls
+                .paint
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    struct MockItems {
+        settings: crate::scene::material::ItemSettings,
+    }
+
+    impl crate::plugin_api::PluginItemCollection for MockItems {
+        fn len(&self) -> usize {
+            1
+        }
+        fn item_settings(&self, _index: usize) -> &crate::scene::material::ItemSettings {
+            &self.settings
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    // A derivative render (bake) must not dispatch any item-type plugin hook:
+    // not the `&mut self` prepare / cull (which advance plugin state), nor the
+    // draw passes (which would render stale, wrong-camera geometry, since cull
+    // was skipped). A presented render dispatches all three.
+    #[test]
+    fn bake_does_not_dispatch_item_type_plugins() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping bake_does_not_dispatch_item_type_plugins: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let calls = std::sync::Arc::new(PluginCalls::default());
+        renderer.with_item_type_plugin(
+            &device,
+            Box::new(MockPlugin {
+                calls: calls.clone(),
+            }),
+        );
+
+        let mut fd = empty_frame();
+        // Route through the HDR path so the opaque plugin paint dispatch runs.
+        fd.effects.post_process.enabled = true;
+        fd.scene.submit_plugin_items(
+            "mock",
+            MockItems {
+                settings: crate::scene::material::ItemSettings {
+                    pick_id: crate::renderer::PickId(1),
+                    ..Default::default()
+                },
+            },
+        );
+
+        // A presented render dispatches prepare, cull, and paint.
+        let target = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("mock_plugin_target"),
+            size: crate::gpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Bgra8UnormSrgb,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = target.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let cmd = renderer.render(&device, &queue, &view, &fd);
+        queue.submit(std::iter::once(cmd));
+
+        assert!(
+            calls.prepare.load(Relaxed) >= 1,
+            "presented render runs prepare"
+        );
+        assert!(calls.cull.load(Relaxed) >= 1, "presented render runs cull");
+        assert!(
+            calls.paint.load(Relaxed) >= 1,
+            "presented render runs paint"
+        );
+
+        let (p, c, pt) = (
+            calls.prepare.load(Relaxed),
+            calls.cull.load(Relaxed),
+            calls.paint.load(Relaxed),
+        );
+
+        // The bake is a derivative render: no plugin hook should fire.
+        let _ = renderer.bake_light_probes(&device, &queue, &mut fd, &[[0.0, 0.0, 0.0]], 8, 8);
+        assert_eq!(
+            calls.prepare.load(Relaxed),
+            p,
+            "bake must not call plugin prepare"
+        );
+        assert_eq!(
+            calls.cull.load(Relaxed),
+            c,
+            "bake must not call plugin cull"
+        );
+        assert_eq!(
+            calls.paint.load(Relaxed),
+            pt,
+            "bake must not call plugin paint"
+        );
+    }
 }
