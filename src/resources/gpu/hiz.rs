@@ -520,4 +520,10 @@ impl crate::resources::DeviceResources {
     pub(crate) fn occlusion_culling_enabled(&self) -> bool {
         self.occlusion_culling_enabled
     }
+
+    /// Force the per-object opaque draw to keep its discarding pipeline instead
+    /// of the discard-free early-Z twin. Measurement knob only.
+    pub(crate) fn set_force_po_discard(&mut self, force: bool) {
+        self.force_po_discard = force;
+    }
 }

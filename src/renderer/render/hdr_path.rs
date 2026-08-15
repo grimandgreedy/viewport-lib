@@ -932,6 +932,7 @@ impl ViewportRenderer {
                             // draws keep the discarding pipeline.
                             let no_discard = plug.is_none()
                                 && !clipping_active
+                                && !resources.force_po_discard
                                 && matches!(
                                     item.material.alpha_mode,
                                     crate::scene::material::AlphaMode::Opaque
@@ -1324,6 +1325,12 @@ impl ViewportRenderer {
     /// otherwise unused).
     fn hdr_store_hiz_depth(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
         if !self.resources.occlusion_culling_enabled() {
+            return;
+        }
+        // A derivative render (capture / bake) must not overwrite the presented
+        // frame's prev-depth: that would feed next frame's occlusion
+        // reprojection the probe camera's depth instead of the shown view's.
+        if !self.render_advances_state() {
             return;
         }
         let view_proj = ctx

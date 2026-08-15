@@ -1053,6 +1053,14 @@ pub struct DeviceResources {
     /// safety valve against the one-frame-stale depth source). The HiZ pyramid
     /// itself is per-viewport and lives on `ViewportCullState::hiz`.
     pub(crate) occlusion_culling_enabled: bool,
+
+    // --- Measurement knob ---
+    /// When true, the per-object opaque scene-pass draw keeps the discarding
+    /// mesh pipeline instead of selecting the discard-free early-Z twin. Off by
+    /// default; this exists only so a benchmark can A/B the per-object early-Z
+    /// path in a single process. It does not change rendered output, only which
+    /// pipeline draws eligible opaque items.
+    pub(crate) force_po_discard: bool,
 }
 
 /// Per-viewport GPU culling outputs.

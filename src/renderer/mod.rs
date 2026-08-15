@@ -318,6 +318,32 @@ pub(crate) const GPU_TS_FXAA: u32 = 9;
 /// (a begin/end pair per slot).
 pub(crate) const GPU_TS_SLOTS: u32 = 10;
 
+/// Whether a `render()` presents the frame the user sees, or is an auxiliary
+/// read.
+///
+/// A `Presented` render owns advancing the per-frame state that only the shown
+/// frame should touch: it pumps the upload pipeline, bumps the frame counter,
+/// stores HiZ prev-depth for next frame's occlusion reprojection, writes
+/// `FrameStats`, and runs item-type plugins' `prepare` / `cull`. A `Derivative`
+/// render (a capture / probe bake, and later an offscreen preview) reads the
+/// currently resident scene to produce a side output and advances none of that,
+/// so it cannot strand a consumer's in-flight upload binds or perturb the
+/// presented frame's temporal state.
+///
+/// Internal, and distinct from the consumer-facing
+/// [`RuntimeMode`](crate::renderer::stats::RuntimeMode), which selects render
+/// quality, not side-effect behaviour. Consumers never set this; the capture
+/// entry points do, for the duration of the capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RenderMode {
+    /// The frame the user sees. Advances per-frame state.
+    #[default]
+    Presented,
+    /// A capture / bake / preview that reads resident state and advances nothing
+    /// shared.
+    Derivative,
+}
+
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
 /// issue draw calls.
@@ -445,6 +471,10 @@ pub struct ViewportRenderer {
     shadow: ShadowState,
     /// Current runtime mode controlling internal default behavior.
     runtime_mode: crate::renderer::stats::RuntimeMode,
+    /// Whether the current render presents a frame or is an auxiliary read. Set
+    /// to `Derivative` for the duration of a capture / bake render and restored
+    /// afterwards, so an auxiliary render advances no shared per-frame state.
+    render_mode: RenderMode,
     /// Optional cap on how much main-thread time `prepare` is allowed to
     /// spend running apply closures for completed upload jobs.
     ///
@@ -782,6 +812,7 @@ impl ViewportRenderer {
             prepared_surfaces: Vec::new(),
             shadow: ShadowState::new(),
             runtime_mode: crate::renderer::stats::RuntimeMode::Interactive,
+            render_mode: RenderMode::Presented,
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
             upload_budget: None,
             current_render_scale: 1.0,
@@ -934,6 +965,20 @@ impl ViewportRenderer {
         self.resources.occlusion_culling_enabled()
     }
 
+    /// Force the per-object opaque scene-pass draw to keep its discarding
+    /// pipeline instead of the discard-free early-Z twin.
+    ///
+    /// Off by default. A fragment shader that contains `discard` disables
+    /// hardware early depth rejection, so an eligible plain-opaque item is
+    /// normally drawn with a discard-free pipeline twin and its hidden fragments
+    /// are depth-rejected before shading. This forces the discarding pipeline
+    /// back on for that path so a benchmark can measure the early-Z difference
+    /// on a fill-bound scene in a single process. It does not change rendered
+    /// output.
+    pub fn set_force_po_discard(&mut self, force: bool) {
+        self.resources.set_force_po_discard(force);
+    }
+
     /// Cap the per-frame cost of upload-job work on the render thread.
     ///
     /// `None` is the default and matches the historical behaviour:
@@ -967,6 +1012,14 @@ impl ViewportRenderer {
     /// Return the current runtime mode.
     pub fn runtime_mode(&self) -> crate::renderer::stats::RuntimeMode {
         self.runtime_mode
+    }
+
+    /// True when the current render presents a frame the user sees, and so
+    /// should advance per-frame state (upload pipeline, frame counter, HiZ
+    /// prev-depth, stats, plugin `prepare` / `cull`). False for a `Derivative`
+    /// capture / bake render, which reads resident state and advances nothing.
+    pub(crate) fn render_advances_state(&self) -> bool {
+        matches!(self.render_mode, RenderMode::Presented)
     }
 
     /// Enable or disable the CPU pick cache.
@@ -1325,6 +1378,14 @@ impl ViewportRenderer {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
             return Vec::new();
         }
+        // A derivative render (capture / bake) reads resident state: it must not
+        // run a plugin's `&mut self` prepare, which would advance the plugin's
+        // own per-frame state, nor bump the plugin frame index. Plugin geometry
+        // still appears in a bake through the `&self` paint path, drawn from the
+        // buffers the last presented frame uploaded.
+        if !self.render_advances_state() {
+            return Vec::new();
+        }
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
@@ -1532,6 +1593,12 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        // Skip during a derivative render: `cull` is `&mut self` and would
+        // advance the plugin's own per-frame visibility state. See
+        // `dispatch_plugin_prepare`.
+        if !self.render_advances_state() {
             return;
         }
         for (name, plugin) in self.item_type_plugins.iter_mut() {

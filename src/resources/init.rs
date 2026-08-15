@@ -2650,6 +2650,7 @@ impl DeviceResources {
             frame_pipelines_built: 0,
             resource_free_epoch: 0,
             occlusion_culling_enabled: false,
+            force_po_discard: false,
             decal: crate::resources::decal::DecalResources::default(),
         };
         // Decal pipelines are built here rather than on the first frame that
