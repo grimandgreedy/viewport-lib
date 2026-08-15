@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::util::DeviceExt;
 
 impl DeviceResources {
     /// Create all GPU resources for the viewport.
@@ -326,6 +327,20 @@ impl DeviceResources {
                 // Walked per fragment to pick / blend environment array layers.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 19,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 20: adaptive probe volume (FRAGMENT, read-only). A
+                // 3-vec4 header (grid box + dims) then 9 vec4 of SH per grid
+                // cell, trilinearly sampled per fragment when the object's
+                // light_probe_index is the volume sentinel.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 20,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
@@ -696,6 +711,15 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
+        // Disabled probe-volume header (binding 20 fallback): 3 vec4, all zero so
+        // the enabled flag (header[0].w) reads 0 and the sampler returns black.
+        let light_probe_volume_fallback =
+            device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                label: Some("light_probe_volume_fallback"),
+                contents: bytemuck::cast_slice(&[[0.0f32; 4]; 3]),
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            });
+
         // Clip planes uniform buffer (binding 4 of camera bind group).
         // Initialized to count=0 (no active clip planes).
         let clip_planes_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -983,6 +1007,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 19,
                     resource: env_zone_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 20,
+                    resource: light_probe_volume_fallback.as_entire_binding(),
                 },
             ],
         });
@@ -2424,6 +2452,8 @@ impl DeviceResources {
             light_storage_buf,
             light_probes: None,
             light_probe_sh_buf,
+            light_probe_volume_buf: None,
+            light_probe_volume_fallback,
             clustered,
             camera_bind_group,
             camera_bind_group_layout: camera_bgl,

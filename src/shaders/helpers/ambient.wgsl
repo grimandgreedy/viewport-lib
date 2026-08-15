@@ -67,6 +67,87 @@ fn evaluate_sh_probe(base: u32, n: vec3<f32>) -> vec3<f32> {
     return max(result, vec3<f32>(0.0));
 }
 
+/// Sample the adaptive probe volume (group 0 binding 20) at world position `p`
+/// and evaluate it as diffuse irradiance for normal `n`. Trilinearly blends the
+/// 8 surrounding grid cells' SH, then applies the cosine-lobe basis. Returns
+/// black when no volume is uploaded (header enabled flag is 0). Mirrors the CPU
+/// `LightProbeVolume::sample_irradiance`.
+fn sample_probe_volume(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let h0 = probe_volume[0];
+    if h0.w < 0.5 { return vec3<f32>(0.0); }
+    let gmin = h0.xyz;
+    let inv_cell = probe_volume[1].xyz;
+    let dims = vec3<u32>(
+        bitcast<u32>(probe_volume[2].x),
+        bitcast<u32>(probe_volume[2].y),
+        bitcast<u32>(probe_volume[2].z),
+    );
+    let last = vec3<f32>(dims - vec3<u32>(1u));
+
+    // Continuous grid coordinate, clamped so points outside the box take the
+    // boundary probes. Axes with a single probe or zero spacing collapse to 0.
+    let g = clamp((p - gmin) * inv_cell, vec3<f32>(0.0), last);
+    let base = floor(g);
+    let frac = g - base;
+    let b = vec3<u32>(base);
+    let hi = min(b + vec3<u32>(1u), dims - vec3<u32>(1u));
+
+    // Accumulate the 8 corners' SH coefficients with trilinear weights.
+    var coeff: array<vec3<f32>, 9>;
+    for (var k = 0u; k < 9u; k = k + 1u) { coeff[k] = vec3<f32>(0.0); }
+    let nx = dims.x;
+    let ny = dims.y;
+    for (var c = 0u; c < 8u; c = c + 1u) {
+        let sx = (c & 1u) != 0u;
+        let sy = (c & 2u) != 0u;
+        let sz = (c & 4u) != 0u;
+        let ix = select(b.x, hi.x, sx);
+        let iy = select(b.y, hi.y, sy);
+        let iz = select(b.z, hi.z, sz);
+        let wx = select(1.0 - frac.x, frac.x, sx);
+        let wy = select(1.0 - frac.y, frac.y, sy);
+        let wz = select(1.0 - frac.z, frac.z, sz);
+        let w = wx * wy * wz;
+        if w <= 0.0 { continue; }
+        // 3 header vec4 precede the SH data; each cell holds 9 vec4.
+        let cell = 3u + (ix + iy * nx + iz * nx * ny) * 9u;
+        for (var k = 0u; k < 9u; k = k + 1u) {
+            coeff[k] = coeff[k] + probe_volume[cell + k].rgb * w;
+        }
+    }
+
+    let x = n.x;
+    let y = n.y;
+    let z = n.z;
+    var yb: array<f32, 9>;
+    yb[0] = 0.282095;
+    yb[1] = 0.488603 * y;
+    yb[2] = 0.488603 * z;
+    yb[3] = 0.488603 * x;
+    yb[4] = 1.092548 * x * y;
+    yb[5] = 1.092548 * y * z;
+    yb[6] = 0.315392 * (3.0 * z * z - 1.0);
+    yb[7] = 1.092548 * x * z;
+    yb[8] = 0.546274 * (x * x - y * y);
+    let a = array<f32, 9>(1.0, 0.6666667, 0.6666667, 0.6666667, 0.25, 0.25, 0.25, 0.25, 0.25);
+    var result = vec3<f32>(0.0);
+    for (var k = 0u; k < 9u; k = k + 1u) {
+        result = result + coeff[k] * (yb[k] * a[k]);
+    }
+    return max(result, vec3<f32>(0.0));
+}
+
+/// An object's indirect diffuse from either its per-object light-probe SH block
+/// or, when `index` is the volume sentinel (0xffffffff), the adaptive probe
+/// volume sampled at world position `p`. Lets both indirect sources share the
+/// one per-object flag and shader branch.
+fn evaluate_object_indirect(index: u32, p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    if index == 0xffffffffu {
+        return sample_probe_volume(p, n);
+    }
+    return evaluate_sh_probe(index, n);
+}
+
 /// Sample the irradiance map (diffuse IBL) of the default environment (array
 /// layer 0). Frozen plugin-contract signature; the `_layer` variant selects a
 /// non-default environment.

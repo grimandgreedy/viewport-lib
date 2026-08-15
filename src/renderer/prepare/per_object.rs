@@ -205,31 +205,40 @@ pub(super) fn prepare_light_probe_sh(
     scene_items: &[SceneRenderItem],
     queue: &crate::gpu::Queue,
 ) -> Vec<Option<u32>> {
+    use crate::renderer::IndirectLightSource;
     let mut indices = vec![None; scene_items.len()];
-    if let Some(probes) = resources.light_probes.as_ref() {
-        if !probes.is_empty() {
-            let mut sh_gpu: Vec<[f32; 4]> = Vec::new();
-            let mut count = 0u32;
-            for (idx, item) in scene_items.iter().enumerate() {
-                if item.indirect_light != crate::renderer::IndirectLightSource::LightProbe {
-                    continue;
+    let probes = resources.light_probes.as_ref().filter(|p| !p.is_empty());
+    let mut sh_gpu: Vec<[f32; 4]> = Vec::new();
+    let mut count = 0u32;
+    for (idx, item) in scene_items.iter().enumerate() {
+        match item.indirect_light {
+            IndirectLightSource::LightProbe => {
+                // Blend the nearby point probes' SH at the object position and
+                // pack a block; the block index rides light_probe_index.
+                if let Some(probes) = probes {
+                    if (count as usize) < crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS {
+                        let center = [item.model[3][0], item.model[3][1], item.model[3][2]];
+                        sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
+                        indices[idx] = Some(count);
+                        count += 1;
+                    }
                 }
-                if count as usize >= crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS {
-                    break;
-                }
-                let center = [item.model[3][0], item.model[3][1], item.model[3][2]];
-                sh_gpu.extend_from_slice(&probes.blend_sh_at(center).to_gpu());
-                indices[idx] = Some(count);
-                count += 1;
             }
-            if !sh_gpu.is_empty() {
-                queue.write_buffer(
-                    &resources.light_probe_sh_buf,
-                    0,
-                    bytemuck::cast_slice(&sh_gpu),
-                );
+            IndirectLightSource::ProbeVolume => {
+                // The volume is sampled per fragment in the shader, so no CPU
+                // blend and no SH block: the sentinel index selects it. Works
+                // whether or not a point-probe set is also uploaded.
+                indices[idx] = Some(crate::resources::light_probes::PROBE_VOLUME_INDEX);
             }
+            IndirectLightSource::GlobalIbl => {}
         }
+    }
+    if !sh_gpu.is_empty() {
+        queue.write_buffer(
+            &resources.light_probe_sh_buf,
+            0,
+            bytemuck::cast_slice(&sh_gpu),
+        );
     }
     indices
 }

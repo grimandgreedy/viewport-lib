@@ -110,6 +110,10 @@ struct ClusterCell {
 // Environment-selection zones (F2). Walked per fragment by ibl_ambient_zoned
 // when lights_uniform.env_zone_count > 0.
 @group(0) @binding(19) var<storage, read> env_zones:             array<EnvZone>;
+// Adaptive probe volume: a 3-vec4 header (grid box + dims) then 9 vec4 of SH per
+// grid cell, trilinearly sampled by sample_probe_volume in ambient.wgsl. A
+// disabled header (element 0 w == 0) is bound when no volume is uploaded.
+@group(0) @binding(20) var<storage, read> probe_volume:          array<vec4<f32>>;
 
 
 fn cluster_index_for(view_pos: vec3<f32>) -> u32 {

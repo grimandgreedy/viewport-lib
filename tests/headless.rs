@@ -1251,6 +1251,95 @@ fn light_probe_object_is_lit_by_the_probe_field() {
     );
 }
 
+/// APV: an object marked `IndirectLightSource::ProbeVolume` takes its indirect
+/// diffuse from the uploaded volume, sampled per fragment. A volume bright on one
+/// X side must light that side of a large object; flipping which side is bright
+/// must move the bright region. A per-object (center-sampled) path would render
+/// both the same, so the two images differing proves the lookup is per-fragment.
+#[test]
+fn probe_volume_lights_object_per_fragment() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    // Two probes along X (dims 2x1x1), spanning the scaled box's extent.
+    let red = {
+        let mut sh = viewport_lib::resources::SHCoefficients::default();
+        sh.r[0] = 1.0 / 0.282095; // DC red -> evaluate_sh returns ~[1,0,0]
+        sh
+    };
+    let black = viewport_lib::resources::SHCoefficients::default();
+    let volume = |bright_plus_x: bool| {
+        let cells = if bright_plus_x {
+            vec![black, red]
+        } else {
+            vec![red, black]
+        };
+        viewport_lib::resources::LightProbeVolume::new(
+            [-1.5, -1.5, -1.5],
+            [3.0, 3.0, 3.0],
+            [2, 1, 1],
+            cells,
+        )
+    };
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.lighting.lights = vec![];
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    // Scale the unit box up so it spans the volume's X gradient.
+    item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
+    item.material.shading_model = ShadingModel::Pbr;
+    item.material.base_colour = [1.0, 1.0, 1.0];
+    item.indirect_light = IndirectLightSource::ProbeVolume;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let (w, h) = (64u32, 64u32);
+    let max_red = |px: &[u8]| px.chunks_exact(4).map(|p| p[0]).max().unwrap_or(0);
+
+    renderer.set_light_probe_volume(&device, &volume(true));
+    let a = renderer.render_offscreen(&device, &queue, &frame, w, h);
+    renderer.set_light_probe_volume(&device, &volume(false));
+    let b = renderer.render_offscreen(&device, &queue, &frame, w, h);
+
+    // Each render must actually be lit red by the volume (end-to-end path works).
+    assert!(
+        max_red(&a) > 60 && max_red(&b) > 60,
+        "volume-lit object should be red: max red a={}, b={}",
+        max_red(&a),
+        max_red(&b)
+    );
+
+    // Flipping the bright side must change the image: sum the per-pixel red
+    // difference. A center-sampled (per-object) path would leave the two
+    // identical.
+    let red_diff: u64 = a
+        .chunks_exact(4)
+        .zip(b.chunks_exact(4))
+        .map(|(pa, pb)| (pa[0] as i32 - pb[0] as i32).unsigned_abs() as u64)
+        .sum();
+    assert!(
+        red_diff > 2000,
+        "per-fragment volume sampling should move the bright side; red diff was {red_diff}"
+    );
+}
+
 /// End-to-end light-probe bake: a probe baked next to a bright emissive box on
 /// its +X side must, when its SH is evaluated, read brighter for a +X-facing
 /// normal than a -X-facing one. This exercises the whole LP-g path

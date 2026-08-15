@@ -510,6 +510,87 @@ impl ViewportRenderer {
         crate::resources::LightProbeSet::new(probes)
     }
 
+    /// Upload an adaptive probe volume for dynamic objects to sample per fragment.
+    ///
+    /// Objects with
+    /// [`IndirectLightSource::ProbeVolume`](crate::IndirectLightSource::ProbeVolume)
+    /// take their indirect diffuse from this volume, trilinearly interpolated at
+    /// each shaded point, instead of the global environment. Replaces any
+    /// previous volume and rebuilds the camera bind groups.
+    pub fn set_light_probe_volume(
+        &mut self,
+        device: &crate::gpu::Device,
+        volume: &crate::resources::LightProbeVolume,
+    ) {
+        let gpu = volume.to_gpu();
+        self.resources.light_probe_volume_buf = Some(device.create_buffer_init(
+            &crate::gpu::util::BufferInitDescriptor {
+                label: Some("light_probe_volume_buf"),
+                contents: bytemuck::cast_slice(&gpu),
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            },
+        ));
+        self.rebuild_camera_bind_groups(device);
+    }
+
+    /// Remove the uploaded probe volume. Objects that opted into it fall back to
+    /// no indirect (a disabled header is bound in its place).
+    pub fn clear_light_probe_volume(&mut self, device: &crate::gpu::Device) {
+        self.resources.light_probe_volume_buf = None;
+        self.rebuild_camera_bind_groups(device);
+    }
+
+    /// Bake an adaptive probe volume: a regular `dims` grid of SH probes over the
+    /// box starting at `min` with `cell_size` spacing.
+    ///
+    /// Captures an equirect panorama at each grid position with
+    /// [`capture_equirect`](Self::capture_equirect) and projects it to order-2
+    /// SH, returning a [`LightProbeVolume`](crate::resources::LightProbeVolume)
+    /// ready to upload with [`set_light_probe_volume`](Self::set_light_probe_volume).
+    /// This is the generation half: run it once at bake time. `face_size` and
+    /// `equirect_height` trade capture time for angular accuracy; `frame` is
+    /// restored on return.
+    pub fn bake_light_probe_volume(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &mut FrameData,
+        min: [f32; 3],
+        cell_size: [f32; 3],
+        dims: [u32; 3],
+        face_size: u32,
+        equirect_height: u32,
+    ) -> crate::resources::LightProbeVolume {
+        let dims = [dims[0].max(1), dims[1].max(1), dims[2].max(1)];
+        let count = (dims[0] * dims[1] * dims[2]) as usize;
+        let mut sh = Vec::with_capacity(count);
+        for iz in 0..dims[2] {
+            for iy in 0..dims[1] {
+                for ix in 0..dims[0] {
+                    let position = [
+                        min[0] + ix as f32 * cell_size[0],
+                        min[1] + iy as f32 * cell_size[1],
+                        min[2] + iz as f32 * cell_size[2],
+                    ];
+                    let panorama = self.capture_equirect(
+                        device,
+                        queue,
+                        frame,
+                        position,
+                        face_size,
+                        equirect_height,
+                    );
+                    sh.push(crate::resources::project_equirect_to_sh(
+                        &panorama.rgba,
+                        panorama.width,
+                        panorama.height,
+                    ));
+                }
+            }
+        }
+        crate::resources::LightProbeVolume::new(min, cell_size, dims, sh)
+    }
+
     /// Bake a reflection probe at the centre of `bounds` and return a
     /// parallax-enabled [`EnvironmentZone`](crate::resources::EnvironmentZone) for it.
     ///

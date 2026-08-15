@@ -150,6 +150,145 @@ impl LightProbeSet {
 /// Number of nearest probes blended by [`LightProbeSet::blend_sh_at`].
 pub const K_NEAREST: usize = 4;
 
+/// Sentinel `light_probe_index` meaning "sample the uploaded probe volume at the
+/// fragment's world position" instead of reading a per-object SH block. Written
+/// to the object uniform for [`IndirectLightSource::ProbeVolume`](crate::IndirectLightSource::ProbeVolume)
+/// items and branched on in the ambient shader.
+pub const PROBE_VOLUME_INDEX: u32 = 0xffff_ffff;
+
+/// A regular grid of SH light probes covering a box, sampled per-fragment by
+/// world position (an adaptive probe volume). Where [`LightProbeSet`] blends a
+/// handful of point probes once per object, a volume is trilinearly interpolated
+/// at every shaded point, so one large or moving object picks up spatially
+/// varying indirect light without its own lightmap.
+///
+/// Probes are stored grid-order, x fastest then y then z:
+/// `sh[ix + iy*dims[0] + iz*dims[0]*dims[1]]`. Probe `(ix, iy, iz)` sits at world
+/// `min + (ix, iy, iz) * cell_size`.
+#[derive(Clone, Debug)]
+pub struct LightProbeVolume {
+    /// World position of probe `(0, 0, 0)` (the box's minimum corner).
+    pub min: [f32; 3],
+    /// World spacing between adjacent probes on each axis.
+    pub cell_size: [f32; 3],
+    /// Probe counts per axis. Each must be >= 1.
+    pub dims: [u32; 3],
+    /// SH radiance per probe, grid-order (`dims[0]*dims[1]*dims[2]` entries).
+    pub sh: Vec<SHCoefficients>,
+}
+
+impl LightProbeVolume {
+    /// Build a volume. `sh.len()` must equal `dims[0]*dims[1]*dims[2]`.
+    pub fn new(
+        min: [f32; 3],
+        cell_size: [f32; 3],
+        dims: [u32; 3],
+        sh: Vec<SHCoefficients>,
+    ) -> Self {
+        assert_eq!(
+            sh.len(),
+            (dims[0] * dims[1] * dims[2]) as usize,
+            "probe count must match the grid dimensions"
+        );
+        Self {
+            min,
+            cell_size,
+            dims,
+            sh,
+        }
+    }
+
+    fn cell(&self, ix: u32, iy: u32, iz: u32) -> &SHCoefficients {
+        let (nx, ny) = (self.dims[0], self.dims[1]);
+        &self.sh[(ix + iy * nx + iz * nx * ny) as usize]
+    }
+
+    /// Trilinearly interpolate the probe SH at a world position (edge-clamped).
+    pub fn sample_sh(&self, pos: [f32; 3]) -> SHCoefficients {
+        // Continuous grid coordinate per axis, clamped so a point outside the box
+        // takes the boundary probes.
+        let mut base = [0u32; 3];
+        let mut frac = [0.0f32; 3];
+        for a in 0..3 {
+            let n = self.dims[a].max(1);
+            let g = if self.cell_size[a].abs() > 1e-8 && n > 1 {
+                (pos[a] - self.min[a]) / self.cell_size[a]
+            } else {
+                0.0
+            };
+            let g = g.clamp(0.0, (n - 1) as f32);
+            let i0 = g.floor();
+            base[a] = i0 as u32;
+            frac[a] = g - i0;
+        }
+        let hi = [
+            (base[0] + 1).min(self.dims[0] - 1),
+            (base[1] + 1).min(self.dims[1] - 1),
+            (base[2] + 1).min(self.dims[2] - 1),
+        ];
+
+        let mut out = SHCoefficients::default();
+        for cz in 0..2 {
+            let iz = if cz == 0 { base[2] } else { hi[2] };
+            let wz = if cz == 0 { 1.0 - frac[2] } else { frac[2] };
+            for cy in 0..2 {
+                let iy = if cy == 0 { base[1] } else { hi[1] };
+                let wy = if cy == 0 { 1.0 - frac[1] } else { frac[1] };
+                for cx in 0..2 {
+                    let ix = if cx == 0 { base[0] } else { hi[0] };
+                    let wx = if cx == 0 { 1.0 - frac[0] } else { frac[0] };
+                    let w = wx * wy * wz;
+                    if w == 0.0 {
+                        continue;
+                    }
+                    let c = self.cell(ix, iy, iz);
+                    for k in 0..9 {
+                        out.r[k] += c.r[k] * w;
+                        out.g[k] += c.g[k] * w;
+                        out.b[k] += c.b[k] * w;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Diffuse irradiance the volume gives a surface at `pos` facing `normal`.
+    /// Trilinear SH interpolation followed by [`evaluate_sh`].
+    pub fn sample_irradiance(&self, pos: [f32; 3], normal: [f32; 3]) -> [f32; 3] {
+        evaluate_sh(&self.sample_sh(pos), normal)
+    }
+
+    /// Pack for upload to the group-0 volume buffer: a 3-`vec4` header
+    /// (`min.xyz` + enabled flag; `1/cell_size.xyz`; `dims` as bit-cast u32s)
+    /// then 9 `vec4` per probe (rgb in xyz), grid-order. Mirrors
+    /// `sample_probe_volume` in `helpers/ambient.wgsl`.
+    pub fn to_gpu(&self) -> Vec<[f32; 4]> {
+        let mut v = Vec::with_capacity(3 + self.sh.len() * 9);
+        v.push([self.min[0], self.min[1], self.min[2], 1.0]);
+        let inv = |a: usize| {
+            if self.cell_size[a].abs() > 1e-8 {
+                1.0 / self.cell_size[a]
+            } else {
+                0.0
+            }
+        };
+        v.push([inv(0), inv(1), inv(2), 0.0]);
+        v.push([
+            f32::from_bits(self.dims[0]),
+            f32::from_bits(self.dims[1]),
+            f32::from_bits(self.dims[2]),
+            0.0,
+        ]);
+        for c in &self.sh {
+            for k in 0..9 {
+                v.push([c.r[k], c.g[k], c.b[k], 0.0]);
+            }
+        }
+        v
+    }
+}
+
 /// Evaluate the order-2 SH basis (9 functions) for a unit direction.
 fn sh_basis(d: [f32; 3]) -> [f32; 9] {
     let (x, y, z) = (d[0], d[1], d[2]);
@@ -351,5 +490,56 @@ mod tests {
             LightProbeSet::default().blend_sh_at([0.0; 3]),
             SHCoefficients::default()
         );
+    }
+
+    /// A probe volume trilinearly interpolates its cells: on a probe it returns
+    /// that probe, between two it interpolates, and outside the box it clamps to
+    /// the boundary. DC-only probes make `sample_irradiance` return the constant.
+    #[test]
+    fn volume_samples_trilinearly() {
+        // Two probes along X: DC red 1.0 at x=0, DC red 3.0 at x=10.
+        let dc = |v: f32| {
+            let mut sh = SHCoefficients::default();
+            sh.r[0] = v / 0.282095; // evaluate_sh returns v for a DC-only probe
+            sh
+        };
+        let vol = LightProbeVolume::new(
+            [0.0, 0.0, 0.0],
+            [10.0, 10.0, 10.0],
+            [2, 1, 1],
+            vec![dc(1.0), dc(3.0)],
+        );
+        let n = [0.0, 0.0, 1.0];
+        assert!((vol.sample_irradiance([0.0, 0.0, 0.0], n)[0] - 1.0).abs() < 1e-3);
+        assert!((vol.sample_irradiance([10.0, 0.0, 0.0], n)[0] - 3.0).abs() < 1e-3);
+        let mid = vol.sample_irradiance([5.0, 0.0, 0.0], n)[0];
+        assert!((mid - 2.0).abs() < 0.05, "midpoint {mid} (expected ~2.0)");
+        // Outside the box clamps to the near boundary probe.
+        assert!((vol.sample_irradiance([-8.0, 0.0, 0.0], n)[0] - 1.0).abs() < 1e-3);
+        assert!((vol.sample_irradiance([99.0, 0.0, 0.0], n)[0] - 3.0).abs() < 1e-3);
+    }
+
+    /// The GPU packing round-trips the header and SH: the header carries the box,
+    /// inverse spacing, and dims, and the SH data follows grid-order.
+    #[test]
+    fn volume_gpu_packing_has_header_then_sh() {
+        let dc = |v: f32| {
+            let mut sh = SHCoefficients::default();
+            sh.r[0] = v;
+            sh
+        };
+        let vol = LightProbeVolume::new(
+            [1.0, 2.0, 3.0],
+            [4.0, 4.0, 4.0],
+            [2, 1, 1],
+            vec![dc(0.5), dc(0.9)],
+        );
+        let g = vol.to_gpu();
+        assert_eq!(g.len(), 3 + 2 * 9);
+        assert_eq!(g[0], [1.0, 2.0, 3.0, 1.0]); // min + enabled
+        assert_eq!(g[1], [0.25, 0.25, 0.25, 0.0]); // 1 / cell_size
+        assert_eq!(g[2][0].to_bits(), 2); // dims.x bit-cast
+        assert_eq!(g[3][0], 0.5); // first probe DC red
+        assert_eq!(g[3 + 9][0], 0.9); // second probe DC red
     }
 }

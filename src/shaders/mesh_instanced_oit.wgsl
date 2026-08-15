@@ -469,7 +469,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // diffuse above. SH probes carry diffuse only, so IBL specular is not
         // added here.
         if inst.has_light_probe != 0u {
-            ambient = evaluate_sh_probe(inst.light_probe_index, N) * base_colour * ao_factor;
+            ambient = evaluate_object_indirect(inst.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // </viewport-shade-slot:ambient>
@@ -499,7 +499,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         dbg_direct_lum  = dot(direct_rgb, lum_weights);
         var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
         if inst.has_light_probe != 0u {
-            hemi_rgb = evaluate_sh_probe(inst.light_probe_index, N) * base_colour * ao_factor;
+            hemi_rgb = evaluate_object_indirect(inst.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
         }
         dbg_ambient_lum = dot(hemi_rgb, lum_weights);
         let lit_rgb = hemi_rgb + direct_rgb;

@@ -613,6 +613,13 @@ pub struct DeviceResources {
     /// Per-object blended SH, one 9-`vec4` block per light-probe-lit object,
     /// written each frame and read at group 1 binding 16 by `mesh.wgsl`.
     pub(crate) light_probe_sh_buf: crate::gpu::Buffer,
+    /// Uploaded adaptive probe volume (group 0 binding 20): a header plus SH per
+    /// grid cell, sampled per fragment by world position. `None` until
+    /// `set_light_probe_volume`; the fallback (a disabled 3-`vec4` header) is
+    /// bound in its place so the binding is always valid.
+    pub(crate) light_probe_volume_buf: Option<crate::gpu::Buffer>,
+    /// Disabled 3-`vec4` header bound at binding 20 when no volume is set.
+    pub(crate) light_probe_volume_fallback: crate::gpu::Buffer,
     /// Clustered-shading state: cluster grid, global light index list, and the
     /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
     /// group expose this state to every lit pipeline.
@@ -1425,6 +1432,14 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 19,
                     resource: self.env_zone_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 20,
+                    resource: self
+                        .light_probe_volume_buf
+                        .as_ref()
+                        .unwrap_or(&self.light_probe_volume_fallback)
+                        .as_entire_binding(),
                 },
             ],
         })

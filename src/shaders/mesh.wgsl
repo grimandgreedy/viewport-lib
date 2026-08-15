@@ -848,7 +848,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         // diffuse above. SH probes carry diffuse only, so IBL specular is not
         // added here.
         if object.has_light_probe != 0u {
-            ambient = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
+            ambient = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
         // Baked lightmap: replace, add, or occlude the ambient term. Sample the
@@ -925,7 +925,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         var hemi_rgb = base_colour * (ambient_contrib + hemi_ambient) * ao_factor;
         // Light-probe objects take their indirect diffuse from the SH field.
         if object.has_light_probe != 0u {
-            hemi_rgb = evaluate_sh_probe(object.light_probe_index, N) * base_colour * ao_factor;
+            hemi_rgb = evaluate_object_indirect(object.light_probe_index, in.world_pos, N) * base_colour * ao_factor;
         }
         // Baked lightmap: replace, add, or occlude the ambient term. Sample the
         // base mip explicitly (see the ambient branch above): derivative-based

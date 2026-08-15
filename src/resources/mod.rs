@@ -35,7 +35,8 @@ pub use self::gpu::external_instances::{ExternalInstanceSetConfig, ExternalInsta
 pub use self::gpu::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 pub use self::handle::ContentHandle;
 pub use self::light_probes::{
-    LightProbe, LightProbeSet, SHCoefficients, evaluate_sh, project_equirect_to_sh,
+    LightProbe, LightProbeSet, LightProbeVolume, SHCoefficients, evaluate_sh,
+    project_equirect_to_sh,
 };
 pub use self::lightmap::{LightmapData, LightmapMode};
 pub use self::material::environment::{EnvironmentMapId, EnvironmentZone};

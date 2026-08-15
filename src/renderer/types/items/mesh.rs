@@ -123,6 +123,10 @@ pub enum IndirectLightSource {
     /// effect until light probes are uploaded and only applies to opaque,
     /// non-instanced meshes.
     LightProbe,
+    /// The adaptive probe volume, sampled per fragment at the shaded point's
+    /// world position. Gives one object spatially varying indirect light; has no
+    /// effect until a volume is uploaded with `set_light_probe_volume`.
+    ProbeVolume,
 }
 
 impl Default for SceneRenderItem {
