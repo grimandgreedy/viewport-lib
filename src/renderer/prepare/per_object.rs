@@ -965,6 +965,13 @@ impl ViewportRenderer {
         // HDR pipelines build on the first HDR frame, so frame one records
         // nothing and the bundle starts on frame two.
         let hdr = frame.effects.post_process.enabled;
+        // Clip geometry needs the discarding pipeline (its clip test is a
+        // discard); with it active the whole bundle keeps discards.
+        let clipping_active = frame
+            .effects
+            .clip_objects
+            .iter()
+            .any(|o| o.enabled && o.clip_geometry);
         let plan = 'plan: {
             if frame.viewport.wireframe_mode
                 || !self.compute_filter_results.is_empty()
@@ -988,6 +995,9 @@ impl ViewportRenderer {
             self.prepared_surfaces.len().hash(&mut h);
             let mut transparent: Vec<usize> = Vec::new();
             let mut opaque = 0usize;
+            // An alpha-mask item's fragment shader discards below the cutoff, so
+            // one in the opaque set forces the whole bundle to keep discards.
+            let mut any_mask = false;
             for (i, item) in self.prepared_surfaces.iter().enumerate() {
                 if item.settings.hidden {
                     (i, 0u8).hash(&mut h);
@@ -1017,6 +1027,9 @@ impl ViewportRenderer {
                     transparent.push(i);
                     continue;
                 }
+                if !matches!(item.material.alpha_mode, crate::scene::material::AlphaMode::Opaque) {
+                    any_mask = true;
+                }
                 (
                     i,
                     3u8,
@@ -1030,10 +1043,22 @@ impl ViewportRenderer {
             if opaque < MIN_BUNDLE_ITEMS {
                 break 'plan None;
             }
-            Some((h.finish(), transparent))
+            // Early-Z: a plain-opaque HDR set with no clip geometry and no
+            // alpha mask can never hit a discard, so record it with the
+            // discard-free pipeline twins and let hidden fragments be depth
+            // rejected before shading. The choice is hashed so flipping it
+            // (clip toggled, the force-discard measurement knob) re-records.
+            let no_discard = hdr
+                && !clipping_active
+                && !any_mask
+                && !self.resources.force_po_discard
+                && self.resources.hdr_solid_nodiscard_pipeline.is_some()
+                && self.resources.hdr_solid_two_sided_nodiscard_pipeline.is_some();
+            no_discard.hash(&mut h);
+            Some((h.finish(), transparent, no_discard))
         };
 
-        let Some((key, transparent)) = plan else {
+        let Some((key, transparent, no_discard)) = plan else {
             self.per_object_bundle = None;
             return;
         };
@@ -1091,8 +1116,14 @@ impl ViewportRenderer {
                 .as_ref()
                 .is_some_and(|pb| pb.key == key && pb.camera_bg == camera_bg);
         if !reusable {
-            self.per_object_bundle =
-                Some(self.record_per_object_bundle(device, key, camera_bg, transparent, hdr));
+            self.per_object_bundle = Some(self.record_per_object_bundle(
+                device,
+                key,
+                camera_bg,
+                transparent,
+                hdr,
+                no_discard,
+            ));
         }
         self.last_stats.per_object_bundle_cached = true;
     }
@@ -1108,6 +1139,7 @@ impl ViewportRenderer {
         camera_bg: crate::gpu::BindGroup,
         transparent: Vec<usize>,
         hdr: bool,
+        no_discard: bool,
     ) -> crate::renderer::per_object_state::PerObjectBundle {
         let resources = &self.resources;
         // The HDR scene pass renders Rgba16Float at sample count 1 with a
@@ -1120,7 +1152,18 @@ impl ViewportRenderer {
         } else {
             (resources.target_format, resources.sample_count)
         };
-        let (solid, solid_two_sided) = if hdr {
+        let (solid, solid_two_sided) = if hdr && no_discard {
+            (
+                self.resources
+                    .hdr_solid_nodiscard_pipeline
+                    .as_ref()
+                    .unwrap(),
+                self.resources
+                    .hdr_solid_two_sided_nodiscard_pipeline
+                    .as_ref()
+                    .unwrap(),
+            )
+        } else if hdr {
             (
                 self.resources.hdr_solid_pipeline.as_ref().unwrap(),
                 self.resources
