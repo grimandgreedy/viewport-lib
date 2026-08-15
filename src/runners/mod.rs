@@ -315,6 +315,84 @@ impl ViewportInstance {
         &mut self.renderer
     }
 
+    // ---- streaming: upload + bind, and residency ------------------------------
+
+    /// Upload mesh data and return its `MeshId`.
+    ///
+    /// A thin forward over [`resources_mut().upload_mesh_data`](DeviceResources::upload_mesh_data)
+    /// so a streaming loop does not have to reach through
+    /// [`resources_mut`](Self::resources_mut). The returned handle can be bound
+    /// onto a node right away: a node referencing a not-yet-resident mesh is
+    /// skipped until the upload lands, then drawn, so there is no need to poll for
+    /// readiness before binding.
+    pub fn upload_mesh(
+        &mut self,
+        device: &crate::gpu::Device,
+        data: &crate::resources::MeshData,
+    ) -> crate::error::ViewportResult<crate::MeshId> {
+        self.renderer.resources_mut().upload_mesh_data(device, data)
+    }
+
+    /// Upload mesh data and bind it onto an existing node in one call.
+    ///
+    /// Uploads `data`, sets the resulting `MeshId` on `node`, and returns the
+    /// handle. This is the eager-binding path: bind as soon as you have the
+    /// handle and let the renderer draw the node the frame the mesh becomes
+    /// resident. `MeshId` is generational, so this stays correct across
+    /// stream-in / evict churn: an evicted mesh's node draws nothing until
+    /// rebound, and a reused slot never aliases the wrong mesh.
+    pub fn upload_and_bind(
+        &mut self,
+        device: &crate::gpu::Device,
+        node: crate::NodeId,
+        data: &crate::resources::MeshData,
+    ) -> crate::error::ViewportResult<crate::MeshId> {
+        let id = self
+            .renderer
+            .resources_mut()
+            .upload_mesh_data(device, data)?;
+        self.scene.set_mesh(node, Some(id));
+        Ok(id)
+    }
+
+    /// Upload mesh data and add a new node bound to it, returning both ids.
+    ///
+    /// The stream-in-a-new-object convenience: uploads `data`, adds a node with
+    /// `transform` and `material` already referencing the mesh, and returns the
+    /// new `NodeId` and `MeshId`. The node is present immediately and draws once
+    /// the upload is resident.
+    pub fn upload_and_add(
+        &mut self,
+        device: &crate::gpu::Device,
+        data: &crate::resources::MeshData,
+        transform: glam::Mat4,
+        material: crate::Material,
+    ) -> crate::error::ViewportResult<(crate::NodeId, crate::MeshId)> {
+        let id = self
+            .renderer
+            .resources_mut()
+            .upload_mesh_data(device, data)?;
+        let node = self.scene.add(Some(id), transform, material);
+        Ok((node, id))
+    }
+
+    /// Number of upload jobs still in flight. Zero once the scene is fully
+    /// streamed in. Use this to gate load screens or a bake, rather than polling
+    /// each upload's status individually.
+    pub fn uploads_pending(&self) -> usize {
+        self.renderer.uploads_pending()
+    }
+
+    /// True when no upload jobs are in flight.
+    pub fn all_uploads_complete(&self) -> bool {
+        self.renderer.all_uploads_complete()
+    }
+
+    /// Current state of a submitted upload job.
+    pub fn upload_status(&self, id: crate::resources::JobId) -> crate::resources::UploadStatus {
+        self.renderer.upload_status(id)
+    }
+
     /// Forward a device recreation from your application to the renderer and runtime so their
     /// GPU state re-initialises. Call after your application rebuilds the device.
     pub fn notify_device_recreated(
@@ -360,6 +438,44 @@ mod tests {
             focused: true,
             viewport_size: [256.0, 256.0],
         }
+    }
+
+    #[test]
+    fn upload_and_bind_helpers_set_the_node_mesh() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping upload_and_bind_helpers_set_the_node_mesh: no GPU adapter");
+            return;
+        };
+        let format = crate::gpu::TextureFormat::Bgra8UnormSrgb;
+        let mut session = ViewportInstance::new(&device, format);
+
+        // upload_and_add creates a node already bound to the uploaded mesh.
+        let (node, mesh) = session
+            .upload_and_add(
+                &device,
+                &primitives::cube(1.0),
+                glam::Mat4::IDENTITY,
+                Material::from_colour([0.6, 0.6, 0.9]),
+            )
+            .unwrap();
+        assert_eq!(
+            session.scene().node(node).and_then(|n| n.mesh_id()),
+            Some(mesh)
+        );
+
+        // upload_and_bind rebinds the same node to a freshly uploaded mesh.
+        let mesh2 = session
+            .upload_and_bind(&device, node, &primitives::cube(2.0))
+            .unwrap();
+        assert_ne!(mesh, mesh2);
+        assert_eq!(
+            session.scene().node(node).and_then(|n| n.mesh_id()),
+            Some(mesh2)
+        );
+
+        // Synchronous uploads leave nothing in flight.
+        assert_eq!(session.uploads_pending(), 0);
+        assert!(session.all_uploads_complete());
     }
 
     #[test]
