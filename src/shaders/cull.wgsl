@@ -53,7 +53,7 @@ struct BatchMeta {
     instance_count:  u32,
     vis_offset:      u32,
     is_transparent:  u32,
-    _pad0:           u32,
+    base_vertex:     i32,
     _pad1:           u32,
 }
 
@@ -216,7 +216,7 @@ fn write_indirect_args(@builtin(global_invocation_id) id: vec3<u32>) {
         bmeta.index_count,
         visible_count,
         bmeta.first_index,
-        0i,
+        bmeta.base_vertex,
         bmeta.vis_offset,
     );
 

@@ -668,6 +668,11 @@ impl ViewportRenderer {
     ///
     /// - `INDIRECT_FIRST_INSTANCE` enables GPU-driven culling and the
     ///   indirect instanced draw path.
+    /// - `MULTI_DRAW_INDIRECT_COUNT` signals that `multi_draw_indexed_indirect`
+    ///   runs natively rather than emulated as a per-entry loop, so the indirect
+    ///   draw path collapses a run of batches that share pipeline, bind group,
+    ///   and geometry chunk into one multi-draw (present on Vulkan/DX12; absent
+    ///   on Metal, which keeps the per-batch loop).
     /// - `TIMESTAMP_QUERY` enables `FrameStats::gpu_frame_ms` and the
     ///   per-pass GPU breakdown.
     /// - `PIPELINE_CACHE` enables
@@ -693,6 +698,7 @@ impl ViewportRenderer {
         let mut features = crate::gpu::Features::empty();
         for feature in [
             crate::gpu::Features::INDIRECT_FIRST_INSTANCE,
+            crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT,
             crate::gpu::Features::TIMESTAMP_QUERY,
             crate::gpu::Features::PIPELINE_CACHE,
             crate::gpu::PRIMITIVE_INDEX_FEATURE,
@@ -757,6 +763,9 @@ impl ViewportRenderer {
         let gpu_culling_supported = device
             .features()
             .contains(crate::gpu::Features::INDIRECT_FIRST_INSTANCE);
+        let multi_draw_supported = device
+            .features()
+            .contains(crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT);
         Self {
             resources: DeviceResources::new_with_cache(
                 device,
@@ -764,7 +773,7 @@ impl ViewportRenderer {
                 sample_count,
                 pipeline_cache_data,
             ),
-            instancing: InstancingState::new(gpu_culling_supported),
+            instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: std::collections::HashMap::new(),
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
@@ -977,6 +986,16 @@ impl ViewportRenderer {
     /// output.
     pub fn set_force_po_discard(&mut self, force: bool) {
         self.resources.set_force_po_discard(force);
+    }
+
+    /// Force the indirect draw paths to collapse batch runs into
+    /// `multi_draw_indexed_indirect` even where the backend emulates it as a
+    /// per-entry loop (Metal). The emulated result is identical, so this exists
+    /// to exercise and pixel-compare the collapse path on a backend without
+    /// native multi-draw. Off by default; on backends that support native
+    /// multi-draw the collapse is already active and this is a no-op.
+    pub fn set_force_multi_draw(&mut self, force: bool) {
+        self.instancing.multi_draw_forced = force;
     }
 
     /// Cap the per-frame cost of upload-job work on the render thread.
@@ -1285,7 +1304,8 @@ impl ViewportRenderer {
             instance_count,
             vis_offset: 0,
             is_transparent: 0,
-            _pad: [0, 0],
+            base_vertex: draw.base_vertex,
+            _pad: 0,
         };
         queue.write_buffer(meta_buf, 0, bytemuck::bytes_of(&meta));
         queue.write_buffer(counter_buf, 0, &[0u8; 4]);

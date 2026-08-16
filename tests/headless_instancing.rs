@@ -819,3 +819,121 @@ fn lod_culled_per_object_item_is_not_drawn() {
     );
 }
 
+/// The multi-draw collapse must not change a pixel. A scene of several distinct
+/// meshes (so every mesh but the first has a non-zero slab base_vertex /
+/// first_index) with an interleaved transparent item (so the opaque batch run
+/// breaks on a global-index gap) and a shadow-casting light (so the live
+/// per-cascade multi-draw shadow path runs) is rendered twice: once on the
+/// default path and once with `set_force_multi_draw(true)`, which forces the
+/// batch runs to collapse into `multi_draw_indexed_indirect` even where the
+/// backend emulates it. The two framebuffers must be byte-identical.
+///
+/// The device requests `INDIRECT_FIRST_INSTANCE` so the GPU-culled indirect
+/// path (the only one that multi-draws) is engaged; without it the test skips.
+#[test]
+fn multi_draw_collapse_is_pixel_identical() {
+    let Some((device, queue)) = headless_device_with_indirect() else {
+        eprintln!("skipping: no GPU adapter with INDIRECT_FIRST_INSTANCE");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Five separate uploads of the same box. Distinct uploads get distinct slab
+    // spans, so meshes 1..5 sit at non-zero base_vertex / first_index -- exactly
+    // what the collapsed draws must offset correctly.
+    let mesh_ids: Vec<_> = (0..5)
+        .map(|_| {
+            renderer
+                .resources_mut()
+                .upload_mesh_data(&device, &box_mesh())
+                .unwrap()
+        })
+        .collect();
+
+    // Materials: meshes 0 and 1 share one (their batches form a collapsible run
+    // of length 2); mesh 2 is transparent (sorted between the opaque meshes by
+    // mesh id, it breaks the opaque run into two); meshes 3 and 4 are distinct.
+    let colours = [
+        [0.9, 0.2, 0.2],
+        [0.9, 0.2, 0.2],
+        [0.2, 0.9, 0.2],
+        [0.2, 0.2, 0.9],
+        [0.9, 0.9, 0.2],
+    ];
+    let mut surfaces = Vec::new();
+    for (i, &mesh_id) in mesh_ids.iter().enumerate() {
+        // Two instances per mesh, offset along X and Y, so instancing engages
+        // (visible count well past the threshold) and batches carry >1 instance.
+        for inst in 0..2 {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh_id;
+            let x = (i as f32 - 2.0) * 1.3;
+            let y = inst as f32 * 1.1;
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
+            item.material = Material::from_colour(colours[i]);
+            if i == 2 {
+                item.settings.opacity = 0.5;
+            }
+            surfaces.push(item);
+        }
+    }
+
+    let mut frame = FrameData::default();
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    let cam = Camera::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        let eye = glam::Vec3::new(0.0, -8.0, 5.0);
+        rc.eye_position = eye.into();
+        rc.forward = (-eye).normalize().into();
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [96.0, 96.0];
+
+    // Directional light with shadows on (the defaults) so the shadow cascade
+    // draws run and the live multi-draw shadow path is exercised.
+    let mut light = LightSource::default();
+    light.kind = LightKind::Directional {
+        direction: [0.3, 0.4, -1.0],
+    };
+    light.intensity = 4.0;
+    frame.effects.lighting.lights = vec![light];
+
+    // Default path (multi-draw off on backends without native support).
+    renderer.set_force_multi_draw(false);
+    let baseline = renderer.render_offscreen(&device, &queue, &frame, 96, 96);
+
+    // Forced collapse path (emulated where the backend lacks native multi-draw).
+    renderer.set_force_multi_draw(true);
+    let collapsed = renderer.render_offscreen(&device, &queue, &frame, 96, 96);
+
+    // Sanity: the scene actually drew something, so this is not comparing two
+    // blank frames.
+    let non_bg = baseline
+        .chunks_exact(4)
+        .filter(|p| p[0] > 20 || p[1] > 20 || p[2] > 20)
+        .count();
+    assert!(
+        non_bg > 100,
+        "scene should render visible geometry; only {non_bg} lit pixels",
+    );
+
+    assert_eq!(
+        baseline.len(),
+        collapsed.len(),
+        "framebuffer sizes must match",
+    );
+    let diffs = baseline
+        .iter()
+        .zip(&collapsed)
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(
+        diffs, 0,
+        "multi-draw collapse changed {diffs} framebuffer bytes; it must be \
+         pixel-identical to the per-batch path",
+    );
+}

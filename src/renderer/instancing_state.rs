@@ -15,6 +15,19 @@ pub(crate) struct InstancingState {
     pub(crate) gpu_culling_supported: bool,
     /// True when GPU-driven culling is active (supported and not disabled by the caller).
     pub(crate) gpu_culling_enabled: bool,
+    /// True when `multi_draw_indexed_indirect` runs natively (signalled by
+    /// `MULTI_DRAW_INDIRECT_COUNT`, present on Vulkan/DX12). On these backends
+    /// the per-batch indirect draw loop collapses a run of batches that share
+    /// pipeline, bind group, and slab chunk into a single multi-draw. Metal
+    /// lacks the feature and keeps the per-batch loop over the same contiguous
+    /// args buffer.
+    pub(crate) multi_draw_supported: bool,
+    /// Diagnostic override that forces the multi-draw collapse on even where the
+    /// backend emulates `multi_draw_indexed_indirect` as a per-entry loop (Metal).
+    /// The emulated result is identical, so this lets the collapse path (run
+    /// forming, the actual multi-draw call) be exercised and pixel-compared on
+    /// the correctness box. Off by default; set via `set_force_multi_draw`.
+    pub(crate) multi_draw_forced: bool,
     /// GPU culling compute pipelines and frustum buffer. Created lazily on the first
     /// frame where `gpu_culling_enabled` is true and instance buffers are present.
     pub(crate) cull_resources: Option<indirect::CullResources>,
@@ -75,12 +88,21 @@ pub(crate) struct InstancingState {
 }
 
 impl InstancingState {
-    pub(crate) fn new(gpu_culling_supported: bool) -> Self {
+    /// Whether the indirect draw paths should collapse batch runs into
+    /// `multi_draw_indexed_indirect`: true when the backend runs it natively or
+    /// the diagnostic override is on (emulated, for the correctness box).
+    pub(crate) fn multi_draw_active(&self) -> bool {
+        self.multi_draw_supported || self.multi_draw_forced
+    }
+
+    pub(crate) fn new(gpu_culling_supported: bool, multi_draw_supported: bool) -> Self {
         Self {
             batches: Vec::new(),
             use_instancing: false,
             gpu_culling_supported,
             gpu_culling_enabled: gpu_culling_supported,
+            multi_draw_supported,
+            multi_draw_forced: false,
             cull_resources: None,
             last_scene_generation: u64::MAX,
             last_selection_generation: u64::MAX,

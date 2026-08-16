@@ -298,7 +298,11 @@ macro_rules! emit_draw_calls {
                             bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                             // Batches are sorted with two_sided in the key, so one- and
                             // two-sided runs are contiguous; switch pipeline on change.
+                            // Geometry is in the shared slab, so the chunk buffers bind
+                            // once and each draw carries the mesh's base_vertex /
+                            // first_index instead of re-binding a sub-slice per batch.
                             let mut cur_pipe: Option<(bool, bool)> = None;
+                            let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
@@ -322,11 +326,17 @@ macro_rules! emit_draw_calls {
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                render_pass.set_index_buffer(resources.geometry.index_slice(mesh.index_span), crate::gpu::IndexFormat::Uint32);
+                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                if cur_chunks != Some(chunks) {
+                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                                    render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
+                                    cur_chunks = Some(chunks);
+                                }
+                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                                let first_index = resources.geometry.first_index(mesh.index_span);
                                 render_pass.draw_indexed(
-                                    0..mesh.index_count,
-                                    0,
+                                    first_index..first_index + mesh.index_count,
+                                    base_vertex,
                                     batch.instance_offset..batch.instance_offset + batch.instance_count,
                                 );
                             }
@@ -338,6 +348,7 @@ macro_rules! emit_draw_calls {
                         if let Some(ref pipeline) = resources.instancing.transparent_pipeline {
                             render_pass.set_pipeline(pipeline);
                             bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
+                            let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &transparent_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
@@ -347,11 +358,17 @@ macro_rules! emit_draw_calls {
                                 );
                                 let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
-                                render_pass.set_index_buffer(resources.geometry.index_slice(mesh.index_span), crate::gpu::IndexFormat::Uint32);
+                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                if cur_chunks != Some(chunks) {
+                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                                    render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
+                                    cur_chunks = Some(chunks);
+                                }
+                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                                let first_index = resources.geometry.first_index(mesh.index_span);
                                 render_pass.draw_indexed(
-                                    0..mesh.index_count,
-                                    0,
+                                    first_index..first_index + mesh.index_count,
+                                    base_vertex,
                                     batch.instance_offset..batch.instance_offset + batch.instance_count,
                                 );
                             }

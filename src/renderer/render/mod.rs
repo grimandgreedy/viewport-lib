@@ -1,6 +1,29 @@
 use super::*;
 use crate::gpu::util::DeviceExt;
 
+/// Emit one indirect draw run against the shared args buffer. `start` is the
+/// run's first global batch index and `len` the number of consecutive batches
+/// in it (all sharing pipeline, bind group, and geometry chunk). Each
+/// `DrawIndexedIndirect` entry is 20 bytes. When native multi-draw is
+/// available a run longer than one collapses into a single
+/// `multi_draw_indexed_indirect`; otherwise (and for single-batch runs) it
+/// falls back to one `draw_indexed_indirect` per entry over the same buffer.
+pub(crate) fn emit_indirect_run(
+    render_pass: &mut crate::gpu::RenderPass<'_>,
+    indirect_buf: &crate::gpu::Buffer,
+    start: u64,
+    len: u32,
+    multi_draw: bool,
+) {
+    if multi_draw && len > 1 {
+        render_pass.multi_draw_indexed_indirect(indirect_buf, start * 20, len);
+    } else {
+        for k in 0..len as u64 {
+            render_pass.draw_indexed_indirect(indirect_buf, (start + k) * 20);
+        }
+    }
+}
+
 /// Emit the 2D overlay draw calls shared by every paint path: SDF shapes,
 /// rects, labels, scalar bars, rulers, loading bars, and overlay images, in
 /// back-to-front order. Each block is guarded by its own prepared GPU data, so

@@ -284,6 +284,12 @@ impl ViewportRenderer {
                         && resources.cull.shadow_pipeline.is_some()
                         && instancing.shadow_cull.shadow_vis_bufs[0].is_some();
 
+                    // On backends with native multi-draw the per-cascade shadow
+                    // draws collapse into one multi_draw_indexed_indirect per
+                    // pipeline/bind-group run, drawn live in the pass; the render
+                    // bundle cannot host a multi-draw, so the bundle build and
+                    // replay below are skipped in that case.
+                    let shadow_multi_draw = instancing.multi_draw_active();
                     if use_shadow_indirect {
                         // GPU-culled indirect shadow path, replayed from cached
                         // per-cascade render bundles. The draw sequence below is
@@ -301,7 +307,9 @@ impl ViewportRenderer {
                             instancing.shadow_cull.outputs_gen,
                             light.effective_cascade_count,
                         );
-                        if instancing.shadow_cull.bundle_key != Some(bundle_key) {
+                        if !shadow_multi_draw
+                            && instancing.shadow_cull.bundle_key != Some(bundle_key)
+                        {
                             instancing.shadow_cull.shadow_bundles = [None, None, None, None];
                             instancing.shadow_cull.bundle_draws = 0;
 
@@ -382,6 +390,7 @@ impl ViewportRenderer {
                                 // batches use the depth-only pipeline and the shared group 1.
                                 let mut cur_pipe: Option<(bool, bool)> = None; // (two_sided, cutout)
                                 let mut cur_group1_opaque = false;
+                                let mut cur_chunks: Option<(u32, u32)> = None;
                                 let mut draws = 0u32;
                                 for (bi, batch) in instancing.batches.iter().enumerate() {
                                     if batch.is_transparent {
@@ -427,14 +436,18 @@ impl ViewportRenderer {
                                         bundle_enc.set_bind_group(1, inst_cull_bg, &[]);
                                         cur_group1_opaque = true;
                                     }
-                                    bundle_enc.set_vertex_buffer(
-                                        0,
-                                        resources.geometry.vertex_slice(mesh.vertex_span),
-                                    );
-                                    bundle_enc.set_index_buffer(
-                                        resources.geometry.index_slice(mesh.index_span),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
+                                    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                    if cur_chunks != Some(chunks) {
+                                        bundle_enc.set_vertex_buffer(
+                                            0,
+                                            resources.geometry.vertex_chunk_slice(chunks.0),
+                                        );
+                                        bundle_enc.set_index_buffer(
+                                            resources.geometry.index_chunk_slice(chunks.1),
+                                            crate::gpu::IndexFormat::Uint32,
+                                        );
+                                        cur_chunks = Some(chunks);
+                                    }
                                     bundle_enc
                                         .draw_indexed_indirect(shadow_indirect_buf, bi as u64 * 20);
                                     draws += 1;
@@ -449,42 +462,54 @@ impl ViewportRenderer {
                             instancing.shadow_cull.bundle_key = Some(bundle_key);
                         }
 
-                        for cascade in 0..light.effective_cascade_count {
-                            let tile_col = (cascade % 2) as f32;
-                            let tile_row = (cascade / 2) as f32;
-                            shadow_pass.set_viewport(
-                                tile_col * tile_px,
-                                tile_row * tile_px,
+                        if shadow_multi_draw {
+                            shadow_draws += draw_shadow_cascades_multi_draw(
+                                &mut shadow_pass,
+                                device,
+                                queue,
+                                resources,
+                                instancing,
+                                light,
                                 tile_px,
-                                tile_px,
-                                0.0,
-                                1.0,
                             );
-                            shadow_pass.set_scissor_rect(
-                                (tile_col * tile_px) as u32,
-                                (tile_row * tile_px) as u32,
-                                light.tile_size,
-                                light.tile_size,
-                            );
+                        } else {
+                            for cascade in 0..light.effective_cascade_count {
+                                let tile_col = (cascade % 2) as f32;
+                                let tile_row = (cascade / 2) as f32;
+                                shadow_pass.set_viewport(
+                                    tile_col * tile_px,
+                                    tile_row * tile_px,
+                                    tile_px,
+                                    tile_px,
+                                    0.0,
+                                    1.0,
+                                );
+                                shadow_pass.set_scissor_rect(
+                                    (tile_col * tile_px) as u32,
+                                    (tile_row * tile_px) as u32,
+                                    light.tile_size,
+                                    light.tile_size,
+                                );
 
-                            // Write cascade view-projection matrix.
-                            queue.write_buffer(
-                                resources.instancing.shadow_cascade_bufs[cascade]
-                                    .as_ref()
-                                    .expect("shadow_instanced_cascade_bufs not allocated"),
-                                0,
-                                bytemuck::cast_slice(
-                                    &light.cascade_view_projs[cascade].to_cols_array_2d(),
-                                ),
-                            );
+                                // Write cascade view-projection matrix.
+                                queue.write_buffer(
+                                    resources.instancing.shadow_cascade_bufs[cascade]
+                                        .as_ref()
+                                        .expect("shadow_instanced_cascade_bufs not allocated"),
+                                    0,
+                                    bytemuck::cast_slice(
+                                        &light.cascade_view_projs[cascade].to_cols_array_2d(),
+                                    ),
+                                );
 
-                            if let Some(bundle) =
-                                instancing.shadow_cull.shadow_bundles[cascade].as_ref()
-                            {
-                                shadow_pass.execute_bundles(std::iter::once(bundle));
+                                if let Some(bundle) =
+                                    instancing.shadow_cull.shadow_bundles[cascade].as_ref()
+                                {
+                                    shadow_pass.execute_bundles(std::iter::once(bundle));
+                                }
                             }
+                            shadow_draws += instancing.shadow_cull.bundle_draws;
                         }
-                        shadow_draws += instancing.shadow_cull.bundle_draws;
                     } else if let (Some(ranges), Some(pipeline), Some(pipeline_two_sided)) = (
                         cpu_cull_ranges.as_ref(),
                         resources.cull.shadow_pipeline.as_ref(),
@@ -555,6 +580,7 @@ impl ViewportRenderer {
 
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             let mut cur_group1_opaque = false;
+                            let mut cur_chunks: Option<(u32, u32)> = None;
                             for (bi, batch) in instancing.batches.iter().enumerate() {
                                 if batch.is_transparent {
                                     continue;
@@ -600,17 +626,23 @@ impl ViewportRenderer {
                                     shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
                                     cur_group1_opaque = true;
                                 }
-                                shadow_pass.set_vertex_buffer(
-                                    0,
-                                    resources.geometry.vertex_slice(mesh.vertex_span),
-                                );
-                                shadow_pass.set_index_buffer(
-                                    resources.geometry.index_slice(mesh.index_span),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
+                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                if cur_chunks != Some(chunks) {
+                                    shadow_pass.set_vertex_buffer(
+                                        0,
+                                        resources.geometry.vertex_chunk_slice(chunks.0),
+                                    );
+                                    shadow_pass.set_index_buffer(
+                                        resources.geometry.index_chunk_slice(chunks.1),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    cur_chunks = Some(chunks);
+                                }
+                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                                let first_index = resources.geometry.first_index(mesh.index_span);
                                 shadow_pass.draw_indexed(
-                                    0..mesh.index_count,
-                                    0,
+                                    first_index..first_index + mesh.index_count,
+                                    base_vertex,
                                     start..start + count,
                                 );
                                 shadow_draws += 1;
@@ -669,6 +701,7 @@ impl ViewportRenderer {
 
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             let mut cur_group1_opaque = false;
+                            let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &instancing.batches {
                                 if batch.is_transparent {
                                     continue;
@@ -709,17 +742,23 @@ impl ViewportRenderer {
                                     shadow_pass.set_bind_group(1, instance_bg, &[]);
                                     cur_group1_opaque = true;
                                 }
-                                shadow_pass.set_vertex_buffer(
-                                    0,
-                                    resources.geometry.vertex_slice(mesh.vertex_span),
-                                );
-                                shadow_pass.set_index_buffer(
-                                    resources.geometry.index_slice(mesh.index_span),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
+                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                if cur_chunks != Some(chunks) {
+                                    shadow_pass.set_vertex_buffer(
+                                        0,
+                                        resources.geometry.vertex_chunk_slice(chunks.0),
+                                    );
+                                    shadow_pass.set_index_buffer(
+                                        resources.geometry.index_chunk_slice(chunks.1),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    cur_chunks = Some(chunks);
+                                }
+                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                                let first_index = resources.geometry.first_index(mesh.index_span);
                                 shadow_pass.draw_indexed(
-                                    0..mesh.index_count,
-                                    0,
+                                    first_index..first_index + mesh.index_count,
+                                    base_vertex,
                                     batch.instance_offset
                                         ..batch.instance_offset + batch.instance_count,
                                 );
@@ -1201,4 +1240,189 @@ impl ViewportRenderer {
             );
         }
     }
+}
+
+/// Draw the directional shadow cascades live in the pass with per-run
+/// `multi_draw_indexed_indirect`, the backend-native alternative to the cached
+/// render bundle (which cannot host a multi-draw). Geometry is bound once per
+/// slab chunk and the GPU-cull-written args carry each mesh's base_vertex /
+/// first_index; a run collapses consecutive batches that share the pipeline
+/// variant, the group-1 bind group, and the slab chunk, breaking on a
+/// global-index gap so a multi-draw never sweeps in a batch this loop skipped.
+/// Returns the number of batch draws issued (pre-collapse, for stats parity
+/// with the bundle path).
+#[allow(clippy::too_many_arguments)]
+fn draw_shadow_cascades_multi_draw(
+    pass: &mut crate::gpu::RenderPass<'_>,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    resources: &DeviceResources,
+    instancing: &mut InstancingState,
+    light: &LightingFrame,
+    tile_px: f32,
+) -> u32 {
+    let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
+        return 0;
+    };
+    let Some(pipeline_two_sided) = resources.cull.shadow_two_sided_pipeline.as_ref() else {
+        return 0;
+    };
+    let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
+    let cutout_pipeline_two_sided = resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
+    let multi_draw = instancing.multi_draw_active();
+    let mut drawn = 0u32;
+
+    for cascade in 0..light.effective_cascade_count {
+        let tile_col = (cascade % 2) as f32;
+        let tile_row = (cascade / 2) as f32;
+        pass.set_viewport(
+            tile_col * tile_px,
+            tile_row * tile_px,
+            tile_px,
+            tile_px,
+            0.0,
+            1.0,
+        );
+        pass.set_scissor_rect(
+            (tile_col * tile_px) as u32,
+            (tile_row * tile_px) as u32,
+            light.tile_size,
+            light.tile_size,
+        );
+
+        queue.write_buffer(
+            resources.instancing.shadow_cascade_bufs[cascade]
+                .as_ref()
+                .expect("shadow_instanced_cascade_bufs not allocated"),
+            0,
+            bytemuck::cast_slice(&light.cascade_view_projs[cascade].to_cols_array_2d()),
+        );
+
+        // Build this cascade's alpha-cutout bind groups up front (mutable
+        // borrow), so the draw loop below can look them up immutably.
+        let cutout_keys: Vec<_> = instancing
+            .batches
+            .iter()
+            .filter(|b| b.is_cutout && !b.is_transparent)
+            .map(|b| (b.texture_id, b.normal_map_id, b.ao_map_id))
+            .collect();
+        for (t, n, a) in cutout_keys {
+            resources.get_shadow_cutout_cull_bind_group(
+                &mut instancing.shadow_cull,
+                device,
+                cascade,
+                t,
+                n,
+                a,
+            );
+        }
+
+        let Some(shadow_indirect_buf) =
+            instancing.shadow_cull.shadow_indirect_bufs[cascade].as_ref()
+        else {
+            continue;
+        };
+        let Some(cascade_bg) = resources.instancing.shadow_cascade_bgs[cascade].as_ref() else {
+            continue;
+        };
+        let Some(inst_cull_bg) = instancing.shadow_cull.shadow_cull_instance_bgs[cascade].as_ref()
+        else {
+            continue;
+        };
+        pass.set_bind_group(0, cascade_bg, &[]);
+
+        let mut cur_pipe: Option<(bool, bool)> = None; // (two_sided, cutout)
+        let mut cur_group1: Option<*const crate::gpu::BindGroup> = None;
+        let mut cur_chunks: Option<(u32, u32)> = None;
+        let mut run_start: u64 = 0;
+        let mut run_len: u32 = 0;
+
+        for (bi, batch) in instancing.batches.iter().enumerate() {
+            if batch.is_transparent {
+                continue;
+            }
+            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                continue;
+            };
+            let cutout_bg = if batch.is_cutout {
+                let key = (
+                    cascade,
+                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                );
+                instancing.shadow_cull.shadow_cutout_cull_bgs.get(&key)
+            } else {
+                None
+            };
+            let use_cutout = cutout_bg.is_some()
+                && cutout_pipeline.is_some()
+                && cutout_pipeline_two_sided.is_some();
+            let group1: &crate::gpu::BindGroup = if use_cutout {
+                cutout_bg.unwrap()
+            } else {
+                inst_cull_bg
+            };
+            let pipe_key = (batch.two_sided, use_cutout);
+            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+            let g1_ptr = group1 as *const crate::gpu::BindGroup;
+            let g = bi as u64;
+
+            if run_len > 0
+                && g == run_start + run_len as u64
+                && cur_pipe == Some(pipe_key)
+                && cur_group1 == Some(g1_ptr)
+                && cur_chunks == Some(chunks)
+            {
+                run_len += 1;
+                drawn += 1;
+                continue;
+            }
+            if run_len > 0 {
+                crate::renderer::render::emit_indirect_run(
+                    pass,
+                    shadow_indirect_buf,
+                    run_start,
+                    run_len,
+                    multi_draw,
+                );
+            }
+            if cur_pipe != Some(pipe_key) {
+                let pipe = match (use_cutout, batch.two_sided) {
+                    (true, true) => cutout_pipeline_two_sided.unwrap(),
+                    (true, false) => cutout_pipeline.unwrap(),
+                    (false, true) => pipeline_two_sided,
+                    (false, false) => pipeline,
+                };
+                pass.set_pipeline(pipe);
+                cur_pipe = Some(pipe_key);
+            }
+            if cur_group1 != Some(g1_ptr) {
+                pass.set_bind_group(1, group1, &[]);
+                cur_group1 = Some(g1_ptr);
+            }
+            if cur_chunks != Some(chunks) {
+                pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                pass.set_index_buffer(
+                    resources.geometry.index_chunk_slice(chunks.1),
+                    crate::gpu::IndexFormat::Uint32,
+                );
+                cur_chunks = Some(chunks);
+            }
+            run_start = g;
+            run_len = 1;
+            drawn += 1;
+        }
+        if run_len > 0 {
+            crate::renderer::render::emit_indirect_run(
+                pass,
+                shadow_indirect_buf,
+                run_start,
+                run_len,
+                multi_draw,
+            );
+        }
+    }
+
+    drawn
 }

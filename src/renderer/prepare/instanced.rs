@@ -132,6 +132,18 @@ impl ViewportRenderer {
                         let batch_idx = instanced_batches.len() as u32;
                         let batch_mesh = resources.mesh_store.get(rep.mesh_id);
                         let mesh_index_count = batch_mesh.map(|m| m.index_count).unwrap_or(0);
+                        // The draw binds the whole slab chunk once and offsets
+                        // per mesh; carry those offsets so the cull kernel writes
+                        // them into the indirect args (and the direct path reads
+                        // them from the batch).
+                        let (mesh_first_index, mesh_base_vertex) = batch_mesh
+                            .map(|m| {
+                                (
+                                    resources.geometry.first_index(m.index_span),
+                                    resources.geometry.base_vertex(m.vertex_span),
+                                )
+                            })
+                            .unwrap_or((0, 0));
 
                         for (orig_idx, item) in batch_items {
                             let cm = common_material(item);
@@ -184,12 +196,13 @@ impl ViewportRenderer {
                         // instance_offset.
                         batch_metas.push(BatchMeta {
                             index_count: mesh_index_count,
-                            first_index: 0,
+                            first_index: mesh_first_index,
                             instance_offset,
                             instance_count: batch_items.len() as u32,
                             vis_offset: instance_offset,
                             is_transparent: if is_transparent { 1 } else { 0 },
-                            _pad: [0, 0],
+                            base_vertex: mesh_base_vertex,
+                            _pad: 0,
                         });
 
                         instanced_batches.push(InstancedBatch {

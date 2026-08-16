@@ -52,6 +52,42 @@ pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some((device, queue))
 }
 
+/// Headless device with `INDIRECT_FIRST_INSTANCE` enabled (plus
+/// `MULTI_DRAW_INDIRECT_COUNT` when the adapter offers it), or `None` when no
+/// adapter is available or the adapter lacks `INDIRECT_FIRST_INSTANCE`. Used by
+/// tests that exercise the GPU-culled indirect draw path and the multi-draw
+/// collapse. Metal advertises `INDIRECT_FIRST_INSTANCE` but not the count
+/// feature, so the collapse there runs emulated (still bit-identical output).
+pub fn headless_device_with_indirect() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let instance = viewport_lib::wgpu::default_instance();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
+    .ok()?;
+    if !adapter
+        .features()
+        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+    {
+        return None;
+    }
+    let mut features = wgpu::Features::INDIRECT_FIRST_INSTANCE;
+    if adapter
+        .features()
+        .contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT)
+    {
+        features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
+    }
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("test-indirect"),
+        required_features: features,
+        ..Default::default()
+    }))
+    .ok()?;
+    Some((device, queue))
+}
+
 /// Headless device with `SHADER_PRIMITIVE_INDEX` enabled, or `None` when no
 /// adapter is available or the adapter does not support the feature. Used by the
 /// GPU sub-object tests that read the pick pass's triangle-index channel.

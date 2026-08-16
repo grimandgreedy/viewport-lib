@@ -753,10 +753,22 @@ impl ViewportRenderer {
                                     resources,
                                     &resources.deform.dummy_bind_group
                                 );
-                                // Batches are sorted with two_sided in the key, so
-                                // one- and two-sided runs are contiguous; switch the
-                                // pipeline only when the flag changes.
+                                // Geometry lives in the shared slab, so the chunk
+                                // buffers bind once and each batch's indirect args
+                                // carry the mesh's base_vertex / first_index (written
+                                // by the cull kernel). Consecutive batches that share
+                                // the pipeline variant, the instance+texture bind
+                                // group, and the slab chunk form a run drawn with one
+                                // multi_draw_indexed_indirect where the backend
+                                // supports it; runs break on a global-index gap (a
+                                // transparent batch sits between two opaque ones) so a
+                                // multi-draw never sweeps in an entry the CPU skipped.
+                                let multi_draw = self.instancing.multi_draw_active();
                                 let mut cur_pipe: Option<(bool, bool)> = None;
+                                let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
+                                let mut cur_chunks: Option<(u32, u32)> = None;
+                                let mut run_start: u64 = 0;
+                                let mut run_len: u32 = 0;
                                 for (batch_global_idx, batch) in &opaque_batches {
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
@@ -775,7 +787,29 @@ impl ViewportRenderer {
                                         && !batch.has_alpha_mask
                                         && nodiscard_pipes.0.is_some()
                                         && nodiscard_pipes.1.is_some();
-                                    if cur_pipe != Some((batch.two_sided, no_discard)) {
+                                    let pipe_key = (batch.two_sided, no_discard);
+                                    let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                    let bg_ptr = inst_tex_bg as *const crate::gpu::BindGroup;
+                                    let g = *batch_global_idx as u64;
+                                    if run_len > 0
+                                        && g == run_start + run_len as u64
+                                        && cur_pipe == Some(pipe_key)
+                                        && cur_bg == Some(bg_ptr)
+                                        && cur_chunks == Some(chunks)
+                                    {
+                                        run_len += 1;
+                                        continue;
+                                    }
+                                    if run_len > 0 {
+                                        crate::renderer::render::emit_indirect_run(
+                                            &mut render_pass,
+                                            indirect_buf,
+                                            run_start,
+                                            run_len,
+                                            multi_draw,
+                                        );
+                                    }
+                                    if cur_pipe != Some(pipe_key) {
                                         render_pass.set_pipeline(
                                             match (no_discard, batch.two_sided) {
                                                 (true, true) => nodiscard_pipes.1.unwrap(),
@@ -784,22 +818,33 @@ impl ViewportRenderer {
                                                 (false, false) => pipeline,
                                             },
                                         );
-                                        cur_pipe = Some((batch.two_sided, no_discard));
+                                        cur_pipe = Some(pipe_key);
                                     }
-                                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                    render_pass.set_vertex_buffer(
-                                        0,
-                                        resources.geometry.vertex_slice(mesh.vertex_span),
-                                    );
-                                    render_pass.set_index_buffer(
-                                        resources.geometry.index_slice(mesh.index_span),
-                                        crate::gpu::IndexFormat::Uint32,
-                                    );
-                                    // Each DrawIndexedIndirect entry is 20 bytes; index by global
-                                    // batch position so the offset matches write_indirect_args output.
-                                    render_pass.draw_indexed_indirect(
+                                    if cur_bg != Some(bg_ptr) {
+                                        render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                        cur_bg = Some(bg_ptr);
+                                    }
+                                    if cur_chunks != Some(chunks) {
+                                        render_pass.set_vertex_buffer(
+                                            0,
+                                            resources.geometry.vertex_chunk_slice(chunks.0),
+                                        );
+                                        render_pass.set_index_buffer(
+                                            resources.geometry.index_chunk_slice(chunks.1),
+                                            crate::gpu::IndexFormat::Uint32,
+                                        );
+                                        cur_chunks = Some(chunks);
+                                    }
+                                    run_start = g;
+                                    run_len = 1;
+                                }
+                                if run_len > 0 {
+                                    crate::renderer::render::emit_indirect_run(
+                                        &mut render_pass,
                                         indirect_buf,
-                                        *batch_global_idx as u64 * 20,
+                                        run_start,
+                                        run_len,
+                                        multi_draw,
                                     );
                                 }
                             }
@@ -820,6 +865,7 @@ impl ViewportRenderer {
                                 &resources.deform.dummy_bind_group
                             );
                             let mut cur_pipe: Option<(bool, bool)> = None;
+                            let mut cur_chunks: Option<(u32, u32)> = None;
                             for (_, batch) in &opaque_batches {
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
@@ -848,17 +894,23 @@ impl ViewportRenderer {
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                render_pass.set_vertex_buffer(
-                                    0,
-                                    resources.geometry.vertex_slice(mesh.vertex_span),
-                                );
-                                render_pass.set_index_buffer(
-                                    resources.geometry.index_slice(mesh.index_span),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
+                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                if cur_chunks != Some(chunks) {
+                                    render_pass.set_vertex_buffer(
+                                        0,
+                                        resources.geometry.vertex_chunk_slice(chunks.0),
+                                    );
+                                    render_pass.set_index_buffer(
+                                        resources.geometry.index_chunk_slice(chunks.1),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    cur_chunks = Some(chunks);
+                                }
+                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                                let first_index = resources.geometry.first_index(mesh.index_span);
                                 render_pass.draw_indexed(
-                                    0..mesh.index_count,
-                                    0,
+                                    first_index..first_index + mesh.index_count,
+                                    base_vertex,
                                     batch.instance_offset
                                         ..batch.instance_offset + batch.instance_count,
                                 );
@@ -2548,6 +2600,14 @@ impl ViewportRenderer {
                                 self.resources,
                                 &self.resources.deform.dummy_bind_group
                             );
+                            // Transparent batches all use the single OIT pipeline, so
+                            // a run collapses when the bind group and slab chunk hold
+                            // across consecutive global indices (see the opaque path).
+                            let multi_draw = self.instancing.multi_draw_active();
+                            let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
+                            let mut cur_chunks: Option<(u32, u32)> = None;
+                            let mut run_start: u64 = 0;
+                            let mut run_len: u32 = 0;
                             for (batch_global_idx, batch) in
                                 self.instancing.batches.iter().enumerate()
                             {
@@ -2568,18 +2628,51 @@ impl ViewportRenderer {
                                 else {
                                     continue;
                                 };
-                                oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                oit_pass.set_vertex_buffer(
-                                    0,
-                                    resources.geometry.vertex_slice(mesh.vertex_span),
-                                );
-                                oit_pass.set_index_buffer(
-                                    resources.geometry.index_slice(mesh.index_span),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                oit_pass.draw_indexed_indirect(
+                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                let bg_ptr = inst_tex_bg as *const crate::gpu::BindGroup;
+                                let g = batch_global_idx as u64;
+                                if run_len > 0
+                                    && g == run_start + run_len as u64
+                                    && cur_bg == Some(bg_ptr)
+                                    && cur_chunks == Some(chunks)
+                                {
+                                    run_len += 1;
+                                    continue;
+                                }
+                                if run_len > 0 {
+                                    crate::renderer::render::emit_indirect_run(
+                                        &mut oit_pass,
+                                        indirect_buf,
+                                        run_start,
+                                        run_len,
+                                        multi_draw,
+                                    );
+                                }
+                                if cur_bg != Some(bg_ptr) {
+                                    oit_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                    cur_bg = Some(bg_ptr);
+                                }
+                                if cur_chunks != Some(chunks) {
+                                    oit_pass.set_vertex_buffer(
+                                        0,
+                                        resources.geometry.vertex_chunk_slice(chunks.0),
+                                    );
+                                    oit_pass.set_index_buffer(
+                                        resources.geometry.index_chunk_slice(chunks.1),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    cur_chunks = Some(chunks);
+                                }
+                                run_start = g;
+                                run_len = 1;
+                            }
+                            if run_len > 0 {
+                                crate::renderer::render::emit_indirect_run(
+                                    &mut oit_pass,
                                     indirect_buf,
-                                    batch_global_idx as u64 * 20,
+                                    run_start,
+                                    run_len,
+                                    multi_draw,
                                 );
                             }
                         }
@@ -2590,6 +2683,7 @@ impl ViewportRenderer {
                             self.resources,
                             &self.resources.deform.dummy_bind_group
                         );
+                        let mut cur_chunks: Option<(u32, u32)> = None;
                         for batch in &self.instancing.batches {
                             if !batch.is_transparent {
                                 continue;
@@ -2608,17 +2702,23 @@ impl ViewportRenderer {
                                 continue;
                             };
                             oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                            oit_pass.set_vertex_buffer(
-                                0,
-                                resources.geometry.vertex_slice(mesh.vertex_span),
-                            );
-                            oit_pass.set_index_buffer(
-                                resources.geometry.index_slice(mesh.index_span),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if cur_chunks != Some(chunks) {
+                                oit_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
+                                oit_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                cur_chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
                             oit_pass.draw_indexed(
-                                0..mesh.index_count,
-                                0,
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
                                 batch.instance_offset..batch.instance_offset + batch.instance_count,
                             );
                         }

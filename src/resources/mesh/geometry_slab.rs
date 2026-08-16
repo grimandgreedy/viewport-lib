@@ -427,6 +427,35 @@ impl GeometrySlab {
             .slice(span.offset..span.offset + span.len)
     }
 
+    /// Full slice of the chunk buffer that backs a vertex span. Used by the
+    /// bind-once draw paths: bind the whole chunk once, then draw with a
+    /// per-mesh `base_vertex` (see [`base_vertex`](Self::base_vertex)) instead
+    /// of re-binding a sub-slice per mesh.
+    pub(crate) fn vertex_chunk_slice(&self, chunk: u32) -> gpu::BufferSlice<'_> {
+        self.vertex.buffer(chunk).slice(..)
+    }
+
+    /// Full slice of the chunk buffer that backs an index span (see
+    /// [`vertex_chunk_slice`](Self::vertex_chunk_slice)).
+    pub(crate) fn index_chunk_slice(&self, chunk: u32) -> gpu::BufferSlice<'_> {
+        self.index.buffer(chunk).slice(..)
+    }
+
+    /// The `base_vertex` a `draw_indexed` needs so indices resolve to this
+    /// mesh's vertices inside the shared chunk buffer. The span is aligned to
+    /// the storage-offset alignment, so the offset divides the vertex stride
+    /// evenly and the result is an exact vertex index.
+    pub(crate) fn base_vertex(&self, span: SlabSpan) -> i32 {
+        (span.offset / std::mem::size_of::<crate::resources::types::Vertex>() as u64) as i32
+    }
+
+    /// The `first_index` a `draw_indexed` needs so the index range lands on
+    /// this mesh's indices inside the shared chunk buffer (u32 indices, so the
+    /// byte offset divides by 4).
+    pub(crate) fn first_index(&self, span: SlabSpan) -> u32 {
+        (span.offset / 4) as u32
+    }
+
     pub(crate) fn vertex_binding(&self, span: SlabSpan) -> gpu::BindingResource<'_> {
         gpu::BindingResource::Buffer(gpu::BufferBinding {
             buffer: self.vertex.buffer(span.chunk),

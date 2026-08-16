@@ -1660,12 +1660,13 @@ const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);
 /// 16-byte aligned):
 ///
 /// - `index_count`:     `u32` - index range used by this batch's draw
-/// - `first_index`:     `u32` - index buffer offset (typically 0)
+/// - `first_index`:     `u32` - first index into the shared index-slab chunk
 /// - `instance_offset`: `u32` - first instance for this batch in the AABB buffer
 /// - `instance_count`:  `u32` - number of instances belonging to this batch
 /// - `vis_offset`:      `u32` - first slot in the visibility output buffer
 /// - `is_transparent`:  `u32` - `1` marks a transparent batch
-/// - `_pad`:            `[u32; 2]`
+/// - `base_vertex`:     `i32` - first vertex into the shared vertex-slab chunk
+/// - `_pad`:            `u32`
 ///
 /// `vis_offset` is a prefix sum of `instance_count` across batches; for a
 /// scene where instances are laid out contiguously per batch it equals
@@ -1685,8 +1686,13 @@ pub struct BatchMeta {
     pub vis_offset: u32,
     /// `1` if the batch is transparent, `0` for opaque.
     pub is_transparent: u32,
+    /// `base_vertex` for the draw: the mesh's first vertex inside the shared
+    /// geometry-slab chunk. The cull kernel copies this straight into the
+    /// `DrawIndexedIndirect` it emits so the bind-once draw path can bind the
+    /// whole chunk and offset per mesh.
+    pub base_vertex: i32,
     /// Padding to keep the struct 16-byte aligned.
-    pub _pad: [u32; 2],
+    pub _pad: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<BatchMeta>() == 32);
