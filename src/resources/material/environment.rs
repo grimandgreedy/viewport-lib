@@ -181,7 +181,11 @@ fn drain_until_ready(
     id: JobId,
 ) -> crate::error::ViewportResult<()> {
     loop {
-        resources.process_uploads(device, queue);
+        // Retaining variant: this blocking drain pumps the runner many times,
+        // and a reflection bake runs it per probe. Clearing the promotion window
+        // here would reap a streaming consumer's in-flight mesh upload `Ready`
+        // before their next poll observes it, stranding a deferred bind.
+        resources.process_uploads_retaining(device, queue);
         match resources.upload_status(id) {
             UploadStatus::Ready => return Ok(()),
             UploadStatus::Failed(e) => return Err(e),
