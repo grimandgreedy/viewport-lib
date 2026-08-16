@@ -8,19 +8,25 @@ use crate::gpu::util::DeviceExt;
 /// available a run longer than one collapses into a single
 /// `multi_draw_indexed_indirect`; otherwise (and for single-batch runs) it
 /// falls back to one `draw_indexed_indirect` per entry over the same buffer.
+///
+/// Returns the number of draw commands issued: `1` for a collapsed multi-draw,
+/// `len` for the per-entry fallback. Callers sum this for the draw-command
+/// stats counters.
 pub(crate) fn emit_indirect_run(
     render_pass: &mut crate::gpu::RenderPass<'_>,
     indirect_buf: &crate::gpu::Buffer,
     start: u64,
     len: u32,
     multi_draw: bool,
-) {
+) -> u32 {
     if multi_draw && len > 1 {
         render_pass.multi_draw_indexed_indirect(indirect_buf, start * 20, len);
+        1
     } else {
         for k in 0..len as u64 {
             render_pass.draw_indexed_indirect(indirect_buf, (start + k) * 20);
         }
+        len
     }
 }
 
@@ -674,6 +680,13 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
         let paint_start = std::time::Instant::now();
+        // Reset the per-frame main-pass draw counters; the instanced draw loops
+        // bump them through `&self` during encode and they are latched into
+        // `FrameStats` after paint.
+        self.frame_main_buffer_binds
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.frame_main_draw_commands
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         // Take the LOD-resolved surfaces from prepare (level mesh chosen, culled
         // items hidden), then extend with the boundary draws contributed by
         // opaque volume meshes (see the matching construction in `prepare.rs`).
@@ -785,6 +798,14 @@ impl ViewportRenderer {
         // CPU time spent encoding the paint pass (draw-call recording), separate
         // from prepare. Latched so last_frame_stats() reflects it after render.
         self.last_stats.cpu_paint_ms = paint_start.elapsed().as_secs_f32() * 1000.0;
+        // Latch the main-pass geometry-bind and draw-command counters the
+        // instanced draw loops accumulated during encode.
+        self.last_stats.main_buffer_binds = self
+            .frame_main_buffer_binds
+            .load(std::sync::atomic::Ordering::Relaxed);
+        self.last_stats.main_draw_commands = self
+            .frame_main_draw_commands
+            .load(std::sync::atomic::Ordering::Relaxed);
         // Pipelines compiled during the render phase (e.g. the shared HDR set on
         // the first HDR frame) land after prepare() snapshotted the counter; fold
         // them into this frame's stats rather than the next frame's.

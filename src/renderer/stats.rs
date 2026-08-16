@@ -290,6 +290,43 @@ pub struct FrameStats {
     pub triangles_submitted: u64,
     /// Number of draw calls in the shadow pass.
     pub shadow_draw_calls: u32,
+    /// Geometry buffer binds (`set_vertex_buffer` + `set_index_buffer`) issued
+    /// by the main-pass instanced draw loops (opaque scene + OIT) this frame.
+    ///
+    /// With the shared geometry slab the chunk buffers are bound once and reused
+    /// across batches, so this collapses from roughly two per instanced batch to
+    /// roughly two per slab chunk (one chunk for most scenes). Reading it near
+    /// `2` while `instanced_batches` is in the hundreds is the direct proof the
+    /// slab removed the per-mesh binds. Zero on the per-object path.
+    pub main_buffer_binds: u32,
+    /// Draw commands the main-pass instanced loops issued this frame.
+    ///
+    /// Each `multi_draw_indexed_indirect` counts once regardless of how many
+    /// batches it collapsed; each fallback per-batch `draw_indexed_indirect` /
+    /// `draw_indexed` counts once. On a backend with native multi-draw this is
+    /// well below `instanced_batches` (the collapse ratio); without it, or on the
+    /// non-indirect path, it tracks the batch count. Zero on the per-object path.
+    pub main_draw_commands: u32,
+    /// Geometry buffer binds issued by the shadow pass this frame, summed across
+    /// cascades. The slab collapses per-mesh binds the same way as the main pass;
+    /// on the cached-bundle path this is the count recorded in the bundle (the
+    /// binds the replay issues), carried over on frames that replay without a
+    /// rebuild.
+    pub shadow_buffer_binds: u32,
+    /// Draw commands the shadow pass issued this frame, summed across cascades
+    /// (multi-draw counts once, per-batch draws count once each). Compare against
+    /// `shadow_draw_calls` (the pre-collapse batch-draw count) to read the shadow
+    /// collapse ratio.
+    pub shadow_draw_commands: u32,
+    /// Number of chunk buffers backing the geometry slab (vertex chunks + index
+    /// chunks). Grows only when a scene's geometry exceeds the current chunk
+    /// capacity; a steady value of 2 means all mesh geometry fits one vertex and
+    /// one index chunk and every pass binds geometry at most once.
+    pub slab_chunk_count: u32,
+    /// Total bytes reserved by the geometry slab chunks (vertex + index),
+    /// including free space inside partially-filled chunks. Divide the live mesh
+    /// byte size by this to gauge slab fragmentation under churn.
+    pub slab_resident_bytes: u64,
     /// CPU time spent in `prepare()`, in milliseconds.
     pub cpu_prepare_ms: f32,
     /// Per-phase split of `cpu_prepare_ms`. See [`PrepareBreakdown`].

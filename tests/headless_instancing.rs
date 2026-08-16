@@ -880,6 +880,7 @@ fn multi_draw_collapse_is_pixel_identical() {
     }
 
     let mut frame = FrameData::default();
+    frame.scene.surfaces = SurfaceSubmission::Flat(surfaces.into());
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     let cam = Camera::default();
@@ -935,5 +936,60 @@ fn multi_draw_collapse_is_pixel_identical() {
         diffs, 0,
         "multi-draw collapse changed {diffs} framebuffer bytes; it must be \
          pixel-identical to the per-batch path",
+    );
+
+    // The instrumentation must reflect the slab + collapse. `collapsed` was the
+    // most recent render (force on), so `last_frame_stats` describes it.
+    let stats = renderer.last_frame_stats();
+    // All geometry fits one vertex and one index chunk.
+    assert_eq!(
+        stats.slab_chunk_count, 2,
+        "expected one vertex + one index slab chunk, got {}",
+        stats.slab_chunk_count,
+    );
+    // The five distinct opaque/transparent meshes form several batches, but the
+    // slab binds geometry once per chunk, so the main-pass bind count is a small
+    // constant rather than two per batch.
+    assert!(
+        stats.instanced_batches >= 4,
+        "expected several instanced batches, got {}",
+        stats.instanced_batches,
+    );
+    assert!(
+        stats.main_buffer_binds > 0 && stats.main_buffer_binds <= 8,
+        "main_buffer_binds should be a small constant (bind-once per chunk), \
+         got {} for {} batches",
+        stats.main_buffer_binds,
+        stats.instanced_batches,
+    );
+    // Meshes 0 and 1 share a material and are adjacent, so their two opaque
+    // batches collapse into one draw command: the post-collapse count is below
+    // the batch count.
+    assert!(
+        stats.main_draw_commands < stats.instanced_batches,
+        "expected the shared-material run to collapse: {} draw commands for {} \
+         batches",
+        stats.main_draw_commands,
+        stats.instanced_batches,
+    );
+    // The shadow cascades draw the opaque batches; with the shared material and
+    // slab chunk their draws collapse below the per-batch count, and geometry
+    // binds once per cascade rather than per batch.
+    assert!(
+        stats.shadow_draw_calls > 0,
+        "the shadow-casting light should produce shadow draws",
+    );
+    assert!(
+        stats.shadow_draw_commands < stats.shadow_draw_calls,
+        "expected shadow draws to collapse: {} commands for {} batch-draws",
+        stats.shadow_draw_commands,
+        stats.shadow_draw_calls,
+    );
+    assert!(
+        stats.shadow_buffer_binds < 2 * stats.shadow_draw_calls,
+        "shadow geometry should bind once per chunk, not per batch: {} binds for \
+         {} batch-draws",
+        stats.shadow_buffer_binds,
+        stats.shadow_draw_calls,
     );
 }

@@ -277,6 +277,11 @@ impl ViewportRenderer {
                     });
 
                 let mut shadow_draws = 0u32;
+                // Post-collapse shadow draw commands and geometry binds, for the
+                // slab/multi-draw FrameStats counters. `shadow_draws` stays the
+                // pre-collapse per-batch count that feeds `shadow_draw_calls`.
+                let mut shadow_draw_cmds = 0u32;
+                let mut shadow_binds = 0u32;
                 let tile_px = light.tile_size as f32;
 
                 if instancing.use_instancing {
@@ -312,6 +317,7 @@ impl ViewportRenderer {
                         {
                             instancing.shadow_cull.shadow_bundles = [None, None, None, None];
                             instancing.shadow_cull.bundle_draws = 0;
+                            instancing.shadow_cull.bundle_binds = 0;
 
                             // Build the per-batch alpha-cutout bind groups up
                             // front so the encode loop can look them up with
@@ -392,6 +398,7 @@ impl ViewportRenderer {
                                 let mut cur_group1_opaque = false;
                                 let mut cur_chunks: Option<(u32, u32)> = None;
                                 let mut draws = 0u32;
+                                let mut binds = 0u32;
                                 for (bi, batch) in instancing.batches.iter().enumerate() {
                                     if batch.is_transparent {
                                         continue;
@@ -446,6 +453,7 @@ impl ViewportRenderer {
                                             resources.geometry.index_chunk_slice(chunks.1),
                                             crate::gpu::IndexFormat::Uint32,
                                         );
+                                        binds += 2;
                                         cur_chunks = Some(chunks);
                                     }
                                     bundle_enc
@@ -458,12 +466,13 @@ impl ViewportRenderer {
                                     });
                                 instancing.shadow_cull.shadow_bundles[cascade] = Some(bundle);
                                 instancing.shadow_cull.bundle_draws += draws;
+                                instancing.shadow_cull.bundle_binds += binds;
                             }
                             instancing.shadow_cull.bundle_key = Some(bundle_key);
                         }
 
                         if shadow_multi_draw {
-                            shadow_draws += draw_shadow_cascades_multi_draw(
+                            let counts = draw_shadow_cascades_multi_draw(
                                 &mut shadow_pass,
                                 device,
                                 queue,
@@ -472,6 +481,9 @@ impl ViewportRenderer {
                                 light,
                                 tile_px,
                             );
+                            shadow_draws += counts.batch_draws;
+                            shadow_draw_cmds += counts.draw_commands;
+                            shadow_binds += counts.binds;
                         } else {
                             for cascade in 0..light.effective_cascade_count {
                                 let tile_col = (cascade % 2) as f32;
@@ -508,7 +520,11 @@ impl ViewportRenderer {
                                     shadow_pass.execute_bundles(std::iter::once(bundle));
                                 }
                             }
+                            // Bundles replay per-batch draws (no multi-draw), so the
+                            // recorded draw and bind counts are the per-frame totals.
                             shadow_draws += instancing.shadow_cull.bundle_draws;
+                            shadow_draw_cmds += instancing.shadow_cull.bundle_draws;
+                            shadow_binds += instancing.shadow_cull.bundle_binds;
                         }
                     } else if let (Some(ranges), Some(pipeline), Some(pipeline_two_sided)) = (
                         cpu_cull_ranges.as_ref(),
@@ -636,6 +652,7 @@ impl ViewportRenderer {
                                         resources.geometry.index_chunk_slice(chunks.1),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
+                                    shadow_binds += 2;
                                     cur_chunks = Some(chunks);
                                 }
                                 let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
@@ -646,6 +663,7 @@ impl ViewportRenderer {
                                     start..start + count,
                                 );
                                 shadow_draws += 1;
+                                shadow_draw_cmds += 1;
                             }
                         }
                     } else if let (Some(pipeline), Some(pipeline_two_sided), Some(instance_bg)) = (
@@ -752,6 +770,7 @@ impl ViewportRenderer {
                                         resources.geometry.index_chunk_slice(chunks.1),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
+                                    shadow_binds += 2;
                                     cur_chunks = Some(chunks);
                                 }
                                 let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
@@ -763,6 +782,7 @@ impl ViewportRenderer {
                                         ..batch.instance_offset + batch.instance_count,
                                 );
                                 shadow_draws += 1;
+                                shadow_draw_cmds += 1;
                             }
                         }
                     }
@@ -875,7 +895,9 @@ impl ViewportRenderer {
                                 crate::gpu::IndexFormat::Uint32,
                             );
                             shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            shadow_binds += 2;
                             shadow_draws += 1;
+                            shadow_draw_cmds += 1;
                         }
                     }
                 } else {
@@ -952,7 +974,9 @@ impl ViewportRenderer {
                                 crate::gpu::IndexFormat::Uint32,
                             );
                             shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            shadow_binds += 2;
                             shadow_draws += 1;
+                            shadow_draw_cmds += 1;
                         }
                     }
                 }
@@ -1001,6 +1025,8 @@ impl ViewportRenderer {
 
                 drop(shadow_pass);
                 last_stats.shadow_draw_calls = shadow_draws;
+                last_stats.shadow_draw_commands = shadow_draw_cmds;
+                last_stats.shadow_buffer_binds = shadow_binds;
             }
             sink.push(encoder.finish());
         }
@@ -1260,17 +1286,19 @@ fn draw_shadow_cascades_multi_draw(
     instancing: &mut InstancingState,
     light: &LightingFrame,
     tile_px: f32,
-) -> u32 {
+) -> ShadowDrawCounts {
     let Some(pipeline) = resources.cull.shadow_pipeline.as_ref() else {
-        return 0;
+        return ShadowDrawCounts::default();
     };
     let Some(pipeline_two_sided) = resources.cull.shadow_two_sided_pipeline.as_ref() else {
-        return 0;
+        return ShadowDrawCounts::default();
     };
     let cutout_pipeline = resources.cull.shadow_cutout_pipeline.as_ref();
     let cutout_pipeline_two_sided = resources.cull.shadow_cutout_two_sided_pipeline.as_ref();
     let multi_draw = instancing.multi_draw_active();
     let mut drawn = 0u32;
+    let mut binds = 0u32;
+    let mut draw_cmds = 0u32;
 
     for cascade in 0..light.effective_cascade_count {
         let tile_col = (cascade % 2) as f32;
@@ -1379,7 +1407,7 @@ fn draw_shadow_cascades_multi_draw(
                 continue;
             }
             if run_len > 0 {
-                crate::renderer::render::emit_indirect_run(
+                draw_cmds += crate::renderer::render::emit_indirect_run(
                     pass,
                     shadow_indirect_buf,
                     run_start,
@@ -1407,6 +1435,7 @@ fn draw_shadow_cascades_multi_draw(
                     resources.geometry.index_chunk_slice(chunks.1),
                     crate::gpu::IndexFormat::Uint32,
                 );
+                binds += 2;
                 cur_chunks = Some(chunks);
             }
             run_start = g;
@@ -1414,7 +1443,7 @@ fn draw_shadow_cascades_multi_draw(
             drawn += 1;
         }
         if run_len > 0 {
-            crate::renderer::render::emit_indirect_run(
+            draw_cmds += crate::renderer::render::emit_indirect_run(
                 pass,
                 shadow_indirect_buf,
                 run_start,
@@ -1424,5 +1453,20 @@ fn draw_shadow_cascades_multi_draw(
         }
     }
 
-    drawn
+    ShadowDrawCounts {
+        batch_draws: drawn,
+        binds,
+        draw_commands: draw_cmds,
+    }
+}
+
+/// Shadow instanced-draw tallies for one pass: `batch_draws` is the pre-collapse
+/// per-batch draw count (feeds `FrameStats::shadow_draw_calls`), `binds` counts
+/// `set_vertex_buffer` + `set_index_buffer` calls, and `draw_commands` is the
+/// post-collapse draw count (a multi-draw counts once).
+#[derive(Default, Clone, Copy)]
+struct ShadowDrawCounts {
+    batch_draws: u32,
+    binds: u32,
+    draw_commands: u32,
 }

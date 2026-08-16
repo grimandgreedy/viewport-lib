@@ -1230,6 +1230,10 @@ pub(crate) struct ShadowCullState {
     pub(crate) bundle_key: Option<(u64, u64, u64, usize)>,
     /// GPU draws recorded per cascade bundle, for FrameStats.
     pub(crate) bundle_draws: u32,
+    /// Geometry buffer binds (`set_vertex_buffer` + `set_index_buffer`) recorded
+    /// across the cascade bundles, for `FrameStats::shadow_buffer_binds`. Carried
+    /// over on frames that replay the bundles without a rebuild.
+    pub(crate) bundle_binds: u32,
     /// Bumped whenever `ensure_outputs` reallocates a buffer the bundles (or
     /// bind groups) reference.
     pub(crate) outputs_gen: u64,
@@ -1249,6 +1253,7 @@ impl ShadowCullState {
             shadow_bundles: [None, None, None, None],
             bundle_key: None,
             bundle_draws: 0,
+            bundle_binds: 0,
             outputs_gen: 0,
         }
     }

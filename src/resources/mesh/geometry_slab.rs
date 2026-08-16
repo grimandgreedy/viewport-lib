@@ -473,9 +473,15 @@ impl GeometrySlab {
     }
 
     /// Total GPU bytes reserved by the slab chunks (for residency reporting).
-    #[allow(dead_code)] // wired into residency stats in a later phase
     pub(crate) fn resident_bytes(&self) -> u64 {
         self.vertex.resident_bytes() + self.index.resident_bytes()
+    }
+
+    /// Number of chunk buffers backing the slab (vertex chunks + index chunks).
+    /// A steady value of 2 means all geometry fits one vertex and one index
+    /// chunk, so every pass binds geometry at most once.
+    pub(crate) fn chunk_count(&self) -> u32 {
+        (self.vertex.chunks.len() + self.index.chunks.len()) as u32
     }
 }
 

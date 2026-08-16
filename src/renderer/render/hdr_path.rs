@@ -801,13 +801,15 @@ impl ViewportRenderer {
                                         continue;
                                     }
                                     if run_len > 0 {
-                                        crate::renderer::render::emit_indirect_run(
+                                        let dc = crate::renderer::render::emit_indirect_run(
                                             &mut render_pass,
                                             indirect_buf,
                                             run_start,
                                             run_len,
                                             multi_draw,
                                         );
+                                        self.frame_main_draw_commands
+                                            .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
                                     }
                                     if cur_pipe != Some(pipe_key) {
                                         render_pass.set_pipeline(
@@ -833,19 +835,23 @@ impl ViewportRenderer {
                                             resources.geometry.index_chunk_slice(chunks.1),
                                             crate::gpu::IndexFormat::Uint32,
                                         );
+                                        self.frame_main_buffer_binds
+                                            .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
                                         cur_chunks = Some(chunks);
                                     }
                                     run_start = g;
                                     run_len = 1;
                                 }
                                 if run_len > 0 {
-                                    crate::renderer::render::emit_indirect_run(
+                                    let dc = crate::renderer::render::emit_indirect_run(
                                         &mut render_pass,
                                         indirect_buf,
                                         run_start,
                                         run_len,
                                         multi_draw,
                                     );
+                                    self.frame_main_draw_commands
+                                        .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
                                 }
                             }
                         } else if let (Some(pipeline), Some(pipeline_two_sided)) = (
@@ -904,6 +910,8 @@ impl ViewportRenderer {
                                         resources.geometry.index_chunk_slice(chunks.1),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
+                                    self.frame_main_buffer_binds
+                                        .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
                                     cur_chunks = Some(chunks);
                                 }
                                 let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
@@ -914,6 +922,8 @@ impl ViewportRenderer {
                                     batch.instance_offset
                                         ..batch.instance_offset + batch.instance_count,
                                 );
+                                self.frame_main_draw_commands
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
                     }
@@ -2640,13 +2650,15 @@ impl ViewportRenderer {
                                     continue;
                                 }
                                 if run_len > 0 {
-                                    crate::renderer::render::emit_indirect_run(
+                                    let dc = crate::renderer::render::emit_indirect_run(
                                         &mut oit_pass,
                                         indirect_buf,
                                         run_start,
                                         run_len,
                                         multi_draw,
                                     );
+                                    self.frame_main_draw_commands
+                                        .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
                                 }
                                 if cur_bg != Some(bg_ptr) {
                                     oit_pass.set_bind_group(1, inst_tex_bg, &[]);
@@ -2661,19 +2673,23 @@ impl ViewportRenderer {
                                         resources.geometry.index_chunk_slice(chunks.1),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
+                                    self.frame_main_buffer_binds
+                                        .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
                                     cur_chunks = Some(chunks);
                                 }
                                 run_start = g;
                                 run_len = 1;
                             }
                             if run_len > 0 {
-                                crate::renderer::render::emit_indirect_run(
+                                let dc = crate::renderer::render::emit_indirect_run(
                                     &mut oit_pass,
                                     indirect_buf,
                                     run_start,
                                     run_len,
                                     multi_draw,
                                 );
+                                self.frame_main_draw_commands
+                                    .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
                     } else if let Some(ref pipeline) = self.resources.oit.instanced_pipeline {
@@ -2712,6 +2728,8 @@ impl ViewportRenderer {
                                     resources.geometry.index_chunk_slice(chunks.1),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
+                                self.frame_main_buffer_binds
+                                    .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
                                 cur_chunks = Some(chunks);
                             }
                             let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
@@ -2721,6 +2739,8 @@ impl ViewportRenderer {
                                 base_vertex,
                                 batch.instance_offset..batch.instance_offset + batch.instance_count,
                             );
+                            self.frame_main_draw_commands
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
 

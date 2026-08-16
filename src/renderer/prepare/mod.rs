@@ -792,7 +792,11 @@ impl ViewportRenderer {
                 decal_uploads: decal_cache_stats.uploads,
                 decal_reused: decal_cache_stats.reused,
                 triangles_submitted: triangles,
-                shadow_draw_calls: 0, // Updated below in shadow pass.
+                shadow_draw_calls: 0,    // Updated below in shadow pass.
+                shadow_draw_commands: 0, // Updated below in shadow pass.
+                shadow_buffer_binds: 0,  // Updated below in shadow pass.
+                slab_chunk_count: resources.geometry.chunk_count(),
+                slab_resident_bytes: resources.geometry.resident_bytes(),
                 lod_items_resolved,
                 lod_switches,
                 lod_culled,

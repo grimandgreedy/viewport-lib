@@ -612,6 +612,19 @@ pub struct ViewportRenderer {
     /// with the immutable viewport-slot borrows live during pass encoding (and
     /// to keep `ViewportRenderer: Sync`).
     ts_written_mask: std::sync::atomic::AtomicU32,
+    /// Geometry buffer binds (`set_vertex_buffer` + `set_index_buffer`) issued
+    /// by the main-pass instanced draw loops (opaque scene + OIT) this frame.
+    /// Atomic so the draw loops can bump it through `&self` while the pass holds
+    /// immutable borrows. Reset before paint and latched into
+    /// `FrameStats::main_buffer_binds` after. The slab collapses this from ~one
+    /// pair per batch to ~one pair per chunk; the counter is the direct proof.
+    frame_main_buffer_binds: std::sync::atomic::AtomicU32,
+    /// Draw commands the main-pass instanced loops issued this frame: each
+    /// `multi_draw_indexed_indirect` counts once regardless of how many batches
+    /// it collapsed, each fallback `draw_indexed_indirect` / `draw_indexed`
+    /// counts once. Latched into `FrameStats::main_draw_commands`; compare
+    /// against `instanced_batches` to read the collapse ratio.
+    frame_main_draw_commands: std::sync::atomic::AtomicU32,
     /// One-shot latch for the paint_to foreground warning: a host-owned
     /// render pass cannot host the cleared-depth foreground pass, so
     /// submitted foreground items are reported once instead of every frame.
@@ -866,6 +879,8 @@ impl ViewportRenderer {
             ts_map_inflight: false,
             ts_map_status: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             ts_written_mask: std::sync::atomic::AtomicU32::new(0),
+            frame_main_buffer_binds: std::sync::atomic::AtomicU32::new(0),
+            frame_main_draw_commands: std::sync::atomic::AtomicU32::new(0),
             foreground_paint_to_warned: std::sync::atomic::AtomicBool::new(false),
             ts_pending_mask: 0,
             degradation_tier: 0,
