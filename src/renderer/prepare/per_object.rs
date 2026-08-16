@@ -342,6 +342,14 @@ impl ViewportRenderer {
                 usize,
                 Vec<crate::scene::material::Material>,
             > = std::collections::HashMap::new();
+            // Meshes whose single-element `object_uniform_buf` fallback has been
+            // written this frame, so a mesh shared by many per-object items pays
+            // one write instead of one per item (the write is only a shadow /
+            // fallback buffer; the items themselves draw from the shared
+            // object-data buffer).
+            let mut shared_written: std::collections::HashSet<
+                crate::resources::mesh::mesh_store::MeshId,
+            > = std::collections::HashSet::new();
             for (item_idx, item) in scene_items.iter().enumerate() {
                 // When instancing is active, skip items that will be rendered
                 // via the instanced path. They don't need per-object uniform
@@ -485,16 +493,19 @@ impl ViewportRenderer {
 
                 // Keep the mesh's single-element object buffer in sync: it backs
                 // the mesh's fallback bind group and the shadow (directional and
-                // point) caster passes, which draw at instance 0. Several items
-                // can share a MeshId, so it holds whichever wrote last; that is
-                // the pre-existing shared-buffer behaviour those passes rely on.
-                if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                    queue.write_buffer(
-                        &mesh.object_uniform_buf,
-                        0,
-                        bytemuck::cast_slice(&[obj_uniform]),
-                    );
-                    resources.frame_upload_bytes += std::mem::size_of::<ObjectUniform>() as u64;
+                // point) caster passes, which draw at instance 0. Written once
+                // per mesh per frame; when several items share a MeshId it holds
+                // the first item's transform (the multi-item-per-mesh shadow
+                // caster case was already a shared-buffer approximation).
+                if shared_written.insert(item.mesh_id) {
+                    if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                        queue.write_buffer(
+                            &mesh.object_uniform_buf,
+                            0,
+                            bytemuck::cast_slice(&[obj_uniform]),
+                        );
+                        resources.frame_upload_bytes += std::mem::size_of::<ObjectUniform>() as u64;
+                    }
                 }
 
                 // Whole-mesh draw: record this item's element in the shared
