@@ -1,5 +1,6 @@
 //! Per-mesh GPU buffers and bind group (`GpuMesh`).
 
+use crate::resources::mesh::geometry_slab::SlabSpan;
 use crate::resources::types::*;
 
 // ---------------------------------------------------------------------------
@@ -8,10 +9,12 @@ use crate::resources::types::*;
 
 /// GPU buffers and bind group for a single mesh.
 pub struct GpuMesh {
-    /// Interleaved position + normal vertex buffer (Vertex layout).
-    pub vertex_buffer: crate::gpu::Buffer,
-    /// Triangle index buffer (for solid rendering).
-    pub index_buffer: crate::gpu::Buffer,
+    /// Window into the shared vertex slab holding this mesh's interleaved
+    /// vertices (Vertex layout). Resolve to a bindable slice via
+    /// `DeviceResources::geometry`.
+    pub(crate) vertex_span: SlabSpan,
+    /// Window into the shared index slab holding this mesh's triangle indices.
+    pub(crate) index_span: SlabSpan,
     /// Number of indices in the triangle index buffer.
     pub index_count: u32,
     /// Material ranges partitioning the index buffer, from
@@ -141,7 +144,7 @@ impl GpuMesh {
     /// Useful for sizing or validating a position/normal override buffer
     /// against the mesh it will be bound to.
     pub fn vertex_count(&self) -> usize {
-        (self.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize
+        (self.vertex_span.len / std::mem::size_of::<Vertex>() as u64) as usize
     }
 
     /// Mesh-local-space `parry3d::TriMesh` for CPU picking, built once from
@@ -193,8 +196,10 @@ impl GpuMesh {
     /// Used for the resident-bytes accounting so freeing the mesh decrements the
     /// running total by the same amount it added at upload.
     pub(crate) fn gpu_byte_size(&self) -> u64 {
-        let mut bytes = self.vertex_buffer.size()
-            + self.index_buffer.size()
+        // The geometry lives in the shared slab; charge this mesh's spans, not
+        // the whole chunk buffer (the slab reports its chunk bytes separately).
+        let mut bytes = self.vertex_span.len
+            + self.index_span.len
             + self.object_uniform_buf.size()
             + self.normal_uniform_buf.size();
         for buf in [

@@ -95,6 +95,7 @@ impl DeviceResources {
             + indices.len() * std::mem::size_of::<u32>()) as u64;
         let mesh = Self::create_mesh(
             device,
+            &mut self.geometry,
             &self.object_bind_group_layout,
             &self.fallback_texture.view,
             &self.fallback_texture_array_view,
@@ -123,6 +124,19 @@ impl DeviceResources {
     /// Converts positions/normals/indices to the GPU `Vertex` layout (white colour)
     /// and creates a normal visualization line buffer (light blue #a0c4ff, length 0.1).
     /// Returns the `MeshId`.
+    ///
+    /// You can bind the returned `MeshId` onto a scene node right away, before
+    /// the mesh is drawn for the first time. Referencing a not-yet-resident (or
+    /// later evicted) `MeshId` is a graceful skip: the item draws the frame the
+    /// mesh is resident and simply does not draw until then. `MeshId` is
+    /// generational, so a handle for an evicted-and-reused slot never aliases the
+    /// new mesh. Prefer this eager binding over polling an async upload's
+    /// promotion edge and binding on it: the poll is a one-cycle signal that an
+    /// intervening capture / bake can consume. For streaming this mesh in
+    /// asynchronously, see
+    /// [`begin_upload_mesh_data`](Self::begin_upload_mesh_data); use the
+    /// residency queries `mesh_resident` / `frame_fully_resident` for lifecycle
+    /// decisions (load gating, a bake precondition), not to gate a bind.
     ///
     /// # Errors
     ///
@@ -236,6 +250,7 @@ impl DeviceResources {
 
         let mut mesh = Self::create_mesh_with_normals(
             device,
+            &mut self.geometry,
             &self.object_bind_group_layout,
             &self.fallback_texture.view,
             &self.fallback_texture_array_view,
@@ -322,6 +337,17 @@ impl DeviceResources {
             crate::resources::ResultSlot::<crate::resources::mesh::mesh_store::MeshId>::new();
         let slot_for_apply = slot.clone();
 
+        // Allocate the slab windows up front (vertex/index counts are known from
+        // the data) so the chunked GPU step can write geometry straight into the
+        // slab, preserving incremental streaming. Freed by the mesh's eventual
+        // removal; a cancelled job leaks the window (rare, acceptable).
+        let vertex_bytes = (data.positions.len() * std::mem::size_of::<Vertex>()) as u64;
+        let index_bytes = (data.indices.len() * std::mem::size_of::<u32>()) as u64;
+        let vertex_span = self.geometry.alloc_vertex(device, vertex_bytes);
+        let index_span = self.geometry.alloc_index(device, index_bytes);
+        let vertex_chunk = self.geometry.vertex_chunk_buffer(vertex_span);
+        let index_chunk = self.geometry.index_chunk_buffer(index_span);
+
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu_then_gpu_chunked(move |progress| {
@@ -343,7 +369,6 @@ impl DeviceResources {
                     cpu_normals,
                     cpu_indices,
                 } = prep;
-                let mut bufs: Option<(crate::gpu::Buffer, crate::gpu::Buffer)> = None;
                 let mut voff: usize = 0;
                 let mut ioff: usize = 0;
                 // One-shot payload for the apply closure; an FnMut cannot
@@ -359,7 +384,7 @@ impl DeviceResources {
                 ));
                 Ok(Box::new(
                     move |dev: &crate::gpu::Device,
-                          _q: &crate::gpu::Queue,
+                          q: &crate::gpu::Queue,
                           progress: &crate::resources::ProgressHandle,
                           budget: &crate::resources::upload_jobs::FrameBudget| {
                         use bytemuck::cast_slice;
@@ -371,31 +396,15 @@ impl DeviceResources {
                             .indices
                             .len()
                             * std::mem::size_of::<u32>();
-                        let (vbuf, ibuf) = bufs.get_or_insert_with(|| {
-                            let vbuf = dev.create_buffer(&crate::gpu::BufferDescriptor {
-                                label: Some("vertex_buf"),
-                                size: vsrc.len() as u64,
-                                usage: crate::gpu::BufferUsages::VERTEX
-                                    | crate::gpu::BufferUsages::COPY_DST
-                                    | crate::gpu::BufferUsages::STORAGE,
-                                mapped_at_creation: true,
-                            });
-                            let ibuf = dev.create_buffer(&crate::gpu::BufferDescriptor {
-                                label: Some("index_buf"),
-                                size: indices_bytes as u64,
-                                usage: crate::gpu::BufferUsages::INDEX
-                                    | crate::gpu::BufferUsages::COPY_DST
-                                    | crate::gpu::BufferUsages::STORAGE,
-                                mapped_at_creation: true,
-                            });
-                            (vbuf, ibuf)
-                        });
+                        // Stream the geometry straight into the pre-allocated slab
+                        // windows, MESH_CHUNK_BYTES per turn as the budget allows.
                         let total = vsrc.len() + indices_bytes;
                         loop {
                             if voff < vsrc.len() {
                                 let end = (voff + MESH_CHUNK_BYTES).min(vsrc.len());
-                                crate::resources::builders::write_mapped(
-                                    vbuf.slice(voff as u64..end as u64),
+                                q.write_buffer(
+                                    &vertex_chunk,
+                                    vertex_span.offset + voff as u64,
                                     &vsrc[voff..end],
                                 );
                                 voff = end;
@@ -404,8 +413,9 @@ impl DeviceResources {
                                     &payload.as_ref().expect("payload present").0.indices,
                                 );
                                 let end = (ioff + MESH_CHUNK_BYTES).min(isrc.len());
-                                crate::resources::builders::write_mapped(
-                                    ibuf.slice(ioff as u64..end as u64),
+                                q.write_buffer(
+                                    &index_chunk,
+                                    index_span.offset + ioff as u64,
                                     &isrc[ioff..end],
                                 );
                                 ioff = end;
@@ -421,9 +431,6 @@ impl DeviceResources {
                             return Ok(crate::resources::upload_jobs::GpuStep::Continue);
                         }
 
-                        let (vbuf, ibuf) = bufs.take().expect("buffers created on first turn");
-                        vbuf.unmap();
-                        ibuf.unmap();
                         let (
                             data,
                             computed_tangents,
@@ -458,8 +465,8 @@ impl DeviceResources {
                                 &resources.content.fallback_extension_attr_buf,
                                 &resources.fallback_metallic_roughness_texture_view,
                                 &resources.fallback_emissive_texture_view,
-                                vbuf,
-                                ibuf,
+                                vertex_span,
+                                index_span,
                                 data.indices.len() as u32,
                                 aabb,
                             );
@@ -648,7 +655,7 @@ impl DeviceResources {
                 "write_mesh_positions_normals called on mesh {} that has a GPU position/normal override bound. The CPU write and the GPU override race; call clear_position_override / clear_normal_override first.",
                 mesh_id.index(),
             );
-            (mesh.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize
+            (mesh.vertex_span.len / std::mem::size_of::<Vertex>() as u64) as usize
         };
         if positions.len() != existing_vertex_count {
             return Err(crate::error::ViewportError::MeshLengthMismatch {
@@ -681,8 +688,13 @@ impl DeviceResources {
             has_normal_lines.then(|| Self::build_normal_lines(positions, normals));
 
         let aabb = crate::scene::aabb::Aabb::from_positions(positions);
+        // Flush any not-yet-resident initial geometry for this mesh, then write
+        // the animated vertices into the slab window (this path has the queue).
+        let vspan = self.mesh_store.get(mesh_id).unwrap().vertex_span;
+        self.geometry.flush(queue);
+        self.geometry
+            .write_vertex(queue, vspan, cast_slice(&vertices));
         let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
-        queue.write_buffer(&mesh.vertex_buffer, 0, cast_slice(&vertices));
         if let (Some(nl_buf), Some(nl_verts)) = (&mesh.normal_line_buffer, &normal_line_verts) {
             queue.write_buffer(nl_buf, 0, cast_slice(nl_verts.as_slice()));
         }
@@ -1187,13 +1199,18 @@ impl DeviceResources {
             return Ok(());
         }
         let stride = std::mem::size_of::<Vertex>() as u64;
-        let vertex_count = (mesh.vertex_buffer.size() / stride) as usize;
+        let vertex_count = (mesh.vertex_span.len / stride) as usize;
         if start_vertex + colours.len() > vertex_count {
             return Err(crate::error::ViewportError::MeshLengthMismatch {
                 positions: start_vertex + colours.len(),
                 normals: vertex_count,
             });
         }
+        let vspan = mesh.vertex_span;
+        // Ensure the initial geometry is resident before these partial
+        // (colour-only) writes: a still-pending full-vertex write would
+        // otherwise land afterwards and clobber the colours.
+        self.geometry.flush(queue);
         // Colour is the `[f32; 4]` at offset 24 in the interleaved `Vertex`
         // (see `Vertex::buffer_layout`). Interleaving puts each vertex's colour
         // one full stride apart, so a contiguous vertex run is written per
@@ -1201,8 +1218,9 @@ impl DeviceResources {
         const COLOUR_OFFSET: u64 = 24;
         for (i, colour) in colours.iter().enumerate() {
             let byte_offset = (start_vertex as u64 + i as u64) * stride + COLOUR_OFFSET;
-            queue.write_buffer(
-                &mesh.vertex_buffer,
+            self.geometry.write_vertex_at(
+                queue,
+                vspan,
                 byte_offset,
                 bytemuck::cast_slice(std::slice::from_ref(colour)),
             );
@@ -1294,7 +1312,7 @@ impl DeviceResources {
         {
             let existing = self.mesh_store.get(mesh_id).unwrap();
             let existing_vc =
-                (existing.vertex_buffer.size() / std::mem::size_of::<Vertex>() as u64) as usize;
+                (existing.vertex_span.len / std::mem::size_of::<Vertex>() as u64) as usize;
             let in_place = existing_vc == vertices.len()
                 && existing.index_count as usize == data.indices.len()
                 && data.attributes.is_empty()
@@ -1305,9 +1323,19 @@ impl DeviceResources {
                 use bytemuck::cast_slice;
                 let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
 
+                // Same-size in-place update writes into the existing slab
+                // windows; flush any pending initial write first so it cannot
+                // land afterwards and clobber this update.
+                let (vspan, ispan) = {
+                    let m = self.mesh_store.get(mesh_id).unwrap();
+                    (m.vertex_span, m.index_span)
+                };
+                self.geometry.flush(queue);
+                self.geometry
+                    .write_vertex(queue, vspan, cast_slice(&vertices));
+                self.geometry
+                    .write_index(queue, ispan, cast_slice(data.indices.as_slice()));
                 let mesh = self.mesh_store.get_mut(mesh_id).unwrap();
-                queue.write_buffer(&mesh.vertex_buffer, 0, cast_slice(&vertices));
-                queue.write_buffer(&mesh.index_buffer, 0, cast_slice(data.indices.as_slice()));
                 // Sidecars are built lazily; refresh only the ones a view has
                 // already materialised.
                 if let Some(ref edge_buf) = mesh.edge_index_buffer {
@@ -1343,8 +1371,16 @@ impl DeviceResources {
             }
         }
 
+        // Free the old mesh's slab windows; the new mesh allocates fresh ones.
+        {
+            let old = self.mesh_store.get(mesh_id).unwrap();
+            let (ovs, ois) = (old.vertex_span, old.index_span);
+            self.geometry.free_vertex(ovs);
+            self.geometry.free_index(ois);
+        }
         let mut new_mesh = Self::create_mesh_with_normals(
             device,
+            &mut self.geometry,
             &self.object_bind_group_layout,
             &self.fallback_texture.view,
             &self.fallback_texture_array_view,
@@ -1453,8 +1489,17 @@ impl DeviceResources {
     ///
     /// [`remove_mesh`]: Self::remove_mesh
     pub fn free_mesh(&mut self, id: crate::resources::mesh::mesh_store::MeshId) -> bool {
+        // Return the mesh's slab windows to the free list before removing it.
+        let spans = self
+            .mesh_store
+            .get(id)
+            .map(|m| (m.vertex_span, m.index_span));
         let removed = self.mesh_store.remove(id);
         if removed {
+            if let Some((vspan, ispan)) = spans {
+                self.geometry.free_vertex(vspan);
+                self.geometry.free_index(ispan);
+            }
             self.resource_free_epoch += 1;
         }
         removed
@@ -2578,6 +2623,7 @@ impl DeviceResources {
 
     pub(crate) fn create_mesh(
         device: &crate::gpu::Device,
+        geometry: &mut crate::resources::mesh::geometry_slab::GeometrySlab,
         object_bgl: &crate::gpu::BindGroupLayout,
         fallback_albedo_view: &crate::gpu::TextureView,
         fallback_lightmap_array_view: &crate::gpu::TextureView,
@@ -2600,6 +2646,7 @@ impl DeviceResources {
     ) -> GpuMesh {
         Self::create_mesh_with_normals(
             device,
+            geometry,
             object_bgl,
             fallback_albedo_view,
             fallback_lightmap_array_view,
@@ -2625,6 +2672,7 @@ impl DeviceResources {
 
     pub(crate) fn create_mesh_with_normals(
         device: &crate::gpu::Device,
+        geometry: &mut crate::resources::mesh::geometry_slab::GeometrySlab,
         object_bgl: &crate::gpu::BindGroupLayout,
         fallback_albedo_view: &crate::gpu::TextureView,
         fallback_lightmap_array_view: &crate::gpu::TextureView,
@@ -2648,27 +2696,15 @@ impl DeviceResources {
     ) -> GpuMesh {
         use bytemuck::cast_slice;
 
-        let vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("vertex_buf"),
-            size: (std::mem::size_of::<Vertex>() * vertices.len()) as u64,
-            usage: crate::gpu::BufferUsages::VERTEX
-                | crate::gpu::BufferUsages::COPY_DST
-                | crate::gpu::BufferUsages::STORAGE,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(vertex_buffer.slice(..), cast_slice(vertices));
-        vertex_buffer.unmap();
-
-        let index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("index_buf"),
-            size: (std::mem::size_of::<u32>() * indices.len()) as u64,
-            usage: crate::gpu::BufferUsages::INDEX
-                | crate::gpu::BufferUsages::COPY_DST
-                | crate::gpu::BufferUsages::STORAGE,
-            mapped_at_creation: true,
-        });
-        crate::resources::builders::write_mapped(index_buffer.slice(..), cast_slice(indices));
-        index_buffer.unmap();
+        // Allocate slab windows and record the geometry writes; they flush at the
+        // next `process_uploads` (the upload path has no queue). An empty mesh
+        // still gets a minimal span so its slice/binding is valid.
+        let vertex_bytes = (std::mem::size_of::<Vertex>() * vertices.len()) as u64;
+        let index_bytes = (std::mem::size_of::<u32>() * indices.len()) as u64;
+        let vertex_span = geometry.alloc_vertex(device, vertex_bytes);
+        let index_span = geometry.alloc_index(device, index_bytes);
+        geometry.enqueue_vertex(vertex_span, cast_slice(vertices).to_vec());
+        geometry.enqueue_index(index_span, cast_slice(indices).to_vec());
 
         let aabb = crate::scene::aabb::Aabb::from_positions(
             &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
@@ -2692,8 +2728,8 @@ impl DeviceResources {
             fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
-            vertex_buffer,
-            index_buffer,
+            vertex_span,
+            index_span,
             indices.len() as u32,
             aabb,
         );
@@ -2741,8 +2777,8 @@ impl DeviceResources {
         fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
-        vertex_buffer: crate::gpu::Buffer,
-        index_buffer: crate::gpu::Buffer,
+        vertex_span: crate::resources::mesh::geometry_slab::SlabSpan,
+        index_span: crate::resources::mesh::geometry_slab::SlabSpan,
         index_count: u32,
         aabb: crate::scene::aabb::Aabb,
     ) -> GpuMesh {
@@ -3063,8 +3099,8 @@ impl DeviceResources {
         });
 
         GpuMesh {
-            vertex_buffer,
-            index_buffer,
+            vertex_span,
+            index_span,
             index_count,
             submeshes: Vec::new(),
             // Wireframe edges are built lazily on first use; the indices are

@@ -1027,7 +1027,10 @@ impl ViewportRenderer {
                     transparent.push(i);
                     continue;
                 }
-                if !matches!(item.material.alpha_mode, crate::scene::material::AlphaMode::Opaque) {
+                if !matches!(
+                    item.material.alpha_mode,
+                    crate::scene::material::AlphaMode::Opaque
+                ) {
                     any_mask = true;
                 }
                 (
@@ -1053,7 +1056,10 @@ impl ViewportRenderer {
                 && !any_mask
                 && !self.resources.force_po_discard
                 && self.resources.hdr_solid_nodiscard_pipeline.is_some()
-                && self.resources.hdr_solid_two_sided_nodiscard_pipeline.is_some();
+                && self
+                    .resources
+                    .hdr_solid_two_sided_nodiscard_pipeline
+                    .is_some();
             no_discard.hash(&mut h);
             Some((h.finish(), transparent, no_discard))
         };
@@ -1215,8 +1221,11 @@ impl ViewportRenderer {
                 &[],
             );
             if cur_mesh != Some(item.mesh_id) {
-                enc.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                enc.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+                enc.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+                enc.set_index_buffer(
+                    resources.geometry.index_slice(mesh.index_span),
+                    crate::gpu::IndexFormat::Uint32,
+                );
                 cur_mesh = Some(item.mesh_id);
             }
             enc.draw_indexed(0..mesh.index_count, 0, 0..1);

@@ -632,6 +632,10 @@ pub struct DeviceResources {
     pub(crate) object_bind_group_layout: crate::gpu::BindGroupLayout,
     /// Scene meshes (slotted storage with free-list removal).
     pub(crate) mesh_store: crate::resources::mesh::mesh_store::MeshStore,
+    /// Shared vertex/index geometry buffers. Each mesh's `vertex_span` /
+    /// `index_span` is a window into these; geometry writes recorded at upload
+    /// flush in `process_uploads`.
+    pub(crate) geometry: crate::resources::mesh::geometry_slab::GeometrySlab,
     /// Registered LOD groups. Each groups several meshes that are detail
     /// variants of one object; the renderer picks a level per frame.
     pub(crate) lod_groups: crate::resources::mesh::lod::LodGroupStore,

@@ -810,7 +810,7 @@ impl JobRunner {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) -> Vec<Completion> {
-        self.process_budgeted(device, queue, &FrameBudget::unbounded())
+        self.process_budgeted(device, queue, &FrameBudget::unbounded(), true)
     }
 
     /// `process` with a time bound on the deferred GPU-job drain.
@@ -824,10 +824,17 @@ impl JobRunner {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         budget: &FrameBudget,
+        clear_finished: bool,
     ) -> Vec<Completion> {
-        // Drop the previous frame's retention window. Callers that needed
-        // those results have already taken them.
-        self.finished.clear();
+        // Drop the previous frame's retention window unless the caller asked to
+        // preserve it. Callers that needed those results have already taken
+        // them. An internal blocking drain (an environment upload during a
+        // reflection bake) pumps the runner many times in one frame; clearing
+        // here would reap another job's `Ready` before the consumer's next poll
+        // observes it, stranding a deferred bind. Such drains pass `false`.
+        if clear_finished {
+            self.finished.clear();
+        }
 
         // Run deferred GPU jobs on this (the device-owning) thread, bounded
         // by the frame budget and a fixed cap so a large batch spreads
@@ -1086,13 +1093,39 @@ impl super::DeviceResources {
         queue: &crate::gpu::Queue,
         budget: FrameBudget,
     ) {
+        self.process_uploads_inner(device, queue, budget, true);
+    }
+
+    /// Advance the runner without clearing the promotion retention window.
+    ///
+    /// Used by internal blocking drains (an environment upload during a
+    /// reflection bake) that pump the runner many times in one frame. Preserving
+    /// the window means such a drain does not reap another job's `Ready` before
+    /// the consumer observes it, so it cannot strand a deferred bind. The next
+    /// ordinary `process_uploads` (from the presented prepare) clears the window
+    /// as usual, so retention stays bounded.
+    pub(crate) fn process_uploads_retaining(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
+        self.process_uploads_inner(device, queue, FrameBudget::unbounded(), false);
+    }
+
+    fn process_uploads_inner(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        budget: FrameBudget,
+        clear_finished: bool,
+    ) {
         // Stage 1: advance the runner and drain immediate (failure /
         // no-apply) completions. Their callbacks fire here regardless of
         // budget: they do no main-thread work and dropping them would
         // hide errors from consumers.
         let completions = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.process_budgeted(device, queue, &budget)
+            runner.process_budgeted(device, queue, &budget, clear_finished)
         };
         for Completion {
             id: _,
@@ -1138,6 +1171,12 @@ impl super::DeviceResources {
                 cb(&status);
             }
         }
+
+        // Stage 3: flush geometry writes recorded by sync mesh uploads (which
+        // have no queue) into the slab now that we hold the frame queue. Async
+        // uploads stream straight into the slab in their GPU step, so this only
+        // drains the deferred sync writes.
+        self.geometry.flush(queue);
     }
 
     /// Total wall-clock work duration for a completed job.
@@ -1589,8 +1628,12 @@ mod tests {
 
         with_test_gpu(|device, queue| {
             for _ in 0..400 {
-                let _ =
-                    runner.process_budgeted(device, queue, &FrameBudget::from_now(Duration::ZERO));
+                let _ = runner.process_budgeted(
+                    device,
+                    queue,
+                    &FrameBudget::from_now(Duration::ZERO),
+                    true,
+                );
                 if runner.all_complete() {
                     break;
                 }
@@ -1700,8 +1743,12 @@ mod tests {
             let mut max_per_call = 0usize;
             for _ in 0..400 {
                 let before = ran.load(Ordering::Relaxed);
-                let _ =
-                    runner.process_budgeted(device, queue, &FrameBudget::from_now(Duration::ZERO));
+                let _ = runner.process_budgeted(
+                    device,
+                    queue,
+                    &FrameBudget::from_now(Duration::ZERO),
+                    true,
+                );
                 let delta = ran.load(Ordering::Relaxed) - before;
                 max_per_call = max_per_call.max(delta);
                 if runner.all_complete() {

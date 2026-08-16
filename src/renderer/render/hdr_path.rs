@@ -124,7 +124,7 @@ pub(super) fn draw_mesh_item(
         if let Some(edge_buf) = &mesh.edge_index_buffer {
             render_pass.set_pipeline(wf_pl);
             bind_deform_group!(render_pass, resources, deform_bg);
-            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
             render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
         }
@@ -167,9 +167,11 @@ pub(super) fn draw_mesh_item(
         };
         if let Some((mats, bgs)) = ranges {
             bind_deform_group!(render_pass, resources, deform_bg);
-            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            render_pass
-                .set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+            render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+            render_pass.set_index_buffer(
+                resources.geometry.index_slice(mesh.index_span),
+                crate::gpu::IndexFormat::Uint32,
+            );
             for (r, (mat, range)) in mats.iter().zip(&mesh.submeshes).enumerate() {
                 let is_trans = item.settings.opacity < 1.0 || mat.is_blend();
                 if let Some(want) = submesh_transparent {
@@ -222,14 +224,16 @@ pub(super) fn draw_mesh_item(
             };
             render_pass.set_pipeline(pl);
             bind_deform_group!(render_pass, resources, deform_bg);
-            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
             if let Some(fr) = filter {
                 render_pass
                     .set_index_buffer(fr.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
             } else {
-                render_pass
-                    .set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+                render_pass.set_index_buffer(
+                    resources.geometry.index_slice(mesh.index_span),
+                    crate::gpu::IndexFormat::Uint32,
+                );
                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
         }
@@ -783,9 +787,12 @@ impl ViewportRenderer {
                                         cur_pipe = Some((batch.two_sided, no_discard));
                                     }
                                     render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_vertex_buffer(
+                                        0,
+                                        resources.geometry.vertex_slice(mesh.vertex_span),
+                                    );
                                     render_pass.set_index_buffer(
-                                        mesh.index_buffer.slice(..),
+                                        resources.geometry.index_slice(mesh.index_span),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
                                     // Each DrawIndexedIndirect entry is 20 bytes; index by global
@@ -841,9 +848,12 @@ impl ViewportRenderer {
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                render_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_slice(mesh.vertex_span),
+                                );
                                 render_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
+                                    resources.geometry.index_slice(mesh.index_span),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(
@@ -885,7 +895,10 @@ impl ViewportRenderer {
                                     .get(wf_idx)
                                     .unwrap_or(&mesh.object_bind_group);
                                 render_pass.set_bind_group(1, bg, &[]);
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                render_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_slice(mesh.vertex_span),
+                                );
                                 if let Some(edge_buf) = &mesh.edge_index_buffer {
                                     render_pass.set_index_buffer(
                                         edge_buf.slice(..),
@@ -979,7 +992,10 @@ impl ViewportRenderer {
                             if let Some((_, mat_bg)) = plug {
                                 bind_material_group!(render_pass, mat_bg);
                             }
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            render_pass.set_vertex_buffer(
+                                0,
+                                resources.geometry.vertex_slice(mesh.vertex_span),
+                            );
                             let filter = compute_filter_results
                                 .iter()
                                 .find(|r| r.mesh_id == item.mesh_id);
@@ -1000,7 +1016,7 @@ impl ViewportRenderer {
                                 // ranges go to the OIT pass with the other
                                 // transparent excluded items.
                                 render_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
+                                    resources.geometry.index_slice(mesh.index_span),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
                                 for (r, (mat, range)) in
@@ -1035,7 +1051,7 @@ impl ViewportRenderer {
                                 }
                             } else {
                                 render_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
+                                    resources.geometry.index_slice(mesh.index_span),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
                                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1289,7 +1305,10 @@ impl ViewportRenderer {
                                 &resources.deform.dummy_bind_group
                             );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            render_pass.set_vertex_buffer(
+                                0,
+                                resources.geometry.vertex_slice(mesh.vertex_span),
+                            );
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
                                 render_pass.set_index_buffer(
                                     edge_buf.slice(..),
@@ -1376,6 +1395,7 @@ impl ViewportRenderer {
         if self.external_instances_gpu_data.is_empty() {
             return;
         }
+        let resources = &self.resources;
         let Some(pipeline) = self.resources.external_instances.pipeline.as_ref() else {
             return;
         };
@@ -1427,8 +1447,11 @@ impl ViewportRenderer {
                 continue;
             };
             pass.set_bind_group(1, &gd.bind_group, &[]);
-            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            pass.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+            pass.set_index_buffer(
+                resources.geometry.index_slice(mesh.index_span),
+                crate::gpu::IndexFormat::Uint32,
+            );
             // The instance range is the buffer window: `instance_index` in
             // the shader starts at `first_instance` for direct draws.
             pass.draw_indexed(
@@ -1846,9 +1869,12 @@ impl ViewportRenderer {
                         };
                         pass.set_pipeline(dual.for_format(true));
                         pass.set_bind_group(1, draw_bg, &[]);
-                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pass.set_vertex_buffer(
+                            0,
+                            resources.geometry.vertex_slice(mesh.vertex_span),
+                        );
                         pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
+                            resources.geometry.index_slice(mesh.index_span),
                             crate::gpu::IndexFormat::Uint32,
                         );
                         pass.draw_indexed(0..mesh.index_count, 0, 0..system.capacity);
@@ -2041,6 +2067,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_decals(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let resources = &self.resources;
         let vp_idx = ctx.vp_idx;
         // -----------------------------------------------------------------------
         // Decal exclude pass (D5): stamp stencil = 0 on non-receiver surfaces.
@@ -2075,10 +2102,13 @@ impl ViewportRenderer {
                 for item in &self.decal_exclude_items {
                     if let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) {
                         pass.set_bind_group(1, &item.bind_group, &[]);
-                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pass.set_vertex_buffer(
+                            0,
+                            resources.geometry.vertex_slice(mesh.vertex_span),
+                        );
                         if mesh.index_count > 0 {
                             pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
+                                resources.geometry.index_slice(mesh.index_span),
                                 crate::gpu::IndexFormat::Uint32,
                             );
                             pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -2389,6 +2419,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_oit(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let resources = &self.resources;
         let device = ctx.device;
         let queue = ctx.queue;
         let frame = ctx.frame;
@@ -2538,9 +2569,12 @@ impl ViewportRenderer {
                                     continue;
                                 };
                                 oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                oit_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_slice(mesh.vertex_span),
+                                );
                                 oit_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
+                                    resources.geometry.index_slice(mesh.index_span),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
                                 oit_pass.draw_indexed_indirect(
@@ -2574,9 +2608,12 @@ impl ViewportRenderer {
                                 continue;
                             };
                             oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                            oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            oit_pass.set_vertex_buffer(
+                                0,
+                                resources.geometry.vertex_slice(mesh.vertex_span),
+                            );
                             oit_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
+                                resources.geometry.index_slice(mesh.index_span),
                                 crate::gpu::IndexFormat::Uint32,
                             );
                             oit_pass.draw_indexed(
@@ -2625,9 +2662,12 @@ impl ViewportRenderer {
                                 .and_then(|opt| opt.as_ref())
                                 .unwrap_or(&mesh.object_bind_group);
                             bind_deform_group!(oit_pass, self.resources, deform_bg);
-                            oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            oit_pass.set_vertex_buffer(
+                                0,
+                                resources.geometry.vertex_slice(mesh.vertex_span),
+                            );
                             oit_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
+                                resources.geometry.index_slice(mesh.index_span),
                                 crate::gpu::IndexFormat::Uint32,
                             );
                             if let Some((mats, bgs)) =
@@ -2709,9 +2749,12 @@ impl ViewportRenderer {
                             .and_then(|opt| opt.as_ref())
                             .unwrap_or(&mesh.object_bind_group);
                         bind_deform_group!(oit_pass, self.resources, deform_bg);
-                        oit_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        oit_pass.set_vertex_buffer(
+                            0,
+                            resources.geometry.vertex_slice(mesh.vertex_span),
+                        );
                         oit_pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
+                            resources.geometry.index_slice(mesh.index_span),
                             crate::gpu::IndexFormat::Uint32,
                         );
                         if let Some((mats, bgs)) =
@@ -3316,6 +3359,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_lic(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let resources = &self.resources;
         let vp_idx = ctx.vp_idx;
         let slot = &self.viewport_slots[vp_idx];
         let slot_hdr = slot.hdr.as_ref().unwrap();
@@ -3361,10 +3405,13 @@ impl ViewportRenderer {
                             continue;
                         };
                         pass.set_bind_group(1, &gpu.bind_group, &[]);
-                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pass.set_vertex_buffer(
+                            0,
+                            resources.geometry.vertex_slice(mesh.vertex_span),
+                        );
                         pass.set_vertex_buffer(1, vec_buf.slice(..));
                         pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
+                            resources.geometry.index_slice(mesh.index_span),
                             crate::gpu::IndexFormat::Uint32,
                         );
                         pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -4050,6 +4097,7 @@ impl ViewportRenderer {
     }
 
     fn hdr_scene_overlays(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let resources = &self.resources;
         let frame = ctx.frame;
         let output_view = ctx.output_view;
         let vp_idx = ctx.vp_idx;
@@ -4272,9 +4320,12 @@ impl ViewportRenderer {
                             continue;
                         };
                         overlay_pass.set_bind_group(1, bg, &[]);
-                        overlay_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        overlay_pass.set_vertex_buffer(
+                            0,
+                            resources.geometry.vertex_slice(mesh.vertex_span),
+                        );
                         overlay_pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
+                            resources.geometry.index_slice(mesh.index_span),
                             crate::gpu::IndexFormat::Uint32,
                         );
                         overlay_pass.draw_indexed(0..mesh.index_count, 0, 0..1);

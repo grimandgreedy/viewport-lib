@@ -322,11 +322,11 @@ impl crate::resources::DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: gpu_mesh.vertex_buffer.as_entire_binding(),
+                        resource: self.geometry.vertex_binding(gpu_mesh.vertex_span),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: gpu_mesh.index_buffer.as_entire_binding(),
+                        resource: self.geometry.index_binding(gpu_mesh.index_span),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,

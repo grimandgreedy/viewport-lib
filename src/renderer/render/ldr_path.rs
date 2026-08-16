@@ -191,7 +191,10 @@ impl ViewportRenderer {
                                 &self.resources.deform.dummy_bind_group
                             );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            render_pass.set_vertex_buffer(
+                                0,
+                                self.resources.geometry.vertex_slice(mesh.vertex_span),
+                            );
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
                                 render_pass.set_index_buffer(
                                     edge_buf.slice(..),

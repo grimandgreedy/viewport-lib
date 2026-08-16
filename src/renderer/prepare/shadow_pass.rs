@@ -427,9 +427,12 @@ impl ViewportRenderer {
                                         bundle_enc.set_bind_group(1, inst_cull_bg, &[]);
                                         cur_group1_opaque = true;
                                     }
-                                    bundle_enc.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    bundle_enc.set_vertex_buffer(
+                                        0,
+                                        resources.geometry.vertex_slice(mesh.vertex_span),
+                                    );
                                     bundle_enc.set_index_buffer(
-                                        mesh.index_buffer.slice(..),
+                                        resources.geometry.index_slice(mesh.index_span),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
                                     bundle_enc
@@ -597,9 +600,12 @@ impl ViewportRenderer {
                                     shadow_pass.set_bind_group(1, inst_cull_bg, &[]);
                                     cur_group1_opaque = true;
                                 }
-                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                shadow_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_slice(mesh.vertex_span),
+                                );
                                 shadow_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
+                                    resources.geometry.index_slice(mesh.index_span),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
                                 shadow_pass.draw_indexed(
@@ -703,9 +709,12 @@ impl ViewportRenderer {
                                     shadow_pass.set_bind_group(1, instance_bg, &[]);
                                     cur_group1_opaque = true;
                                 }
-                                shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                shadow_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_slice(mesh.vertex_span),
+                                );
                                 shadow_pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
+                                    resources.geometry.index_slice(mesh.index_span),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
                                 shadow_pass.draw_indexed(
@@ -818,9 +827,12 @@ impl ViewportRenderer {
                                     .deform
                                     .instance_bind_group_for(item.mesh_id, item.deform_instance,)
                             );
-                            shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            shadow_pass.set_vertex_buffer(
+                                0,
+                                resources.geometry.vertex_slice(mesh.vertex_span),
+                            );
                             shadow_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
+                                resources.geometry.index_slice(mesh.index_span),
                                 crate::gpu::IndexFormat::Uint32,
                             );
                             shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -892,9 +904,12 @@ impl ViewportRenderer {
                                     .deform
                                     .instance_bind_group_for(item.mesh_id, item.deform_instance,)
                             );
-                            shadow_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            shadow_pass.set_vertex_buffer(
+                                0,
+                                resources.geometry.vertex_slice(mesh.vertex_span),
+                            );
                             shadow_pass.set_index_buffer(
-                                mesh.index_buffer.slice(..),
+                                resources.geometry.index_slice(mesh.index_span),
                                 crate::gpu::IndexFormat::Uint32,
                             );
                             shadow_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1149,9 +1164,12 @@ impl ViewportRenderer {
                                 .deform
                                 .instance_bind_group_for(c.item.mesh_id, c.item.deform_instance,)
                         );
-                        pass.set_vertex_buffer(0, c.mesh.vertex_buffer.slice(..));
+                        pass.set_vertex_buffer(
+                            0,
+                            resources.geometry.vertex_slice(c.mesh.vertex_span),
+                        );
                         pass.set_index_buffer(
-                            c.mesh.index_buffer.slice(..),
+                            resources.geometry.index_slice(c.mesh.index_span),
                             crate::gpu::IndexFormat::Uint32,
                         );
                         pass.draw_indexed(0..c.mesh.index_count, 0, 0..1);

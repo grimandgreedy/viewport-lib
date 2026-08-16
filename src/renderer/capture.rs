@@ -157,6 +157,12 @@ impl ViewportRenderer {
         });
         let dummy_view = dummy.create_view(&crate::gpu::TextureViewDescriptor::default());
 
+        // Derivative mode suppresses the upload pump, but sync mesh uploads defer
+        // their slab geometry write to `process_uploads`; a capture can run
+        // without an intervening presented frame, so flush geometry here or the
+        // scene renders from unwritten (degenerate) vertices.
+        self.resources.geometry.flush(queue);
+
         // Render the full HDR frame; the pre-tonemap radiance lands in the
         // per-viewport hdr_texture.
         let cmd = self.render(device, queue, &dummy_view, frame);
@@ -241,6 +247,10 @@ impl ViewportRenderer {
     /// and lighting and is restored on return. Near/far planes are taken from
     /// the frame's current camera so the probe sees the same depth range as the
     /// on-screen view.
+    ///
+    /// Like all captures, this reads the currently resident scene (auxiliary
+    /// `Derivative` renders that do not advance the upload pipeline); bake once
+    /// the scene is resident. See [`bake_light_probes`](Self::bake_light_probes).
     pub fn capture_equirect(
         &mut self,
         device: &crate::gpu::Device,
@@ -491,6 +501,15 @@ impl ViewportRenderer {
     /// the projected panorama height; both trade capture time for angular
     /// accuracy of the low-frequency SH, so modest values (e.g. 64 / 64) are
     /// usually enough. `frame` is restored on return.
+    ///
+    /// This reads the *currently resident* scene: it renders auxiliary
+    /// (`Derivative`) frames that do not advance the upload pipeline or the
+    /// presented frame's state, so a streaming consumer should bake only once the
+    /// geometry it wants captured is resident (gate on
+    /// [`frame_fully_resident`](Self::frame_fully_resident) or
+    /// `uploads_pending() == 0`). Meshes still streaming in are simply absent from
+    /// the bake, not partially captured. Item-type plugin geometry is not included
+    /// in the capture.
     pub fn bake_light_probes(
         &mut self,
         device: &crate::gpu::Device,
@@ -1061,6 +1080,47 @@ mod tests {
         assert!(matches!(renderer.upload_status(job), UploadStatus::Ready));
     }
 
+    // The reflection-probe bake uploads an environment per probe, which blocks
+    // on a runner drain. That drain must not clear the promotion window and
+    // strand a streaming consumer's in-flight mesh upload.
+    #[test]
+    fn reflection_bake_does_not_strand_a_pending_upload() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping reflection_bake_does_not_strand_a_pending_upload: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+
+        let job = renderer
+            .resources_mut()
+            .begin_upload_mesh_data(&device, crate::primitives::cube(1.0))
+            .unwrap();
+        assert!(matches!(
+            renderer.upload_status(job),
+            UploadStatus::Pending { .. }
+        ));
+
+        let mut fd = empty_frame();
+        let bounds = crate::scene::aabb::Aabb {
+            min: glam::Vec3::splat(-1.0),
+            max: glam::Vec3::splat(1.0),
+        };
+        let _zone = renderer
+            .capture_reflection_probe(&device, &queue, &mut fd, bounds, 1.0, 8, 8)
+            .unwrap();
+
+        // The bake's environment upload drained the runner, promoting the mesh,
+        // but retained the promotion window, so the consumer's next poll still
+        // observes `Ready` rather than a reaped `Unknown`. (Do not pump again
+        // here: an ordinary clearing `process_uploads` is exactly what the
+        // consumer's next presented prepare does, after they have observed it.)
+        assert!(
+            matches!(renderer.upload_status(job), UploadStatus::Ready),
+            "reflection bake must promote and retain the pending upload, not strand it"
+        );
+    }
+
     // A derivative render must not advance the frame counter, which drives the
     // presented frame's temporal phase (scatter jitter, pick cadence).
     #[test]
@@ -1081,6 +1141,78 @@ mod tests {
         assert_eq!(
             renderer.frame_counter, before,
             "capture must not advance the frame counter"
+        );
+    }
+
+    // render_offscreen_snapshot is a derivative render: it must not pump the
+    // upload pipeline, whereas the presented render_offscreen must.
+    #[test]
+    fn render_offscreen_snapshot_does_not_pump_uploads() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping render_offscreen_snapshot_does_not_pump_uploads: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let job = renderer
+            .resources_mut()
+            .begin_upload_mesh_data(&device, crate::primitives::cube(1.0))
+            .unwrap();
+
+        let fd = empty_frame();
+        let _ = renderer.render_offscreen_snapshot(&device, &queue, &fd, 64, 64);
+        assert!(
+            matches!(renderer.upload_status(job), UploadStatus::Pending { .. }),
+            "snapshot offscreen render must not advance the upload pipeline"
+        );
+
+        // The presented offscreen render pumps it toward Ready.
+        for _ in 0..16 {
+            let _ = renderer.render_offscreen(&device, &queue, &fd, 64, 64);
+            if matches!(renderer.upload_status(job), UploadStatus::Ready) {
+                break;
+            }
+        }
+        assert!(matches!(renderer.upload_status(job), UploadStatus::Ready));
+    }
+
+    // mesh_resident / frame_fully_resident are level queries over the store.
+    #[test]
+    fn residency_queries_track_the_mesh_store() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping residency_queries_track_the_mesh_store: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &crate::primitives::cube(1.0))
+            .unwrap();
+        assert!(renderer.mesh_resident(mesh), "uploaded mesh is resident");
+
+        // Empty frame: trivially fully resident.
+        assert!(renderer.frame_fully_resident(&empty_frame()));
+
+        // A frame referencing the resident mesh is fully resident.
+        let item = crate::SceneRenderItem {
+            mesh_id: mesh,
+            ..Default::default()
+        };
+        let cf = CameraFrame::new(RenderCamera::from_camera(&Camera::default()), [64.0, 64.0]);
+        let fd = FrameData::new(cf, SceneFrame::from_surface_items(vec![item]));
+        assert!(renderer.frame_fully_resident(&fd));
+
+        // Remove the mesh: both queries flip.
+        assert!(renderer.resources_mut().remove_mesh(mesh));
+        assert!(
+            !renderer.mesh_resident(mesh),
+            "removed mesh is not resident"
+        );
+        assert!(
+            !renderer.frame_fully_resident(&fd),
+            "a frame referencing a non-resident mesh is not fully resident"
         );
     }
 

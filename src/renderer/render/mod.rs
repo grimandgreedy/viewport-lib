@@ -218,7 +218,10 @@ impl ViewportRenderer {
                                 &self.resources.deform.dummy_bind_group
                             );
                             render_pass.set_bind_group(1, tvm_bg, &[]);
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            render_pass.set_vertex_buffer(
+                                0,
+                                self.resources.geometry.vertex_slice(mesh.vertex_span),
+                            );
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
                                 render_pass.set_index_buffer(
                                     edge_buf.slice(..),
@@ -827,6 +830,14 @@ impl ViewportRenderer {
     ///
     /// Returns `width * height * 4` bytes in RGBA8 layout. The caller encodes to
     /// PNG/EXR independently : no image codec dependency in this crate.
+    ///
+    /// This is a *presented* render: it advances per-frame state (it pumps the
+    /// upload pipeline, bumps the frame counter, stores HiZ prev-depth, and
+    /// writes `FrameStats`), because a headless app commonly uses it as its only
+    /// render and relies on uploads promoting here. If instead you render a
+    /// preview / thumbnail *alongside* a main presented frame and do not want it
+    /// to touch that frame's state, use
+    /// [`render_offscreen_snapshot`](Self::render_offscreen_snapshot).
     pub fn render_offscreen(
         &mut self,
         device: &crate::gpu::Device,
@@ -952,6 +963,36 @@ impl ViewportRenderer {
             }
         }
 
+        pixels
+    }
+
+    /// [`render_offscreen`](Self::render_offscreen) as an auxiliary (snapshot)
+    /// render: it reads the currently resident scene without advancing shared
+    /// per-frame state, so it does not pump the upload pipeline, bump the frame
+    /// counter, store HiZ prev-depth, clobber `FrameStats`, or run item-type
+    /// plugins.
+    ///
+    /// Use this for a preview / thumbnail rendered alongside a main presented
+    /// frame, where the offscreen render must not perturb that frame's timeline.
+    /// Because it does not pump uploads, the scene must already be resident (gate
+    /// on [`frame_fully_resident`](Self::frame_fully_resident) if unsure);
+    /// item-type plugin geometry is absent, as in a probe bake. If this is your
+    /// only render, use [`render_offscreen`](Self::render_offscreen) instead so
+    /// uploads promote.
+    pub fn render_offscreen_snapshot(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+        width: u32,
+        height: u32,
+    ) -> Vec<u8> {
+        let saved_mode = self.render_mode;
+        let saved_stats = self.last_stats;
+        self.render_mode = crate::renderer::RenderMode::Derivative;
+        let pixels = self.render_offscreen(device, queue, frame, width, height);
+        self.render_mode = saved_mode;
+        self.last_stats = saved_stats;
         pixels
     }
 

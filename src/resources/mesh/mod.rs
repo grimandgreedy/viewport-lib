@@ -1,5 +1,7 @@
 /// Geometry helpers for building glyph and primitive meshes.
 pub(crate) mod geometry;
+/// Shared vertex/index geometry buffers (the mesh slab).
+pub(crate) mod geometry_slab;
 /// Per-mesh GPU buffers and bind group.
 pub(crate) mod gpu_mesh;
 pub(crate) mod instancing;

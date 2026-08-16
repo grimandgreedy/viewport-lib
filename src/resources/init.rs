@@ -2105,8 +2105,12 @@ impl DeviceResources {
         // can reference the fallback texture views at creation time.
         // ------------------------------------------------------------------
         let (cube_verts, cube_indices) = build_unit_cube();
+        // Shared geometry slab; the fallback cube is its first allocation. Its
+        // write is recorded now and flushed at the first `process_uploads`.
+        let mut geometry = crate::resources::mesh::geometry_slab::GeometrySlab::new(device);
         let cube_mesh = Self::create_mesh(
             device,
+            &mut geometry,
             &object_bgl,
             &fallback_texture.view,
             &fallback_texture_array_view,
@@ -2463,6 +2467,7 @@ impl DeviceResources {
                 store.insert(cube_mesh);
                 store
             },
+            geometry,
             lod_groups: crate::resources::mesh::lod::LodGroupStore::new(),
             shadow_map_texture,
             shadow_map_view,

@@ -798,6 +798,11 @@ impl ViewportRenderer {
             SurfaceSubmission::Flat(items) => items.as_ref(),
         };
 
+        // Ensure freshly uploaded geometry is resident: sync mesh uploads defer
+        // their slab write to `process_uploads`, and picking can run without an
+        // intervening frame. Flush before any sub-pass work submits.
+        self.resources.geometry.flush(queue);
+
         let ppp = frame.camera.pixels_per_point;
         let vp_w = (frame.camera.viewport_size[0] * ppp).round() as u32;
         let vp_h = (frame.camera.viewport_size[1] * ppp).round() as u32;
@@ -836,6 +841,10 @@ impl ViewportRenderer {
 
         let targets = PickTargets::new(device, vp_w, vp_h);
 
+        // A second flush catches geometry that pick-draw building itself uploaded
+        // (scatter volumes, decal boxes), so every mesh the pass rasterises is
+        // resident before the encoder records.
+        self.resources.geometry.flush(queue);
         // --- render pass ---
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("pick_pass_encoder"),
@@ -1986,11 +1995,11 @@ impl ViewportRenderer {
                         entries: &[
                             crate::gpu::BindGroupEntry {
                                 binding: 0,
-                                resource: mesh.vertex_buffer.as_entire_binding(),
+                                resource: self.resources.geometry.vertex_binding(mesh.vertex_span),
                             },
                             crate::gpu::BindGroupEntry {
                                 binding: 1,
-                                resource: mesh.index_buffer.as_entire_binding(),
+                                resource: self.resources.geometry.index_binding(mesh.index_span),
                             },
                         ],
                     });
@@ -2077,9 +2086,12 @@ impl ViewportRenderer {
                             pick_pass.set_bind_group(1, pick_instance_bg, &[]);
                         }
                     }
-                    pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pick_pass.set_vertex_buffer(
+                        0,
+                        self.resources.geometry.vertex_slice(mesh.vertex_span),
+                    );
                     pick_pass.set_index_buffer(
-                        mesh.index_buffer.slice(..),
+                        self.resources.geometry.index_slice(mesh.index_span),
                         crate::gpu::IndexFormat::Uint32,
                     );
                     pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
@@ -2272,9 +2284,12 @@ impl ViewportRenderer {
                     };
                     pick_pass.set_bind_group(1, vsd.render_bind_group, &[]);
                     pick_pass.set_bind_group(2, &vsd.id_bind_group, &[]);
-                    pick_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pick_pass.set_vertex_buffer(
+                        0,
+                        self.resources.geometry.vertex_slice(mesh.vertex_span),
+                    );
                     pick_pass.set_index_buffer(
-                        mesh.index_buffer.slice(..),
+                        self.resources.geometry.index_slice(mesh.index_span),
                         crate::gpu::IndexFormat::Uint32,
                     );
                     pick_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -2432,6 +2447,7 @@ impl ViewportRenderer {
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
         let targets = PickTargets::new(device, vp_w, vp_h);
 
+        self.resources.geometry.flush(queue);
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("pick_rect_pass_encoder"),
         });
@@ -2676,6 +2692,7 @@ impl ViewportRenderer {
         let sublevel = self.build_pick_sublevel_binds(device, &draw_set);
         let targets = PickTargets::new(device, vp_w, vp_h);
 
+        self.resources.geometry.flush(queue);
         let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
             label: Some("snap_query_pass_encoder"),
         });

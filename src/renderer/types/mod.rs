@@ -322,8 +322,8 @@ macro_rules! emit_draw_calls {
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+                                render_pass.set_index_buffer(resources.geometry.index_slice(mesh.index_span), crate::gpu::IndexFormat::Uint32);
                                 render_pass.draw_indexed(
                                     0..mesh.index_count,
                                     0,
@@ -347,8 +347,8 @@ macro_rules! emit_draw_calls {
                                 );
                                 let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+                                render_pass.set_index_buffer(resources.geometry.index_slice(mesh.index_span), crate::gpu::IndexFormat::Uint32);
                                 render_pass.draw_indexed(
                                     0..mesh.index_count,
                                     0,
@@ -376,7 +376,7 @@ macro_rules! emit_draw_calls {
                             let bg = wireframe_bind_groups.get(wf_idx)
                                 .unwrap_or(&mesh.object_bind_group);
                             render_pass.set_bind_group(1, bg, &[]);
-                            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
                                 render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
                                 render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
@@ -464,9 +464,9 @@ macro_rules! emit_draw_calls {
                                 // ranges inline with the transparent pipeline,
                                 // matching how it draws blended items.
                                 if cur_geometry != Some((item.mesh_id, false)) {
-                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                     render_pass.set_index_buffer(
-                                        mesh.index_buffer.slice(..),
+                                        resources.geometry.index_slice(mesh.index_span),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
                                     cur_geometry = Some((item.mesh_id, false));
@@ -519,9 +519,9 @@ macro_rules! emit_draw_calls {
                                 }
                             } else {
                                 if cur_geometry != Some((item.mesh_id, false)) {
-                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                     render_pass.set_index_buffer(
-                                        mesh.index_buffer.slice(..),
+                                        resources.geometry.index_slice(mesh.index_span),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
                                     cur_geometry = Some((item.mesh_id, false));
@@ -641,7 +641,7 @@ macro_rules! emit_draw_calls {
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
                                 set_pipeline_cached!(&resources.wireframe_pipeline);
                                 set_deform_cached!(deform_bg);
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                 render_pass.set_index_buffer(
                                     edge_buf.slice(..),
                                     crate::gpu::IndexFormat::Uint32,
@@ -673,9 +673,9 @@ macro_rules! emit_draw_calls {
                             if let Some((mats, bgs)) = ranges {
                                 set_deform_cached!(deform_bg);
                                 if cur_geometry != Some((item.mesh_id, false)) {
-                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                     render_pass.set_index_buffer(
-                                        mesh.index_buffer.slice(..),
+                                        resources.geometry.index_slice(mesh.index_span),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
                                     cur_geometry = Some((item.mesh_id, false));
@@ -727,7 +727,7 @@ macro_rules! emit_draw_calls {
                                 set_pipeline_cached!($pipeline);
                                 set_deform_cached!(deform_bg);
                                 if let Some(fr) = filter_result {
-                                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                     render_pass.set_index_buffer(
                                         fr.index_buffer.slice(..),
                                         crate::gpu::IndexFormat::Uint32,
@@ -737,9 +737,9 @@ macro_rules! emit_draw_calls {
                                 } else {
                                     if cur_geometry != Some((item.mesh_id, false)) {
                                         render_pass
-                                            .set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                            .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                         render_pass.set_index_buffer(
-                                            mesh.index_buffer.slice(..),
+                                            resources.geometry.index_slice(mesh.index_span),
                                             crate::gpu::IndexFormat::Uint32,
                                         );
                                         cur_geometry = Some((item.mesh_id, false));
@@ -871,8 +871,8 @@ macro_rules! emit_draw_calls {
                 for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
                     let Some(mesh) = resources.mesh_store.get(*mesh_id) else { continue };
                     render_pass.set_bind_group(1, bg, &[]);
-                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(mesh.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
+                    render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
+                    render_pass.set_index_buffer(resources.geometry.index_slice(mesh.index_span), crate::gpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
@@ -1212,9 +1212,12 @@ macro_rules! emit_scivis_draw_calls {
                 for slice in $volume_surface_slice_gpu_data.iter() {
                     if let Some(mesh) = resources.mesh_store.get(slice.mesh_id) {
                         render_pass.set_bind_group(1, &slice.bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_vertex_buffer(
+                            0,
+                            resources.geometry.vertex_slice(mesh.vertex_span),
+                        );
                         render_pass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
+                            resources.geometry.index_slice(mesh.index_span),
                             crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1326,9 +1329,10 @@ macro_rules! emit_scivis_draw_calls {
                         .deform
                         .instance_bind_group_for(batch.mesh_id, None);
                     bind_deform_group!(render_pass, resources, deform_bg);
-                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    render_pass
+                        .set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                     render_pass.set_index_buffer(
-                        mesh.index_buffer.slice(..),
+                        resources.geometry.index_slice(mesh.index_span),
                         crate::gpu::IndexFormat::Uint32,
                     );
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instance_count);

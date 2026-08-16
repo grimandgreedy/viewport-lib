@@ -1901,6 +1901,36 @@ impl ViewportRenderer {
         self.resources.uploads_pending()
     }
 
+    /// True when the mesh for `id` is uploaded and resident in the store.
+    ///
+    /// A level query: it reports whether the mesh is present right now, not
+    /// whether a promotion edge just fired, so it is unaffected by upload-pipeline
+    /// pumping (a capture / bake never changes the answer). Referencing a
+    /// non-resident `MeshId` on a scene node is a graceful skip: the item draws
+    /// once the mesh lands, so this is for lifecycle decisions (load gating,
+    /// eviction, a bake precondition), not for gating a bind. `MeshId` is
+    /// generational, so a stale handle for an evicted-and-reused slot reports
+    /// `false` rather than aliasing the new mesh.
+    pub fn mesh_resident(&self, id: crate::MeshId) -> bool {
+        self.resources.mesh(id).is_some()
+    }
+
+    /// True when every mesh referenced by `frame`'s surface items is resident.
+    ///
+    /// Walks the frame's `surfaces` submission and checks each item's `mesh_id`.
+    /// Use it to gate a capture / bake on the scene being streamed in, since the
+    /// `bake_*` and `capture_*` entries read the currently resident scene. This
+    /// looks only at surface (mesh) items; it does not consider non-mesh items,
+    /// plugin items, or LOD levels other than the referenced id. For a
+    /// whole-scene readiness check, combine it with `uploads_pending() == 0`.
+    pub fn frame_fully_resident(&self, frame: &FrameData) -> bool {
+        match &frame.scene.surfaces {
+            SurfaceSubmission::Flat(items) => items
+                .iter()
+                .all(|item| self.resources.mesh(item.mesh_id).is_some()),
+        }
+    }
+
     /// Wall-clock work duration recorded for an async upload job. See
     /// [`DeviceResources::job_duration`].
     pub fn job_duration(&self, id: crate::resources::JobId) -> Option<std::time::Duration> {
@@ -2656,7 +2686,10 @@ impl ViewportRenderer {
                             &self.resources.deform.dummy_bind_group
                         );
                         render_pass.set_bind_group(1, tvm_bg, &[]);
-                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_vertex_buffer(
+                            0,
+                            self.resources.geometry.vertex_slice(mesh.vertex_span),
+                        );
                         if let Some(edge_buf) = &mesh.edge_index_buffer {
                             render_pass.set_index_buffer(
                                 edge_buf.slice(..),
