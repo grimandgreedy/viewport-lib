@@ -605,7 +605,7 @@ impl ViewportRenderer {
             let buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("tvm_wireframe_uniform"),
                 contents: bytemuck::cast_slice(&[tvm_wf_uniform]),
-                usage: crate::gpu::BufferUsages::UNIFORM,
+                usage: crate::gpu::BufferUsages::STORAGE,
             });
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("tvm_wireframe_bg"),

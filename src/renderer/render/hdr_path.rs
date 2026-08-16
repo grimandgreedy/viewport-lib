@@ -89,6 +89,10 @@ pub(super) fn draw_mesh_item(
     render_pass: &mut crate::gpu::RenderPass<'_>,
     item: &SceneRenderItem,
     obj_bg_override: Option<&crate::gpu::BindGroup>,
+    // Object-data element index the whole-mesh draw selects with
+    // @builtin(instance_index). Must be 0 when `obj_bg_override` is None (the
+    // mesh's single-element fallback buffer).
+    obj_index: u32,
     wireframe_mode: bool,
     hdr: bool,
     solid_pl: &crate::gpu::RenderPipeline,
@@ -96,6 +100,9 @@ pub(super) fn draw_mesh_item(
     trans_pl: &crate::gpu::RenderPipeline,
     wf_pl: &crate::gpu::RenderPipeline,
     submesh_bgs: Option<&[Option<crate::gpu::BindGroup>]>,
+    // Object-data indices parallel to `submesh_bgs`; a range with its own bind
+    // group selects its element here.
+    submesh_indices: Option<&[u32]>,
     submesh_transparent: Option<bool>,
 ) {
     let Some(mesh) = resources.mesh_store.get(item.mesh_id) else {
@@ -126,7 +133,7 @@ pub(super) fn draw_mesh_item(
             bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
             render_pass.set_index_buffer(edge_buf.slice(..), crate::gpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+            render_pass.draw_indexed(0..mesh.edge_index_count, 0, obj_index..obj_index + 1);
         }
     } else if is_face_attr {
         if let Some(ref fvb) = mesh.face_vertex_buffer {
@@ -151,7 +158,7 @@ pub(super) fn draw_mesh_item(
             render_pass.set_pipeline(pl);
             bind_deform_group!(render_pass, resources, deform_bg);
             render_pass.set_vertex_buffer(0, fvb.slice(..));
-            render_pass.draw(0..mesh.index_count, 0..1);
+            render_pass.draw(0..mesh.index_count, obj_index..obj_index + 1);
         }
     } else {
         let filter = compute_filter_results
@@ -197,7 +204,16 @@ pub(super) fn draw_mesh_item(
                     solid_pl
                 };
                 render_pass.set_pipeline(pl);
-                let bg = bgs.get(r).and_then(|b| b.as_ref()).unwrap_or(obj_bg);
+                let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
+                    Some(rbg) => (
+                        rbg,
+                        submesh_indices
+                            .and_then(|v| v.get(r))
+                            .copied()
+                            .unwrap_or(obj_index),
+                    ),
+                    None => (obj_bg, obj_index),
+                };
                 render_pass.set_bind_group(1, bg, &[]);
                 if let Some((_, mat_bg)) = plug_r {
                     bind_material_group!(render_pass, mat_bg);
@@ -205,7 +221,7 @@ pub(super) fn draw_mesh_item(
                 render_pass.draw_indexed(
                     range.first_index..range.first_index + range.index_count,
                     0,
-                    0..1,
+                    inst..inst + 1,
                 );
             }
         } else {
@@ -228,13 +244,13 @@ pub(super) fn draw_mesh_item(
             if let Some(fr) = filter {
                 render_pass
                     .set_index_buffer(fr.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+                render_pass.draw_indexed(0..fr.index_count, 0, obj_index..obj_index + 1);
             } else {
                 render_pass.set_index_buffer(
                     resources.geometry.index_slice(mesh.index_span),
                     crate::gpu::IndexFormat::Uint32,
                 );
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                render_pass.draw_indexed(0..mesh.index_count, 0, obj_index..obj_index + 1);
             }
         }
     }
@@ -1044,12 +1060,18 @@ impl ViewportRenderer {
                                     .deform
                                     .instance_bind_group_for(item.mesh_id, item.deform_instance,)
                             );
-                            let obj_bg = self
+                            // A per-item slot draws with the shared material bind
+                            // group at object_indices[item_idx]; a None slot uses
+                            // the mesh's single-element buffer at instance 0.
+                            let (obj_bg, obj_inst) = match self
                                 .mesh_uniforms
                                 .bind_groups
                                 .get(item_idx)
                                 .and_then(|opt| opt.as_ref())
-                                .unwrap_or(&mesh.object_bind_group);
+                            {
+                                Some(bg) => (bg, self.mesh_uniforms.object_indices[item_idx]),
+                                None => (&mesh.object_bind_group, 0),
+                            };
                             render_pass.set_bind_group(1, obj_bg, &[]);
                             if let Some((_, mat_bg)) = plug {
                                 bind_material_group!(render_pass, mat_bg);
@@ -1072,7 +1094,11 @@ impl ViewportRenderer {
                                     fr.index_buffer.slice(..),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
-                                render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+                                render_pass.draw_indexed(
+                                    0..fr.index_count,
+                                    0,
+                                    obj_inst..obj_inst + 1,
+                                );
                             } else if let Some((mats, bgs)) = ranges {
                                 // One draw per opaque-material range; blend
                                 // ranges go to the OIT pass with the other
@@ -1100,7 +1126,18 @@ impl ViewportRenderer {
                                         hdr_solid
                                     };
                                     render_pass.set_pipeline(pl);
-                                    let bg = bgs.get(r).and_then(|b| b.as_ref()).unwrap_or(obj_bg);
+                                    let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
+                                        Some(rbg) => (
+                                            rbg,
+                                            self.mesh_uniforms
+                                                .submesh_indices
+                                                .get(&item_idx)
+                                                .and_then(|v| v.get(r))
+                                                .copied()
+                                                .unwrap_or(0),
+                                        ),
+                                        None => (obj_bg, obj_inst),
+                                    };
                                     render_pass.set_bind_group(1, bg, &[]);
                                     if let Some((_, mat_bg)) = plug_r {
                                         bind_material_group!(render_pass, mat_bg);
@@ -1108,7 +1145,7 @@ impl ViewportRenderer {
                                     render_pass.draw_indexed(
                                         range.first_index..range.first_index + range.index_count,
                                         0,
-                                        0..1,
+                                        inst..inst + 1,
                                     );
                                 }
                             } else {
@@ -1116,7 +1153,11 @@ impl ViewportRenderer {
                                     resources.geometry.index_slice(mesh.index_span),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
-                                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                                render_pass.draw_indexed(
+                                    0..mesh.index_count,
+                                    0,
+                                    obj_inst..obj_inst + 1,
+                                );
                             }
                         }
                     }
@@ -1235,6 +1276,7 @@ impl ViewportRenderer {
                                 &mut render_pass,
                                 item,
                                 obj_bg,
+                                obj_bg.map_or(0, |_| self.mesh_uniforms.object_indices[*item_idx]),
                                 frame.viewport.wireframe_mode,
                                 true,
                                 solid_pl,
@@ -1243,6 +1285,10 @@ impl ViewportRenderer {
                                 hdr_wf,
                                 self.mesh_uniforms
                                     .submesh_bind_groups
+                                    .get(item_idx)
+                                    .map(|v| v.as_slice()),
+                                self.mesh_uniforms
+                                    .submesh_indices
                                     .get(item_idx)
                                     .map(|v| v.as_slice()),
                                 Some(false),
@@ -2775,12 +2821,15 @@ impl ViewportRenderer {
                                 .resources
                                 .deform
                                 .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                            let obj_bg = self
+                            let (obj_bg, obj_inst) = match self
                                 .mesh_uniforms
                                 .bind_groups
                                 .get(item_idx)
                                 .and_then(|opt| opt.as_ref())
-                                .unwrap_or(&mesh.object_bind_group);
+                            {
+                                Some(bg) => (bg, self.mesh_uniforms.object_indices[item_idx]),
+                                None => (&mesh.object_bind_group, 0),
+                            };
                             bind_deform_group!(oit_pass, self.resources, deform_bg);
                             oit_pass.set_vertex_buffer(
                                 0,
@@ -2814,12 +2863,23 @@ impl ViewportRenderer {
                                         }
                                         None => {}
                                     }
-                                    let bg = bgs.get(r).and_then(|b| b.as_ref()).unwrap_or(obj_bg);
+                                    let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
+                                        Some(rbg) => (
+                                            rbg,
+                                            self.mesh_uniforms
+                                                .submesh_indices
+                                                .get(&item_idx)
+                                                .and_then(|v| v.get(r))
+                                                .copied()
+                                                .unwrap_or(obj_inst),
+                                        ),
+                                        None => (obj_bg, obj_inst),
+                                    };
                                     oit_pass.set_bind_group(1, bg, &[]);
                                     oit_pass.draw_indexed(
                                         range.first_index..range.first_index + range.index_count,
                                         0,
-                                        0..1,
+                                        inst..inst + 1,
                                     );
                                 }
                                 continue;
@@ -2840,7 +2900,7 @@ impl ViewportRenderer {
                                 None => {}
                             }
                             oit_pass.set_bind_group(1, obj_bg, &[]);
-                            oit_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            oit_pass.draw_indexed(0..mesh.index_count, 0, obj_inst..obj_inst + 1);
                         }
                     }
                 } else if let Some(ref pipeline) = self.resources.oit.pipeline {
@@ -2862,12 +2922,15 @@ impl ViewportRenderer {
                             .resources
                             .deform
                             .instance_bind_group_for(item.mesh_id, item.deform_instance);
-                        let obj_bg = self
+                        let (obj_bg, obj_inst) = match self
                             .mesh_uniforms
                             .bind_groups
                             .get(item_idx)
                             .and_then(|opt| opt.as_ref())
-                            .unwrap_or(&mesh.object_bind_group);
+                        {
+                            Some(bg) => (bg, self.mesh_uniforms.object_indices[item_idx]),
+                            None => (&mesh.object_bind_group, 0),
+                        };
                         bind_deform_group!(oit_pass, self.resources, deform_bg);
                         oit_pass.set_vertex_buffer(
                             0,
@@ -2899,12 +2962,23 @@ impl ViewportRenderer {
                                     }
                                     None => {}
                                 }
-                                let bg = bgs.get(r).and_then(|b| b.as_ref()).unwrap_or(obj_bg);
+                                let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
+                                    Some(rbg) => (
+                                        rbg,
+                                        self.mesh_uniforms
+                                            .submesh_indices
+                                            .get(&item_idx)
+                                            .and_then(|v| v.get(r))
+                                            .copied()
+                                            .unwrap_or(obj_inst),
+                                    ),
+                                    None => (obj_bg, obj_inst),
+                                };
                                 oit_pass.set_bind_group(1, bg, &[]);
                                 oit_pass.draw_indexed(
                                     range.first_index..range.first_index + range.index_count,
                                     0,
-                                    0..1,
+                                    inst..inst + 1,
                                 );
                             }
                             continue;
@@ -2925,7 +2999,7 @@ impl ViewportRenderer {
                             None => {}
                         }
                         oit_pass.set_bind_group(1, obj_bg, &[]);
-                        oit_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                        oit_pass.draw_indexed(0..mesh.index_count, 0, obj_inst..obj_inst + 1);
                     }
                 }
 
@@ -3754,6 +3828,8 @@ impl ViewportRenderer {
                 &mut render_pass,
                 item,
                 obj_bg,
+                // Foreground buffers hold one element each: draw at instance 0.
+                0,
                 false,
                 true,
                 solid_pl,
@@ -3763,6 +3839,7 @@ impl ViewportRenderer {
                 // Foreground items draw through the positional
                 // foreground_objects cache, which has no per-range entries;
                 // they render with the single item material.
+                None,
                 None,
                 None,
             );

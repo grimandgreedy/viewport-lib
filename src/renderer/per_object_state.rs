@@ -5,45 +5,19 @@
 use crate::resources::mesh::mesh_store::MeshId;
 use std::collections::HashMap;
 
-/// Stable key for a cached per-object draw resource.
-///
-/// The key is the item's `pick_id` plus an `occurrence` counter that
-/// distinguishes items sharing the same `pick_id` within one frame. A single
-/// pickable object keys on `(pick_id, 0)`, so the cache survives the host
-/// reordering or rebuilding the item list each frame: a static object keeps its
-/// uniform buffer and bind group instead of rebuilding every frame.
-///
-/// `occurrence` is what makes the key correct when several render items share a
-/// `pick_id`: every non-pickable item defaults to `PickId::NONE`, and one
-/// logical object can be drawn by more than one item (for example a volume mesh
-/// submitted both as a coloured boundary surface and as a pickable cell mesh).
-/// Without `occurrence` those items would collide on one cache entry, share a
-/// uniform buffer, and all draw with the last item's transform and material.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct PerObjectKey {
-    /// The item's `pick_id` (0 == `PickId::NONE`).
-    pub(crate) pick_id: u64,
-    /// How many earlier items this frame shared the same `pick_id`.
-    pub(crate) occurrence: u32,
-    /// Which draw resource of the item this entry backs: 0 is the whole-mesh
-    /// entry every item has; `r + 1` is the entry for submesh range `r` of an
-    /// item drawn with per-range materials.
-    pub(crate) submesh: u32,
-}
-
-/// One cached per-object draw resource.
-pub(crate) struct PerObjectCacheEntry {
-    /// This object's own uniform buffer (rewritten each frame; its transform changes).
-    pub(crate) uniform_buf: crate::gpu::Buffer,
-    /// Bind group pairing the uniform with the object's mesh textures.
-    /// `None` until first built.
-    pub(crate) bind_group: Option<crate::gpu::BindGroup>,
-    /// Material/texture fingerprint the bind group was built from.
-    pub(crate) cache_key: u64,
-    /// Last `ObjectUniform` written to `uniform_buf`, used to skip the uniform
-    /// write when the object is unchanged. `None` until first written.
-    pub(crate) last_uniform: Option<crate::resources::ObjectUniform>,
-    /// Frame index this entry was last used, for pruning evicted objects.
+/// One cached group-1 bind group, shared by every per-object item whose mesh +
+/// material resources hash to the same [`crate::resources::DeviceResources::per_item_object_bg_key`].
+/// Binding 0 is the shared object-data storage buffer; each item selects its
+/// element with `@builtin(instance_index)`, so items with the same material
+/// reuse this one handle and the draw loop stops rebinding group 1 per draw.
+pub(crate) struct MaterialBindGroup {
+    /// The bind group. Binding 0 references the shared object-data buffer.
+    pub(crate) bind_group: crate::gpu::BindGroup,
+    /// `object_data_gen` this bind group was built against. When the shared
+    /// object-data buffer is reallocated the whole map is cleared, so this is a
+    /// belt-and-braces check rather than a per-entry gate.
+    pub(crate) data_gen: u64,
+    /// Frame index this entry was last used, for capacity-based pruning.
     pub(crate) last_frame: u64,
 }
 
@@ -120,15 +94,33 @@ pub(crate) struct ForegroundObjectEntry {
 }
 
 pub(crate) struct PerObjectState {
-    /// Per-object draw resources keyed by [`PerObjectKey`].
-    pub(crate) cache: HashMap<PerObjectKey, PerObjectCacheEntry>,
+    /// Group-1 bind groups deduped by mesh+material fingerprint. Every per-object
+    /// draw binds one of these (binding 0 is the shared `object_data_buf`) and
+    /// selects its element with an object-data index, so items sharing a material
+    /// share one bind group. Persists across frames; pruned by capacity and on a
+    /// resource-free epoch bump.
+    pub(crate) material_bind_groups: HashMap<u64, MaterialBindGroup>,
+    /// Shared storage buffer holding this frame's `array<ObjectUniform>`. Binding
+    /// 0 of every per-object group-1 bind group. Grown (reallocated) when the
+    /// per-frame object count exceeds its capacity.
+    pub(crate) object_data_buf: Option<crate::gpu::Buffer>,
+    /// Capacity of `object_data_buf` in `ObjectUniform` elements.
+    pub(crate) object_data_capacity: usize,
+    /// Bumped whenever `object_data_buf` is reallocated. A change clears
+    /// `material_bind_groups` (their binding-0 reference went stale).
+    pub(crate) object_data_gen: u64,
+    /// This frame's object-data element index for each item's whole-mesh draw,
+    /// parallel to `bind_groups`. Meaningful only where `bind_groups[i]` is
+    /// `Some`; a `None` slot falls back to the mesh's single-element bind group
+    /// and draws at instance 0.
+    pub(crate) object_indices: Vec<u32>,
     /// `DeviceResources::resource_free_epoch` as of the last prepare. When the
-    /// epoch moves (a texture or mesh was freed), stale cache entries are
-    /// purged so their bind groups stop pinning the freed resource's memory.
+    /// epoch moves (a texture or mesh was freed), the material bind-group map is
+    /// purged so its bind groups stop pinning the freed resource's memory.
     pub(crate) free_epoch: u64,
     /// Per-item bind groups for the current frame, indexed by the item's position
-    /// in the frame's item list. Populated from `cache` each frame (cheap
-    /// reference-counted clones) so the render path can index by item slot.
+    /// in the frame's item list. Populated from `material_bind_groups` each frame
+    /// (cheap reference-counted clones) so the render path can index by item slot.
     pub(crate) bind_groups: Vec<Option<crate::gpu::BindGroup>>,
     /// Per-range bind groups for items drawn with per-submesh materials,
     /// keyed by the item's position in the frame's item list. Only items
@@ -136,6 +128,10 @@ pub(crate) struct PerObjectState {
     /// entry; everything else draws through `bind_groups`. Rebuilt each
     /// frame like `bind_groups`.
     pub(crate) submesh_bind_groups: HashMap<usize, Vec<Option<crate::gpu::BindGroup>>>,
+    /// Object-data element indices for each submesh range, parallel to
+    /// `submesh_bind_groups`. `submesh_indices[&item][r]` is the index range `r`
+    /// draws at. Rebuilt each frame alongside `submesh_bind_groups`.
+    pub(crate) submesh_indices: HashMap<usize, Vec<u32>>,
     /// Per-item uniform buffers used in wireframe mode.
     pub(crate) wireframe_uniform_bufs: Vec<crate::gpu::Buffer>,
     /// Per-item bind groups pairing wireframe uniforms with fallback textures.
@@ -151,10 +147,15 @@ pub(crate) struct PerObjectState {
 impl PerObjectState {
     pub(crate) fn new() -> Self {
         Self {
-            cache: HashMap::new(),
+            material_bind_groups: HashMap::new(),
+            object_data_buf: None,
+            object_data_capacity: 0,
+            object_data_gen: 0,
+            object_indices: Vec::new(),
             free_epoch: 0,
             bind_groups: Vec::new(),
             submesh_bind_groups: HashMap::new(),
+            submesh_indices: HashMap::new(),
             wireframe_uniform_bufs: Vec::new(),
             wireframe_bind_groups: Vec::new(),
             tvm_wireframe_draws: Vec::new(),

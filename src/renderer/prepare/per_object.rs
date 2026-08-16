@@ -1,6 +1,34 @@
 //! Non-instanced (per-object) mesh draw preparation.
 
 use super::*;
+use crate::renderer::per_object_state::PerObjectState;
+
+/// Ensure the shared object-data storage buffer holds at least `needed`
+/// `ObjectUniform` elements. Grows by reallocating to the next power of two
+/// (never shrinks), bumps `object_data_gen`, and clears the material bind-group
+/// map (whose binding-0 reference points at the old buffer) when it does.
+fn ensure_object_data_buffer(
+    state: &mut PerObjectState,
+    device: &crate::gpu::Device,
+    needed: usize,
+) {
+    let needed = needed.max(1);
+    if state.object_data_buf.is_some() && state.object_data_capacity >= needed {
+        return;
+    }
+    let new_cap = needed.next_power_of_two().max(256);
+    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        label: Some("object_data_buf"),
+        size: (new_cap * std::mem::size_of::<ObjectUniform>()) as u64,
+        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    state.object_data_buf = Some(buf);
+    state.object_data_capacity = new_cap;
+    state.object_data_gen += 1;
+    // The previously built bind groups reference the old buffer at binding 0.
+    state.material_bind_groups.clear();
+}
 
 /// Assemble the per-item `ObjectUniform` for a scene item: the model
 /// transform, material and feature flags the mesh shaders read at group 1
@@ -266,19 +294,33 @@ impl ViewportRenderer {
         // in FrameStats so a cache that is silently missing is visible.
         let mut bind_groups_built = 0u32;
 
+        // Purge the deduped material bind-group map when a texture or mesh was
+        // freed, so no bind group keeps freed GPU memory alive.
+        if mesh_uniforms.free_epoch != resources.resource_free_epoch {
+            mesh_uniforms.free_epoch = resources.resource_free_epoch;
+            mesh_uniforms.material_bind_groups.clear();
+        }
+
+        // Reset this frame's per-item slot maps. Slots for items on the
+        // instanced path stay None; a None slot at draw time falls back to the
+        // mesh's single-element bind group drawn at instance 0.
+        mesh_uniforms.bind_groups.clear();
+        mesh_uniforms
+            .bind_groups
+            .resize_with(scene_items.len(), || None);
+        mesh_uniforms.object_indices.clear();
+        mesh_uniforms.object_indices.resize(scene_items.len(), 0);
+        mesh_uniforms.submesh_bind_groups.clear();
+        mesh_uniforms.submesh_indices.clear();
+
         // Collect per-item uniforms when wireframe mode is on so we can give each
-        // visible item its own bind group (the mesh's shared object_uniform_buf gets
-        // overwritten when multiple items reference the same MeshId).
+        // visible item its own wireframe bind group.
         let mut wireframe_uniforms: Vec<ObjectUniform> = Vec::new();
         let collect_wf_uniforms = frame.viewport.wireframe_mode;
-        // Enter the per-object write loop when at least one item needs it. An
-        // item is non-instanceable for any of the reasons is_instanceable
-        // tests (scalar colouring, two-sided, matcap, param-vis, a position or
-        // normal override, skinning, a compute filter, or hidden), so
-        // `instanceable` already folds all of those in: scanning it is cheaper
-        // than rescanning the materials once per flag. Wireframe and
-        // normal-visualization items take the per-object path even when they
-        // would otherwise instance, so test those two directly.
+        // Enter the per-object path when at least one item needs it. An item is
+        // non-instanceable for any of the reasons is_instanceable tests, so
+        // `instanceable` already folds those in; wireframe and normal
+        // visualization force the per-object path directly.
         let any_non_instanceable = instanceable.iter().any(|&b| !b);
         let any_wireframe_or_normals = scene_items
             .iter()
@@ -288,25 +330,18 @@ impl ViewportRenderer {
             || any_non_instanceable
             || any_wireframe_or_normals
         {
-            // The per-frame slot Vec maps this frame's item index to a bind
-            // group for the render path. Clear it and size it to the item list:
-            // slots for items on the instanced path stay None, and stale entries
-            // from a previous frame's different item must not leak through.
-            if mesh_uniforms.bind_groups.len() < scene_items.len() {
-                mesh_uniforms
-                    .bind_groups
-                    .resize_with(scene_items.len(), || None);
-            }
-            for slot in mesh_uniforms.bind_groups.iter_mut() {
-                *slot = None;
-            }
-            mesh_uniforms.submesh_bind_groups.clear();
-            // Counts how many per-object items this frame have shared each
-            // pick_id, so items with a duplicate pick_id (or the shared
-            // PickId::NONE default) get distinct cache entries instead of
-            // stomping one another's uniform buffer.
-            let mut pick_occurrences: std::collections::HashMap<u64, u32> =
-                std::collections::HashMap::new();
+            // Pass 1 gathers every per-object draw's ObjectUniform into one
+            // contiguous Vec and records its element index; the group-1 bind
+            // groups are built in pass 2, after the shared storage buffer is
+            // sized, so a build never references a buffer a later grow
+            // reallocated. `pending` lists the draws (whole-mesh entry, then each
+            // submesh range) to bind in pass 2.
+            let mut object_data: Vec<ObjectUniform> = Vec::with_capacity(scene_items.len());
+            let mut pending: Vec<(usize, u32)> = Vec::new();
+            let mut range_mats_by_item: std::collections::HashMap<
+                usize,
+                Vec<crate::scene::material::Material>,
+            > = std::collections::HashMap::new();
             for (item_idx, item) in scene_items.iter().enumerate() {
                 // When instancing is active, skip items that will be rendered
                 // via the instanced path. They don't need per-object uniform
@@ -448,250 +483,171 @@ impl ViewportRenderer {
                     item.material.emissive_texture_id,
                 );
 
-                // Per-object draw resources are cached so each item keeps its own
-                // uniform buffer and bind group. Multiple scene items can share
-                // the same MeshId; the mesh's shared object_uniform_buf is stomped
-                // by whichever item wrote last, so the per-object cache guarantees
-                // each item draws with its own transform/material.
-                //
-                // The cache key is pick_id plus an occurrence counter. A single
-                // pickable object keys on (pick_id, 0) so the entry survives the
-                // host reordering the item list. The occurrence disambiguates
-                // items that share a pick_id: every non-pickable item defaults to
-                // PickId::NONE, and one object can be drawn by several items (such
-                // as a volume mesh submitted as both a coloured surface and a
-                // pickable cell mesh). Without it they would collide on one entry
-                // and all draw with the last item's transform and material.
-                {
-                    use crate::renderer::per_object_state::PerObjectKey;
-                    let pick = item.settings.pick_id.0;
-                    let occurrence = {
-                        let counter = pick_occurrences.entry(pick).or_insert(0);
-                        let n = *counter;
-                        *counter += 1;
-                        n
-                    };
-                    let key = PerObjectKey {
-                        pick_id: pick,
-                        occurrence,
-                        submesh: 0,
-                    };
-                    let uniform_size = std::mem::size_of::<ObjectUniform>() as u64;
-                    let entry = mesh_uniforms.cache.entry(key).or_insert_with(|| {
-                        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                            label: Some("per_item_object_uniform"),
-                            size: uniform_size,
-                            usage: crate::gpu::BufferUsages::UNIFORM
-                                | crate::gpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        });
-                        crate::renderer::per_object_state::PerObjectCacheEntry {
-                            uniform_buf: buf,
-                            bind_group: None,
-                            cache_key: 0,
-                            last_uniform: None,
-                            last_frame: frame_index,
-                        }
-                    });
-                    entry.last_frame = frame_index;
+                // Keep the mesh's single-element object buffer in sync: it backs
+                // the mesh's fallback bind group and the shadow (directional and
+                // point) caster passes, which draw at instance 0. Several items
+                // can share a MeshId, so it holds whichever wrote last; that is
+                // the pre-existing shared-buffer behaviour those passes rely on.
+                if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
+                    queue.write_buffer(
+                        &mesh.object_uniform_buf,
+                        0,
+                        bytemuck::cast_slice(&[obj_uniform]),
+                    );
+                    resources.frame_upload_bytes += std::mem::size_of::<ObjectUniform>() as u64;
+                }
 
-                    // Skip the uniform write when nothing about this object's
-                    // ObjectUniform changed (the common case for static scene
-                    // geometry the camera only moves past). Writing it is the
-                    // bulk of the per-object cost at scale.
-                    let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
-                        bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)
-                    });
-                    if uniform_changed {
-                        queue.write_buffer(
-                            &entry.uniform_buf,
-                            0,
-                            bytemuck::cast_slice(&[obj_uniform]),
+                // Whole-mesh draw: record this item's element in the shared
+                // object-data array; the group-1 bind group is built in pass 2.
+                let idx = object_data.len() as u32;
+                object_data.push(obj_uniform);
+                mesh_uniforms.object_indices[item_idx] = idx;
+                pending.push((item_idx, 0));
+
+                // Items drawn with per-submesh materials get one extra array
+                // element and one pending bind per range.
+                let range_mats: Option<Vec<crate::scene::material::Material>> = resources
+                    .mesh_store
+                    .get(item.mesh_id)
+                    .and_then(|m| super::mesh_material::active_submesh_materials(item, m))
+                    .map(|mats| mats.to_vec());
+                if let Some(mats) = range_mats {
+                    let mut range_item = item.clone();
+                    range_item.submesh_materials = None;
+                    let mut range_indices: Vec<u32> = Vec::with_capacity(mats.len());
+                    for (r, mat) in mats.iter().enumerate() {
+                        range_item.material = mat.clone();
+                        let range_uniform = build_object_uniform(
+                            resources,
+                            &range_item,
+                            frame.viewport.wireframe_mode,
+                            probe_indices[item_idx],
                         );
-                        entry.last_uniform = Some(obj_uniform);
-                        let mut written = uniform_size;
-                        // Keep the mesh's shared object uniform in sync too. It
-                        // feeds the fallback bind group and the point-shadow
-                        // pass; per-object items draw via their own bind group,
-                        // so a stale shared buffer for an unchanged item is
-                        // harmless, but a changed one must be propagated.
-                        if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
-                            queue.write_buffer(
-                                &mesh.object_uniform_buf,
-                                0,
-                                bytemuck::cast_slice(&[obj_uniform]),
-                            );
-                            written += uniform_size;
-                        }
-                        resources.frame_upload_bytes += written;
+                        let ridx = object_data.len() as u32;
+                        object_data.push(range_uniform);
+                        range_indices.push(ridx);
+                        pending.push((item_idx, r as u32 + 1));
                     }
+                    mesh_uniforms
+                        .submesh_bind_groups
+                        .insert(item_idx, vec![None; mats.len()]);
+                    mesh_uniforms
+                        .submesh_indices
+                        .insert(item_idx, range_indices);
+                    range_mats_by_item.insert(item_idx, mats);
+                }
+            }
 
-                    // Pass the cached key so the build skips create_bind_group
-                    // when nothing changed. Only treat the stored key as valid
-                    // when a bind group has already been built for this object.
-                    let prev_key = entry.bind_group.as_ref().map(|_| entry.cache_key);
-                    let built = resources.build_per_item_object_bind_group(
-                        device,
+            // Size and fill the shared object-data buffer, then build pass-2
+            // bind groups against it (deduped by mesh+material fingerprint).
+            ensure_object_data_buffer(mesh_uniforms, device, object_data.len());
+            if !object_data.is_empty() {
+                if let Some(buf) = mesh_uniforms.object_data_buf.as_ref() {
+                    queue.write_buffer(buf, 0, bytemuck::cast_slice(&object_data));
+                    resources.frame_upload_bytes +=
+                        (object_data.len() * std::mem::size_of::<ObjectUniform>()) as u64;
+                }
+            }
+            let data_gen = mesh_uniforms.object_data_gen;
+            let buf = mesh_uniforms.object_data_buf.clone();
+            if let Some(buf) = buf {
+                for &(item_idx, submesh) in &pending {
+                    let item = &scene_items[item_idx];
+                    let mat: &crate::scene::material::Material = if submesh == 0 {
+                        &item.material
+                    } else {
+                        &range_mats_by_item[&item_idx][(submesh - 1) as usize]
+                    };
+                    let Some(key) = resources.per_item_object_bg_key(
                         item.mesh_id,
-                        &entry.uniform_buf,
-                        item.material.texture_id,
-                        item.material.normal_map_id,
-                        item.material.ao_map_id,
+                        mat.texture_id,
+                        mat.normal_map_id,
+                        mat.ao_map_id,
                         item.colourmap_id,
                         item.active_attribute.as_ref().map(|a| a.name.as_str()),
-                        item.material.matcap_id(),
+                        mat.matcap_id(),
                         item.warp_attribute.as_deref(),
-                        item.material.metallic_roughness_texture_id,
-                        item.material.emissive_texture_id,
-                        prev_key,
-                    );
-                    // `built` is Some only on a miss (or first build); on a hit
-                    // the build returns None and the cached bind group is kept.
-                    if let Some((bg, key)) = built {
-                        bind_groups_built += 1;
-                        entry.bind_group = Some(bg);
-                        entry.cache_key = key;
-                    }
-
-                    // Populate this frame's slot for the render path (cheap
-                    // reference-counted clone of the cached bind group). Clone
-                    // into a local first so the `entry` borrow of `cache` ends
-                    // before the disjoint `bind_groups` field is written.
-                    let slot_bg = entry.bind_group.clone();
-                    mesh_uniforms.bind_groups[item_idx] = slot_bg;
-
-                    // Items drawn with per-submesh materials additionally get
-                    // one cache entry per range, so each range draws with its
-                    // own uniform and texture bind group. The whole-mesh entry
-                    // above is still built: wireframe mode, normal lines, and
-                    // the shared-uniform sync all use it.
-                    let range_mats: Option<Vec<crate::scene::material::Material>> = resources
-                        .mesh_store
-                        .get(item.mesh_id)
-                        .and_then(|m| super::mesh_material::active_submesh_materials(item, m))
-                        .map(|mats| mats.to_vec());
-                    if let Some(mats) = range_mats {
-                        let mut range_item = item.clone();
-                        range_item.submesh_materials = None;
-                        let mut range_bgs: Vec<Option<crate::gpu::BindGroup>> =
-                            Vec::with_capacity(mats.len());
-                        for (r, mat) in mats.into_iter().enumerate() {
-                            range_item.material = mat;
-                            let range_uniform = build_object_uniform(
-                                resources,
-                                &range_item,
-                                frame.viewport.wireframe_mode,
-                                probe_indices[item_idx],
-                            );
-                            let key = PerObjectKey {
-                                pick_id: pick,
-                                occurrence,
-                                submesh: r as u32 + 1,
-                            };
-                            let entry = mesh_uniforms.cache.entry(key).or_insert_with(|| {
-                                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                                    label: Some("per_item_object_uniform"),
-                                    size: uniform_size,
-                                    usage: crate::gpu::BufferUsages::UNIFORM
-                                        | crate::gpu::BufferUsages::COPY_DST,
-                                    mapped_at_creation: false,
-                                });
-                                crate::renderer::per_object_state::PerObjectCacheEntry {
-                                    uniform_buf: buf,
-                                    bind_group: None,
-                                    cache_key: 0,
-                                    last_uniform: None,
+                        mat.metallic_roughness_texture_id,
+                        mat.emissive_texture_id,
+                    ) else {
+                        continue;
+                    };
+                    let fresh = mesh_uniforms
+                        .material_bind_groups
+                        .get(&key)
+                        .is_some_and(|m| m.data_gen == data_gen);
+                    if !fresh {
+                        if let Some((bg, _)) = resources.build_per_item_object_bind_group(
+                            device,
+                            item.mesh_id,
+                            &buf,
+                            mat.texture_id,
+                            mat.normal_map_id,
+                            mat.ao_map_id,
+                            item.colourmap_id,
+                            item.active_attribute.as_ref().map(|a| a.name.as_str()),
+                            mat.matcap_id(),
+                            item.warp_attribute.as_deref(),
+                            mat.metallic_roughness_texture_id,
+                            mat.emissive_texture_id,
+                            None,
+                        ) {
+                            bind_groups_built += 1;
+                            mesh_uniforms.material_bind_groups.insert(
+                                key,
+                                crate::renderer::per_object_state::MaterialBindGroup {
+                                    bind_group: bg,
+                                    data_gen,
                                     last_frame: frame_index,
-                                }
-                            });
-                            entry.last_frame = frame_index;
-                            let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
-                                bytemuck::bytes_of(u) != bytemuck::bytes_of(&range_uniform)
-                            });
-                            if uniform_changed {
-                                queue.write_buffer(
-                                    &entry.uniform_buf,
-                                    0,
-                                    bytemuck::cast_slice(&[range_uniform]),
-                                );
-                                entry.last_uniform = Some(range_uniform);
-                                resources.frame_upload_bytes += uniform_size;
-                            }
-                            let prev_key = entry.bind_group.as_ref().map(|_| entry.cache_key);
-                            let built = resources.build_per_item_object_bind_group(
-                                device,
-                                item.mesh_id,
-                                &entry.uniform_buf,
-                                range_item.material.texture_id,
-                                range_item.material.normal_map_id,
-                                range_item.material.ao_map_id,
-                                item.colourmap_id,
-                                item.active_attribute.as_ref().map(|a| a.name.as_str()),
-                                range_item.material.matcap_id(),
-                                item.warp_attribute.as_deref(),
-                                range_item.material.metallic_roughness_texture_id,
-                                range_item.material.emissive_texture_id,
-                                prev_key,
+                                },
                             );
-                            if let Some((bg, key)) = built {
-                                bind_groups_built += 1;
-                                entry.bind_group = Some(bg);
-                                entry.cache_key = key;
-                            }
-                            range_bgs.push(entry.bind_group.clone());
                         }
-                        mesh_uniforms
-                            .submesh_bind_groups
-                            .insert(item_idx, range_bgs);
+                    }
+                    let bg = mesh_uniforms.material_bind_groups.get_mut(&key).map(|m| {
+                        m.last_frame = frame_index;
+                        m.bind_group.clone()
+                    });
+                    if let Some(bg) = bg {
+                        if submesh == 0 {
+                            mesh_uniforms.bind_groups[item_idx] = Some(bg);
+                        } else if let Some(slot) =
+                            mesh_uniforms.submesh_bind_groups.get_mut(&item_idx)
+                        {
+                            slot[(submesh - 1) as usize] = Some(bg);
+                        }
                     }
                 }
             }
         }
 
-        // Capacity-based eviction. An entry whose item left the frame (hidden,
-        // culled, or streamed out) keeps its uniform buffer and bind group
-        // until the cache exceeds its budget, so re-showing a large set does
-        // not rebuild every bind group in one frame (~11 us per item measured;
-        // 11 ms for 1k items). The previous policy evicted by age (60 frames),
-        // which made any hide-longer-than-a-second / re-show cycle pay that
-        // storm. Entries used this frame are never evicted: the budget is at
-        // least twice the live set, so eviction only ever removes stale
-        // entries, oldest first.
-        // A freed texture or mesh may still be referenced by a stale entry's
-        // bind group, which would pin its GPU memory for as long as the entry
-        // stays cached. Purge every stale entry when something was freed;
-        // live entries reference only live resources.
-        if mesh_uniforms.free_epoch != resources.resource_free_epoch {
-            mesh_uniforms.free_epoch = resources.resource_free_epoch;
-            mesh_uniforms
-                .cache
-                .retain(|_, e| e.last_frame == frame_index);
-        }
-
+        // Capacity-based eviction of the deduped material bind-group map. A
+        // material whose items left the frame keeps its bind group until the map
+        // exceeds its budget, so re-showing a large set does not rebuild every
+        // bind group in one frame (~11 us per build measured). Entries used this
+        // frame are never evicted: the budget is at least twice the live set, so
+        // eviction only removes stale entries, oldest first. (A resource free
+        // already cleared the whole map at the top of this function.)
         const CACHE_MIN_CAPACITY: usize = 8192;
-        if mesh_uniforms.cache.len() > CACHE_MIN_CAPACITY {
+        if mesh_uniforms.material_bind_groups.len() > CACHE_MIN_CAPACITY {
             let live = mesh_uniforms
-                .cache
+                .material_bind_groups
                 .values()
                 .filter(|e| e.last_frame == frame_index)
                 .count();
             let cap = CACHE_MIN_CAPACITY.max(live.saturating_mul(2));
-            let len = mesh_uniforms.cache.len();
+            let len = mesh_uniforms.material_bind_groups.len();
             if len > cap {
                 let excess = len - cap;
                 let mut stale_frames: Vec<u64> = mesh_uniforms
-                    .cache
+                    .material_bind_groups
                     .values()
                     .map(|e| e.last_frame)
                     .filter(|f| *f != frame_index)
                     .collect();
                 stale_frames.sort_unstable();
-                // Evict every stale entry at least as old as the excess-th
-                // oldest. Ties may evict slightly past the budget; all such
-                // entries are equally stale.
                 let threshold = stale_frames[excess.min(stale_frames.len()) - 1];
                 mesh_uniforms
-                    .cache
+                    .material_bind_groups
                     .retain(|_, e| e.last_frame == frame_index || e.last_frame > threshold);
             }
         }
@@ -707,7 +663,7 @@ impl ViewportRenderer {
                 let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("wireframe_item_uniform"),
                     size: uniform_size,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -863,7 +819,7 @@ impl ViewportRenderer {
                 let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("foreground_object_uniform"),
                     size: uniform_size,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 entries.push(crate::renderer::per_object_state::ForegroundObjectEntry {
@@ -1211,15 +1167,19 @@ impl ViewportRenderer {
                 enc.set_pipeline(if two_sided { solid_two_sided } else { solid });
                 cur_two_sided = Some(two_sided);
             }
-            enc.set_bind_group(
-                1,
-                self.mesh_uniforms
-                    .bind_groups
-                    .get(i)
-                    .and_then(|opt| opt.as_ref())
-                    .unwrap_or(&mesh.object_bind_group),
-                &[],
-            );
+            // A per-item slot means this item draws with the shared material
+            // bind group and selects its data at object_indices[i]; a None slot
+            // falls back to the mesh's single-element bind group at instance 0.
+            let (obj_bg, inst) = match self
+                .mesh_uniforms
+                .bind_groups
+                .get(i)
+                .and_then(|opt| opt.as_ref())
+            {
+                Some(bg) => (bg, self.mesh_uniforms.object_indices[i]),
+                None => (&mesh.object_bind_group, 0),
+            };
+            enc.set_bind_group(1, obj_bg, &[]);
             if cur_mesh != Some(item.mesh_id) {
                 enc.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                 enc.set_index_buffer(
@@ -1228,7 +1188,7 @@ impl ViewportRenderer {
                 );
                 cur_mesh = Some(item.mesh_id);
             }
-            enc.draw_indexed(0..mesh.index_count, 0, 0..1);
+            enc.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
         }
 
         let bundle = enc.finish(&crate::gpu::RenderBundleDescriptor {

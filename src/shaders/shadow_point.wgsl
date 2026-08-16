@@ -24,7 +24,10 @@ struct Object {
 };
 
 @group(0) @binding(0) var<uniform> face: PointFace;
-@group(1) @binding(0) var<uniform> object: Object;
+// Indexed per-object storage array (see mesh.wgsl); the caster's element is
+// selected by @builtin(instance_index) and copied into `object` at entry.
+@group(1) @binding(0) var<storage, read> objects: array<Object>;
+var<private> object: Object;
 
 // Per-vertex deformation hook contract.
 // #include "helpers/deform.wgsl"
@@ -38,7 +41,9 @@ struct VsOut {
 fn vs_main(
     @location(0) position: vec3<f32>,
     @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
 ) -> VsOut {
+    object = objects[instance_index];
     var dv = DeformVertex(position, vec3<f32>(0.0, 0.0, 1.0), vertex_index);
     let dctx = DeformContext(object.model, object.model[3].xyz, 0.0, object.deform_flags, 0u);
     dv = viewport_deform_object_space(dv, dctx);

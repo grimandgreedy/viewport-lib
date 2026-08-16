@@ -35,7 +35,10 @@ struct Object {
 };
 
 @group(0) @binding(0) var<uniform> light: Light;
-@group(1) @binding(0) var<uniform> object: Object;
+// Indexed per-object storage array (see mesh.wgsl); the caster's element is
+// selected by @builtin(instance_index) and copied into `object` at entry.
+@group(1) @binding(0) var<storage, read> objects: array<Object>;
+var<private> object: Object;
 // Per-vertex position override (binding 13 of the shared object bind group).
 // When a `GpuPlugin` drives positions through `set_position_override_buffer`
 // the mesh's own vertex buffer still holds the rest pose, so the shadow
@@ -53,7 +56,9 @@ struct Object {
 fn vs_main(
     @location(0) position: vec3<f32>,
     @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
 ) -> @builtin(position) vec4<f32> {
+    object = objects[instance_index];
     // Override replaces the vertex-buffer position outright, matching the main
     // mesh pass; deformers layer on top.
     var local_pos = position;

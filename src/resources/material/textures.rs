@@ -1482,9 +1482,74 @@ impl DeviceResources {
         mesh.last_tex_key = key;
     }
 
-    /// Build an object bind group that pairs an external per-item uniform buffer with
-    /// the mesh's textures/LUT/matcap/scalar/override resources. Returns the bind group
-    /// and the cache key that was used to construct it.
+    /// Fingerprint of the mesh + material resources a group-1 bind group binds
+    /// (every binding except the object-data buffer at binding 0, which is now a
+    /// shared storage array). Two items with the same fingerprint can share one
+    /// bind group and differ only by their object-data index, which is what lets
+    /// the per-object path stop rebinding group 1 per draw. Returns `None` when
+    /// the mesh is gone. Kept in sync with the key built in
+    /// [`Self::build_per_item_object_bind_group`], which calls this.
+    pub(crate) fn per_item_object_bg_key(
+        &self,
+        mesh_id: crate::resources::mesh::mesh_store::MeshId,
+        albedo_id: Option<crate::resources::TextureId>,
+        normal_map_id: Option<crate::resources::TextureId>,
+        ao_map_id: Option<crate::resources::TextureId>,
+        lut_id: Option<ColourmapId>,
+        active_attr: Option<&str>,
+        matcap_id: Option<crate::resources::MatcapId>,
+        warp_attr: Option<&str>,
+        metallic_roughness_id: Option<crate::resources::TextureId>,
+        emissive_texture_id: Option<crate::resources::TextureId>,
+    ) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let hash_str = |name: &str| -> u64 {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            name.hash(&mut h);
+            h.finish()
+        };
+        let attr_hash = active_attr.map(hash_str).unwrap_or(u64::MAX);
+        let warp_hash = warp_attr.map(hash_str).unwrap_or(u64::MAX);
+        let mesh = self.mesh_store.get(mesh_id)?;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        // Index and generation both: cached entries can outlive a mesh slot's
+        // occupant, so a freed-and-reused slot must not alias the old bind group.
+        mesh_id.index().hash(&mut h);
+        mesh_id.generation.hash(&mut h);
+        albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
+        normal_map_id
+            .map(|t| t.raw())
+            .unwrap_or(u64::MAX)
+            .hash(&mut h);
+        ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
+        lut_id
+            .map(|id| id.0 as u64)
+            .unwrap_or(u64::MAX)
+            .hash(&mut h);
+        attr_hash.hash(&mut h);
+        matcap_id
+            .map(|id| id.index as u64)
+            .unwrap_or(u64::MAX)
+            .hash(&mut h);
+        warp_hash.hash(&mut h);
+        metallic_roughness_id
+            .map(|t| t.raw())
+            .unwrap_or(u64::MAX)
+            .hash(&mut h);
+        emissive_texture_id
+            .map(|t| t.raw())
+            .unwrap_or(u64::MAX)
+            .hash(&mut h);
+        mesh.position_override_gen.hash(&mut h);
+        mesh.normal_override_gen.hash(&mut h);
+        mesh.extension_attr_buffer.is_some().hash(&mut h);
+        mesh.lightmap_gen.hash(&mut h);
+        Some(h.finish())
+    }
+
+    /// Build an object bind group that pairs an external object-data buffer
+    /// (binding 0) with the mesh's textures/LUT/matcap/scalar/override
+    /// resources. Returns the bind group and the cache key used to construct it.
     ///
     /// This mirrors the resource-resolution in `update_mesh_texture_bind_group`, but
     /// reads from a caller-supplied uniform buffer instead of the mesh's shared
@@ -1506,57 +1571,19 @@ impl DeviceResources {
         emissive_texture_id: Option<crate::resources::TextureId>,
         prev_key: Option<u64>,
     ) -> Option<(crate::gpu::BindGroup, u64)> {
-        let hash_str = |name: &str| -> u64 {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            name.hash(&mut h);
-            h.finish()
-        };
-        let attr_hash = active_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
-        let warp_hash = warp_attr.map(|n| hash_str(n)).unwrap_or(u64::MAX);
-
+        let cache_key = self.per_item_object_bg_key(
+            mesh_id,
+            albedo_id,
+            normal_map_id,
+            ao_map_id,
+            lut_id,
+            active_attr,
+            matcap_id,
+            warp_attr,
+            metallic_roughness_id,
+            emissive_texture_id,
+        )?;
         let mesh = self.mesh_store.get(mesh_id)?;
-        let pos_override_gen = mesh.position_override_gen;
-        let nrm_override_gen = mesh.normal_override_gen;
-
-        let cache_key = {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            // Index and generation both: cached per-object entries can now
-            // outlive a mesh slot's occupant, so a freed-and-reused slot must
-            // not alias the old occupant's bind group.
-            mesh_id.index().hash(&mut h);
-            mesh_id.generation.hash(&mut h);
-            albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
-            normal_map_id
-                .map(|t| t.raw())
-                .unwrap_or(u64::MAX)
-                .hash(&mut h);
-            ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
-            lut_id
-                .map(|id| id.0 as u64)
-                .unwrap_or(u64::MAX)
-                .hash(&mut h);
-            attr_hash.hash(&mut h);
-            matcap_id
-                .map(|id| id.index as u64)
-                .unwrap_or(u64::MAX)
-                .hash(&mut h);
-            warp_hash.hash(&mut h);
-            metallic_roughness_id
-                .map(|t| t.raw())
-                .unwrap_or(u64::MAX)
-                .hash(&mut h);
-            emissive_texture_id
-                .map(|t| t.raw())
-                .unwrap_or(u64::MAX)
-                .hash(&mut h);
-            pos_override_gen.hash(&mut h);
-            nrm_override_gen.hash(&mut h);
-            mesh.extension_attr_buffer.is_some().hash(&mut h);
-            mesh.lightmap_gen.hash(&mut h);
-            h.finish()
-        };
 
         // Cache hit: the previously built bind group is still valid, so skip the
         // create_bind_group below. The caller keeps its existing bind group. The

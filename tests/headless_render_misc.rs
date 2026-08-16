@@ -119,3 +119,61 @@ fn two_bind_group_device_renders_without_validation_errors() {
     assert_eq!(wireframe_pixels.len(), 64 * 64 * 4);
 }
 
+/// Two non-instanced items that share one mesh but differ in transform and
+/// colour must each draw with their own data. The per-object path writes each
+/// item's `ObjectUniform` to a distinct slot in the shared object-data buffer
+/// and draws it with that slot as `@builtin(instance_index)`; if the indexing
+/// collapsed (every draw at instance 0) both boxes would render with the first
+/// item's red colour and the second item's green would never appear. A styled
+/// back-face policy forces the non-instanced path so this exercises the indexed
+/// object-data buffer rather than the instanced path.
+#[test]
+fn per_object_items_select_distinct_object_data() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
+    frame.camera.viewport_size = [128.0, 128.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.post_process.enabled = false;
+
+    let make = |x: f32, colour: [f32; 3]| {
+        let mut it = SceneRenderItem::default();
+        it.mesh_id = mesh_id;
+        it.material.base_colour = colour;
+        // Styled back faces => is_instanceable is false => per-object path.
+        it.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0]);
+        it.settings.unlit = true;
+        it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+        it
+    };
+    frame.scene.surfaces = SurfaceSubmission::Flat(
+        vec![make(-1.0, [1.0, 0.0, 0.0]), make(1.0, [0.0, 1.0, 0.0])].into(),
+    );
+
+    let px = renderer.render_offscreen(&device, &queue, &frame, 128, 128);
+    let (mut has_red, mut has_green) = (false, false);
+    for p in px.chunks_exact(4) {
+        if p[0] > 128 && p[1] < 80 && p[2] < 80 {
+            has_red = true;
+        }
+        if p[1] > 128 && p[0] < 80 && p[2] < 80 {
+            has_green = true;
+        }
+    }
+    assert!(has_red, "first per-object item (red) did not render");
+    assert!(
+        has_green,
+        "second per-object item (green) did not render: items collapsed to one object-data slot"
+    );
+}

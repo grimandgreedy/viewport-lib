@@ -365,13 +365,18 @@ impl DeviceResources {
         let object_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("object_bgl"),
             entries: &[
-                // binding 0: per-object uniform buffer
+                // binding 0: per-object data as a read-only storage array.
+                // Every per-object mesh draw binds the same buffer here and
+                // selects its element with @builtin(instance_index), so group 1
+                // stops changing per draw. Single-item paths (shadow casters,
+                // normal lines, LIC) bind a one-element buffer and draw at
+                // instance 0.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: crate::gpu::ShaderStages::VERTEX
                         | crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },

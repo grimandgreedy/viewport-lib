@@ -165,7 +165,13 @@ struct ClipVolumeUB {
 @group(0) @binding(12) var<storage, read_write> debug_frag_buf: array<vec4<f32>>;
 
 // #include "helpers/clip_volume_test.wgsl"
-@group(1) @binding(0) var<uniform> object: Object;
+// Per-object data is an indexed storage array: every per-object draw binds the
+// same buffer and selects its element with @builtin(instance_index), so group 1
+// stops changing per draw. The selected element is copied into the `object`
+// private global at the top of each entry point so the shader body and every
+// plugin hook still read `object.FIELD` unchanged.
+@group(1) @binding(0) var<storage, read> objects: array<Object>;
+var<private> object: Object;
 @group(1) @binding(1) var obj_texture: texture_2d<f32>;
 @group(1) @binding(2) var obj_sampler: sampler;
 @group(1) @binding(3) var normal_map: texture_2d<f32>;
@@ -239,6 +245,9 @@ struct VertexOut {
     // Atlas page (array layer) for a multi-page lightmap, carried in UV1.z. Flat:
     // every vertex of a chart shares one page, so no interpolation is wanted.
     @location(10) @interpolate(flat) lightmap_page: f32,
+    // Index of this draw's element in the group 1 binding 0 objects[] array,
+    // carried to the fragment stage so it re-selects the same object.
+    @location(11) @interpolate(flat) obj_idx: u32,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -246,8 +255,10 @@ struct VertexOut {
 };
 
 @vertex
-fn vs_main(in: VertexIn) -> VertexOut {
+fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOut {
+    object = objects[instance_index];
     var out: VertexOut;
+    out.obj_idx = instance_index;
     // Override > vertex attribute. When a plugin has bound a per-vertex position
     // storage buffer, replace `in.position` outright; warp is then layered on top
     // additively. Same idea for normals further down.
@@ -964,6 +975,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
 
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    object = objects[in.obj_idx];
     let surface = compute_surface(in, is_front);
     if surface.resolved {
         return surface.out_colour;

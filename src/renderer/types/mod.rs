@@ -193,7 +193,7 @@ impl FrameData {
 /// ~90 lines of rendering code while satisfying Rust's lifetime invariance
 /// on `&mut RenderPass<'a>`.
 macro_rules! emit_draw_calls {
-    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $submesh_bgs:expr, $scene_items:expr, $po_bundle:expr) => {{
+    ($resources:expr, $render_pass:expr, $frame:expr, $use_instancing:expr, $batches:expr, $camera_bg:expr, $grid_bg:expr, $compute_filter_results:expr, $slot:expr, $wireframe_bgs:expr, $per_item_bgs:expr, $submesh_bgs:expr, $object_indices:expr, $submesh_indices:expr, $scene_items:expr, $po_bundle:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let frame = $frame;
@@ -216,6 +216,24 @@ macro_rules! emit_draw_calls {
             usize,
             Vec<Option<crate::gpu::BindGroup>>,
         > = $submesh_bgs;
+        // Object-data element index for each item's whole-mesh draw (parallel to
+        // per_item_object_bind_groups) and for each submesh range. A per-object
+        // draw binds the shared object-data buffer and selects its element via
+        // this index as @builtin(instance_index); a None bind-group slot falls
+        // back to the mesh's single-element buffer and draws at instance 0.
+        let object_indices: &[u32] = $object_indices;
+        let submesh_indices: &std::collections::HashMap<usize, Vec<u32>> = $submesh_indices;
+        // Whole-mesh instance for an item: its object-data index when a shared
+        // material bind group is used, else 0 for the mesh's fallback buffer.
+        let object_inst = |item_idx: usize| -> u32 {
+            match per_item_object_bind_groups
+                .get(item_idx)
+                .and_then(|o| o.as_ref())
+            {
+                Some(_) => object_indices.get(item_idx).copied().unwrap_or(0),
+                None => 0,
+            }
+        };
 
         // The LOD-resolved surface items from prepare: each item's mesh is the
         // level chosen for its on-screen size, and culled items are hidden.
@@ -468,7 +486,8 @@ macro_rules! emit_draw_calls {
                             if is_face_attr {
                                 if let Some(ref fvb) = mesh.face_vertex_buffer {
                                     render_pass.set_vertex_buffer(0, fvb.slice(..));
-                                    render_pass.draw(0..mesh.index_count, 0..1);
+                                    let inst = object_inst(item_idx);
+                                    render_pass.draw(0..mesh.index_count, inst..inst + 1);
                                     // The face path binds no index buffer, so the
                                     // cached geometry state no longer holds.
                                     cur_geometry = None;
@@ -515,15 +534,28 @@ macro_rules! emit_draw_calls {
                                         render_pass.set_pipeline(pl);
                                         cur_pipeline = Some(pl as *const _);
                                     }
-                                    let bg = bgs
-                                        .get(r)
-                                        .and_then(|b| b.as_ref())
-                                        .unwrap_or_else(|| {
-                                            per_item_object_bind_groups
-                                                .get(item_idx)
-                                                .and_then(|opt| opt.as_ref())
-                                                .unwrap_or(&mesh.object_bind_group)
-                                        });
+                                    // Prefer the range's own bind group + index;
+                                    // fall back to the item's whole-mesh slot, then
+                                    // the mesh's single-element buffer at instance 0.
+                                    let (bg, inst) = if let Some(rbg) =
+                                        bgs.get(r).and_then(|b| b.as_ref())
+                                    {
+                                        (
+                                            rbg,
+                                            submesh_indices
+                                                .get(&item_idx)
+                                                .and_then(|v| v.get(r))
+                                                .copied()
+                                                .unwrap_or(0),
+                                        )
+                                    } else if let Some(ibg) = per_item_object_bind_groups
+                                        .get(item_idx)
+                                        .and_then(|opt| opt.as_ref())
+                                    {
+                                        (ibg, object_indices.get(item_idx).copied().unwrap_or(0))
+                                    } else {
+                                        (&mesh.object_bind_group, 0)
+                                    };
                                     render_pass.set_bind_group(1, bg, &[]);
                                     if let Some((_, mat_bg)) = plug_r {
                                         bind_material_group!(render_pass, mat_bg);
@@ -531,7 +563,7 @@ macro_rules! emit_draw_calls {
                                     render_pass.draw_indexed(
                                         range.first_index..range.first_index + range.index_count,
                                         0,
-                                        0..1,
+                                        inst..inst + 1,
                                     );
                                 }
                             } else {
@@ -543,7 +575,8 @@ macro_rules! emit_draw_calls {
                                     );
                                     cur_geometry = Some((item.mesh_id, false));
                                 }
-                                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                                let inst = object_inst(item_idx);
+                                render_pass.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
                             }
                         }
                     }
@@ -663,7 +696,8 @@ macro_rules! emit_draw_calls {
                                     edge_buf.slice(..),
                                     crate::gpu::IndexFormat::Uint32,
                                 );
-                                render_pass.draw_indexed(0..mesh.edge_index_count, 0, 0..1);
+                                let inst = object_inst(item_idx);
+                                render_pass.draw_indexed(0..mesh.edge_index_count, 0, inst..inst + 1);
                                 cur_geometry = None;
                             }
                         } else if is_face_attr {
@@ -671,7 +705,8 @@ macro_rules! emit_draw_calls {
                                 set_pipeline_cached!($pipeline);
                                 set_deform_cached!(deform_bg);
                                 render_pass.set_vertex_buffer(0, fvb.slice(..));
-                                render_pass.draw(0..mesh.index_count, 0..1);
+                                let inst = object_inst(item_idx);
+                                render_pass.draw(0..mesh.index_count, inst..inst + 1);
                                 cur_geometry = None;
                             }
                         } else {
@@ -721,15 +756,28 @@ macro_rules! emit_draw_calls {
                                             &resources.solid_pipeline
                                         };
                                     set_pipeline_cached!(pl);
-                                    let bg = bgs
-                                        .get(r)
-                                        .and_then(|b| b.as_ref())
-                                        .unwrap_or_else(|| {
-                                            per_item_object_bind_groups
-                                                .get(item_idx)
-                                                .and_then(|opt| opt.as_ref())
-                                                .unwrap_or(&mesh.object_bind_group)
-                                        });
+                                    // Prefer the range's own bind group + index;
+                                    // fall back to the item's whole-mesh slot, then
+                                    // the mesh's single-element buffer at instance 0.
+                                    let (bg, inst) = if let Some(rbg) =
+                                        bgs.get(r).and_then(|b| b.as_ref())
+                                    {
+                                        (
+                                            rbg,
+                                            submesh_indices
+                                                .get(&item_idx)
+                                                .and_then(|v| v.get(r))
+                                                .copied()
+                                                .unwrap_or(0),
+                                        )
+                                    } else if let Some(ibg) = per_item_object_bind_groups
+                                        .get(item_idx)
+                                        .and_then(|opt| opt.as_ref())
+                                    {
+                                        (ibg, object_indices.get(item_idx).copied().unwrap_or(0))
+                                    } else {
+                                        (&mesh.object_bind_group, 0)
+                                    };
                                     render_pass.set_bind_group(1, bg, &[]);
                                     if let Some((_, mat_bg)) = plug_r {
                                         bind_material_group!(render_pass, mat_bg);
@@ -737,19 +785,20 @@ macro_rules! emit_draw_calls {
                                     render_pass.draw_indexed(
                                         range.first_index..range.first_index + range.index_count,
                                         0,
-                                        0..1,
+                                        inst..inst + 1,
                                     );
                                 }
                             } else {
                                 set_pipeline_cached!($pipeline);
                                 set_deform_cached!(deform_bg);
+                                let inst = object_inst(item_idx);
                                 if let Some(fr) = filter_result {
                                     render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                     render_pass.set_index_buffer(
                                         fr.index_buffer.slice(..),
                                         crate::gpu::IndexFormat::Uint32,
                                     );
-                                    render_pass.draw_indexed(0..fr.index_count, 0, 0..1);
+                                    render_pass.draw_indexed(0..fr.index_count, 0, inst..inst + 1);
                                     cur_geometry = None;
                                 } else {
                                     if cur_geometry != Some((item.mesh_id, false)) {
@@ -761,7 +810,7 @@ macro_rules! emit_draw_calls {
                                         );
                                         cur_geometry = Some((item.mesh_id, false));
                                     }
-                                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                                    render_pass.draw_indexed(0..mesh.index_count, 0, inst..inst + 1);
                                 }
                             }
                         }

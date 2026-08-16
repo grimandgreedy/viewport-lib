@@ -147,7 +147,10 @@ struct ClipVolumeUB {
 @group(0) @binding(12) var<storage, read_write> debug_frag_buf: array<vec4<f32>>;
 
 // #include "helpers/clip_volume_test.wgsl"
-@group(1) @binding(0) var<uniform> object: Object;
+// Indexed per-object storage array; see mesh.wgsl for the rationale. The
+// selected element is copied into the `object` private global at entry.
+@group(1) @binding(0) var<storage, read> objects: array<Object>;
+var<private> object: Object;
 @group(1) @binding(1) var obj_texture: texture_2d<f32>;
 @group(1) @binding(2) var obj_sampler: sampler;
 @group(1) @binding(3) var normal_map: texture_2d<f32>;
@@ -198,6 +201,8 @@ struct VertexOut {
     // Atlas page (array layer) for a multi-page lightmap, carried in UV1.z. Flat:
     // every vertex of a chart shares one page, so no interpolation is wanted.
     @location(10) @interpolate(flat) lightmap_page: f32,
+    // Index of this draw's element in objects[], carried to the fragment stage.
+    @location(11) @interpolate(flat) obj_idx: u32,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -210,8 +215,10 @@ struct OitOut {
 };
 
 @vertex
-fn vs_main(in: VertexIn) -> VertexOut {
+fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> VertexOut {
+    object = objects[instance_index];
     var out: VertexOut;
+    out.obj_idx = instance_index;
     var local_pos = in.position;
     if object.has_warp != 0u {
         let wi = in.vertex_index * 3u;
@@ -745,6 +752,7 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
 
 @fragment
 fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
+    object = objects[in.obj_idx];
     let surface = compute_surface(in, is_front);
     if surface.resolved {
         return surface.out_oit;

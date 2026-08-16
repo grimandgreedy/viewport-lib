@@ -123,6 +123,8 @@ impl ViewportRenderer {
                 &self.mesh_uniforms.wireframe_bind_groups,
                 &self.mesh_uniforms.bind_groups,
                 &self.mesh_uniforms.submesh_bind_groups,
+                &self.mesh_uniforms.object_indices,
+                &self.mesh_uniforms.submesh_indices,
                 scene_items,
                 // The cached bundle was recorded from `prepared_surfaces` (the
                 // surface submission, with the opaque volume-mesh boundaries
@@ -374,6 +376,8 @@ impl ViewportRenderer {
                         &mut render_pass,
                         item,
                         obj_bg,
+                        // Foreground buffers hold one element each: instance 0.
+                        0,
                         false,
                         false,
                         solid_pl,
@@ -383,6 +387,7 @@ impl ViewportRenderer {
                         // Foreground items draw through the positional
                         // foreground_objects cache, which has no per-range
                         // entries; they render with the single item material.
+                        None,
                         None,
                         None,
                     );
