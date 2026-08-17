@@ -46,6 +46,7 @@ pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     .ok()?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("test"),
+        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .ok()?;
@@ -82,6 +83,7 @@ pub fn headless_device_with_indirect() -> Option<(wgpu::Device, wgpu::Queue)> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("test-indirect"),
         required_features: features,
+        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .ok()?;
@@ -108,6 +110,7 @@ pub fn headless_device_with_primitive_index() -> Option<(wgpu::Device, wgpu::Que
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("test-primitive-index"),
         required_features: viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE,
+        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .ok()?;
@@ -129,11 +132,38 @@ pub fn headless_device_limited_bind_groups() -> Option<(wgpu::Device, wgpu::Queu
         force_fallback_adapter: false,
     }))
     .ok()?;
-    let mut limits = wgpu::Limits::default();
+    // Start from viewport-lib's required limits (it needs more storage buffers
+    // per stage than wgpu's default) and additionally cap bind groups at 2.
+    let mut limits = ViewportRenderer::recommended_device_limits(&adapter);
     limits.max_bind_groups = 2;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("test-2-bind-groups"),
         required_limits: limits,
+        ..Default::default()
+    }))
+    .ok()?;
+    Some((device, queue))
+}
+
+/// A headless device requested with exactly `ViewportRenderer::recommended_device_limits`
+/// (not the adapter's full caps), so building a renderer here exercises the path
+/// a limits-following consumer takes. `ViewportRenderer::new` asserts the device
+/// meets its storage-buffer requirement, so a device under that requirement
+/// panics with a clear message on any backend (Metal does not enforce the limit
+/// at pipeline-layout creation, so the explicit assert is what catches it).
+/// Returns `None` when no adapter is available.
+pub fn headless_device_recommended_limits() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let instance = viewport_lib::wgpu::default_instance();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
+    .ok()?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("test-recommended-limits"),
+        required_features: ViewportRenderer::recommended_device_features(&adapter),
+        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .ok()?;
@@ -155,9 +185,13 @@ pub fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Q
         },
     ))
     .ok()?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&viewport_lib::gpu::DeviceDescriptor::default()))
-            .ok()?;
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &viewport_lib::gpu::DeviceDescriptor {
+            required_limits: ViewportRenderer::recommended_device_limits(&adapter),
+            ..Default::default()
+        },
+    ))
+    .ok()?;
     Some((device, queue))
 }
 

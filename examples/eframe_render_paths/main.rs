@@ -107,7 +107,7 @@ fn main() -> eframe::Result {
                             let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
                                 wgpu::Limits::downlevel_webgl2_defaults()
                             } else {
-                                wgpu::Limits::default()
+                                viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
                             };
                             wgpu::DeviceDescriptor {
                                 label: Some("viewport-lib render-paths device"),

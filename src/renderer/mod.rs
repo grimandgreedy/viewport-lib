@@ -724,6 +724,43 @@ impl ViewportRenderer {
         features
     }
 
+    /// The number of storage buffers viewport-lib's clustered lit mesh fragment
+    /// shader binds in one stage: clustered light data, light probes, shadow
+    /// data, plus the per-object, scalar-attribute, and face-colour buffers.
+    /// This exceeds wgpu's default `max_storage_buffers_per_shader_stage` of 8,
+    /// so the device must be created with a raised limit (see
+    /// [`recommended_device_limits`](Self::recommended_device_limits)); on
+    /// backends that enforce the limit (Vulkan, DX12) construction otherwise
+    /// panics at mesh-pipeline-layout creation.
+    pub const REQUIRED_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
+
+    /// The device limits viewport-lib's pipelines need above wgpu's defaults.
+    ///
+    /// The clustered lit mesh fragment shader binds
+    /// [`REQUIRED_STORAGE_BUFFERS_PER_STAGE`](Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE)
+    /// storage buffers in one stage, over wgpu's
+    /// default `max_storage_buffers_per_shader_stage` of 8. On backends that
+    /// enforce the limit (Vulkan, DX12) a device created with the default limits
+    /// fails to build the mesh pipeline layout; Metal does not enforce it, so it
+    /// works there regardless.
+    ///
+    /// Pass the result as `required_limits` in the `DeviceDescriptor`. It starts
+    /// from [`Limits::default`](crate::gpu::Limits::default) and raises only the
+    /// storage-buffer count viewport-lib needs, clamped to what the adapter
+    /// actually supports. Consumers that already request `adapter.limits()` (the
+    /// device's full capabilities) do not need this; consumers uploading meshes
+    /// larger than the default 256 MiB `max_buffer_size` must raise that limit
+    /// separately.
+    pub fn recommended_device_limits(adapter: &crate::gpu::Adapter) -> crate::gpu::Limits {
+        let adapter_max = adapter.limits().max_storage_buffers_per_shader_stage;
+        let mut limits = crate::gpu::Limits::default();
+        limits.max_storage_buffers_per_shader_stage = limits
+            .max_storage_buffers_per_shader_stage
+            .max(Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE)
+            .min(adapter_max);
+        limits
+    }
+
     /// Create a new renderer with default settings (no MSAA).
     /// Call once at application startup.
     pub fn new(device: &crate::gpu::Device, target_format: crate::gpu::TextureFormat) -> Self {
@@ -773,6 +810,20 @@ impl ViewportRenderer {
         sample_count: u32,
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
+        // Fail early with an actionable message rather than a cryptic wgpu
+        // validation panic deep in mesh-pipeline-layout creation. The clustered
+        // lit mesh fragment binds more storage buffers than wgpu's default
+        // per-stage limit; create the device with `recommended_device_limits`
+        // (or a higher limit) so the pipeline layouts validate.
+        let available = device.limits().max_storage_buffers_per_shader_stage;
+        assert!(
+            available >= Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE,
+            "viewport-lib needs max_storage_buffers_per_shader_stage >= {}, but the device was \
+             created with {}. Pass ViewportRenderer::recommended_device_limits(&adapter) as \
+             required_limits in the DeviceDescriptor (or request a higher limit).",
+            Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE,
+            available,
+        );
         let gpu_culling_supported = device
             .features()
             .contains(crate::gpu::Features::INDIRECT_FIRST_INSTANCE);

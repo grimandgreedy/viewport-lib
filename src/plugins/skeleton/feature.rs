@@ -144,7 +144,11 @@ mod tests {
             },
         ))
         .ok()?;
-        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
+        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+            required_limits: crate::renderer::ViewportRenderer::recommended_device_limits(&adapter),
+            ..Default::default()
+        }))
+        .ok()
     }
 
     fn single_joint_skeleton() -> Skeleton {

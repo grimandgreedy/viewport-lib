@@ -93,6 +93,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("slint-minimal"),
         required_features: ViewportRenderer::recommended_device_features(&adapter),
+        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .expect("device request failed");

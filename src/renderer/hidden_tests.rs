@@ -35,6 +35,7 @@ fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
     let (device, queue) =
         pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
             label: Some("hidden_tests"),
+            required_limits: crate::ViewportRenderer::recommended_device_limits(&adapter),
             ..Default::default()
         }))
         .ok()?;

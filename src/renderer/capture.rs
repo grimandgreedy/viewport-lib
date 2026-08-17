@@ -1027,6 +1027,9 @@ mod tests {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
                 label: Some("capture_tests"),
+                required_limits: crate::renderer::ViewportRenderer::recommended_device_limits(
+                    &adapter,
+                ),
                 ..Default::default()
             }))
             .ok()?;

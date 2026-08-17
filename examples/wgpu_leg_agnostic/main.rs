@@ -36,6 +36,7 @@ fn main() {
     .expect("no wgpu adapter");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("leg-agnostic"),
+        required_limits: viewport_lib::ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .expect("no wgpu device");

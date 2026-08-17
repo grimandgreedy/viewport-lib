@@ -177,3 +177,59 @@ fn per_object_items_select_distinct_object_data() {
         "second per-object item (green) did not render: items collapsed to one object-data slot"
     );
 }
+
+/// Building a renderer and rendering the full HDR + shadow + OIT + per-object
+/// mesh path on a device requested with exactly `recommended_device_limits`
+/// (not the adapter's full caps) must succeed. This is the path a
+/// limits-following consumer takes, and it guards the requirement two ways:
+/// `ViewportRenderer::new`'s up-front assert fails on any backend if the device
+/// is under the storage-buffer requirement, and on backends that enforce the
+/// limit at pipeline-layout creation (Vulkan, DX12) an over-budget layout also
+/// fails here. Metal does not enforce it at layout creation, so on the local
+/// box this is a smoke test that the whole path builds under the recommended
+/// limits; the enforcing-backend catch needs a Vulkan/DX12 run.
+#[test]
+fn renderer_fits_recommended_device_limits() {
+    let Some((device, queue)) = headless_device_recommended_limits() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    // Construction builds the LDR mesh pipeline layout (group 0 + group 1
+    // storage buffers): the original wgpu29 failure was here.
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = RenderCamera::from_camera(&cam);
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+
+    // A styled-backface (per-object) opaque item plus a transparent item, so the
+    // per-object object-data storage binding, the OIT layout, and the shadow
+    // pass (default lighting casts shadows) all build under the capped limits.
+    let mut opaque = SceneRenderItem::default();
+    opaque.mesh_id = mesh_id;
+    opaque.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0]);
+    let mut transparent = SceneRenderItem::default();
+    transparent.mesh_id = mesh_id;
+    transparent.settings.opacity = 0.5;
+    transparent.model =
+        glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
+
+    // HDR path builds the clustered lit / OIT pipeline layouts.
+    frame.effects.post_process.enabled = true;
+    let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(hdr.len(), 64 * 64 * 4);
+
+    // LDR path (its own mesh pipeline layout family).
+    frame.effects.post_process.enabled = false;
+    let ldr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    assert_eq!(ldr.len(), 64 * 64 * 4);
+}

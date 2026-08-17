@@ -109,6 +109,7 @@ fn main() {
     };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("skinned-feature"),
+        required_limits: viewport_lib::ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .expect("device");

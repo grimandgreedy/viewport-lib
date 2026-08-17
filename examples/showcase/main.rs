@@ -40,7 +40,7 @@ fn main() -> eframe::Result {
                                 viewport_lib::ViewportRenderer::recommended_device_features(adapter),
                             required_limits: wgpu::Limits {
                                 max_texture_dimension_2d: 8192,
-                                ..wgpu::Limits::default()
+                                ..viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
                             },
                             ..Default::default()
                         }),

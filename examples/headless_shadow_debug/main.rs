@@ -42,6 +42,7 @@ fn main() {
     .expect("adapter");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("headless-shadow-debug"),
+        required_limits: viewport_lib::ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .expect("device");

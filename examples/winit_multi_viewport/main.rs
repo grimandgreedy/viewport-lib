@@ -196,6 +196,7 @@ impl ApplicationHandler for App {
         }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features,
+            required_limits: ViewportRenderer::recommended_device_limits(&adapter),
             ..Default::default()
         }))
         .expect("Failed to create device");

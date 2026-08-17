@@ -1166,6 +1166,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let (device, queue) =
             pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
                 label: Some("shade_tests"),
+                required_limits: crate::ViewportRenderer::recommended_device_limits(&adapter),
                 ..Default::default()
             }))
             .ok()?;

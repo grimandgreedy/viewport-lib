@@ -475,6 +475,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
                 required_features,
+                required_limits: crate::ViewportRenderer::recommended_device_limits(&adapter),
                 ..Default::default()
             }))
             .expect("device");
@@ -733,6 +734,7 @@ mod tests {
         let (device, _queue) =
             pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
                 label: Some("input_ctx_tests"),
+                required_limits: crate::ViewportRenderer::recommended_device_limits(&adapter),
                 ..Default::default()
             }))
             .ok()?;
