@@ -725,25 +725,52 @@ impl ViewportRenderer {
         features
     }
 
-    /// The number of storage buffers viewport-lib's clustered lit mesh fragment
-    /// shader binds in one stage: clustered light data, light probes, shadow
-    /// data, plus the per-object, scalar-attribute, and face-colour buffers.
-    /// This exceeds wgpu's default `max_storage_buffers_per_shader_stage` of 8,
-    /// so the device must be created with a raised limit (see
-    /// [`recommended_device_limits`](Self::recommended_device_limits)); on
-    /// backends that enforce the limit (Vulkan, DX12) construction otherwise
-    /// panics at mesh-pipeline-layout creation.
+    /// The storage-buffer-per-stage headroom
+    /// [`recommended_device_limits`](Self::recommended_device_limits) requests:
+    /// the most any single pipeline binds in one stage across all optional
+    /// features. The `raytrace` path tracer's compute stage is the high-water
+    /// mark at ten; the base lit mesh path needs only
+    /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE),
+    /// and per-vertex deformers sit between at
+    /// [`DEFORM_STORAGE_BUFFERS_PER_STAGE`](Self::DEFORM_STORAGE_BUFFERS_PER_STAGE).
+    /// Requesting this much up front lets every optional feature run; it is
+    /// clamped to what the adapter actually supports.
     pub const REQUIRED_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
-    /// The device limits viewport-lib's pipelines need above wgpu's defaults.
+    /// The hard floor the base lit mesh pipeline needs in one shader stage. The
+    /// clustered lit fragment binds this many storage buffers (clustered light
+    /// data, light probes, shadow data, plus the per-object buffer), so a device
+    /// below this cannot render the mesh path at all and [`new`](Self::new)
+    /// rejects it. Optional features that need more are gated on the device
+    /// providing the headroom (see [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]) rather
+    /// than asserted here, so they degrade instead of crashing.
     ///
-    /// The clustered lit mesh fragment shader binds
-    /// [`REQUIRED_STORAGE_BUFFERS_PER_STAGE`](Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE)
-    /// storage buffers in one stage, over wgpu's
-    /// default `max_storage_buffers_per_shader_stage` of 8. On backends that
-    /// enforce the limit (Vulkan, DX12) a device created with the default limits
-    /// fails to build the mesh pipeline layout; Metal does not enforce it, so it
-    /// works there regardless.
+    /// [`DEFORM_STORAGE_BUFFERS_PER_STAGE`]: Self::DEFORM_STORAGE_BUFFERS_PER_STAGE
+    #[cfg(not(feature = "raytrace"))]
+    pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 8;
+    /// The `raytrace` path tracer's compute stage binds ten storage buffers, so
+    /// a build with that feature requires ten up front. See the non-`raytrace`
+    /// definition for the base rationale.
+    #[cfg(feature = "raytrace")]
+    pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
+
+    /// The per-stage storage-buffer count per-vertex deformers need: the base
+    /// vertex stage (seven) plus the two the deform sidecar adds. A device below
+    /// this still renders the base mesh path, but the deform group is left out
+    /// and `register_deformer` reports that deformers are unavailable, rather
+    /// than failing pipeline creation.
+    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 9;
+
+    /// The device limits viewport-lib runs best with, above wgpu's defaults.
+    ///
+    /// Raises `max_storage_buffers_per_shader_stage` to
+    /// [`REQUIRED_STORAGE_BUFFERS_PER_STAGE`](Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE),
+    /// enough headroom for every optional feature (per-vertex deformers, the
+    /// `raytrace` path tracer). The base lit mesh path needs only
+    /// [`MIN_STORAGE_BUFFERS_PER_STAGE`](Self::MIN_STORAGE_BUFFERS_PER_STAGE) and
+    /// renders on wgpu's default limits, so passing this is not required just to
+    /// draw: it is what turns the optional features on. Features whose headroom
+    /// the device lacks are disabled rather than fatal.
     ///
     /// Pass the result as `required_limits` in the `DeviceDescriptor`. It starts
     /// from [`Limits::default`](crate::gpu::Limits::default) and raises only the
@@ -812,17 +839,18 @@ impl ViewportRenderer {
         pipeline_cache_data: Option<&[u8]>,
     ) -> Self {
         // Fail early with an actionable message rather than a cryptic wgpu
-        // validation panic deep in mesh-pipeline-layout creation. The clustered
-        // lit mesh fragment binds more storage buffers than wgpu's default
-        // per-stage limit; create the device with `recommended_device_limits`
-        // (or a higher limit) so the pipeline layouts validate.
+        // validation panic deep in mesh-pipeline-layout creation. This is the
+        // base lit mesh path's floor; optional features that need more storage
+        // buffers (per-vertex deformers, the raytrace path tracer) gate on the
+        // device providing the headroom rather than asserting it here, so they
+        // degrade instead of crashing.
         let available = device.limits().max_storage_buffers_per_shader_stage;
         assert!(
-            available >= Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE,
+            available >= Self::MIN_STORAGE_BUFFERS_PER_STAGE,
             "viewport-lib needs max_storage_buffers_per_shader_stage >= {}, but the device was \
              created with {}. Pass ViewportRenderer::recommended_device_limits(&adapter) as \
              required_limits in the DeviceDescriptor (or request a higher limit).",
-            Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE,
+            Self::MIN_STORAGE_BUFFERS_PER_STAGE,
             available,
         );
         let gpu_culling_supported = device

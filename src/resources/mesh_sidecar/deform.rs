@@ -1496,6 +1496,20 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         desc: DeformerDesc,
     ) -> ViewportResult<DeformerId> {
+        // The deform group is left out of the mesh pipelines on devices that
+        // lack a third bind group or the storage-buffer headroom its two
+        // vertex-stage buffers need, so a deformer would never run. Report that
+        // instead of silently accepting a registration that does nothing.
+        if !self.deform.enabled {
+            return Err(crate::error::ViewportError::DeformShaderInvalid {
+                reason: format!(
+                    "per-vertex deformers need a device created with max_bind_groups >= 3 and \
+                     max_storage_buffers_per_shader_stage >= {}; this device provides fewer. \
+                     Create the device with ViewportRenderer::recommended_device_limits(&adapter).",
+                    crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
+                ),
+            });
+        }
         validate_name(&self.deform.registrations, desc.name)?;
         let slot = allocate_slot(&self.deform.registrations)?;
 

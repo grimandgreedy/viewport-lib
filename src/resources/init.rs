@@ -69,11 +69,20 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shader module
         // ------------------------------------------------------------------
-        // iced_wgpu and other WebGL2-targeting backends cap max_bind_groups at
-        // 2. viewport-lib's mesh shader family uses 3 groups (camera, object,
-        // deform). On limited devices we compile the _noop variants which omit
-        // the deform group, and build 2-group pipeline layouts instead.
-        let deform_enabled = device.limits().max_bind_groups >= 3;
+        // The deform sidecar is group 2 and adds two vertex-stage storage
+        // buffers (nine total in the vertex stage). It needs both a third bind
+        // group and the storage-buffer headroom for those two buffers. iced_wgpu
+        // and other WebGL2-targeting backends cap max_bind_groups at 2, and a
+        // device created with wgpu's default max_storage_buffers_per_shader_stage
+        // of 8 has room for the base lit mesh path but not the deform buffers.
+        // On either shortfall we compile the _noop variants, which omit the
+        // deform group, and build 2-group pipeline layouts; the base mesh path
+        // then fits in the default limits. Per-vertex deformers are unavailable
+        // in that state, and register_deformer reports it.
+        let device_limits = device.limits();
+        let deform_enabled = device_limits.max_bind_groups >= 3
+            && device_limits.max_storage_buffers_per_shader_stage
+                >= crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE;
 
         let mesh_src = if deform_enabled {
             include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
