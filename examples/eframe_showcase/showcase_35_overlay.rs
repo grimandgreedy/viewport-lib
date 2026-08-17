@@ -1629,13 +1629,113 @@ pub(crate) fn build_overlay_frame(
             }
         }
 
+        // ---------------------------------------------------------------------------
+        // New feature row: stacked shadow layers, rotation pivot, texture flip.
+        // ---------------------------------------------------------------------------
+        {
+            let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+            let row7_h = 70.0_f32;
+            let y7_mid = 20.0
+                + row_h
+                + 24.0
+                + 90.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 70.0
+                + 24.0
+                + 90.0
+                + 24.0
+                + row7_h * 0.5;
+            let mut x7 = 20.0_f32;
+
+            // Stacked shadow layers: two offset coloured outer glows (a red
+            // halo pushed down-right and a blue halo pushed up-left) make the
+            // stacking obvious at a glance, plus a dark inner shadow for a
+            // recessed feel. One item carrying several distinct shadow layers.
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect { corner_radius: cr },
+                    [x7, y7_mid - row7_h * 0.5],
+                    [120.0, row7_h],
+                )
+                .with_fill(OverlayFill::Solid([0.16, 0.17, 0.22, 1.0]))
+                .with_border([0.7, 0.72, 0.8, 0.9], 1.0)
+                .with_shadows(vec![
+                    viewport_lib::ShadowLayer::new([0.95, 0.25, 0.2, 0.85], 20.0, [16.0, 14.0]),
+                    viewport_lib::ShadowLayer::new([0.2, 0.5, 1.0, 0.85], 20.0, [-16.0, -14.0]),
+                ])
+                .with_inner_shadows(vec![viewport_lib::ShadowLayer::new(
+                    [0.0, 0.0, 0.0, 0.55],
+                    14.0,
+                    [0.0, 5.0],
+                )]),
+            );
+            x7 += 120.0 + gap + 48.0;
+
+            // Rotation pivot: a metronome. The capsule pivots about its bottom
+            // end (not its centre) and swings side to side. The bounding quad
+            // grows to contain the swing, so nothing is clipped.
+            let hand_h = 60.0_f32;
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Capsule,
+                    [x7, y7_mid - hand_h * 0.5],
+                    [16.0, hand_h],
+                )
+                .with_fill(OverlayFill::Solid([0.95, 0.75, 0.2, 0.95]))
+                .with_border([1.0, 0.9, 0.5, 0.9], bw)
+                .with_rotation((t * 2.0).sin() * 0.7)
+                .with_rotation_pivot([0.0, hand_h * 0.5]),
+            );
+            x7 += 16.0 + gap + 48.0;
+
+            // Texture flip / mirror: the Carl Gauss portrait mirrored
+            // vertically via the convenience flip helper, no second upload.
+            if let Some(tid) = app.ovl_state.carlgauss_tex_id {
+                shapes.push(
+                    OverlayShapeItem::new(
+                        OverlayShape::Rect { corner_radius: cr },
+                        [x7, y7_mid - row7_h * 0.5],
+                        [110.0, row7_h],
+                    )
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                    .with_border([0.8, 0.8, 0.8, 0.9], bw)
+                    .with_texture(tid)
+                    .with_texture_flip(false, true),
+                );
+            }
+        }
+
         // Backdrop blur circle (top-right area, 140px : 2x the normal shape size).
         if app.ovl_state.backdrop_blur_radius > 0.0 {
+            let t = app.ovl_state.start_time.elapsed().as_secs_f32();
             shapes.push(
                 OverlayShapeItem::new(OverlayShape::Circle, [x + gap, 20.0], [140.0, 140.0])
                     .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.12]))
                     .with_border([1.0, 1.0, 1.0, 0.3], 1.0)
                     .with_backdrop_blur(app.ovl_state.backdrop_blur_radius),
+            );
+            // Second frosted panel with backdrop colour filters: desaturated,
+            // slightly dimmed, and hue-rotated, the way a cool glass surface
+            // reads in AAA UI. The hue drifts over time to make the effect
+            // obvious.
+            shapes.push(
+                OverlayShapeItem::new(
+                    OverlayShape::Rect {
+                        corner_radius: 16.0,
+                    },
+                    [x + gap, 176.0],
+                    [140.0, 96.0],
+                )
+                .with_fill(OverlayFill::Solid([0.4, 0.5, 0.7, 0.14]))
+                .with_border([1.0, 1.0, 1.0, 0.25], 1.0)
+                .with_backdrop_blur(app.ovl_state.backdrop_blur_radius)
+                .with_backdrop_filters(0.35, 0.9, 0.6 * t.sin()),
             );
         }
     }

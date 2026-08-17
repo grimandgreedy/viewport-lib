@@ -248,6 +248,23 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
     }
 }
 
+// Apply saturation, brightness, and hue-rotation to a backdrop colour.
+// sat/bright are multipliers (1.0 = unchanged); hue is in radians. Hue
+// rotation uses Rodrigues rotation around the grey axis (1,1,1)/sqrt(3).
+fn apply_backdrop_filters(rgb: vec3<f32>, sat: f32, bright: f32, hue: f32) -> vec3<f32> {
+    var c = rgb;
+    if (abs(hue) > 0.0001) {
+        let k = vec3<f32>(0.57735026919);
+        let ca = cos(hue);
+        let sa = sin(hue);
+        c = c * ca + cross(k, c) * sa + k * dot(k, c) * (1.0 - ca);
+    }
+    let luma = dot(c, vec3<f32>(0.299, 0.587, 0.114));
+    c = mix(vec3<f32>(luma, luma, luma), c, sat);
+    c = c * bright;
+    return max(c, vec3<f32>(0.0, 0.0, 0.0));
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.local_pos;
@@ -351,10 +368,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         var fc: vec4<f32>;
         if (in.extras.x > 0.5) {
             // Backdrop blur: bound texture is the scene-blur output (opaque
-            // RGBA). Overlay the tint on top of the blurred scene, then mask
-            // by the SDF.
+            // RGBA). Apply the backdrop colour filters (extras.yzw =
+            // saturation, brightness, hue-shift), overlay the tint on top,
+            // then mask by the SDF.
             let tint = in.fill_colour;
-            let blended_rgb = mix(tex_sample.rgb, tint.rgb, tint.a);
+            let filtered = apply_backdrop_filters(
+                tex_sample.rgb,
+                in.extras.y,
+                in.extras.z,
+                in.extras.w,
+            );
+            let blended_rgb = mix(filtered, tint.rgb, tint.a);
             fc = vec4<f32>(blended_rgb, fill_alpha);
         } else {
             // Regular texture fill: multiply by tint colour. Works correctly

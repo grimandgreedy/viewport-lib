@@ -990,6 +990,10 @@ impl ViewportRenderer {
                 }
 
                 let mut solid_verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
+                // Stacked shadow layers for solid shapes, shared across the
+                // whole frame. Each solid shape references a contiguous run
+                // (outer layers first, then inner) via its `shadow_index`.
+                let mut shadow_layers: Vec<crate::resources::OverlayShadowLayerGpu> = Vec::new();
                 // One vertex list per unique texture ID, in order of first appearance.
                 let mut tex_groups: Vec<(u64, Vec<crate::resources::OverlayShapeTexVertex>)> =
                     Vec::new();
@@ -1112,9 +1116,11 @@ impl ViewportRenderer {
                     let cx = shape.position[0] + hw;
                     let cy = shape.position[1] + hh;
 
-                    // Expand the bounding quad by border width, shadow extent,
-                    // and AA so nothing gets clipped at the edges.
-                    let shadow_pad = if shape.shadow_radius > 0.0 {
+                    // Outer-shadow extent that reaches past the shape edge.
+                    // Inner shadows stay inside the shape, so they need no quad
+                    // padding. Both the legacy single shadow and the stacked
+                    // `shadows` layers contribute.
+                    let mut shadow_pad = if shape.shadow_radius > 0.0 {
                         shape.shadow_radius
                             + shape.shadow_offset[0]
                                 .abs()
@@ -1122,7 +1128,10 @@ impl ViewportRenderer {
                     } else {
                         0.0
                     };
-                    let pad = shape.border_width + shadow_pad + 1.0; // +1 for AA
+                    for l in &shape.shadows {
+                        let e = l.radius + l.offset[0].abs().max(l.offset[1].abs());
+                        shadow_pad = shadow_pad.max(e);
+                    }
 
                     // Extra quad expansion for shapes whose stroke extends
                     // beyond the item's position/size bounding box.
@@ -1132,8 +1141,41 @@ impl ViewportRenderer {
                         }
                         _ => 0.0,
                     };
-                    let ex = hw + pad + extra_expand;
-                    let ey = hh + pad + extra_expand;
+
+                    // Base half-extents including the border, before rotation.
+                    let bx = hw + shape.border_width + extra_expand;
+                    let by = hh + shape.border_width + extra_expand;
+
+                    // Rotation about the pivot moves the shape's corners out of
+                    // the axis-aligned box, so grow the quad to the AABB of the
+                    // rotated border box (matching how the fragment shader maps
+                    // the rotated shape into the quad). Without this a rotated
+                    // rect, capsule, or off-centre pivot clips against its own
+                    // quad. A zero rotation with a zero pivot leaves bx/by
+                    // unchanged.
+                    let (rx, ry) = if shape.rotation != 0.0 {
+                        let c = shape.rotation.cos();
+                        let s = shape.rotation.sin();
+                        let piv = shape.rotation_pivot;
+                        let mut mx = 0.0_f32;
+                        let mut my = 0.0_f32;
+                        for cxp in [-bx, bx] {
+                            for cyp in [-by, by] {
+                                let dx = cxp - piv[0];
+                                let dy = cyp - piv[1];
+                                let rxp = c * dx - s * dy + piv[0];
+                                let ryp = s * dx + c * dy + piv[1];
+                                mx = mx.max(rxp.abs());
+                                my = my.max(ryp.abs());
+                            }
+                        }
+                        (mx, my)
+                    } else {
+                        (bx, by)
+                    };
+
+                    let ex = rx + shadow_pad + 1.0; // +1 for AA
+                    let ey = ry + shadow_pad + 1.0;
 
                     // Encode shape type and radii.
                     let (shape_type, radii) = match shape.shape {
@@ -1409,7 +1451,15 @@ impl ViewportRenderer {
                                 uv: [px / vp_w, py / vp_h],
                                 shadow_colour: sc,
                                 shadow_params,
-                                extras: [1.0, 0.0, 0.0, 0.0],
+                                // extras.x = 1.0 flags the blur path; yzw carry
+                                // the backdrop colour filters (saturation,
+                                // brightness, hue-shift radians).
+                                extras: [
+                                    1.0,
+                                    shape.backdrop_saturation,
+                                    shape.backdrop_brightness,
+                                    shape.backdrop_hue_shift,
+                                ],
                                 nine_slice_uv: [0.0; 4],
                                 nine_slice_frac: [0.0; 4],
                                 texture_transform_a: [0.0, 0.0, 1.0, 1.0],
@@ -1427,6 +1477,72 @@ impl ViewportRenderer {
                             .unwrap_or([0.0, 0.0, 0.0, 0.0]);
                         // gradient_params is now vec4: [type, angle, stop_count, _pad]
                         let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
+
+                        // Build the stacked shadow layers for this shape:
+                        // outer layers first, then inner, appended to the
+                        // shared frame buffer. Prefer the Vec-based lists; fall
+                        // back to the single legacy `shadow_*` fields so old
+                        // call sites keep working.
+                        let base_index = shadow_layers.len();
+                        let mut outer_count = 0usize;
+                        let mut inner_count = 0usize;
+                        let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
+                        if !shape.shadows.is_empty() {
+                            for l in shape.shadows.iter().take(max_layers) {
+                                let mut col = l.colour;
+                                col[3] *= resolved_opacity;
+                                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                                    colour: col,
+                                    params: [l.radius, l.offset[0], l.offset[1], 0.0],
+                                });
+                                outer_count += 1;
+                            }
+                        } else if shape.shadow_radius > 0.0 && !shape.shadow_inset {
+                            shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                                colour: sc,
+                                params: [
+                                    shape.shadow_radius,
+                                    shape.shadow_offset[0],
+                                    shape.shadow_offset[1],
+                                    0.0,
+                                ],
+                            });
+                            outer_count += 1;
+                        }
+                        if !shape.inner_shadows.is_empty() {
+                            for l in shape.inner_shadows.iter().take(max_layers) {
+                                let mut col = l.colour;
+                                col[3] *= resolved_opacity;
+                                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                                    colour: col,
+                                    params: [l.radius, l.offset[0], l.offset[1], 1.0],
+                                });
+                                inner_count += 1;
+                            }
+                        } else if shape.shadow_radius > 0.0 && shape.shadow_inset {
+                            shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                                colour: sc,
+                                params: [
+                                    shape.shadow_radius,
+                                    shape.shadow_offset[0],
+                                    shape.shadow_offset[1],
+                                    1.0,
+                                ],
+                            });
+                            inner_count += 1;
+                        }
+                        let shadow_index = [
+                            base_index as f32,
+                            outer_count as f32,
+                            inner_count as f32,
+                            border_mode_f,
+                        ];
+                        let rotation_pivot = [
+                            shape.rotation,
+                            shape.rotation_pivot[0],
+                            shape.rotation_pivot[1],
+                            0.0,
+                        ];
                         for (px, py, lx, ly) in corners_px {
                             solid_verts.push(crate::resources::OverlayShapeVertex {
                                 position: px_to_ndc(px, py, vp_w, vp_h),
@@ -1439,10 +1555,10 @@ impl ViewportRenderer {
                                 shape_type,
                                 fill_colour2: fc2,
                                 gradient_params: gp4,
-                                shadow_colour: sc,
-                                shadow_params,
+                                shadow_index,
+                                rotation_pivot,
                                 clip_rect,
-                                rotation: shape.rotation,
+                                _reserved: 0.0,
                                 stop_colour_c: stop_colours[2],
                                 stop_colour_d: stop_colours[3],
                                 stop_positions,
@@ -1534,6 +1650,40 @@ impl ViewportRenderer {
                     None
                 };
 
+                // Build the shadow-layer storage buffer and its bind group.
+                // The solid pipeline layout always expects group 0, so we
+                // provide at least one (dummy) element even when no shape has
+                // shadows.
+                let (shadow_bind_group, shadow_buf) = if solid_vbuf.is_some() {
+                    if shadow_layers.is_empty() {
+                        shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                            colour: [0.0; 4],
+                            params: [0.0; 4],
+                        });
+                    }
+                    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                        label: Some("overlay_shape_shadow_buf"),
+                        size: std::mem::size_of_val(&shadow_layers[..]) as u64,
+                        usage: crate::gpu::BufferUsages::STORAGE
+                            | crate::gpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    queue.write_buffer(&buf, 0, bytemuck::cast_slice(&shadow_layers));
+                    let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
+                        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                            label: Some("overlay_shape_shadow_bg"),
+                            layout: bgl,
+                            entries: &[crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: buf.as_entire_binding(),
+                            }],
+                        })
+                    });
+                    (bg, Some(buf))
+                } else {
+                    (None, None)
+                };
+
                 let mut tex_batches = Vec::new();
                 if has_tex {
                     if let (Some(bgl), Some(sampler)) = (
@@ -1593,6 +1743,8 @@ impl ViewportRenderer {
                     self.overlay_shape_gpu_data = Some(crate::resources::OverlayShapeGpuData {
                         vertex_buf: solid_vbuf,
                         vertex_count: solid_verts.len() as u32,
+                        shadow_bind_group,
+                        _shadow_buf: shadow_buf,
                         tex_batches,
                         blur_vertex_buf: blur_vbuf,
                         blur_vertex_count: blur_verts.len() as u32,

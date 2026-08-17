@@ -84,6 +84,40 @@ pub enum OverlayShape {
     },
 }
 
+/// One soft drop or inset shadow.
+///
+/// Used with [`OverlayShapeItem::shadows`] (drawn behind the fill) and
+/// [`OverlayShapeItem::inner_shadows`] (drawn on top of the fill, under the
+/// border) to stack several shadow effects on a single shape: a soft ambient
+/// shadow for depth plus a tighter one for contact, or an outer glow for
+/// focus.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadowLayer {
+    /// RGBA colour of the shadow, linear float format. The alpha scales the
+    /// shadow strength.
+    pub colour: [f32; 4],
+    /// Blur spread in logical pixels. `0.0` produces no visible shadow.
+    pub radius: f32,
+    /// Offset of the shadow from the shape centre in logical pixels.
+    /// Positive X shifts right, positive Y shifts down.
+    pub offset: [f32; 2],
+}
+
+impl ShadowLayer {
+    /// Build a shadow layer from colour, blur radius, and offset.
+    pub fn new(colour: [f32; 4], radius: f32, offset: [f32; 2]) -> Self {
+        Self {
+            colour,
+            radius,
+            offset,
+        }
+    }
+}
+
+/// Maximum number of stacked outer (or inner) shadow layers honoured per
+/// shape. Extra layers beyond this count are dropped during `prepare()`.
+pub const OVERLAY_MAX_SHADOW_LAYERS: usize = 4;
+
 /// Cardinal direction for `OverlayShape::Triangle`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TriangleDirection {
@@ -234,6 +268,33 @@ pub struct OverlayShapeItem {
     /// `opacity` track takes precedence over the legacy
     /// [`Self::animation`] field when both are set.
     pub animations: OverlayAnimations,
+    /// Saturation multiplier applied to the blurred backdrop. `1.0` leaves
+    /// saturation unchanged, `0.0` produces greyscale. Only affects shapes
+    /// with `backdrop_blur > 0.0`.
+    pub backdrop_saturation: f32,
+    /// Brightness multiplier applied to the blurred backdrop. `1.0` is
+    /// unchanged. Only affects shapes with `backdrop_blur > 0.0`.
+    pub backdrop_brightness: f32,
+    /// Hue rotation applied to the blurred backdrop, in radians. `0.0` is
+    /// unchanged. Only affects shapes with `backdrop_blur > 0.0`.
+    pub backdrop_hue_shift: f32,
+    /// Point to rotate around, in logical pixels measured from the shape
+    /// centre. `[0.0, 0.0]` (default) rotates around the centre. Positive X
+    /// is right, positive Y is down, matching the screen-space axes. Applies
+    /// together with [`Self::rotation`] on solid (non-textured) shapes.
+    pub rotation_pivot: [f32; 2],
+    /// Stacked outer shadow layers, drawn behind the fill in order (first
+    /// entry furthest back). Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
+    ///
+    /// When non-empty this replaces the single legacy `shadow_*` outer
+    /// shadow. Only the solid (non-textured, non-blur) shape path draws
+    /// stacked layers; textured and backdrop-blur shapes fall back to the
+    /// single legacy `shadow_*` shadow.
+    pub shadows: Vec<ShadowLayer>,
+    /// Stacked inner (inset) shadow layers, drawn on top of the fill and
+    /// under the border, in order. Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are
+    /// honoured. Same path limitation as [`Self::shadows`].
+    pub inner_shadows: Vec<ShadowLayer>,
 }
 
 impl Default for OverlayShapeItem {
@@ -261,6 +322,12 @@ impl Default for OverlayShapeItem {
             shadow_inset: false,
             texture_transform: TextureTransform::default(),
             animations: OverlayAnimations::default(),
+            backdrop_saturation: 1.0,
+            backdrop_brightness: 1.0,
+            backdrop_hue_shift: 0.0,
+            rotation_pivot: [0.0, 0.0],
+            shadows: Vec::new(),
+            inner_shadows: Vec::new(),
         }
     }
 }
@@ -556,6 +623,51 @@ impl OverlayShapeItem {
         self
     }
 
+    /// Set the point to rotate around, in logical pixels from the shape
+    /// centre. `[0.0, 0.0]` rotates around the centre (the default).
+    pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
+        self.rotation_pivot = pivot;
+        self
+    }
+
+    /// Set the backdrop colour filters applied to the blurred scene behind a
+    /// `backdrop_blur` shape: saturation and brightness multipliers (`1.0`
+    /// leaves each unchanged) and a hue rotation in radians.
+    pub fn with_backdrop_filters(
+        mut self,
+        saturation: f32,
+        brightness: f32,
+        hue_shift: f32,
+    ) -> Self {
+        self.backdrop_saturation = saturation;
+        self.backdrop_brightness = brightness;
+        self.backdrop_hue_shift = hue_shift;
+        self
+    }
+
+    /// Set the stacked outer shadow layers (drawn behind the fill). Replaces
+    /// the single legacy `with_shadow` outer shadow on the solid shape path.
+    pub fn with_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
+        self.shadows = shadows;
+        self
+    }
+
+    /// Set the stacked inner (inset) shadow layers (drawn on top of the fill,
+    /// under the border).
+    pub fn with_inner_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
+        self.inner_shadows = shadows;
+        self
+    }
+
+    /// Flip the texture fill horizontally and/or vertically. Convenience over
+    /// [`TextureTransform::flip_x`] / [`TextureTransform::flip_y`]; sets those
+    /// fields on the shape's texture transform.
+    pub fn with_texture_flip(mut self, flip_x: bool, flip_y: bool) -> Self {
+        self.texture_transform.flip_x = flip_x;
+        self.texture_transform.flip_y = flip_y;
+        self
+    }
+
     /// Mark this shape as a clip mask with the given id. Other shapes whose
     /// clip id matches are clipped to this shape's bounding box.
     pub fn with_clip_mask(mut self, mask_id: u32) -> Self {
@@ -608,11 +720,16 @@ impl OverlayShapeItem {
         let cy = self.position[1] + hh;
         let dx = point[0] - cx;
         let dy = point[1] - cy;
-        // Rotate the query point by -rotation around the shape centre so the
-        // SDF evaluates in the unrotated frame, matching the fragment shader.
+        // Rotate the query point by -rotation around the rotation pivot (an
+        // offset from the shape centre) so the SDF evaluates in the unrotated
+        // frame, matching the fragment shader. With a zero pivot this reduces
+        // to rotation around the centre.
         let c = (-self.rotation).cos();
         let s = (-self.rotation).sin();
-        let p = [c * dx - s * dy, s * dx + c * dy];
+        let piv = self.rotation_pivot;
+        let rx = dx - piv[0];
+        let ry = dy - piv[1];
+        let p = [c * rx - s * ry + piv[0], s * rx + c * ry + piv[1]];
         let hs = [hw, hh];
 
         match self.shape {
@@ -1131,5 +1248,42 @@ mod tests {
         assert!(!s.contains([50.0, 80.0]));
         s.rotation = std::f32::consts::FRAC_PI_2;
         assert!(s.contains([50.0, 80.0]));
+    }
+
+    #[test]
+    fn rotation_pivot_shifts_hit_boundary() {
+        // 80x40 rectangle at the origin: centre (40, 20). Rotating 90 degrees
+        // about the centre keeps the centre fixed. Rotating about a pivot far
+        // from the centre swings the whole shape elsewhere, so a point that is
+        // inside under centre-rotation falls outside under pivot-rotation.
+        let mut s = OverlayShapeItem {
+            position: [0.0, 0.0],
+            size: [80.0, 40.0],
+            shape: OverlayShape::Rect { corner_radius: 0.0 },
+            rotation: std::f32::consts::FRAC_PI_2,
+            ..Default::default()
+        };
+        // Centre is always inside regardless of pivot.
+        assert!(s.contains([40.0, 20.0]));
+        // With a large pivot offset the shape rotates away from the centre.
+        s.rotation_pivot = [200.0, 0.0];
+        assert!(!s.contains([40.0, 20.0]));
+    }
+
+    #[test]
+    fn rotation_pivot_zero_matches_centre_rotation() {
+        // A zero pivot must reproduce plain centre rotation exactly.
+        let base = OverlayShapeItem {
+            position: [10.0, 10.0],
+            size: [100.0, 30.0],
+            shape: OverlayShape::Capsule,
+            rotation: 0.7,
+            ..Default::default()
+        };
+        let mut piv = base.clone();
+        piv.rotation_pivot = [0.0, 0.0];
+        for pt in [[60.0, 25.0], [20.0, 20.0], [90.0, 40.0]] {
+            assert!((base.distance(pt) - piv.distance(pt)).abs() < 1e-4);
+        }
     }
 }

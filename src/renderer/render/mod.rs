@@ -42,8 +42,9 @@ macro_rules! emit_overlay_2d {
         if let Some(ref sd) = $this.overlay_shape_gpu_data {
             if sd.vertex_count > 0 {
                 if let Some(pipeline) = &$this.resources.overlay_shape.pipeline {
-                    if let Some(vbuf) = &sd.vertex_buf {
+                    if let (Some(vbuf), Some(shadow_bg)) = (&sd.vertex_buf, &sd.shadow_bind_group) {
                         $render_pass.set_pipeline(pipeline);
+                        $render_pass.set_bind_group(0, shadow_bg, &[]);
                         $render_pass.set_vertex_buffer(0, vbuf.slice(..));
                         $render_pass.draw(0..sd.vertex_count, 0..1);
                     }

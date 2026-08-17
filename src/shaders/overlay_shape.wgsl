@@ -15,13 +15,21 @@ struct VertexInput {
     @location(7) stop_positions:  vec4<f32>, // positions in [0,1] for stops a..d
     @location(8) fill_colour2:    vec4<f32>,  // 2nd colour stop (equals fill_colour for solid)
     @location(9) gradient_params: vec4<f32>,  // x=type, y=angle/offset, z=stop_count, w=pad
-    @location(10) shadow_colour:  vec4<f32>,  // RGBA shadow colour
-    @location(11) shadow_params:  vec4<f32>,  // x=radius, y=offset_x, z=offset_y, w=border_mode
+    @location(10) shadow_index:   vec4<f32>,  // base_index, outer_ct, inner_ct, border_mode
+    @location(11) rotation_pivot: vec4<f32>,  // rotation, pivot_x, pivot_y, pad
     @location(12) clip_rect:      vec4<f32>,  // framebuffer-pixel clip rect (x0,y0,x1,y1); all zero = no clip
-    @location(13) rotation:       f32,        // radians; applied to local_pos before SDF eval
+    @location(13) reserved:       f32,        // reserved / unused
     @location(14) stop_colour_c:  vec4<f32>,  // 3rd colour stop (multi-stop gradients)
     @location(15) stop_colour_d:  vec4<f32>,  // 4th colour stop
 };
+
+// One stacked shadow layer. `params` = (radius, offset_x, offset_y, is_inner).
+struct ShadowLayer {
+    colour: vec4<f32>,
+    params: vec4<f32>,
+};
+
+@group(0) @binding(0) var<storage, read> shadow_layers: array<ShadowLayer>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -34,10 +42,9 @@ struct VertexOutput {
     @location(6) shape_type:      f32,
     @location(7) fill_colour2:    vec4<f32>,
     @location(8) gradient_params: vec4<f32>,
-    @location(9) shadow_colour:   vec4<f32>,
-    @location(10) shadow_params:  vec4<f32>,
+    @location(9) @interpolate(flat) shadow_index:   vec4<f32>,
+    @location(10) @interpolate(flat) rotation_pivot: vec4<f32>,
     @location(11) @interpolate(flat) clip_rect: vec4<f32>,
-    @location(12) @interpolate(flat) rotation:  f32,
     @location(13) @interpolate(flat) stop_colour_c:  vec4<f32>,
     @location(14) @interpolate(flat) stop_colour_d:  vec4<f32>,
     @location(15) @interpolate(flat) stop_positions: vec4<f32>,
@@ -56,10 +63,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.shape_type      = in.shape_meta.y;
     out.fill_colour2    = in.fill_colour2;
     out.gradient_params = in.gradient_params;
-    out.shadow_colour   = in.shadow_colour;
-    out.shadow_params   = in.shadow_params;
+    out.shadow_index    = in.shadow_index;
+    out.rotation_pivot  = in.rotation_pivot;
     out.clip_rect       = in.clip_rect;
-    out.rotation        = in.rotation;
     out.stop_colour_c   = in.stop_colour_c;
     out.stop_colour_d   = in.stop_colour_d;
     out.stop_positions  = in.stop_positions;
@@ -345,15 +351,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
     }
-    // Rotate local position by -rotation so the SDF evaluates in the
-    // shape's unrotated frame; the visible result is the shape rotated by
-    // `rotation`. Shadow uses the same rotated frame with its own offset.
-    let _rc = cos(-in.rotation);
-    let _rs = sin(-in.rotation);
+    // Rotate local position by -rotation around the pivot so the SDF
+    // evaluates in the shape's unrotated frame; the visible result is the
+    // shape rotated by `rotation` about the pivot. With a zero pivot this is
+    // rotation about the shape centre.
+    let _rc = cos(-in.rotation_pivot.x);
+    let _rs = sin(-in.rotation_pivot.x);
+    let pivot = in.rotation_pivot.yz;
+    let _pd = in.local_pos - pivot;
     let p = vec2<f32>(
-        _rc * in.local_pos.x - _rs * in.local_pos.y,
-        _rs * in.local_pos.x + _rc * in.local_pos.y,
-    );
+        _rc * _pd.x - _rs * _pd.y,
+        _rs * _pd.x + _rc * _pd.y,
+    ) + pivot;
     let hs = in.half_size;
 
     let d = eval_sdf(p, hs, in.shape_type, in.radii);
@@ -361,30 +370,37 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Anti-aliasing: 1 pixel smoothstep at the boundary.
     let aa = 1.0;
 
-    // Decode the combined shadow_params.w slot:
-    //   combined = border_mode + 3 * inset_shadow_flag
-    // border_mode: 0=inset border, 1=outer border, 2=centre border
-    // inset_shadow_flag: 0=outer shadow, 1=inner shadow.
-    let combined_w = i32(in.shadow_params.w + 0.5);
-    let inset_shadow = combined_w >= 3;
-    let border_mode = combined_w % 3;
+    // shadow_index: (base_index, outer_count, inner_count, border_mode).
+    let base_index = i32(in.shadow_index.x + 0.5);
+    let outer_count = i32(in.shadow_index.y + 0.5);
+    let inner_count = i32(in.shadow_index.z + 0.5);
+    let border_mode = i32(in.shadow_index.w + 0.5);
 
-    // Outer shadow only draws when inset_shadow is off. Inner shadow is
-    // composited later, on top of the fill but under the border.
-    let shadow_r = in.shadow_params.x;
-    let shadow_off = vec2<f32>(in.shadow_params.y, in.shadow_params.z);
-    var shadow_a = 0.0;
-    if (!inset_shadow && shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
-        let sp = in.local_pos - shadow_off;
-        let sp_r = vec2<f32>(_rc * sp.x - _rs * sp.y, _rs * sp.x + _rc * sp.y);
-        let sd = eval_sdf(sp_r, hs, in.shape_type, in.radii);
-        shadow_a = in.shadow_colour.a * (1.0 - smoothstep(0.0, shadow_r, sd));
+    // Accumulate the stacked outer shadow layers (drawn behind the fill).
+    // Each layer is composited src-over the previous, first layer furthest
+    // back. Sample the SDF at the layer's offset in the rotated frame.
+    var shadow_col = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    for (var i = 0; i < outer_count; i = i + 1) {
+        let layer = shadow_layers[base_index + i];
+        let sr = layer.params.x;
+        let soff = layer.params.yz;
+        if (sr > 0.0 && layer.colour.a > 0.0) {
+            let spd = (in.local_pos - soff) - pivot;
+            let sp_r = vec2<f32>(_rc * spd.x - _rs * spd.y, _rs * spd.x + _rc * spd.y) + pivot;
+            let sd = eval_sdf(sp_r, hs, in.shape_type, in.radii);
+            let a = layer.colour.a * (1.0 - smoothstep(0.0, sr, sd));
+            let src = vec4<f32>(layer.colour.rgb, a);
+            shadow_col = vec4<f32>(
+                mix(shadow_col.rgb, src.rgb, src.a),
+                src.a + shadow_col.a * (1.0 - src.a),
+            );
+        }
     }
 
     let fill_alpha = 1.0 - smoothstep(-aa, 0.0, d);
 
-    // If neither fill nor shadow contributes, discard.
-    if (fill_alpha <= 0.0 && shadow_a <= 0.0) {
+    // If neither fill nor any outer shadow contributes, discard.
+    if (fill_alpha <= 0.0 && shadow_col.a <= 0.0) {
         discard;
     }
 
@@ -448,8 +464,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // Start with the shadow layer.
-    var colour = vec4<f32>(in.shadow_colour.rgb, shadow_a);
+    // Start with the accumulated outer shadow layers.
+    var colour = shadow_col;
 
     // Composite fill on top of shadow.
     if (fill_alpha > 0.0) {
@@ -460,28 +476,34 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
     }
 
-    // Inner shadow: composite on top of the fill (so it tints the body)
-    // but under the border (so the border still sits clean on top). Sample
-    // the SDF at (p - shadow_off) in the rotated frame; positive sd means
-    // the offset point lies outside the shape and the current fragment is
-    // in the shadow band, with darkness fading over `shadow_r`. Only
-    // contributes where the current fragment is itself inside the shape.
-    if (inset_shadow && shadow_r > 0.0 && in.shadow_colour.a > 0.0 && d < 0.0) {
-        let sp_i = in.local_pos - shadow_off;
-        let sp_ir = vec2<f32>(_rc * sp_i.x - _rs * sp_i.y, _rs * sp_i.x + _rc * sp_i.y);
-        let inner_sd = eval_sdf(sp_ir, hs, in.shape_type, in.radii);
-        let inner_alpha = in.shadow_colour.a * smoothstep(0.0, shadow_r, inner_sd);
-        if (inner_alpha > 0.0) {
-            let ic = vec4<f32>(in.shadow_colour.rgb, inner_alpha);
-            colour = vec4<f32>(
-                mix(colour.rgb, ic.rgb, ic.a),
-                ic.a + colour.a * (1.0 - ic.a),
-            );
+    // Inner shadow layers: composite on top of the fill (so they tint the
+    // body) but under the border. Sample the SDF at (p - offset) in the
+    // rotated frame; positive sd means the offset point lies outside the
+    // shape, so the current fragment is in the shadow band, fading over the
+    // layer radius. Only contributes where the fragment is inside the shape.
+    if (d < 0.0) {
+        for (var j = 0; j < inner_count; j = j + 1) {
+            let layer = shadow_layers[base_index + outer_count + j];
+            let sr = layer.params.x;
+            let soff = layer.params.yz;
+            if (sr > 0.0 && layer.colour.a > 0.0) {
+                let spd = (in.local_pos - soff) - pivot;
+                let sp_ir = vec2<f32>(_rc * spd.x - _rs * spd.y, _rs * spd.x + _rc * spd.y) + pivot;
+                let inner_sd = eval_sdf(sp_ir, hs, in.shape_type, in.radii);
+                let inner_alpha = layer.colour.a * smoothstep(0.0, sr, inner_sd);
+                if (inner_alpha > 0.0) {
+                    let ic = vec4<f32>(layer.colour.rgb, inner_alpha);
+                    colour = vec4<f32>(
+                        mix(colour.rgb, ic.rgb, ic.a),
+                        ic.a + colour.a * (1.0 - ic.a),
+                    );
+                }
+            }
         }
     }
 
     // Border: blend border colour in a band near d = 0.
-    // border_mode (low part of shadow_params.w): 0=inset, 1=outer, 2=center.
+    // border_mode (shadow_index.w): 0=inset, 1=outer, 2=center.
     if (in.border_width > 0.0) {
         let bw = in.border_width;
         let bm = border_mode;

@@ -259,3 +259,168 @@ fn render_tuning_round_trips() {
     renderer.apply_tuning(&want);
     assert_eq!(renderer.tuning(), want);
 }
+
+/// Overlay SDF shapes that exercise the new stacked-shadow storage buffer,
+/// rotation pivot, and textured backdrop-filter paths must all render without
+/// tripping wgpu validation. The solid pipeline now carries a group-0 storage
+/// buffer bind group for shadow layers; a missing or mismatched binding would
+/// fail validation the moment the shapes draw. A shape with a coloured fill
+/// over a mid-grey background must leave visible non-background pixels.
+#[test]
+fn overlay_shape_shadow_layers_and_pivot_render() {
+    use viewport_lib::{OverlayFill, OverlayShape, OverlayShapeItem, ShadowLayer};
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let size = 96u32;
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [size as f32, size as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0]);
+
+    // A shape with two outer shadow layers plus two inner shadow layers,
+    // rotated about an off-centre pivot. Fill is bright so it stands out.
+    frame.overlays.shapes = vec![
+        OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 8.0 },
+            [24.0, 24.0],
+            [48.0, 48.0],
+        )
+        .with_fill(OverlayFill::Solid([0.9, 0.2, 0.1, 1.0]))
+        .with_border([1.0, 1.0, 1.0, 1.0], 2.0)
+        .with_rotation(0.5)
+        .with_rotation_pivot([10.0, 6.0])
+        .with_shadows(vec![
+            ShadowLayer::new([0.0, 0.0, 0.0, 0.5], 12.0, [0.0, 6.0]),
+            ShadowLayer::new([0.0, 0.0, 0.0, 0.6], 4.0, [0.0, 2.0]),
+        ])
+        .with_inner_shadows(vec![
+            ShadowLayer::new([1.0, 1.0, 1.0, 0.3], 5.0, [0.0, -2.0]),
+            ShadowLayer::new([0.0, 0.0, 0.0, 0.4], 8.0, [0.0, 3.0]),
+        ]),
+    ];
+
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    // Look for a clearly red-dominant pixel produced by the shape fill.
+    let mut found = false;
+    for i in (0..px.len()).step_by(4) {
+        let (r, g, b) = (px[i] as i32, px[i + 1] as i32, px[i + 2] as i32);
+        if r > 150 && r - g > 60 && r - b > 60 {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "expected the red shadowed shape to render");
+}
+
+/// A backdrop-blur shape with colour filters (saturation / brightness /
+/// hue-shift) must render through the blur + textured-overlay pipelines
+/// without wgpu validation errors. The filters are encoded into the blur
+/// vertex `extras` slot and applied in the textured shader's blur branch.
+#[test]
+fn overlay_shape_backdrop_filters_render() {
+    use viewport_lib::{OverlayFill, OverlayShape, OverlayShapeItem};
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let size = 96u32;
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [size as f32, size as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some([0.2, 0.5, 0.8, 1.0]);
+
+    frame.overlays.shapes = vec![
+        OverlayShapeItem::new(OverlayShape::Circle, [24.0, 24.0], [48.0, 48.0])
+            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1]))
+            .with_backdrop_blur(8.0)
+            .with_backdrop_filters(0.4, 0.9, 1.0),
+    ];
+
+    // Just needs to complete without a validation panic; also sanity-check we
+    // got a full frame back.
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert_eq!(px.len(), (size * size * 4) as usize);
+}
+
+/// A capsule rotated about its bottom end (an off-centre pivot) must not clip
+/// against its own axis-aligned bounding quad: the prepare pass grows the quad
+/// to the AABB of the rotated shape. Rotated ~90 degrees, a tall narrow
+/// capsule lies horizontally and must paint pixels well outside its original
+/// narrow column.
+#[test]
+fn overlay_shape_pivot_rotation_not_clipped() {
+    use viewport_lib::{OverlayFill, OverlayShape, OverlayShapeItem};
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let size = 160u32;
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [size as f32, size as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some([0.1, 0.1, 0.1, 1.0]);
+
+    // Tall narrow capsule: box x in [60, 76], centre (68, 80). Pivot at the
+    // bottom end; rotate 90 degrees so the hand swings out horizontally.
+    frame.overlays.shapes = vec![
+        OverlayShapeItem::new(OverlayShape::Capsule, [60.0, 20.0], [16.0, 120.0])
+            .with_fill(OverlayFill::Solid([0.95, 0.75, 0.2, 1.0]))
+            .with_rotation(std::f32::consts::FRAC_PI_2)
+            .with_rotation_pivot([0.0, 60.0]),
+    ];
+
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    let is_yellow = |i: usize| {
+        let (r, g, b) = (px[i] as i32, px[i + 1] as i32, px[i + 2] as i32);
+        r > 150 && g > 110 && b < 130 && r - b > 50
+    };
+    // Look for the capsule far outside its original column (x well past 76).
+    let mut found_far = false;
+    for y in 0..size {
+        for x in 110..size {
+            if is_yellow(((y * size + x) * 4) as usize) {
+                found_far = true;
+                break;
+            }
+        }
+        if found_far {
+            break;
+        }
+    }
+    assert!(
+        found_far,
+        "rotated capsule should paint outside its original box (no clip)"
+    );
+}

@@ -8,6 +8,8 @@ use crate::renderer::OverlayTextureId;
 pub(crate) struct OverlayShapeResources {
     /// Render pipeline for screen-space SDF shapes (rounded rects, circles, etc.).
     pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Bind group layout for the solid pipeline (group 0: shadow-layer storage buffer).
+    pub(crate) shadow_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Render pipeline for SDF shapes with texture fill.
     pub(crate) tex_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the texture pipeline (group 0: texture + sampler).
@@ -39,8 +41,31 @@ impl crate::resources::DeviceResources {
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
-        let layout =
-            crate::resources::builders::pipeline_layout(device, "overlay_shape_layout", &[]);
+        // Group 0: read-only storage buffer of stacked shadow layers.
+        let shadow_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("overlay_shape_shadow_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        std::num::NonZeroU64::new(
+                            std::mem::size_of::<OverlayShadowLayerGpu>() as u64
+                        )
+                        .unwrap(),
+                    ),
+                },
+                count: None,
+            }],
+        });
+
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            "overlay_shape_layout",
+            &[&shadow_bgl],
+        );
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -93,6 +118,7 @@ impl crate::resources::DeviceResources {
             },
         );
 
+        self.overlay_shape.shadow_bgl = Some(shadow_bgl);
         self.overlay_shape.pipeline = Some(pipeline);
     }
 
@@ -446,6 +472,20 @@ impl crate::resources::DeviceResources {
     }
 }
 
+/// One stacked shadow layer as uploaded to the shadow storage buffer.
+///
+/// The solid overlay-shape shader reads a contiguous run of these per shape
+/// (outer layers first, then inner) starting at the vertex's `shadow_index`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct OverlayShadowLayerGpu {
+    /// RGBA shadow colour (pre-multiplied opacity).
+    pub colour: [f32; 4],
+    /// `[radius_px, offset_x, offset_y, is_inner]`. `is_inner` is 0 for an
+    /// outer drop shadow, 1 for an inner (inset) shadow.
+    pub params: [f32; 4],
+}
+
 /// Per-vertex data for SDF overlay shapes.
 ///
 /// Each shape is a bounding quad (6 vertices). The fragment shader uses
@@ -478,17 +518,21 @@ pub(crate) struct OverlayShapeVertex {
     /// `type` selects solid/linear/radial/conical; `stop_count` is the
     /// number of active gradient stops (0 for solid, 2..4 otherwise).
     pub gradient_params: [f32; 4],
-    /// RGBA shadow colour (pre-multiplied opacity).
-    pub shadow_colour: [f32; 4],
-    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y.
-    pub shadow_params: [f32; 4],
+    /// Shadow-layer index and counts: `[base_index, outer_count,
+    /// inner_count, border_mode]`. The counts index into the shared shadow
+    /// storage buffer starting at `base_index` (outer layers first, then
+    /// inner). `border_mode` is 0=inset, 1=outer, 2=center.
+    pub shadow_index: [f32; 4],
+    /// Rotation and pivot: `[rotation_radians, pivot_x, pivot_y, _pad]`.
+    /// `local_pos` is rotated by `-rotation` around `pivot` (pixels from the
+    /// shape centre) before SDF evaluation, so the shape rotates inside its
+    /// axis-aligned bounding box.
+    pub rotation_pivot: [f32; 4],
     /// Clip rectangle in framebuffer pixels (x0, y0, x1, y1). All-zero means
     /// no clipping. Fragments outside the rect are discarded.
     pub clip_rect: [f32; 4],
-    /// Rotation around the shape centre in radians. Applied to `local_pos`
-    /// before SDF evaluation so the shape rotates inside its axis-aligned
-    /// bounding box.
-    pub rotation: f32,
+    /// Reserved for future per-shape scalars. Currently unused (zero).
+    pub _reserved: f32,
     /// Third gradient colour stop. Unused for 2-stop and solid fills.
     pub stop_colour_c: [f32; 4],
     /// Fourth gradient colour stop. Unused for 2-stop and solid fills.
@@ -566,13 +610,13 @@ impl OverlayShapeVertex {
                     shader_location: 9,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 10: shadow_colour vec4f
+                // location 10: shadow_index vec4f (base_index, outer_ct, inner_ct, border_mode)
                 crate::gpu::VertexAttribute {
                     offset: 112,
                     shader_location: 10,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 11: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
+                // location 11: rotation_pivot vec4f (rotation, pivot_x, pivot_y, pad)
                 crate::gpu::VertexAttribute {
                     offset: 128,
                     shader_location: 11,
@@ -584,7 +628,7 @@ impl OverlayShapeVertex {
                     shader_location: 12,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 13: rotation f32 (radians)
+                // location 13: _reserved f32
                 crate::gpu::VertexAttribute {
                     offset: 160,
                     shader_location: 13,
@@ -787,6 +831,11 @@ pub(crate) struct OverlayShapeGpuData {
     pub vertex_buf: Option<crate::gpu::Buffer>,
     /// Number of solid vertices. Zero when all shapes are textured.
     pub vertex_count: u32,
+    /// Bind group (group 0) holding the stacked shadow-layer storage buffer
+    /// for the solid pipeline. Present whenever `vertex_buf` is `Some`.
+    pub shadow_bind_group: Option<crate::gpu::BindGroup>,
+    /// Backing storage buffer for `shadow_bind_group`. Kept alive alongside it.
+    pub _shadow_buf: Option<crate::gpu::Buffer>,
     /// One batch per unique texture, drawn after solid shapes.
     pub tex_batches: Vec<OverlayShapeTexBatch>,
     /// Vertex buffer for backdrop-blur shapes (frosted glass). Uses the same
