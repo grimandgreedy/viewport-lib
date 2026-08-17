@@ -140,6 +140,27 @@ pub fn headless_device_limited_bind_groups() -> Option<(wgpu::Device, wgpu::Queu
     Some((device, queue))
 }
 
+/// A headless device/queue for the feature-gated bake and raytrace suites, or
+/// `None` when no adapter is available. Requests a high-performance adapter and
+/// the default device, named through `viewport_lib::gpu` to match those suites'
+/// APIs. Separate from [`headless_device`], which the renderer tests use with a
+/// low-power adapter and the `wgpu` re-export.
+pub fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Queue)> {
+    let instance = viewport_lib::gpu::default_instance();
+    let adapter = pollster::block_on(instance.request_adapter(
+        &viewport_lib::gpu::RequestAdapterOptions {
+            power_preference: viewport_lib::gpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        },
+    ))
+    .ok()?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&viewport_lib::gpu::DeviceDescriptor::default()))
+            .ok()?;
+    Some((device, queue))
+}
+
 /// Simple unit box mesh data for testing.
 pub fn box_mesh() -> MeshData {
     let positions = vec![

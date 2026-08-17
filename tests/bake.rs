@@ -9,22 +9,8 @@
 use glam::Mat4;
 use viewport_lib::bake::{TexelGeometry, rasterize_texel_gbuffer};
 
-/// A headless device/queue, or `None` when no adapter is available (skip).
-fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Queue)> {
-    let instance = viewport_lib::gpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(
-        &viewport_lib::gpu::RequestAdapterOptions {
-            power_preference: viewport_lib::gpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        },
-    ))
-    .ok()?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&viewport_lib::gpu::DeviceDescriptor::default()))
-            .ok()?;
-    Some((device, queue))
-}
+mod common;
+use common::device_queue;
 
 /// A unit quad on the z=0 plane whose UV1 fills the whole `[0,1]` atlas, so every
 /// texel is covered. Corners are placed so UV `(0,0)` sits at world `(-1,-1)`.

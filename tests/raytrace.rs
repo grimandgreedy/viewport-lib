@@ -12,22 +12,8 @@ use viewport_lib::raytrace::{
     RtBackend, RtCamera, RtLight, RtMaterial, RtScene, RtSettings, Tracer, pick_backend, trace,
 };
 
-/// Create a headless device/queue, or skip the test if no adapter is available.
-fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Queue)> {
-    let instance = viewport_lib::gpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(
-        &viewport_lib::gpu::RequestAdapterOptions {
-            power_preference: viewport_lib::gpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        },
-    ))
-    .ok()?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&viewport_lib::gpu::DeviceDescriptor::default()))
-            .ok()?;
-    Some((device, queue))
-}
+mod common;
+use common::device_queue;
 
 /// A camera looking down -Y at the origin (Z-up), covering roughly [-1,1] in x/z.
 fn camera(width: u32, height: u32) -> RtCamera {

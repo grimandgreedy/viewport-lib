@@ -16,21 +16,8 @@ use viewport_lib::raytrace::{
     bake_lightmap_directional, bake_shadowmask,
 };
 
-fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Queue)> {
-    let instance = viewport_lib::gpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(
-        &viewport_lib::gpu::RequestAdapterOptions {
-            power_preference: viewport_lib::gpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        },
-    ))
-    .ok()?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&viewport_lib::gpu::DeviceDescriptor::default()))
-            .ok()?;
-    Some((device, queue))
-}
+mod common;
+use common::device_queue;
 
 /// A floor quad on z=0 facing up (+Z), spanning [-s, s] in x and y.
 fn add_floor(scene: &mut RtScene, s: f32, material: RtMaterial) {
