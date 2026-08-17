@@ -86,6 +86,17 @@ struct EnvZoneGpu {
 
 const _: () = assert!(std::mem::size_of::<EnvZoneGpu>() == ENV_ZONE_STRIDE_BYTES);
 
+/// Byte offset of the environment-zone region inside `indirect_light_buf`; the
+/// per-object light-probe SH region occupies the buffer before it. The shader's
+/// `ENV_ZONE_BASE` (in vec4 elements) in `helpers/scene_lighting.wgsl` must equal
+/// this divided by 16.
+pub(crate) const ENV_ZONE_REGION_OFFSET_BYTES: u64 =
+    (crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
+        * crate::resources::light_probes::SH_GPU_STRIDE_BYTES) as u64;
+// Guard the CPU/shader coupling: scene_lighting.wgsl hardcodes ENV_ZONE_BASE as
+// this value in vec4 elements (bytes / 16). Update both together.
+const _: () = assert!(ENV_ZONE_REGION_OFFSET_BYTES == 36864 * 16);
+
 /// Upload the active environment-selection zones to the GPU buffer (binding 19)
 /// and record the count for the `Lights` uniform. Replaces any previous set;
 /// an empty slice clears zones (every fragment reverts to the default
@@ -115,7 +126,11 @@ pub fn set_environment_zones(
                 _pad_probe: [0; 3],
             })
             .collect();
-        queue.write_buffer(&resources.env_zone_buf, 0, bytemuck::cast_slice(&gpu));
+        queue.write_buffer(
+            &resources.indirect_light_buf,
+            ENV_ZONE_REGION_OFFSET_BYTES,
+            bytemuck::cast_slice(&gpu),
+        );
     }
     resources.env_zone_count = n as u32;
 }

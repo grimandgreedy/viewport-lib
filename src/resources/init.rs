@@ -318,24 +318,14 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // binding 18: per-object light-probe SH storage buffer
-                // (FRAGMENT, read-only). One 9-vec4 block per light-probe-lit
-                // object; `object.light_probe_index` selects the block, read
-                // only when `object.has_light_probe` is set.
+                // binding 18: indirect-lighting storage buffer (FRAGMENT,
+                // read-only). Holds per-object light-probe SH blocks then the
+                // environment-selection zones in a second region (see
+                // indirect_light_data / load_env_zone in scene_lighting.wgsl).
+                // Binding 19 is intentionally free: env zones used to live there
+                // before they were folded into this buffer.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 18,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 19: environment-selection zones (FRAGMENT, read-only).
-                // Walked per fragment to pick / blend environment array layers.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 19,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
@@ -713,18 +703,20 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
-        let light_probe_sh_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("light_probe_sh_buf"),
+        // Indirect-lighting storage buffer (group 0 binding 18). Holds the
+        // per-object light-probe SH blocks in the first region and the
+        // environment-selection zones in the second, sharing one binding so the
+        // fragment stage stays within the storage-buffer budget. Both regions are
+        // fixed capacity, so writes are sub-region and never realloc. The env-zone
+        // region starts at MAX_LIGHT_PROBE_OBJECTS * SH_GPU_STRIDE_BYTES; the
+        // shader's ENV_ZONE_BASE (in vec4) must match (guarded by a const_assert
+        // in resources::material::environment).
+        let indirect_light_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("indirect_light_buf"),
             size: (crate::resources::light_probes::MAX_LIGHT_PROBE_OBJECTS
-                * crate::resources::light_probes::SH_GPU_STRIDE_BYTES) as u64,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let env_zone_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("env_zone_buf"),
-            size: (crate::resources::material::environment::MAX_ENV_ZONES
-                * crate::resources::material::environment::ENV_ZONE_STRIDE_BYTES)
+                * crate::resources::light_probes::SH_GPU_STRIDE_BYTES
+                + crate::resources::material::environment::MAX_ENV_ZONES
+                    * crate::resources::material::environment::ENV_ZONE_STRIDE_BYTES)
                 as u64,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -1021,11 +1013,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 18,
-                    resource: light_probe_sh_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 19,
-                    resource: env_zone_buf.as_entire_binding(),
+                    resource: indirect_light_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 20,
@@ -2474,7 +2462,7 @@ impl DeviceResources {
             light_uniform_buf,
             light_storage_buf,
             light_probes: None,
-            light_probe_sh_buf,
+            indirect_light_buf,
             light_probe_volume_buf: None,
             light_probe_volume_fallback,
             clustered,
@@ -2651,7 +2639,6 @@ impl DeviceResources {
             ibl_irradiance_texture: None,
             ibl_prefiltered_texture: None,
             ibl_env_next_layer: 1,
-            env_zone_buf,
             env_zone_count: 0,
             ibl_brdf_lut_texture: None,
             ibl_skybox_texture: None,

@@ -263,7 +263,7 @@ pub(super) fn prepare_light_probe_sh(
     }
     if !sh_gpu.is_empty() {
         queue.write_buffer(
-            &resources.light_probe_sh_buf,
+            &resources.indirect_light_buf,
             0,
             bytemuck::cast_slice(&sh_gpu),
         );

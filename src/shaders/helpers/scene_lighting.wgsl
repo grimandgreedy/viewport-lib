@@ -104,16 +104,33 @@ struct ClusterCell {
 @group(0) @binding(15) var<storage, read> cluster_cells:         array<ClusterCell>;
 @group(0) @binding(16) var<storage, read> cluster_light_indices: array<u32>;
 @group(0) @binding(17) var                point_shadow_cube_tex: texture_depth_cube_array;
-// Per-object light-probe SH: 9 vec4 per light-probe-lit object (rgb in xyz),
-// selected by the object's light_probe_index. See evaluate_sh_probe in ambient.wgsl.
-@group(0) @binding(18) var<storage, read> light_probe_sh:         array<vec4<f32>>;
-// Environment-selection zones (F2). Walked per fragment by ibl_ambient_zoned
-// when lights_uniform.env_zone_count > 0.
-@group(0) @binding(19) var<storage, read> env_zones:             array<EnvZone>;
+// Indirect-lighting data (binding 18). Two fixed-size regions share one storage
+// buffer to keep the fragment stage within the per-stage storage-buffer budget:
+//   [0, ENV_ZONE_BASE)   : per-object light-probe SH, 9 vec4 per light-probe-lit
+//                          object (rgb in xyz), selected by object.light_probe_index
+//                          (see evaluate_sh_probe).
+//   [ENV_ZONE_BASE, end) : environment-selection zones, 3 vec4 per zone, read via
+//                          load_env_zone (see ibl_ambient_zoned).
+@group(0) @binding(18) var<storage, read> indirect_light_data:   array<vec4<f32>>;
+// Start of the env-zone region, in vec4 elements. Must equal
+// resources::light_probes::MAX_LIGHT_PROBE_OBJECTS * 9 on the CPU side (a
+// const_assert in resources::material::environment guards this).
+const ENV_ZONE_BASE: u32 = 36864u;
 // Adaptive probe volume: a 3-vec4 header (grid box + dims) then 9 vec4 of SH per
 // grid cell, trilinearly sampled by sample_probe_volume in ambient.wgsl. A
 // disabled header (element 0 w == 0) is bound when no volume is uploaded.
 @group(0) @binding(20) var<storage, read> probe_volume:          array<vec4<f32>>;
+
+// Reconstruct environment zone `i` from the packed vec4 region of
+// indirect_light_data. Mirrors EnvZoneGpu (resources::material::environment):
+// 3 vec4 per zone, with layer/parallax bit-cast from the vec4 lanes.
+fn load_env_zone(i: u32) -> EnvZone {
+    let base = ENV_ZONE_BASE + i * 3u;
+    let a = indirect_light_data[base + 0u];
+    let b = indirect_light_data[base + 1u];
+    let c = indirect_light_data[base + 2u];
+    return EnvZone(a.xyz, bitcast<u32>(a.w), b.xyz, b.w, bitcast<u32>(c.x), 0u, 0u, 0u);
+}
 
 
 fn cluster_index_for(view_pos: vec3<f32>) -> u32 {

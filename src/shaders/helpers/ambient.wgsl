@@ -62,7 +62,7 @@ fn evaluate_sh_probe(base: u32, n: vec3<f32>) -> vec3<f32> {
     let a = array<f32, 9>(1.0, 0.6666667, 0.6666667, 0.6666667, 0.25, 0.25, 0.25, 0.25, 0.25);
     var result = vec3<f32>(0.0);
     for (var k = 0u; k < 9u; k = k + 1u) {
-        result = result + light_probe_sh[i + k].rgb * (yb[k] * a[k]);
+        result = result + indirect_light_data[i + k].rgb * (yb[k] * a[k]);
     }
     return max(result, vec3<f32>(0.0));
 }
@@ -426,7 +426,7 @@ fn ibl_ambient_zoned(
     var specular = vec3<f32>(0.0);
     var total_w = 0.0;
     for (var i = 0u; i < count; i = i + 1u) {
-        let z = env_zones[i];
+        let z = load_env_zone(i);
         let w = env_zone_weight(world_pos, z);
         if w <= 0.0 {
             continue;

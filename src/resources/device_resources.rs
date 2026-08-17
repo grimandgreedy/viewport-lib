@@ -610,9 +610,13 @@ pub struct DeviceResources {
     /// Uploaded SH light-probe field, sampled per object at prepare time. `None`
     /// until `set_light_probes` is called.
     pub(crate) light_probes: Option<crate::resources::LightProbeSet>,
-    /// Per-object blended SH, one 9-`vec4` block per light-probe-lit object,
-    /// written each frame and read at group 1 binding 16 by `mesh.wgsl`.
-    pub(crate) light_probe_sh_buf: crate::gpu::Buffer,
+    /// Indirect-lighting storage buffer (group 0 binding 18). First region: the
+    /// per-object blended SH, one 9-`vec4` block per light-probe-lit object,
+    /// written each frame. Second region (from `MAX_LIGHT_PROBE_OBJECTS *
+    /// SH_GPU_STRIDE_BYTES`): the environment-selection zones, `env_zone_count`
+    /// live. Sharing one buffer keeps the fragment stage within the storage-buffer
+    /// budget; see `load_env_zone` in `scene_lighting.wgsl`.
+    pub(crate) indirect_light_buf: crate::gpu::Buffer,
     /// Uploaded adaptive probe volume (group 0 binding 20): a header plus SH per
     /// grid cell, sampled per fragment by world position. `None` until
     /// `set_light_probe_volume`; the fallback (a disabled 3-`vec4` header) is
@@ -960,11 +964,9 @@ pub struct DeviceResources {
     /// Next free array layer for an extra environment (`upload_environment`).
     /// Starts at 1; layer 0 is reserved for the scene default.
     pub(crate) ibl_env_next_layer: u32,
-    /// Environment-selection zones (binding 19), a packed `EnvZone` array. Always
-    /// allocated at `MAX_ENV_ZONES` capacity; `env_zone_count` bounds the live set.
-    pub(crate) env_zone_buf: crate::gpu::Buffer,
-    /// Number of active environment zones written to `env_zone_buf`. 0 = default
-    /// environment everywhere; the shaders skip the per-fragment zone loop.
+    /// Number of active environment zones written to the env-zone region of
+    /// `indirect_light_buf`. 0 = default environment everywhere; the shaders skip
+    /// the per-fragment zone loop.
     pub(crate) env_zone_count: u32,
     /// Uploaded BRDF LUT texture (owned).
     #[allow(dead_code)]
@@ -1450,11 +1452,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 18,
-                    resource: self.light_probe_sh_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 19,
-                    resource: self.env_zone_buf.as_entire_binding(),
+                    resource: self.indirect_light_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 20,
