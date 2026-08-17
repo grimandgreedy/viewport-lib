@@ -433,11 +433,14 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // binding 6: scalar attribute storage buffer (VERTEX | FRAGMENT, read-only)
+                // binding 6: scalar attribute storage buffer (VERTEX, read-only).
+                // Read only in vs_main; the fragment stage receives the value as
+                // the interpolated `scalar_val` varying, so it does not need the
+                // buffer visible. Keeping it vertex-only also keeps this buffer off
+                // the fragment stage's storage-buffer count.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -456,11 +459,13 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // binding 8: per-face colour storage buffer (VERTEX | FRAGMENT, read-only)
+                // binding 8: per-face colour storage buffer (VERTEX, read-only).
+                // Like binding 6, read only in vs_main; the fragment stage gets it
+                // as the interpolated `face_colour` varying, so it stays vertex-only
+                // and off the fragment stage's storage-buffer count.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 8,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
