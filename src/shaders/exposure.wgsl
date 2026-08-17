@@ -25,6 +25,10 @@ struct ExposureParams {
     tex_width:         f32,
     tex_height:        f32,
     center_weight:     f32,
+    adaptation:        f32,
+    _pad0:             f32,
+    _pad1:             f32,
+    _pad2:             f32,
 };
 
 // Persistent adaptation state; `exposure` is the linear multiplier the tone map
@@ -157,7 +161,16 @@ fn resolve_main() {
     // physical-camera exposure are unaffected; this only sets the auto target.
     let middle_grey = 0.36;
     let middle_grey_stops = log2(middle_grey / (params.k_factor / 100.0));
-    var target_ev = log2(max(l_avg, 1e-5) * 100.0 / params.k_factor) - middle_grey_stops;
+    // Partial adaptation. `target_ev` reduces to `log2(l_avg / middle_grey)` - the
+    // full exposure that would render the metered value to `middle_grey`. Scaling
+    // it by ADAPT (<1) makes the exposure only partially follow the scene: at the
+    // reference level (l_avg == middle_grey) it is unchanged, and away from it the
+    // image keeps some of its real brightness difference instead of being driven
+    // all the way to grey. This is more eye-like (a dim view stays somewhat dim)
+    // AND proportionally shrinks every framing-driven swing - orbit, zoom onto a
+    // bright/dark object, and the flare when the camera faces a dimly-lit
+    // underside - since those are all `l_avg` moving.
+    var target_ev = params.adaptation * (log2(max(l_avg, 1e-5) * 100.0 / params.k_factor) - middle_grey_stops);
     target_ev = clamp(target_ev, params.min_ev, params.max_ev);
 
     // Persistent EV; snap on first use (CPU seeds a non-finite value) or dt<=0.

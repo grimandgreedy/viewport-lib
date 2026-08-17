@@ -56,9 +56,16 @@ pub struct ExposureParams {
     pub tex_height: f32,
     /// Center-weighting of the meter, in `[0, 1]` (0 = uniform full frame).
     pub center_weight: f32,
+    /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
+    /// metered scene. `1` drives the metered value to middle grey (full
+    /// auto-exposure); `0` holds a fixed exposure; between, the image keeps some
+    /// of its real brightness difference (more eye-like) and every framing-driven
+    /// swing shrinks proportionally.
+    pub adaptation: f32,
+    pub _pad: [f32; 3],
 }
 
-const _: () = assert!(std::mem::size_of::<ExposureParams>() == 64);
+const _: () = assert!(std::mem::size_of::<ExposureParams>() == 80);
 
 /// Persistent adaptation state. Matches `ExposureState` in `exposure.wgsl` and
 /// the tone-map exposure buffer (16 bytes). `exposure` is the linear multiplier

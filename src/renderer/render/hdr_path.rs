@@ -4149,6 +4149,8 @@ impl ViewportRenderer {
             tex_width: sw as f32,
             tex_height: sh as f32,
             center_weight: auto.center_weight.clamp(0.0, 1.0),
+            adaptation: auto.adaptation.clamp(0.0, 1.0),
+            _pad: [0.0; 3],
         };
         self.resources
             .exposure

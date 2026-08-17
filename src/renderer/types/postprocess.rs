@@ -103,6 +103,14 @@ pub struct AutoExposure {
     /// on zoom/pan); `1` weights the centre strongly so a centred subject drives
     /// exposure and framing barely moves it. Default: `0.85`.
     pub center_weight: f32,
+    /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
+    /// metered scene. `1` is full auto-exposure (drives the metered value to
+    /// middle grey; maximally sensitive to what the camera frames). `0` holds a
+    /// fixed exposure. Values below `1` are more eye-like - a dim view stays
+    /// somewhat dim rather than being lifted to grey - and proportionally shrink
+    /// framing-driven brightness swings (orbit, zoom onto a bright/dark object,
+    /// the flare when facing a dimly-lit surface). Default: `0.5`.
+    pub adaptation: f32,
 }
 
 impl Default for AutoExposure {
@@ -116,6 +124,7 @@ impl Default for AutoExposure {
             low_percent: 0.65,
             high_percent: 0.95,
             center_weight: 0.85,
+            adaptation: 0.5,
         }
     }
 }

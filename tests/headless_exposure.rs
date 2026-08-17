@@ -13,7 +13,7 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-use viewport_lib::ExposureSettings;
+use viewport_lib::{AutoExposure, ExposureMode, ExposureSettings};
 
 /// A camera-facing quad (normal +Z) scaled to fill the frame, so metering sees
 /// the lit surface rather than the background.
@@ -126,37 +126,64 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
          brighter than the dark scene ({man_dark_l})"
     );
 
-    // --- Automatic (dt = 0 snaps): both must land in a comparable mid range. ---
-    let auto_dark = renderer.render_offscreen(
-        &device,
-        &queue,
-        &lit_frame(size, mesh, dark_i, ExposureSettings::automatic()),
-        size,
-        size,
-    );
-    let auto_bright = renderer.render_offscreen(
-        &device,
-        &queue,
-        &lit_frame(size, mesh, bright_i, ExposureSettings::automatic()),
-        size,
-        size,
-    );
-    let auto_dark_l = centre_luma(&auto_dark, size);
-    let auto_bright_l = centre_luma(&auto_bright, size);
+    let man_gap = man_bright_l - man_dark_l;
 
-    // Both exposed to a sensible mid range (neither crushed to black nor blown
-    // out to white across all three channels).
+    // --- Automatic at full strength (adaptation = 1): drives both to middle grey,
+    // so the 24x input difference is erased. ---
+    let mut full = |i: f32| {
+        let a = AutoExposure {
+            adaptation: 1.0,
+            ..AutoExposure::default()
+        };
+        renderer.render_offscreen(
+            &device,
+            &queue,
+            &lit_frame(size, mesh, i, ExposureSettings::from_mode(ExposureMode::Automatic(a))),
+            size,
+            size,
+        )
+    };
+    let full_dark_l = centre_luma(&full(dark_i), size);
+    let full_bright_l = centre_luma(&full(bright_i), size);
+    for (label, l) in [("dark", full_dark_l), ("bright", full_bright_l)] {
+        assert!(
+            l > 40.0 && l < 240.0 * 3.0,
+            "full-adaptation {label} scene luma {l} out of the expected mid range"
+        );
+    }
+    assert!(
+        (full_bright_l - full_dark_l).abs() < 45.0,
+        "full adaptation did not equalise: dark {full_dark_l} vs bright {full_bright_l}"
+    );
+
+    // --- Automatic at the default strength (adaptation = 0.5): partial, eye-like
+    // compensation. It pulls the two scenes much closer than fixed exposure, but
+    // deliberately does NOT fully equalise them - the brighter scene stays
+    // brighter. ---
+    let auto_dark_l = centre_luma(
+        &renderer.render_offscreen(&device, &queue, &lit_frame(size, mesh, dark_i, ExposureSettings::automatic()), size, size),
+        size,
+    );
+    let auto_bright_l = centre_luma(
+        &renderer.render_offscreen(&device, &queue, &lit_frame(size, mesh, bright_i, ExposureSettings::automatic()), size, size),
+        size,
+    );
     for (label, l) in [("dark", auto_dark_l), ("bright", auto_bright_l)] {
         assert!(
             l > 40.0 && l < 240.0 * 3.0,
             "auto-exposed {label} scene luma {l} out of the expected mid range"
         );
     }
-    // And crucially close to each other: auto-exposure compensated for the 24x
-    // input difference.
+    let auto_gap = auto_bright_l - auto_dark_l;
+    // Compensated relative to fixed exposure...
     assert!(
-        (auto_bright_l - auto_dark_l).abs() < 45.0,
-        "auto-exposure did not equalise: dark {auto_dark_l} vs bright \
-         {auto_bright_l}"
+        auto_gap < man_gap * 0.75,
+        "partial adaptation did not compensate: auto gap {auto_gap} vs fixed gap {man_gap}"
+    );
+    // ...but not fully equalised (the brighter scene is still clearly brighter).
+    assert!(
+        auto_gap > 20.0,
+        "partial adaptation over-equalised: gap {auto_gap} (expected the brighter \
+         scene to stay brighter at adaptation 0.5)"
     );
 }

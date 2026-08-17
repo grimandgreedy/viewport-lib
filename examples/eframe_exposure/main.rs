@@ -405,6 +405,7 @@ impl App {
             }
             ModeSel::Automatic => {
                 ui.checkbox(&mut self.smooth, "Smooth adaptation (dt > 0)");
+                ui.add(egui::Slider::new(&mut self.auto.adaptation, 0.0..=1.0).text("Adaptation strength"));
                 ui.add(egui::Slider::new(&mut self.auto.min_ev, -10.0..=6.0).text("EV min"));
                 ui.add(egui::Slider::new(&mut self.auto.max_ev, 4.0..=20.0).text("EV max"));
                 ui.add(egui::Slider::new(&mut self.auto.speed_up, 0.1..=10.0).text("Adapt speed (brighten)"));
