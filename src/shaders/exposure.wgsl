@@ -95,7 +95,15 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let texel = textureLoad(hdr_texture, coord, 0);
     let lum = luminance(texel.rgb);
     let bin = bin_for_lum(lum);
-    atomicAdd(&histogram[bin], center_weight_for(gid.xy, w, h));
+    // Bin 0 is a raw (unweighted) count of lit texels, used by resolve_main as a
+    // confidence signal (how much of the frame is scene content vs excluded
+    // background). Near-black texels land in bin 0 too but are never part of the
+    // luminance average (the resolve loop starts at bin 1), so counting here does
+    // not bias metering.
+    atomicAdd(&histogram[0], 1u);
+    if bin >= 1u {
+        atomicAdd(&histogram[bin], center_weight_for(gid.xy, w, h));
+    }
 }
 
 // Single invocation: reduce the histogram to an average log-luminance with a
@@ -140,10 +148,14 @@ fn resolve_main() {
     }
 
     let l_avg = exp2(avg_log);
-    // Expose the metered average to 18% middle grey (Unity/Unreal convention),
-    // not the ~12.5% the bare K=12.5 saturation form lands on. Lowering the
-    // target EV by log2(0.18 / (K/100)) brightens by that fraction of a stop.
-    let middle_grey = 0.18;
+    // The metered value renders exactly to `middle_grey`. We meter an upper-mid
+    // luminance band (low/high_percent ~0.65/0.95) for framing stability, so
+    // `l_avg` is the well-lit key content, not a whole-frame average. Exposing
+    // that key to the bare 18% grey card value would read ~1 stop dark (the band
+    // is ~1 stop above the frame mean), so the target is raised to keep lit
+    // surfaces looking lit while the exposure stays orbit-stable. Manual and
+    // physical-camera exposure are unaffected; this only sets the auto target.
+    let middle_grey = 0.36;
     let middle_grey_stops = log2(middle_grey / (params.k_factor / 100.0));
     var target_ev = log2(max(l_avg, 1e-5) * 100.0 / params.k_factor) - middle_grey_stops;
     target_ev = clamp(target_ev, params.min_ev, params.max_ev);
@@ -153,6 +165,29 @@ fn resolve_main() {
     if !(cur > -1e30 && cur < 1e30) {
         cur = target_ev;
     }
+
+    // Low-confidence guard. When only a small fraction of the frame is lit scene
+    // content - the camera has orbited past the ground and is looking at mostly
+    // empty (metering-excluded) background - the meter has lost its bright anchor
+    // and the raw average would flare the exposure up. Ease the target back
+    // toward the held EV in proportion to how little of the frame is lit, so
+    // orbiting over the horizon holds steady instead of suddenly brightening.
+    let raw_lit = f32(atomicLoad(&histogram[0]));
+    let frame_px = max(params.tex_width * params.tex_height, 1.0);
+    let lit_fraction = raw_lit / frame_px;
+    // Gate only the BRIGHTENING direction: a darker meter reading because scene
+    // content has left the frame (camera orbiting past the ground into mostly
+    // excluded background) must not flare the exposure up, but a brighter reading
+    // (scene genuinely got brighter) is always honoured so highlights stay
+    // protected. The gate reaches zero at low lit fraction, which fully FREEZES
+    // the held EV there - important in snap mode (dt<=0), where a partial gate
+    // would let `cur` ratchet down toward the flare one frame at a time. Full
+    // brightening resumes once the frame is genuinely full of (even dim) content.
+    let brighten_gate = smoothstep(0.15, 0.40, lit_fraction);
+    if target_ev < cur {
+        target_ev = mix(cur, target_ev, brighten_gate);
+    }
+
     var new_ev: f32;
     if params.dt <= 0.0 {
         new_ev = target_ev;

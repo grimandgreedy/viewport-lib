@@ -101,7 +101,7 @@ impl ViewportInstance {
         // Your application creates the device before the instance, so a missing
         // feature otherwise degrades silently (e.g. mesh sub-object picking).
         // Warn about the ones the caller could still enable at device creation.
-        fn warn_missing_device_features(device: &crate::gpu::Device) {
+        fn warn_missing_device_capabilities(device: &crate::gpu::Device) {
             let have = device.features();
             let mut missing: Vec<&str> = Vec::new();
             if !have.contains(crate::gpu::PRIMITIVE_INDEX_FEATURE) {
@@ -128,8 +128,27 @@ impl ViewportInstance {
                     missing.join("; ")
                 );
             }
+
+            // Unlike the features above, an insufficient storage-buffer limit is
+            // fatal: the renderer asserts on it at construction (a backend that
+            // enforces the limit cannot build the clustered mesh pipeline layout).
+            // Surface it here first so the actionable guidance is logged before
+            // that panic, alongside the feature diagnostics, rather than only
+            // appearing in the panic message deep in renderer bring-up.
+            let available = device.limits().max_storage_buffers_per_shader_stage;
+            let required = ViewportRenderer::REQUIRED_STORAGE_BUFFERS_PER_STAGE;
+            if available < required {
+                tracing::warn!(
+                    "ViewportInstance: device max_storage_buffers_per_shader_stage is {} but \
+                     viewport-lib needs {}; renderer construction will fail. Pass \
+                     ViewportRenderer::recommended_device_limits(adapter) as required_limits in \
+                     your device descriptor.",
+                    available,
+                    required,
+                );
+            }
         }
-        warn_missing_device_features(device);
+        warn_missing_device_capabilities(device);
 
         let mut renderer = ViewportRenderer::new(device, target_format);
         renderer.set_cpu_pick_cache(true);

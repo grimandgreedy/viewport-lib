@@ -11,23 +11,28 @@
 //!
 //! The scene-brightness slider is the thing to play with: under Manual /
 //! Physical it changes how bright the image is; under Automatic the image stays
-//! put while the metered exposure moves. Orbit/zoom under Automatic to confirm
-//! exposure stays stable (background is excluded from the meter).
+//! put while the metered exposure moves.
+//!
+//! Structure mirrors `eframe_minimal`: a `ViewportInstance` renders into an
+//! app-owned offscreen texture that egui displays as an image, and events come
+//! through the standard `from_egui` adapter driving an `OrbitCameraController`
+//! (left/middle drag orbit, right drag pan, scroll zoom). The offscreen texture
+//! is the sRGB variant of egui's format so the tone map's linear output gets the
+//! hardware linear->sRGB encode on write; egui runs on a non-sRGB surface, and
+//! painting straight into its pass would skip that encode and read ~2.4x too
+//! dark. See docs/issues/eframe-offscreen-target-skips-srgb-encode.
 //!
 //! The viewport is repainted every frame (`ctx.request_repaint()`) so exposure
 //! changes take effect live and auto-exposure smoothing runs - viewport-lib only
 //! re-renders on demand, and exposure lives outside the scene, so without a
 //! repaint request a control change would otherwise be dropped.
-//!
-//! Navigation: left/middle drag = orbit, right drag = pan, scroll = zoom.
 
-mod viewport_callback;
-
-use eframe::egui;
+use eframe::{egui, wgpu};
+use viewport_lib::input::adapters::from_egui;
 use viewport_lib::{
-    AutoExposure, ButtonState, Camera, CameraFrame, ExposureMode, ExposureSettings, FrameData,
-    LightKind, LightSource, LightingSettings, Material, MeshId, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings,
+    Material, Modifiers, OrbitCameraController, ViewportContext, ViewportEvent, ViewportInstance,
+    primitives,
 };
 
 const COLUMNS: usize = 6;
@@ -40,6 +45,36 @@ fn main() -> eframe::Result {
             viewport: egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]),
             depth_buffer: 24,
             stencil_buffer: 8,
+            // eframe creates its device with default limits (8 storage buffers
+            // per stage), but the auto-exposure compute path needs the higher
+            // limits the renderer recommends. Request them, or bring-up panics.
+            wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+                wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                    eframe::egui_wgpu::WgpuSetupCreateNew {
+                        device_descriptor: std::sync::Arc::new(|adapter| {
+                            let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+                                wgpu::Limits::downlevel_webgl2_defaults()
+                            } else {
+                                viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
+                            };
+                            wgpu::DeviceDescriptor {
+                                label: Some("viewport-lib exposure device"),
+                                required_features:
+                                    viewport_lib::ViewportRenderer::recommended_device_features(
+                                        adapter,
+                                    ),
+                                required_limits: wgpu::Limits {
+                                    max_texture_dimension_2d: 8192,
+                                    ..base_limits
+                                },
+                                ..Default::default()
+                            }
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         },
         Box::new(|cc| {
@@ -47,28 +82,70 @@ fn main() -> eframe::Result {
                 .wgpu_render_state
                 .as_ref()
                 .expect("wgpu backend required");
-            // eframe/egui runs on a non-sRGB surface, but the tone map outputs
-            // linear light and relies on an sRGB render target for the hardware
-            // linear->sRGB encode. Using the sRGB variant here makes the encode
-            // happen; without it every colour reads ~2.4x too dark (crushed
-            // shadows). See docs/issues/eframe-offscreen-target-skips-srgb-encode.
+            // The session draws into an app-owned offscreen texture built as the
+            // sRGB variant of egui's format (see the module docs), so build the
+            // session for that same format.
             let format = rs.target_format.add_srgb_suffix();
-            let mut renderer = ViewportRenderer::new(&rs.device, format);
+            let mut session = ViewportInstance::new(&rs.device, format);
 
             let span = (COLUMNS - 1) as f32 * COL_SPACING;
-            let (ground, sphere) = {
-                let res = renderer.resources_mut();
-                let ground = res
-                    .upload_mesh_data(&rs.device, &primitives::cuboid(span + 8.0, 12.0, 0.4))
-                    .expect("ground");
-                let sphere = res
-                    .upload_mesh_data(&rs.device, &primitives::sphere(0.8, 48, 24))
-                    .expect("sphere");
-                (ground, sphere)
-            };
+            let ground_mesh = session
+                .resources_mut()
+                .upload_mesh_data(&rs.device, &primitives::cuboid(span + 8.0, 12.0, 0.4))
+                .expect("ground");
+            let sphere_mesh = session
+                .resources_mut()
+                .upload_mesh_data(&rs.device, &primitives::sphere(0.8, 48, 24))
+                .expect("sphere");
 
-            rs.renderer.write().callback_resources.insert(renderer);
-            Ok(Box::new(App::new(ground, sphere)))
+            // Static scene: a ground slab and a row of spheres from dark to bright
+            // albedo. Geometry never changes, so add it once here.
+            let scene = session.scene_mut();
+            scene.add(
+                Some(ground_mesh),
+                glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)),
+                {
+                    let mut m = Material::from_colour([0.45, 0.45, 0.48]);
+                    m.roughness = 0.95;
+                    m
+                },
+            );
+            for c in 0..COLUMNS {
+                let x = c as f32 * COL_SPACING;
+                let a = 0.05 + (c as f32 / (COLUMNS - 1) as f32) * 0.85;
+                let mut m = Material::from_colour([a, a, a]);
+                m.roughness = 0.6;
+                m.metallic = 0.0;
+                scene.add(
+                    Some(sphere_mesh),
+                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.8, 0.8)),
+                    m,
+                );
+            }
+
+            // Background is a persistent viewport setting.
+            session.viewport_frame_mut().background_colour = Some([0.12, 0.12, 0.14, 1.0]);
+
+            let cam = session.camera_mut();
+            cam.center = glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7);
+            cam.distance = 17.0;
+            cam.orientation =
+                glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2);
+
+            Ok(Box::new(App {
+                session,
+                orbit: OrbitCameraController::viewport_all(),
+                target: None,
+                light_intensity: 4.0,
+                mode: ModeSel::Automatic,
+                compensation: 0.0,
+                manual_ev: 0.0,
+                aperture: 1.4,
+                shutter_denom: 30.0,
+                iso: 3200.0,
+                auto: AutoExposure::default(),
+                smooth: true,
+            }))
         }),
     )
 }
@@ -84,12 +161,18 @@ enum ModeSel {
     Automatic,
 }
 
-struct App {
-    camera: Camera,
-    controller: OrbitCameraController,
+/// The app-owned offscreen render target and its egui texture registration.
+struct Target {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    id: egui::TextureId,
+    size: [u32; 2],
+}
 
-    ground: MeshId,
-    sphere: MeshId,
+struct App {
+    session: ViewportInstance,
+    orbit: OrbitCameraController,
+    target: Option<Target>,
 
     // Scene
     light_intensity: f32,
@@ -106,35 +189,6 @@ struct App {
 }
 
 impl App {
-    fn new(ground: MeshId, sphere: MeshId) -> Self {
-        Self {
-            camera: Camera {
-                center: glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7),
-                distance: 17.0,
-                orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2),
-                ..Camera::default()
-            },
-            controller: OrbitCameraController::viewport_primitives(),
-            ground,
-            sphere,
-            light_intensity: 4.0,
-            mode: ModeSel::Automatic,
-            compensation: 0.0,
-            manual_ev: 0.0,
-            // Low-light defaults: the scene is pre-photometric (intensities ~1,
-            // not lux/candela), so daylight f-stops read black until units are
-            // pinned. Wide aperture / slow shutter / high ISO expose it.
-            aperture: 1.4,
-            shutter_denom: 30.0,
-            iso: 3200.0,
-            auto: AutoExposure::default(),
-            // Interactive default: ease exposure over time so orbit/zoom don't
-            // snap the brightness. Snap (dt<=0) is the library default for
-            // one-shot / dirty-only renders.
-            smooth: true,
-        }
-    }
-
     fn build_lighting(&self) -> LightingSettings {
         let mut sun = LightSource::default();
         sun.cast_shadows = true;
@@ -152,33 +206,6 @@ impl App {
         l.sky_colour = [0.6, 0.7, 0.9];
         l.ground_colour = [0.25, 0.22, 0.2];
         l
-    }
-
-    fn build_items(&self) -> Vec<SceneRenderItem> {
-        let mut items = Vec::new();
-        let span = (COLUMNS - 1) as f32 * COL_SPACING;
-
-        let mut ground = SceneRenderItem::default();
-        ground.mesh_id = self.ground;
-        ground.model =
-            glam::Mat4::from_translation(glam::Vec3::new(span * 0.5, 0.0, -0.2)).to_cols_array_2d();
-        ground.material = Material::from_colour([0.45, 0.45, 0.48]);
-        ground.material.roughness = 0.95;
-        items.push(ground);
-
-        for c in 0..COLUMNS {
-            let x = c as f32 * COL_SPACING;
-            let a = 0.05 + (c as f32 / (COLUMNS - 1) as f32) * 0.85;
-            let mut s = SceneRenderItem::default();
-            s.mesh_id = self.sphere;
-            s.model =
-                glam::Mat4::from_translation(glam::Vec3::new(x, 0.8, 0.8)).to_cols_array_2d();
-            s.material = Material::from_colour([a, a, a]);
-            s.material.roughness = 0.6;
-            s.material.metallic = 0.0;
-            items.push(s);
-        }
-        items
     }
 
     fn build_exposure(&self, dt: f32) -> ExposureSettings {
@@ -217,7 +244,12 @@ impl App {
 // ---------------------------------------------------------------------------
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let rs = frame
+            .wgpu_render_state()
+            .expect("wgpu backend required")
+            .clone();
+
         egui::SidePanel::left("exposure_panel")
             .min_width(280.0)
             .max_width(340.0)
@@ -225,86 +257,98 @@ impl eframe::App for App {
                 egui::ScrollArea::vertical().show(ui, |ui| self.ui_panel(ui));
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let (rect, response) =
-                ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                let (rect, response) =
+                    ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.controller.begin_frame(ViewportContext {
-                hovered: response.hovered(),
-                focused: response.has_focus(),
-                viewport_size: [rect.width(), rect.height()],
-            });
-            ui.input(|i| {
-                let local = i
-                    .pointer
-                    .interact_pos()
-                    .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
-                if let Some(pos) = local {
-                    self.controller
-                        .push_event(ViewportEvent::PointerMoved { position: pos });
+                // Offscreen target in physical pixels so it stays sharp on HiDPI;
+                // (re)created when the panel size changes.
+                let ppp = ui.ctx().pixels_per_point();
+                let size = [
+                    (rect.width() * ppp).round().max(1.0) as u32,
+                    (rect.height() * ppp).round().max(1.0) as u32,
+                ];
+                if self.target.as_ref().map_or(true, |t| t.size != size) {
+                    let texture = rs.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("exposure_offscreen"),
+                        size: wgpu::Extent3d {
+                            width: size[0],
+                            height: size[1],
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: rs.target_format.add_srgb_suffix(),
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    });
+                    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                    let id = rs.renderer.write().register_native_texture(
+                        &rs.device,
+                        &view,
+                        wgpu::FilterMode::Linear,
+                    );
+                    self.target = Some(Target {
+                        _texture: texture,
+                        view,
+                        id,
+                        size,
+                    });
                 }
-                for event in &i.events {
-                    match event {
-                        egui::Event::PointerButton {
-                            button, pressed, ..
-                        } => {
-                            let vp_button = match button {
-                                egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
-                                egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
-                                egui::PointerButton::Middle => viewport_lib::MouseButton::Middle,
-                                _ => continue,
-                            };
-                            self.controller.push_event(ViewportEvent::MouseButton {
-                                button: vp_button,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                            });
+                let target = self.target.as_ref().unwrap();
+
+                // Screen-space state stays in logical points; pixels_per_point
+                // sizes the physical render target and keeps overlays crisp.
+                self.session.begin_frame(ViewportContext {
+                    hovered: response.hovered(),
+                    focused: response.has_focus(),
+                    viewport_size: [rect.width(), rect.height()],
+                });
+                self.session.set_pixels_per_point(ppp);
+                let origin = glam::Vec2::new(rect.left(), rect.top());
+                ui.input(|i| {
+                    self.session
+                        .handle_event(ViewportEvent::ModifiersChanged(Modifiers {
+                            alt: i.modifiers.alt,
+                            shift: i.modifiers.shift,
+                            ctrl: i.modifiers.command,
+                        }));
+                    for event in &i.events {
+                        if let Some(ev) = from_egui(event, origin) {
+                            self.session.handle_event(ev);
                         }
-                        egui::Event::MouseWheel { unit, delta, .. } => {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.controller.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                        _ => {}
                     }
+                });
+
+                // Per-frame exposure + lighting (both driven by live controls).
+                let dt = ctx.input(|i| i.stable_dt).min(0.1);
+                let lighting = self.build_lighting();
+                let exposure = self.build_exposure(dt);
+                let eff = self.session.effects_mut();
+                eff.lighting = lighting;
+                eff.exposure = exposure;
+
+                self.session.update_orbit(&mut self.orbit);
+
+                let cmd = self.session.render(&rs.device, &rs.queue, &target.view);
+                rs.queue.submit(std::iter::once(cmd));
+                ui.painter().image(
+                    target.id,
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+
+                if response.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                } else if response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                 }
             });
-
-            let (w, h) = (rect.width(), rect.height());
-            self.controller.apply_to_camera(&mut self.camera);
-            self.camera.set_aspect_ratio(w, h);
-
-            let dt = ctx.input(|i| i.stable_dt).min(0.1);
-            let ppp = ui.ctx().pixels_per_point();
-            let mut fd = FrameData::new(
-                CameraFrame::from_camera(&self.camera, [w, h]).with_pixels_per_point(ppp),
-                SceneFrame::from_surface_items(self.build_items()),
-            );
-            fd.viewport.background_colour = Some([0.12, 0.12, 0.14, 1.0]);
-            fd.effects.lighting = self.build_lighting();
-            fd.effects.exposure = self.build_exposure(dt);
-
-            ui.painter()
-                .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                    rect,
-                    viewport_callback::ViewportCallback { frame: fd },
-                ));
-
-            if response.dragged() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-            } else if response.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-            }
-        });
 
         // Repaint every frame: exposure lives outside the scene, so a control
         // change would otherwise not dirty anything and be dropped; auto-exposure

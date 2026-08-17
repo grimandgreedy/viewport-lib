@@ -85,14 +85,18 @@ pub struct AutoExposure {
     /// this frame (no adaptation animation). `ViewportApp` auto-fills this from
     /// `ctx.dt`; hand-written hosts pass it (or `0.0`). Default: `0.0`.
     pub dt: f32,
-    /// Fraction of the darkest pixels to discard before averaging, in `[0, 1)`.
-    /// A small outlier reject (dark borders / deep shadow), not a metering
-    /// window: large values bias the average toward the brightest content and
-    /// under-expose. Default: `0.1`.
+    /// Lower edge of the metering window: the cumulative pixel fraction below
+    /// which luminances are discarded before averaging, in `[0, 1)`. Together
+    /// with `high_percent` this meters an upper-mid luminance *band* rather than
+    /// the whole frame. Metering that band (not the bulk) is what keeps exposure
+    /// stable as the camera orbits: the brightest lit surfaces have a nearly
+    /// framing-invariant luminance, whereas the frame *average* swings as a large
+    /// surface (a floor, a wall) grows or shrinks in view. Default: `0.65`.
     pub low_percent: f32,
-    /// Cumulative fraction above which the brightest pixels are discarded, in
-    /// `(low_percent, 1]`. Rejects fireflies / specular highlights.
-    /// Default: `0.9`.
+    /// Upper edge of the metering window: the cumulative fraction above which the
+    /// brightest pixels are discarded, in `(low_percent, 1]`. Rejects fireflies /
+    /// specular highlights so a stray hot pixel does not drive exposure.
+    /// Default: `0.95`.
     pub high_percent: f32,
     /// Center-weighting of the meter, in `[0, 1]`. `0` meters the whole frame
     /// uniformly (exposure then swings as bright content enters/leaves the frame
@@ -109,8 +113,8 @@ impl Default for AutoExposure {
             speed_up: 3.0,
             speed_down: 1.0,
             dt: 0.0,
-            low_percent: 0.1,
-            high_percent: 0.9,
+            low_percent: 0.65,
+            high_percent: 0.95,
             center_weight: 0.85,
         }
     }

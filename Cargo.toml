@@ -179,7 +179,7 @@ required-features = ["wgpu27", "example-egui"]
 [[example]]
 name = "eframe-exposure"
 path = "examples/eframe_exposure/main.rs"
-required-features = ["wgpu27", "example-egui"]
+required-features = ["wgpu27", "example-egui", "egui-adapter"]
 
 [[example]]
 name = "eframe-render-paths"
