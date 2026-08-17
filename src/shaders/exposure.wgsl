@@ -24,7 +24,7 @@ struct ExposureParams {
     high_percent:      f32,
     tex_width:         f32,
     tex_height:        f32,
-    _pad:              f32,
+    center_weight:     f32,
 };
 
 // Persistent adaptation state; `exposure` is the linear multiplier the tone map
@@ -63,7 +63,20 @@ fn clear_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
-// One invocation per HDR texel: bin its log-luminance.
+// Center-weight for a texel, in units of the quantised histogram weight. Pixels
+// near the frame centre count more, so a centred subject drives exposure and
+// zoom/pan barely move it. `center_weight = 0` gives a flat full-frame meter.
+fn center_weight_for(gid: vec2<u32>, w: u32, h: u32) -> u32 {
+    let uv = (vec2<f32>(vec2<u32>(gid)) + vec2<f32>(0.5)) / vec2<f32>(f32(w), f32(h));
+    // Normalised radius from centre: 0 at centre, ~1 at the frame edges.
+    let r = length((uv - vec2<f32>(0.5)) * 2.0) * 0.70710677;
+    let falloff = smoothstep(1.0, 0.15, r); // 1 at centre -> 0 at the corners
+    let weight = mix(1.0, falloff, params.center_weight);
+    // Quantise to an integer weight; keep a floor so edge pixels still register.
+    return max(u32(weight * 64.0 + 0.5), 1u);
+}
+
+// One invocation per HDR texel: bin its log-luminance with a center weight.
 @compute @workgroup_size(16, 16, 1)
 fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let w = u32(params.tex_width);
@@ -74,7 +87,7 @@ fn build_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let texel = textureLoad(hdr_texture, vec2<i32>(i32(gid.x), i32(gid.y)), 0);
     let lum = luminance(texel.rgb);
     let bin = bin_for_lum(lum);
-    atomicAdd(&histogram[bin], 1u);
+    atomicAdd(&histogram[bin], center_weight_for(gid.xy, w, h));
 }
 
 // Single invocation: reduce the histogram to an average log-luminance with a

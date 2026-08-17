@@ -54,8 +54,8 @@ pub struct ExposureParams {
     pub tex_width: f32,
     /// HDR target height in texels.
     pub tex_height: f32,
-    /// Padding to a 16-byte multiple.
-    pub _pad: f32,
+    /// Center-weighting of the meter, in `[0, 1]` (0 = uniform full frame).
+    pub center_weight: f32,
 }
 
 const _: () = assert!(std::mem::size_of::<ExposureParams>() == 64);

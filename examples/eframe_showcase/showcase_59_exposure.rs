@@ -73,9 +73,12 @@ impl Default for ExposureShowcaseState {
             mode: ModeSel::Automatic,
             compensation: 0.0,
             manual_ev: 0.0,
-            aperture: 5.6,
-            shutter_denom: 125.0,
-            iso: 100.0,
+            // Low-light defaults (wide aperture, slow shutter, high ISO): the
+            // scene is still pre-photometric (intensities ~1, not lux/candela),
+            // so daylight f-stops read black until units are pinned in Phase 4.
+            aperture: 1.4,
+            shutter_denom: 30.0,
+            iso: 3200.0,
             auto: AutoExposure::default(),
             smooth: false,
             frame_dt: 0.0,
@@ -245,6 +248,7 @@ pub(crate) fn controls_exposure(app: &mut App, ui: &mut egui::Ui) {
                     .text("ISO"),
             );
             ui.label("The camera triangle: EV100 = log2(N^2 / t) + log2(100 / ISO).");
+            ui.label("Note: f-stops are calibrated for photometric magnitudes (Phase 4). Until units are pinned, the scene is dim, so use fast/wide/high-ISO (low EV) settings to expose it; daylight settings read black.");
         }
         ModeSel::Automatic => {
             ui.checkbox(&mut app.exposure_state.smooth, "Smooth adaptation (dt > 0)");
@@ -270,7 +274,11 @@ pub(crate) fn controls_exposure(app: &mut App, ui: &mut egui::Ui) {
                 egui::Slider::new(&mut app.exposure_state.auto.high_percent, 0.1..=1.0)
                     .text("Meter high clip"),
             );
-            ui.label("Metering the HDR target holds the image steady while the scene brightness moves. dt <= 0 snaps; smoothing eases over time.");
+            ui.add(
+                egui::Slider::new(&mut app.exposure_state.auto.center_weight, 0.0..=1.0)
+                    .text("Center weighting"),
+            );
+            ui.label("Metering the HDR target holds the image steady while the scene brightness moves. dt <= 0 snaps; smoothing eases over time. Center weighting keeps exposure stable when you zoom or pan (set it to 0 to meter the whole frame and see the framing-driven swing).");
         }
     }
 

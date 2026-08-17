@@ -4148,7 +4148,7 @@ impl ViewportRenderer {
             high_percent: auto.high_percent.clamp(0.02, 1.0),
             tex_width: sw as f32,
             tex_height: sh as f32,
-            _pad: 0.0,
+            center_weight: auto.center_weight.clamp(0.0, 1.0),
         };
         self.resources
             .exposure
