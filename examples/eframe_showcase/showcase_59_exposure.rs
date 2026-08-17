@@ -73,9 +73,10 @@ impl Default for ExposureShowcaseState {
             mode: ModeSel::Automatic,
             compensation: 0.0,
             manual_ev: 0.0,
-            // Low-light defaults (wide aperture, slow shutter, high ISO): the
-            // scene is still pre-photometric (intensities ~1, not lux/candela),
-            // so daylight f-stops read black until units are pinned in Phase 4.
+            // Low-light defaults (wide aperture, slow shutter, high ISO): this
+            // demo's "scene brightness" slider is a small abstract value rather
+            // than a physical lux level, so daylight f-stops read black here. See
+            // showcase 60 for lights authored in real lux/candela.
             aperture: 1.4,
             shutter_denom: 30.0,
             iso: 3200.0,
@@ -248,7 +249,7 @@ pub(crate) fn controls_exposure(app: &mut App, ui: &mut egui::Ui) {
                     .text("ISO"),
             );
             ui.label("The camera triangle: EV100 = log2(N^2 / t) + log2(100 / ISO).");
-            ui.label("Note: f-stops are calibrated for photometric magnitudes (Phase 4). Until units are pinned, the scene is dim, so use fast/wide/high-ISO (low EV) settings to expose it; daylight settings read black.");
+            ui.label("Note: this demo's brightness slider is a small abstract value, not a physical lux level, so use fast/wide/high-ISO (low EV) settings to expose it; daylight settings read black. Showcase 60 authors lights in real lux/candela, where daylight f-stops expose correctly.");
         }
         ModeSel::Automatic => {
             ui.checkbox(&mut app.exposure_state.smooth, "Smooth adaptation (dt > 0)");

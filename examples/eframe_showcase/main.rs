@@ -77,6 +77,7 @@ mod showcase_56_submesh_materials;
 mod showcase_57_light_falloff;
 mod showcase_58_shading_parity;
 mod showcase_59_exposure;
+mod showcase_60_photometric;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -243,6 +244,7 @@ fn main() -> eframe::Result {
                 lf_state: showcase_57_light_falloff::LfState::default(),
                 parity_state: showcase_58_shading_parity::ParityState::default(),
                 exposure_state: showcase_59_exposure::ExposureShowcaseState::default(),
+                photometric_state: showcase_60_photometric::PhotometricState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -316,6 +318,7 @@ enum ShowcaseMode {
     LightFalloff,
     ShadingParity,
     Exposure,
+    Photometric,
 }
 
 impl ShowcaseMode {
@@ -380,6 +383,7 @@ impl ShowcaseMode {
             Self::LightFalloff => "57: Light Falloff",
             Self::ShadingParity => "58: Shading Model Parity",
             Self::Exposure => "59: Exposure & Auto-Exposure",
+            Self::Photometric => "60: Photometric Presets",
         }
     }
 }
@@ -577,6 +581,9 @@ pub(crate) struct App {
 
     // --- Showcase 59 ---
     pub(crate) exposure_state: showcase_59_exposure::ExposureShowcaseState,
+
+    // --- Showcase 60 ---
+    pub(crate) photometric_state: showcase_60_photometric::PhotometricState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -785,6 +792,7 @@ impl eframe::App for App {
                     ShowcaseMode::LightFalloff,
                     ShowcaseMode::ShadingParity,
                     ShowcaseMode::Exposure,
+                    ShowcaseMode::Photometric,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1586,7 +1594,7 @@ impl eframe::App for App {
                 // renderer is on-demand, so without a repaint request a slider change
                 // is dropped until something else re-renders. Auto-exposure smoothing
                 // also needs continuous frames.
-                if self.mode == ShowcaseMode::Exposure {
+                if self.mode == ShowcaseMode::Exposure || self.mode == ShowcaseMode::Photometric {
                     ctx.request_repaint();
                 }
 
@@ -1666,7 +1674,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 59] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 60] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1726,6 +1734,7 @@ impl App {
             ShowcaseMode::LightFalloff,
             ShowcaseMode::ShadingParity,
             ShowcaseMode::Exposure,
+            ShowcaseMode::Photometric,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1869,6 +1878,7 @@ impl App {
             ShowcaseMode::LightFalloff => !self.lf_state.built,
             ShowcaseMode::ShadingParity => !self.parity_state.built,
             ShowcaseMode::Exposure => !self.exposure_state.built,
+            ShowcaseMode::Photometric => !self.photometric_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2453,6 +2463,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Photometric => {
+                self.build_photometric_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(4.8, 0.4, 0.7),
+                    distance: 16.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.2),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2572,6 +2592,7 @@ impl App {
             ShowcaseMode::LightFalloff => showcase_57_light_falloff::controls_lf(self, ui),
             ShowcaseMode::ShadingParity => showcase_58_shading_parity::controls_parity(self, ui),
             ShowcaseMode::Exposure => showcase_59_exposure::controls_exposure(self, ui),
+            ShowcaseMode::Photometric => showcase_60_photometric::controls_photometric(self, ui),
         }
     }
 }
@@ -3507,6 +3528,15 @@ impl App {
                 let sg = self.exposure_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+            ShowcaseMode::Photometric => {
+                let items = self
+                    .photometric_state
+                    .scene
+                    .collect_render_items(&Selection::new());
+                let lighting = self.photometric_state.lighting();
+                let sg = self.photometric_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3842,6 +3872,13 @@ impl App {
                 // pipeline stays enabled (default) so the tone map / exposure
                 // buffer path runs.
                 fd.effects.exposure = self.exposure_state.settings();
+                let mut rc = RenderCamera::from_camera(&self.camera);
+                rc.far = (self.camera.distance * 3.0).max(60.0);
+                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                fd.camera.render_camera = rc;
+            }
+            ShowcaseMode::Photometric => {
+                fd.effects.exposure = self.photometric_state.settings();
                 let mut rc = RenderCamera::from_camera(&self.camera);
                 rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);

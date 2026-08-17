@@ -137,7 +137,11 @@ impl Default for AutoExposure {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExposureSettings {
     /// How the base exposure multiplier is derived. Default:
-    /// [`ExposureMode::NEUTRAL`].
+    /// [`ExposureMode::Automatic`] - lights are authored in physical photometric
+    /// units (lux/candela), whose magnitudes only read correctly once exposure
+    /// maps them down, so the default adapts to the scene rather than clipping to
+    /// white. Set [`ExposureMode::Manual`] or [`ExposureMode::PhysicalCamera`] for
+    /// a fixed exposure.
     pub mode: ExposureMode,
     /// Exposure compensation in stops, applied on top of `mode`. Positive
     /// values brighten the image (lower the effective EV). Default: `0.0`.
@@ -147,7 +151,7 @@ pub struct ExposureSettings {
 impl Default for ExposureSettings {
     fn default() -> Self {
         Self {
-            mode: ExposureMode::NEUTRAL,
+            mode: ExposureMode::Automatic(AutoExposure::default()),
             compensation: 0.0,
         }
     }

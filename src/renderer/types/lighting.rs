@@ -2,6 +2,102 @@
 // Lighting configuration types
 // ---------------------------------------------------------------------------
 
+use std::f32::consts::PI;
+
+/// Illuminance in lux (lumens per square metre): the photometric unit for
+/// [`LightKind::Directional`] lights, which deliver the same illuminance to
+/// every lit surface regardless of distance.
+///
+/// Reference values are available as associated constants ([`Lux::FULL_DAYLIGHT`]
+/// and friends). Direct midday sun is around `100_000`; a bright overcast sky is
+/// around `1_000`; a well-lit office is a few hundred.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct Lux(pub f32);
+
+/// Luminous intensity in candela (lumens per steradian): the photometric unit
+/// for [`LightKind::Point`] and [`LightKind::Spot`] lights. Unlike lux this is
+/// flux per solid angle, so it becomes an illuminance at a surface only after
+/// the inverse-square falloff. Build one from a bulb's total output with
+/// [`Lumen::to_point_candela`] or [`Lumen::to_spot_candela`].
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct Candela(pub f32);
+
+/// Luminous flux in lumens: the total light a source emits in all directions,
+/// as printed on a bulb's packaging. Convert to [`Candela`] on construction with
+/// [`Lumen::to_point_candela`] (isotropic, over the full sphere) or
+/// [`Lumen::to_spot_candela`] (concentrated into a cone).
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct Lumen(pub f32);
+
+impl Lux {
+    /// Direct midday sun on a clear day.
+    pub const FULL_DAYLIGHT: Lux = Lux(100_000.0);
+    /// Overcast daytime sky.
+    pub const OVERCAST: Lux = Lux(1_000.0);
+    /// Sun near the horizon at sunrise or sunset.
+    pub const SUNRISE_SUNSET: Lux = Lux(400.0);
+    /// A typical brightly-lit office or classroom.
+    pub const OFFICE: Lux = Lux(400.0);
+    /// Comfortable domestic living-room lighting.
+    pub const LIVING_ROOM: Lux = Lux(50.0);
+    /// Full moon on a clear night.
+    pub const FULL_MOON: Lux = Lux(0.25);
+}
+
+impl Candela {
+    /// A single candle flame, viewed from the side (the historical definition).
+    pub const CANDLE: Candela = Candela(1.0);
+}
+
+impl Lumen {
+    /// A candle's total luminous flux.
+    pub const CANDLE: Lumen = Lumen(12.0);
+    /// A 40 W incandescent bulb.
+    pub const INCANDESCENT_40W: Lumen = Lumen(450.0);
+    /// A 60 W incandescent bulb.
+    pub const INCANDESCENT_60W: Lumen = Lumen(800.0);
+    /// A 100 W incandescent bulb.
+    pub const INCANDESCENT_100W: Lumen = Lumen(1_600.0);
+    /// A ~10 W LED bulb (60 W-incandescent equivalent).
+    pub const LED_10W: Lumen = Lumen(900.0);
+
+    /// Candela for an isotropic point source: the flux is spread evenly over the
+    /// full sphere (`4*pi` steradians), so `cd = lm / (4*pi)`.
+    pub fn to_point_candela(self) -> Candela {
+        Candela(self.0 / (4.0 * PI))
+    }
+
+    /// Candela for a spotlight whose flux is confined to a cone of the given
+    /// outer half-angle (radians): `cd = lm / (2*pi*(1 - cos(outer)))`. A
+    /// narrower cone concentrates the same lumens into a brighter beam.
+    pub fn to_spot_candela(self, outer_angle: f32) -> Candela {
+        let solid_angle = 2.0 * PI * (1.0 - outer_angle.cos());
+        Candela(self.0 / solid_angle.max(1e-6))
+    }
+}
+
+impl From<Lux> for f32 {
+    fn from(v: Lux) -> f32 {
+        v.0
+    }
+}
+impl From<Candela> for f32 {
+    fn from(v: Candela) -> f32 {
+        v.0
+    }
+}
+impl From<Lumen> for f32 {
+    fn from(v: Lumen) -> f32 {
+        v.0
+    }
+}
+
 /// Light source type.
 ///
 /// `Directional` emits parallel rays from a fixed direction (infinite distance).
@@ -62,7 +158,20 @@ pub struct LightSource {
     pub kind: LightKind,
     /// RGB light colour in linear 0..1. Default [1.0, 1.0, 1.0].
     pub colour: [f32; 3],
-    /// Intensity multiplier. Default 1.0.
+    /// Photometric brightness, in the unit that matches [`Self::kind`]:
+    /// **lux** ([`Lux`]) for [`LightKind::Directional`] (illuminance delivered to
+    /// every surface), and **candela** ([`Candela`]) for [`LightKind::Point`] and
+    /// [`LightKind::Spot`] (luminous intensity, which becomes illuminance only
+    /// after the inverse-square falloff). The two are different physical
+    /// quantities, so the same number does not read alike across light types.
+    ///
+    /// Prefer the typed constructors ([`LightSource::directional_lux`],
+    /// [`LightSource::point_candela`], [`LightSource::point_lumens`],
+    /// [`LightSource::spot_candela`], [`LightSource::spot_lumens`]) over setting
+    /// this field directly. Default: [`Lux::FULL_DAYLIGHT`] (100,000 lux), which
+    /// only reads correctly under an exposure that maps daylight down - the
+    /// default [`ExposureSettings`](crate::ExposureSettings) is automatic for
+    /// exactly this reason.
     pub intensity: f32,
     /// Importance hint used by the renderer when more lights are pushed
     /// than fit under the per-frame cap. Higher values are kept; lower
@@ -94,10 +203,99 @@ impl Default for LightSource {
                 direction: [0.4, 0.3, 1.5],
             },
             colour: [1.0, 1.0, 1.0],
-            intensity: 1.0,
+            // A physical daylight sun in lux. Reads as pure white unless exposure
+            // maps it down, so the default exposure is automatic (see
+            // `ExposureSettings::default`).
+            intensity: Lux::FULL_DAYLIGHT.0,
             importance: 1.0,
             cast_shadows: true,
         }
+    }
+}
+
+impl LightSource {
+    /// A directional (sun-like) light of the given surface-to-light `direction`
+    /// and illuminance in [`Lux`]. Colour is white; use struct update on the
+    /// result to change colour, shadows, or importance.
+    pub fn directional_lux(direction: [f32; 3], illuminance: Lux) -> Self {
+        Self {
+            kind: LightKind::Directional { direction },
+            intensity: illuminance.0,
+            ..Self::default()
+        }
+    }
+
+    /// A point light at `position` with luminous intensity in [`Candela`].
+    /// `range` bounds reach (not brightness) and `radius` is the source size
+    /// (clamps the near-field and sizes the penumbra). See [`LightKind::Point`].
+    pub fn point_candela(position: [f32; 3], intensity: Candela, range: f32, radius: f32) -> Self {
+        Self {
+            kind: LightKind::Point {
+                position,
+                range,
+                radius,
+            },
+            intensity: intensity.0,
+            ..Self::default()
+        }
+    }
+
+    /// A point light specified by its total luminous flux in [`Lumen`] (as
+    /// printed on a bulb). The flux is converted to candela over the full sphere
+    /// via [`Lumen::to_point_candela`].
+    pub fn point_lumens(position: [f32; 3], flux: Lumen, range: f32, radius: f32) -> Self {
+        Self::point_candela(position, flux.to_point_candela(), range, radius)
+    }
+
+    /// A spotlight at `position` aimed along `direction`, with luminous intensity
+    /// in [`Candela`]. `inner_angle`/`outer_angle` are cone half-angles (radians);
+    /// `range`/`radius` behave as on [`LightKind::Spot`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn spot_candela(
+        position: [f32; 3],
+        direction: [f32; 3],
+        intensity: Candela,
+        range: f32,
+        inner_angle: f32,
+        outer_angle: f32,
+        radius: f32,
+    ) -> Self {
+        Self {
+            kind: LightKind::Spot {
+                position,
+                direction,
+                range,
+                inner_angle,
+                outer_angle,
+                radius,
+            },
+            intensity: intensity.0,
+            ..Self::default()
+        }
+    }
+
+    /// A spotlight specified by its total luminous flux in [`Lumen`]. The flux is
+    /// converted to candela over the outer cone via [`Lumen::to_spot_candela`], so
+    /// a narrower `outer_angle` yields a brighter beam for the same lumens.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spot_lumens(
+        position: [f32; 3],
+        direction: [f32; 3],
+        flux: Lumen,
+        range: f32,
+        inner_angle: f32,
+        outer_angle: f32,
+        radius: f32,
+    ) -> Self {
+        Self::spot_candela(
+            position,
+            direction,
+            flux.to_spot_candela(outer_angle),
+            range,
+            inner_angle,
+            outer_angle,
+            radius,
+        )
     }
 }
 
@@ -178,7 +376,12 @@ pub struct LightingSettings {
     pub sky_colour: [f32; 3],
     /// Ground colour for hemisphere ambient. Default [0.3, 0.2, 0.1].
     pub ground_colour: [f32; 3],
-    /// Hemisphere ambient intensity. 0.0 = disabled. Default 0.0.
+    /// Hemisphere (sky/ground) ambient fill, in the same linear scale as the
+    /// lights' lux/candela. `0.0` disables it. The default approximates a clear
+    /// daytime sky's fill under [`Lux::FULL_DAYLIGHT`] so shadowed surfaces stay
+    /// readable rather than pitch black; scale it with your key light. (This term
+    /// is a provisional ambient approximation until image-based lighting carries
+    /// absolute nits.)
     pub hemisphere_intensity: f32,
     /// Override the shadow frustum half-extent (world units). None = auto (20.0).
     /// Tighter values improve shadow map texel density and reduce contact-shadow penumbra.
@@ -207,7 +410,7 @@ impl Default for LightingSettings {
             shadows_enabled: true,
             sky_colour: [0.8, 0.9, 1.0],
             ground_colour: [0.5, 0.55, 0.6],
-            hemisphere_intensity: 0.5,
+            hemisphere_intensity: 8_000.0,
             shadow_extent_override: None,
             shadow_cascade_count: 4,
             shadow_atlas_resolution: 4096,

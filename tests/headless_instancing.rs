@@ -63,6 +63,16 @@ fn position_override_takes_effect_through_render_path() {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
+    // Pin a fixed neutral exposure and a modest single light so the red plane
+    // tone-maps to a clear saturated red, independent of the library's
+    // photometric default lighting (daylight lux + auto-exposure).
+    frame.effects.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.lighting.lights = vec![{
+        let mut s = LightSource::default();
+        s.intensity = 1.0;
+        s
+    }];
+    frame.effects.lighting.hemisphere_intensity = 0.5;
 
     // Red plane (target of the override) at the origin; blue decoy off to the
     // side so it doesn't overdraw the red region we measure.
@@ -489,6 +499,16 @@ fn position_override_slice_reads_correct_pool_window() {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
+    // Pin a fixed neutral exposure and a modest single light so the red plane
+    // tone-maps to a clear saturated red, independent of the library's
+    // photometric default lighting (daylight lux + auto-exposure).
+    frame.effects.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.lighting.lights = vec![{
+        let mut s = LightSource::default();
+        s.intensity = 1.0;
+        s
+    }];
+    frame.effects.lighting.hemisphere_intensity = 0.5;
 
     let mut red_item = SceneRenderItem::default();
     red_item.mesh_id = red_id;
