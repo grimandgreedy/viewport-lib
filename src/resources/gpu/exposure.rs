@@ -136,6 +136,18 @@ impl ExposureResources {
                     },
                     count: None,
                 },
+                // binding 4: scene depth. Metering skips far-plane (background)
+                // texels so the flat background fill never biases the meter.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: crate::gpu::ShaderStages::COMPUTE,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Depth,
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -221,6 +233,7 @@ impl ExposureResources {
         &self,
         device: &crate::gpu::Device,
         hdr_view: &crate::gpu::TextureView,
+        depth_view: &crate::gpu::TextureView,
         params_buf: &crate::gpu::Buffer,
         histogram_buf: &crate::gpu::Buffer,
         state_buf: &crate::gpu::Buffer,
@@ -244,6 +257,10 @@ impl ExposureResources {
                 crate::gpu::BindGroupEntry {
                     binding: 3,
                     resource: state_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: crate::gpu::BindingResource::TextureView(depth_view),
                 },
             ],
         })

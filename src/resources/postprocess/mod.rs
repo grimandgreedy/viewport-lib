@@ -2649,6 +2649,7 @@ impl DeviceResources {
         let exposure_bind_group = self.exposure.create_bind_group(
             device,
             &hdr_view,
+            &hdr_depth_only_view,
             &exposure_params_buf,
             &exposure_histogram_buf,
             &exposure_state_buf,
