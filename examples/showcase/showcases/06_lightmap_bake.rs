@@ -1307,7 +1307,10 @@ impl viewport_lib_lightbake::SceneBakePasses for ScenePasses<'_> {
         }
     }
 
-    fn solve_gi(&mut self, gbuffer: &viewport_lib_lightbake::TexelGbuffer) -> viewport_lib_lightbake::GiBake {
+    fn solve_gi(
+        &mut self,
+        gbuffer: &viewport_lib_lightbake::TexelGbuffer,
+    ) -> viewport_lib_lightbake::GiBake {
         let bake = bake_lightmap_directional(
             self.device,
             self.queue,
