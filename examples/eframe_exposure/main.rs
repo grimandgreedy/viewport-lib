@@ -401,7 +401,7 @@ impl App {
                         .logarithmic(true)
                         .text("ISO"),
                 );
-                ui.label("EV100 = log2(N^2 / t) + log2(100 / ISO). f-stops are calibrated for photometric magnitudes (Phase 4); until units are pinned, use fast/wide/high-ISO settings - daylight settings read black.");
+                ui.label("EV100 = log2(N^2 / t) + log2(100 / ISO). f-stops line up with real photometric light units once lights carry them; until then, use fast/wide/high-ISO settings - daylight settings read black.");
             }
             ModeSel::Automatic => {
                 ui.checkbox(&mut self.smooth, "Smooth adaptation (dt > 0)");

@@ -13,18 +13,17 @@ pub enum ToneMapping {
     KhronosNeutral,
 }
 
-/// Interim neutral exposure numerator. **Temporary**: cancels the Lagarde
-/// `maxLum` divisor of `1.2` so `ExposureMode::Manual { ev: 0.0 }` maps to a
-/// linear multiplier of exactly `1.0`, reproducing the retired
-/// `PostProcessSettings.exposure = 1.0` default while intensities are still
-/// pre-photometric (`~1`, not yet lux/candela). Removed in Phase 4, where the
-/// true Lagarde form (`exposure = 1 / (1.2 * 2^EV)`) takes over once real
-/// photometric magnitudes make it correct.
+/// Neutral exposure numerator. Temporary: cancels the `1.2` maxLuminance
+/// divisor so `ExposureMode::Manual { ev: 0.0 }` maps to a linear multiplier of
+/// exactly `1.0`, matching the retired `PostProcessSettings.exposure = 1.0`
+/// default while light intensities are still unitless (`~1`, not yet
+/// lux/candela). It goes away once lights carry photometric units, when the full
+/// `exposure = 1 / (1.2 * 2^EV)` form becomes correct.
 pub(crate) const INTERIM_EXPOSURE_BOOST: f32 = 1.2;
 
 /// Reflected-light meter calibration constant `K` used to convert an average
-/// scene luminance to EV100 (`EV100 = log2(L * 100 / K)`). `12.5` matches the
-/// Canon/Nikon convention used by UE and Frostbite.
+/// scene luminance to EV100 (`EV100 = log2(L * 100 / K)`). `12.5` is the
+/// standard reflected-light value.
 pub(crate) const METER_CALIBRATION_K: f32 = 12.5;
 
 /// How the pre-tone-map exposure multiplier is derived each frame.
@@ -243,9 +242,9 @@ pub(crate) fn ev100_from_physical(aperture: f32, shutter: f32, iso: f32) -> f32 
     (aperture * aperture / shutter).log2() + (100.0 / iso).log2()
 }
 
-/// EV100 to a linear exposure multiplier via the Lagarde/UE maxLuminance form:
+/// EV100 to a linear exposure multiplier via the maxLuminance form:
 /// `maxLum = 1.2 * 2^EV100`, `exposure = boost / maxLum`. `boost` is the
-/// temporary interim neutral (see [`INTERIM_EXPOSURE_BOOST`]); it is `1.0` once
+/// temporary neutral numerator (see [`INTERIM_EXPOSURE_BOOST`]); it is `1.0` once
 /// photometric units are pinned.
 pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
     let max_lum = 1.2 * 2.0_f32.powf(ev100);
@@ -381,9 +380,10 @@ mod exposure_tests {
     }
 
     #[test]
-    fn ev0_is_unit_multiplier_during_interim() {
-        // The interim neutral is chosen so EV 0 lands on a 1.0 multiplier,
-        // reproducing the retired `exposure = 1.0` default. Remove in Phase 4.
+    fn ev0_is_unit_multiplier() {
+        // The neutral boost is chosen so EV 0 lands on a 1.0 multiplier,
+        // reproducing the retired `exposure = 1.0` default. It goes away once
+        // lights carry photometric units.
         assert!(approx(ev100_to_exposure(0.0), 1.0, 1e-4));
     }
 
