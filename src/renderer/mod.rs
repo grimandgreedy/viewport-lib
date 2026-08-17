@@ -36,6 +36,7 @@ pub mod shader_hashes;
 mod shadow_debug_stats;
 mod shadows;
 pub mod stats;
+pub mod tuning;
 pub use shadow_debug_stats::ShadowDebugStats;
 
 #[cfg(test)]
@@ -1145,6 +1146,51 @@ impl ViewportRenderer {
     /// Return the active performance policy.
     pub fn performance_policy(&self) -> crate::renderer::stats::PerformancePolicy {
         self.performance_policy
+    }
+
+    /// Apply a full [`RenderTuning`] set in one call: the persistent
+    /// performance/behavior knobs (culling, occlusion, adaptive quality, render
+    /// scale, runtime mode, upload budget, CPU pick cache, and the diagnostic
+    /// overrides). Equivalent to calling the individual setters, and applies the
+    /// same gating: GPU-driven culling only activates on devices that support
+    /// it, and the manual render scale is ignored while adaptive resolution is
+    /// on. Construction-time choices (MSAA, pipeline cache) and the LOD-group
+    /// registry are not part of this and are left unchanged.
+    pub fn apply_tuning(&mut self, tuning: &crate::renderer::tuning::RenderTuning) {
+        if tuning.gpu_driven_culling {
+            self.enable_gpu_driven_culling();
+        } else {
+            self.disable_gpu_driven_culling();
+        }
+        self.set_occlusion_culling(tuning.occlusion_culling);
+        self.set_performance_policy(tuning.performance);
+        self.set_render_scale(tuning.render_scale);
+        self.set_runtime_mode(tuning.runtime_mode);
+        self.set_upload_budget(tuning.upload_budget);
+        self.set_cpu_pick_cache(tuning.cpu_pick_cache);
+        self.set_force_multi_draw(tuning.diagnostics.force_multi_draw);
+        self.set_force_po_discard(tuning.diagnostics.force_po_discard);
+    }
+
+    /// Snapshot the current persistent tuning, so a consumer wanting to tune for
+    /// performance can see every live lever in one place and diff it against
+    /// [`RenderTuning::default`]. `gpu_driven_culling` reflects the requested
+    /// state, which is only actually active when
+    /// [`is_gpu_culling_supported`](Self::is_gpu_culling_supported) is true.
+    pub fn tuning(&self) -> crate::renderer::tuning::RenderTuning {
+        crate::renderer::tuning::RenderTuning {
+            gpu_driven_culling: self.instancing.gpu_culling_enabled,
+            occlusion_culling: self.occlusion_culling_enabled(),
+            performance: self.performance_policy(),
+            render_scale: self.current_render_scale,
+            runtime_mode: self.runtime_mode(),
+            upload_budget: self.upload_budget,
+            cpu_pick_cache: self.cpu_pick_cache(),
+            diagnostics: crate::renderer::tuning::RenderDiagnostics {
+                force_multi_draw: self.instancing.multi_draw_forced,
+                force_po_discard: self.resources.force_po_discard,
+            },
+        }
     }
 
     /// Manually set the render scale.

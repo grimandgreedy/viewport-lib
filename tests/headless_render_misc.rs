@@ -233,3 +233,29 @@ fn renderer_fits_recommended_device_limits() {
     let ldr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(ldr.len(), 64 * 64 * 4);
 }
+
+/// `apply_tuning` then `tuning()` round-trips the persistent knobs. Uses
+/// `gpu_driven_culling: false` (always honored) so the snapshot equals the input
+/// exactly regardless of device support, and a render scale inside the default
+/// policy bounds so it is not clamped.
+#[test]
+fn render_tuning_round_trips() {
+    let Some((device, _queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Non-exhaustive: consumers start from Default and set fields.
+    let mut want = viewport_lib::RenderTuning::default();
+    want.gpu_driven_culling = false;
+    want.occlusion_culling = true;
+    want.render_scale = 0.75;
+    want.runtime_mode = viewport_lib::RuntimeMode::Playback;
+    want.upload_budget = Some(std::time::Duration::from_millis(2));
+    want.cpu_pick_cache = true;
+    want.diagnostics.force_multi_draw = true;
+    want.diagnostics.force_po_discard = true;
+    renderer.apply_tuning(&want);
+    assert_eq!(renderer.tuning(), want);
+}

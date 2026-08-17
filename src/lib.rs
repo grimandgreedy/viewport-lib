@@ -247,6 +247,7 @@ pub use renderer::shader_hashes::ShaderValidation;
 pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
 };
+pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
 pub use renderer::{
     AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, CellSelectionInfo, ClipObject,
     ClipShape, ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode,
