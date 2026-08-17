@@ -193,6 +193,10 @@ pub enum RtLight {
         colour: [f32; 3],
         /// Falloff range in world units; <= 0 disables the windowed falloff.
         range: f32,
+        /// Source radius (world units): clamps the inverse-square term near the
+        /// light so it does not blow up, matching the rasteriser. `0.0` clamps
+        /// to a tiny epsilon (a mathematical point source).
+        radius: f32,
     },
 }
 
@@ -551,6 +555,7 @@ struct GpuMaterial {
 struct GpuLight {
     data: [f32; 4],
     colour: [f32; 4],
+    params: [f32; 4], // x = source radius; yzw reserved
 }
 
 #[repr(C)]
@@ -981,14 +986,17 @@ impl Tracer {
                 RtLight::Directional { direction, colour } => GpuLight {
                     data: [direction[0], direction[1], direction[2], 0.0],
                     colour: [colour[0], colour[1], colour[2], 0.0],
+                    params: [0.0; 4],
                 },
                 RtLight::Point {
                     position,
                     colour,
                     range,
+                    radius,
                 } => GpuLight {
                     data: [position[0], position[1], position[2], 1.0],
                     colour: [colour[0], colour[1], colour[2], range.max(0.0)],
+                    params: [radius.max(0.0), 0.0, 0.0, 0.0],
                 },
             })
             .collect();
@@ -997,6 +1005,7 @@ impl Tracer {
             gpu_lights.push(GpuLight {
                 data: [0.0; 4],
                 colour: [0.0; 4],
+                params: [0.0; 4],
             });
         }
 

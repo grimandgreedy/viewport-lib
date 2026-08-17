@@ -659,3 +659,15 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 **Sidebar:** Play/pause fly-around and restart; DoF enable, auto-rack focus, focal distance/range/max-blur; projection override with FOV and near sliders; unlit foreground toggle; cube spin speed.
 
 **Drift:** None.
+
+---
+
+## 57. Light Falloff  (`showcase_57_light_falloff.rs`, ~203 lines)
+
+**Demos:** The punctual-light falloff model. A row of ten identical white spheres recedes in +X from a single light above the near end, so the physical inverse-square attenuation reads directly as each sphere being dimmer than the last. Three sliders isolate the knobs: `intensity` is a plain linear brightness multiplier (it becomes a photometric unit in a later phase); `range` is reach, windowing the falloff smoothly to zero and culling beyond it without scaling brightness (lower it below the row length and the far spheres go dark); `radius` is the source size that clamps the inverse-square term near the light (raise it to soften and cap the closest spheres instead of letting them blow out). The light-type radio switches between point, spot (aimed down the row), and a flat directional reference with no distance term. Point and spot share one falloff formula (`scene_lighting.wgsl::eval_light`), the same one the path tracer uses.
+
+**Uses:** `LightKind::Point` / `Spot` / `Directional` (with the new `radius` field), `LightSource`, `LightingSettings`, `primitives::sphere`, `Material`, `Scene`.
+
+**Sidebar:** Light type (point/spot/directional); intensity; range (reach, not brightness); source radius (near clamp); light height; hemisphere fill.
+
+**Drift:** None.

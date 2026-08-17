@@ -329,6 +329,7 @@ impl App {
             1 => LightKind::Point {
                 position: self.point_position,
                 range: self.point_range,
+                radius: 0.1,
             },
             _ => LightKind::Spot {
                 position: self.spot_position,
@@ -336,6 +337,7 @@ impl App {
                 range: self.spot_range,
                 inner_angle: self.spot_inner_deg.to_radians(),
                 outer_angle: self.spot_outer_deg.to_radians(),
+                radius: 0.1,
             },
         };
         {

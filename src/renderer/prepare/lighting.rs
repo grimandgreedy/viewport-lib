@@ -69,7 +69,7 @@ impl ViewportRenderer {
                     );
                     light_proj * light_view
                 }
-                LightKind::Point { position, range } => {
+                LightKind::Point { position, range, .. } => {
                     let pos = glam::Vec3::from(*position);
                     let to_center = (shadow_center - pos).normalize();
                     let light_up = if to_center.z.abs() > 0.99 {
@@ -189,6 +189,10 @@ impl ViewportRenderer {
                 light.kind = crate::renderer::types::LightKind::Point {
                     position: centre,
                     range,
+                    // Soft emitter: a volume is not a point source, so give it a
+                    // radius tied to its size to keep the inverse-square falloff
+                    // from spiking right at the centre.
+                    radius: extent.max(0.1),
                 };
                 light.colour = colour;
                 light.intensity = intensity;
@@ -224,9 +228,14 @@ impl ViewportRenderer {
                     spot_direction: [0.0, -1.0, 0.0],
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
-                    _pad: [0.0; 3],
+                    radius: 0.0,
+                    _pad: [0.0; 2],
                 },
-                LightKind::Point { position, range } => SingleLightUniform {
+                LightKind::Point {
+                    position,
+                    range,
+                    radius,
+                } => SingleLightUniform {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
                     light_type: 1,
@@ -239,7 +248,8 @@ impl ViewportRenderer {
                     spot_direction: [0.0, -1.0, 0.0],
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
-                    _pad: [0.0; 3],
+                    radius: *radius,
+                    _pad: [0.0; 2],
                 },
                 LightKind::Spot {
                     position,
@@ -247,6 +257,7 @@ impl ViewportRenderer {
                     range,
                     inner_angle,
                     outer_angle,
+                    radius,
                 } => SingleLightUniform {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
@@ -260,7 +271,8 @@ impl ViewportRenderer {
                     spot_direction: *direction,
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
-                    _pad: [0.0; 3],
+                    radius: *radius,
+                    _pad: [0.0; 2],
                 },
             }
         }
@@ -294,7 +306,7 @@ impl ViewportRenderer {
             .into_iter()
             .filter(|l| match l.kind {
                 LightKind::Directional { .. } => true,
-                LightKind::Point { position, range } => {
+                LightKind::Point { position, range, .. } => {
                     let keep = !cull_frustum.cull_sphere(glam::Vec3::from(position), range);
                     if !keep {
                         frustum_culled += 1;
@@ -352,7 +364,7 @@ impl ViewportRenderer {
                 .map(|(_, l)| {
                     let proximity = match l.kind {
                         LightKind::Directional { .. } => 1.0,
-                        LightKind::Point { position, range }
+                        LightKind::Point { position, range, .. }
                         | LightKind::Spot {
                             position, range, ..
                         } => {
@@ -411,7 +423,7 @@ impl ViewportRenderer {
                 .enumerate()
                 .filter(|(_, src)| src.cast_shadows)
                 .filter_map(|(i, src)| match src.kind {
-                    LightKind::Point { position, range } => {
+                    LightKind::Point { position, range, .. } => {
                         let pos = glam::Vec3::from(position);
                         let score = pos.distance(eye) / src.importance.max(0.001);
                         Some((i, pos, range, score))
@@ -775,7 +787,7 @@ impl ViewportRenderer {
             let mut light_far = 0.0f32;
             for l in combined_lights.iter() {
                 let (position, range) = match l.kind {
-                    LightKind::Point { position, range } => (position, range),
+                    LightKind::Point { position, range, .. } => (position, range),
                     LightKind::Spot {
                         position, range, ..
                     } => (position, range),
@@ -850,7 +862,7 @@ impl ViewportRenderer {
                                 view_mat.transform_vector3(world_dir).normalize_or_zero();
                             (glam::Vec3::ZERO, f32::INFINITY, 0u32, view_dir, 1.0)
                         }
-                        LightKind::Point { position, range } => {
+                        LightKind::Point { position, range, .. } => {
                             let view_pos = view_mat.transform_point3(glam::Vec3::from(position));
                             (view_pos, range, 1u32, glam::Vec3::ZERO, 1.0)
                         }

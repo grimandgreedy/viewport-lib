@@ -71,6 +71,7 @@ fn default_lights() -> [LightSource; 3] {
         s.kind = LightKind::Point {
             position: [5.0, 0.0, 3.0],
             range: 14.0,
+            radius: 0.1,
         };
         s.colour = [1.0, 0.6, 0.2];
         s.intensity = 5.0;
@@ -84,6 +85,7 @@ fn default_lights() -> [LightSource; 3] {
             range: 18.0,
             inner_angle: 0.2,
             outer_angle: 0.4,
+            radius: 0.1,
         };
         s.colour = [0.4, 0.7, 1.0];
         s.intensity = 6.0;
@@ -307,6 +309,7 @@ fn rebuild_stress_lights(state: &mut SlState) {
         src.kind = LightKind::Point {
             position: [x, y, z],
             range: state.stress_radius,
+            radius: 0.1,
         };
         src.colour = colour;
         src.intensity = state.stress_intensity;

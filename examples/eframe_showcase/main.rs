@@ -74,6 +74,7 @@ mod showcase_53_vertex_colours;
 mod showcase_54_custom_shading;
 mod showcase_55_foreground_pass;
 mod showcase_56_submesh_materials;
+mod showcase_57_light_falloff;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -237,6 +238,7 @@ fn main() -> eframe::Result {
                 cs_state: showcase_54_custom_shading::CustomShadingState::default(),
                 fg_state: showcase_55_foreground_pass::ForegroundState::default(),
                 submesh_state: showcase_56_submesh_materials::SubmeshState::default(),
+                lf_state: showcase_57_light_falloff::LfState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -307,6 +309,7 @@ enum ShowcaseMode {
     CustomShading,
     Foreground,
     SubmeshMaterials,
+    LightFalloff,
 }
 
 impl ShowcaseMode {
@@ -368,6 +371,7 @@ impl ShowcaseMode {
             Self::CustomShading => "54: Custom Shading Plugins",
             Self::Foreground => "55: Foreground Composite Pass",
             Self::SubmeshMaterials => "56: Submesh Materials",
+            Self::LightFalloff => "57: Light Falloff",
         }
     }
 }
@@ -556,6 +560,9 @@ pub(crate) struct App {
     pub(crate) cs_state: showcase_54_custom_shading::CustomShadingState,
     pub(crate) fg_state: showcase_55_foreground_pass::ForegroundState,
     pub(crate) submesh_state: showcase_56_submesh_materials::SubmeshState,
+
+    // --- Showcase 57 ---
+    pub(crate) lf_state: showcase_57_light_falloff::LfState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -761,6 +768,7 @@ impl eframe::App for App {
                     ShowcaseMode::CustomShading,
                     ShowcaseMode::Foreground,
                     ShowcaseMode::SubmeshMaterials,
+                    ShowcaseMode::LightFalloff,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1633,7 +1641,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 56] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 57] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1690,6 +1698,7 @@ impl App {
             ShowcaseMode::CustomShading,
             ShowcaseMode::Foreground,
             ShowcaseMode::SubmeshMaterials,
+            ShowcaseMode::LightFalloff,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1830,6 +1839,7 @@ impl App {
             ShowcaseMode::CustomShading => !self.cs_state.built,
             ShowcaseMode::Foreground => !self.fg_state.built,
             ShowcaseMode::SubmeshMaterials => !self.submesh_state.built,
+            ShowcaseMode::LightFalloff => !self.lf_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2383,6 +2393,17 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::LightFalloff => {
+                self.build_light_falloff_scene(renderer);
+                // Frame the row from the side so the near-to-far dimming reads.
+                self.camera = Camera {
+                    center: glam::Vec3::new(9.0, 0.0, 0.5),
+                    distance: 22.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.15),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2499,6 +2520,7 @@ impl App {
             ShowcaseMode::SubmeshMaterials => {
                 showcase_56_submesh_materials::controls_submesh(self, ui)
             }
+            ShowcaseMode::LightFalloff => showcase_57_light_falloff::controls_lf(self, ui),
         }
     }
 }
@@ -2541,6 +2563,7 @@ impl App {
                         _t.kind = LightKind::Point {
                             position: [5.0, 5.0, 5.0],
                             range: 30.0,
+                            radius: 0.1,
                         };
                         _t
                     }]
@@ -2652,6 +2675,7 @@ impl App {
                         _t.kind = LightKind::Point {
                             position: [3.0, 3.0, 3.0],
                             range: 15.0,
+                            radius: 0.1,
                         };
                         _t.colour = [1.0, 0.9, 0.7];
                         _t.intensity = 2.0;
@@ -2702,6 +2726,7 @@ impl App {
                             _t.kind = LightKind::Point {
                                 position: [3.0, 3.0, 3.0],
                                 range: 15.0,
+                                radius: 0.1,
                             };
                             _t.colour = [1.0, 0.97, 0.93];
                             _t.intensity = 2.0;
@@ -3406,6 +3431,15 @@ impl App {
                     0,
                     0,
                 )
+            }
+            ShowcaseMode::LightFalloff => {
+                let items = self
+                    .lf_state
+                    .scene
+                    .collect_render_items(&Selection::new());
+                let lighting = self.lf_state.lighting();
+                let sg = self.lf_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };
 

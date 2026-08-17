@@ -153,6 +153,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                 _t.kind = LightKind::Point {
                     position: [0.0, 3.0, 3.0],
                     range: 15.0,
+                    radius: 0.1,
                 };
                 _t.colour = [1.0, 0.9, 0.7];
                 _t.intensity = 2.0;
@@ -168,6 +169,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     range: 20.0,
                     inner_angle: 0.25,
                     outer_angle: 0.45,
+                    radius: 0.1,
                 };
                 _t.colour = [0.8, 0.95, 1.0];
                 _t.intensity = 3.0;
@@ -228,7 +230,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                                     ui.add(egui::DragValue::new(&mut direction[2]).speed(0.02));
                                 });
                             }
-                            LightKind::Point { position, range } => {
+                            LightKind::Point { position, range, .. } => {
                                 ui.label("Position:");
                                 ui.horizontal(|ui| {
                                     ui.label("X:");
@@ -249,6 +251,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                                 range,
                                 inner_angle,
                                 outer_angle,
+                                ..
                             } => {
                                 ui.label("Position:");
                                 ui.horizontal(|ui| {

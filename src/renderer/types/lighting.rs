@@ -19,25 +19,37 @@ pub enum LightKind {
         /// matrices use this convention.
         direction: [f32; 3],
     },
-    /// Omnidirectional point light with distance falloff.
+    /// Omnidirectional point light with physical inverse-square falloff.
     Point {
         /// World-space position of the light source.
         position: [f32; 3],
-        /// Maximum range (world units) beyond which the light contributes nothing.
+        /// Reach (world units): the falloff is windowed smoothly to zero at
+        /// this distance and the light is culled beyond it. This bounds how far
+        /// the light reaches; it does not scale brightness. Brightness comes
+        /// from `intensity` and the inverse-square falloff.
         range: f32,
+        /// Source radius (world units). The inverse-square term is clamped by
+        /// this radius, so it both removes the near-field singularity and models
+        /// a finite-size emitter (a larger radius is a softer, less point-like
+        /// light). `0.0` is a mathematical point source (clamped internally to a
+        /// tiny epsilon). It also sizes the soft-shadow penumbra.
+        radius: f32,
     },
-    /// Cone-shaped spotlight.
+    /// Cone-shaped spotlight with physical inverse-square falloff.
     Spot {
         /// World-space position of the light source.
         position: [f32; 3],
         /// World-space direction the cone points toward.
         direction: [f32; 3],
-        /// Maximum range (world units).
+        /// Reach (world units): see [`LightKind::Point::range`]. Bounds reach,
+        /// not brightness.
         range: f32,
         /// Inner cone half-angle (radians) : full intensity within this cone.
         inner_angle: f32,
         /// Outer cone half-angle (radians) : light fades to zero at this angle.
         outer_angle: f32,
+        /// Source radius (world units). See [`LightKind::Point::radius`].
+        radius: f32,
     },
 }
 
