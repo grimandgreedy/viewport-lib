@@ -140,7 +140,12 @@ fn resolve_main() {
     }
 
     let l_avg = exp2(avg_log);
-    var target_ev = log2(max(l_avg, 1e-5) * 100.0 / params.k_factor);
+    // Expose the metered average to 18% middle grey (Unity/Unreal convention),
+    // not the ~12.5% the bare K=12.5 saturation form lands on. Lowering the
+    // target EV by log2(0.18 / (K/100)) brightens by that fraction of a stop.
+    let middle_grey = 0.18;
+    let middle_grey_stops = log2(middle_grey / (params.k_factor / 100.0));
+    var target_ev = log2(max(l_avg, 1e-5) * 100.0 / params.k_factor) - middle_grey_stops;
     target_ev = clamp(target_ev, params.min_ev, params.max_ev);
 
     // Persistent EV; snap on first use (CPU seeds a non-finite value) or dt<=0.

@@ -1580,6 +1580,15 @@ impl eframe::App for App {
                 {
                     ctx.request_repaint();
                 }
+                // ----- Exposure (59): keep repainting so exposure-control changes
+                // take effect and auto-exposure adaptation runs. Exposure lives in
+                // `EffectsFrame`, not the scene, so it never dirties the scene; the
+                // renderer is on-demand, so without a repaint request a slider change
+                // is dropped until something else re-renders. Auto-exposure smoothing
+                // also needs continuous frames.
+                if self.mode == ShowcaseMode::Exposure {
+                    ctx.request_repaint();
+                }
 
                 // ----- Vertex colours (53): drive the animated grid and apply
                 // paint strokes. Both go through `update_vertex_colours`, an

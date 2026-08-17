@@ -177,6 +177,11 @@ path = "examples/eframe_lighting_shadows/main.rs"
 required-features = ["wgpu27", "example-egui"]
 
 [[example]]
+name = "eframe-exposure"
+path = "examples/eframe_exposure/main.rs"
+required-features = ["wgpu27", "example-egui"]
+
+[[example]]
 name = "eframe-render-paths"
 path = "examples/eframe_render_paths/main.rs"
 required-features = ["wgpu27", "example-egui"]
