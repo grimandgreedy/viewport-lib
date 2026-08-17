@@ -13,6 +13,224 @@ pub enum ToneMapping {
     KhronosNeutral,
 }
 
+/// Interim neutral exposure numerator. **Temporary**: cancels the Lagarde
+/// `maxLum` divisor of `1.2` so `ExposureMode::Manual { ev: 0.0 }` maps to a
+/// linear multiplier of exactly `1.0`, reproducing the retired
+/// `PostProcessSettings.exposure = 1.0` default while intensities are still
+/// pre-photometric (`~1`, not yet lux/candela). Removed in Phase 4, where the
+/// true Lagarde form (`exposure = 1 / (1.2 * 2^EV)`) takes over once real
+/// photometric magnitudes make it correct.
+pub(crate) const INTERIM_EXPOSURE_BOOST: f32 = 1.2;
+
+/// Reflected-light meter calibration constant `K` used to convert an average
+/// scene luminance to EV100 (`EV100 = log2(L * 100 / K)`). `12.5` matches the
+/// Canon/Nikon convention used by UE and Frostbite.
+pub(crate) const METER_CALIBRATION_K: f32 = 12.5;
+
+/// How the pre-tone-map exposure multiplier is derived each frame.
+///
+/// Every mode resolves to a single linear multiplier applied to scene radiance
+/// before tone mapping (see `tone_map.wgsl`). The multiplier is routed through a
+/// small GPU buffer so auto-exposure can write it from a compute pass in the
+/// same submission as the tone map, keeping a one-shot (dirty-only) render
+/// correctly exposed on its own frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ExposureMode {
+    /// Manual EV100. `ev = 0.0` is the neutral default (a `1.0` multiplier
+    /// during the interim; see [`INTERIM_EXPOSURE_BOOST`]). Higher EV darkens.
+    Manual {
+        /// Exposure value at ISO 100. Higher is darker.
+        ev: f32,
+    },
+    /// Physical-camera triangle. `EV100 = log2(N^2 / t) + log2(100 / ISO)`.
+    PhysicalCamera {
+        /// f-number `N` (aperture). Larger = smaller aperture = darker.
+        aperture: f32,
+        /// Shutter time `t` in seconds. Longer = brighter.
+        shutter: f32,
+        /// Sensor sensitivity (ISO). Higher = brighter.
+        iso: f32,
+    },
+    /// Auto-exposure: meter the HDR target's log-luminance histogram each frame
+    /// and adapt an internal EV toward it (see [`AutoExposure`]).
+    Automatic(AutoExposure),
+}
+
+impl ExposureMode {
+    /// The physically-neutral default: a fixed `EV 0` manual exposure.
+    pub const NEUTRAL: ExposureMode = ExposureMode::Manual { ev: 0.0 };
+}
+
+/// Auto-exposure metering and adaptation parameters (used by
+/// [`ExposureMode::Automatic`]).
+///
+/// Metering reduces the HDR target to a percentile-clipped average
+/// log-luminance, converts it to a target EV100, and eases an internal EV
+/// toward it. `dt` is the smoothing control: `dt <= 0` snaps to the target this
+/// frame (the default, correct for consumers that render only when dirty);
+/// `dt > 0` applies exponential smoothing (the "eye adjusting" look).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoExposure {
+    /// Lower clamp on the adapted EV100. Default: `-8.0`.
+    pub min_ev: f32,
+    /// Upper clamp on the adapted EV100. Default: `18.0`.
+    pub max_ev: f32,
+    /// Adaptation rate (per second) when the scene gets brighter (EV rising).
+    /// Larger adapts faster. Default: `3.0`.
+    pub speed_up: f32,
+    /// Adaptation rate (per second) when the scene gets darker (EV falling).
+    /// Default: `1.0`.
+    pub speed_down: f32,
+    /// Frame time in seconds for temporal smoothing. `<= 0` snaps to the target
+    /// this frame (no adaptation animation). `ViewportApp` auto-fills this from
+    /// `ctx.dt`; hand-written hosts pass it (or `0.0`). Default: `0.0`.
+    pub dt: f32,
+    /// Fraction of the darkest pixels to discard before averaging, in `[0, 1)`.
+    /// Rejects dark borders / background. Default: `0.5`.
+    pub low_percent: f32,
+    /// Cumulative fraction above which the brightest pixels are discarded, in
+    /// `(low_percent, 1]`. Rejects fireflies / specular highlights.
+    /// Default: `0.95`.
+    pub high_percent: f32,
+}
+
+impl Default for AutoExposure {
+    fn default() -> Self {
+        Self {
+            min_ev: -8.0,
+            max_ev: 18.0,
+            speed_up: 3.0,
+            speed_down: 1.0,
+            dt: 0.0,
+            low_percent: 0.5,
+            high_percent: 0.95,
+        }
+    }
+}
+
+/// Physical-camera exposure configuration for the HDR pipeline.
+///
+/// Passed via [`EffectsFrame::exposure`](crate::EffectsFrame). Replaces the old
+/// `PostProcessSettings.exposure` scalar. `compensation` is a stops-of-bias
+/// applied on top of every mode (positive brightens the image).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExposureSettings {
+    /// How the base exposure multiplier is derived. Default:
+    /// [`ExposureMode::NEUTRAL`].
+    pub mode: ExposureMode,
+    /// Exposure compensation in stops, applied on top of `mode`. Positive
+    /// values brighten the image (lower the effective EV). Default: `0.0`.
+    pub compensation: f32,
+}
+
+impl Default for ExposureSettings {
+    fn default() -> Self {
+        Self {
+            mode: ExposureMode::NEUTRAL,
+            compensation: 0.0,
+        }
+    }
+}
+
+impl ExposureSettings {
+    /// An exposure from a mode, with no compensation.
+    pub fn from_mode(mode: ExposureMode) -> Self {
+        Self {
+            mode,
+            compensation: 0.0,
+        }
+    }
+
+    /// Set the exposure compensation (stops); positive brightens.
+    pub fn with_compensation(mut self, stops: f32) -> Self {
+        self.compensation = stops;
+        self
+    }
+
+    /// Convenience: a manual EV100 exposure with no compensation.
+    pub fn manual(ev: f32) -> Self {
+        Self {
+            mode: ExposureMode::Manual { ev },
+            compensation: 0.0,
+        }
+    }
+
+    /// Convenience: a physical-camera exposure with no compensation.
+    pub fn physical(aperture: f32, shutter: f32, iso: f32) -> Self {
+        Self {
+            mode: ExposureMode::PhysicalCamera {
+                aperture,
+                shutter,
+                iso,
+            },
+            compensation: 0.0,
+        }
+    }
+
+    /// Convenience: auto-exposure with default metering/adaptation parameters.
+    pub fn automatic() -> Self {
+        Self {
+            mode: ExposureMode::Automatic(AutoExposure::default()),
+            compensation: 0.0,
+        }
+    }
+
+    /// The EV100 for the non-automatic modes. Returns `None` for `Automatic`,
+    /// whose EV is metered on the GPU.
+    pub(crate) fn base_ev100(&self) -> Option<f32> {
+        match self.mode {
+            ExposureMode::Manual { ev } => Some(ev),
+            ExposureMode::PhysicalCamera {
+                aperture,
+                shutter,
+                iso,
+            } => Some(ev100_from_physical(aperture, shutter, iso)),
+            ExposureMode::Automatic(_) => None,
+        }
+    }
+
+    /// The linear exposure multiplier for the non-automatic modes, including
+    /// `compensation`. Returns `None` for `Automatic`.
+    pub(crate) fn manual_multiplier(&self) -> Option<f32> {
+        self.base_ev100()
+            .map(|ev| ev100_to_exposure(ev - self.compensation))
+    }
+}
+
+/// A snapshot of a viewport's exposure state, read back from the GPU via
+/// [`ViewportRenderer::exposure_state`](crate::ViewportRenderer::exposure_state).
+///
+/// EVs are EV100. For Manual / PhysicalCamera, `current_ev == target_ev` and
+/// `adapting` is always `false`; the fields are only interesting under
+/// [`ExposureMode::Automatic`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExposureReadback {
+    /// The linear exposure multiplier currently applied before tone mapping.
+    pub exposure: f32,
+    /// The adapted EV100 in effect this frame.
+    pub current_ev: f32,
+    /// The metered target EV100 (what adaptation is easing toward).
+    pub target_ev: f32,
+    /// Whether adaptation is still easing toward the target (Automatic only).
+    pub adapting: bool,
+}
+
+/// EV100 from a physical-camera triangle:
+/// `EV100 = log2(N^2 / t) + log2(100 / ISO)`.
+pub(crate) fn ev100_from_physical(aperture: f32, shutter: f32, iso: f32) -> f32 {
+    (aperture * aperture / shutter).log2() + (100.0 / iso).log2()
+}
+
+/// EV100 to a linear exposure multiplier via the Lagarde/UE maxLuminance form:
+/// `maxLum = 1.2 * 2^EV100`, `exposure = boost / maxLum`. `boost` is the
+/// temporary interim neutral (see [`INTERIM_EXPOSURE_BOOST`]); it is `1.0` once
+/// photometric units are pinned.
+pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
+    let max_lum = 1.2 * 2.0_f32.powf(ev100);
+    INTERIM_EXPOSURE_BOOST / max_lum
+}
+
 /// Post-processing settings for the HDR render pipeline.
 ///
 /// Passed via `EffectsFrame::post_process` each frame. When `enabled` is
@@ -31,8 +249,6 @@ pub struct PostProcessSettings {
     pub enabled: bool,
     /// Tone mapping operator. Default: `KhronosNeutral`.
     pub tone_mapping: ToneMapping,
-    /// Pre-tone-mapping exposure multiplier. Default: `1.0`.
-    pub exposure: f32,
     /// Enable screen-space ambient occlusion.
     pub ssao: bool,
     /// Enable bloom.
@@ -94,7 +310,6 @@ impl Default for PostProcessSettings {
         Self {
             enabled: true,
             tone_mapping: ToneMapping::KhronosNeutral,
-            exposure: 1.0,
             ssao: false,
             bloom: false,
             bloom_threshold: 1.0,
@@ -114,5 +329,80 @@ impl Default for PostProcessSettings {
             dof_focal_range: 1.0,
             dof_max_blur_radius: 8.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod exposure_tests {
+    use super::*;
+
+    fn approx(a: f32, b: f32, eps: f32) -> bool {
+        (a - b).abs() <= eps
+    }
+
+    #[test]
+    fn physical_ev100_matches_hand_computed() {
+        // Reference exposure (f/1, 1s, ISO 100) is EV 0.
+        assert!(approx(ev100_from_physical(1.0, 1.0, 100.0), 0.0, 1e-4));
+        // Stopping down two stops (f/2) adds 2 EV.
+        assert!(approx(ev100_from_physical(2.0, 1.0, 100.0), 2.0, 1e-4));
+        // Doubling ISO (200) removes one stop.
+        assert!(approx(ev100_from_physical(2.0, 1.0, 200.0), 1.0, 1e-4));
+        // Halving the shutter (1/2 s) adds one stop.
+        assert!(approx(ev100_from_physical(1.0, 0.5, 100.0), 1.0, 1e-4));
+    }
+
+    #[test]
+    fn sunny_sixteen_is_about_ev15() {
+        // Sunny 16: f/16 at shutter ~= 1/ISO. At ISO 100, 1/125s ~= EV 15.
+        let ev = ev100_from_physical(16.0, 1.0 / 125.0, 100.0);
+        assert!(approx(ev, 15.0, 0.1), "sunny-16 EV100 was {ev}");
+    }
+
+    #[test]
+    fn ev0_is_unit_multiplier_during_interim() {
+        // The interim neutral is chosen so EV 0 lands on a 1.0 multiplier,
+        // reproducing the retired `exposure = 1.0` default. Remove in Phase 4.
+        assert!(approx(ev100_to_exposure(0.0), 1.0, 1e-4));
+    }
+
+    #[test]
+    fn exposure_halves_per_stop_and_is_monotonic() {
+        let e0 = ev100_to_exposure(0.0);
+        let e1 = ev100_to_exposure(1.0);
+        let e2 = ev100_to_exposure(2.0);
+        // Each +1 EV halves the multiplier (darker).
+        assert!(approx(e1, e0 * 0.5, 1e-4));
+        assert!(approx(e2, e0 * 0.25, 1e-4));
+        assert!(e2 < e1 && e1 < e0);
+    }
+
+    #[test]
+    fn compensation_brightens() {
+        let base = ExposureSettings::manual(0.0);
+        let plus = ExposureSettings {
+            mode: ExposureMode::Manual { ev: 0.0 },
+            compensation: 1.0,
+        };
+        // +1 stop of compensation doubles the exposure multiplier.
+        let b = base.manual_multiplier().unwrap();
+        let p = plus.manual_multiplier().unwrap();
+        assert!(approx(p, b * 2.0, 1e-4), "b={b} p={p}");
+    }
+
+    #[test]
+    fn automatic_has_no_manual_multiplier() {
+        let auto = ExposureSettings::automatic();
+        assert!(auto.manual_multiplier().is_none());
+        assert!(auto.base_ev100().is_none());
+        assert!(matches!(auto.mode, ExposureMode::Automatic(_)));
+    }
+
+    #[test]
+    fn physical_mode_multiplier_tracks_ev() {
+        // f/2, 1s, ISO 100 -> EV 2 -> exposure = ev0 * 0.25.
+        let s = ExposureSettings::physical(2.0, 1.0, 100.0);
+        let expected = ev100_to_exposure(2.0);
+        assert!(approx(s.manual_multiplier().unwrap(), expected, 1e-4));
     }
 }

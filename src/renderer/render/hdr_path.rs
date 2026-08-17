@@ -319,7 +319,9 @@ impl ViewportRenderer {
             crate::renderer::ToneMapping::KhronosNeutral => 2u32,
         };
         let tm_uniform = crate::resources::ToneMapUniform {
-            exposure: pp.exposure,
+            // Exposure is applied from the per-viewport exposure state buffer
+            // (binding 9), not this field; kept at 1.0 for layout stability.
+            exposure: 1.0,
             mode,
             bloom_enabled: if pp.bloom { 1 } else { 0 },
             ssao_enabled: if pp.ssao { 1 } else { 0 },
@@ -547,6 +549,7 @@ impl ViewportRenderer {
         self.hdr_outline_composite(&ctx, &mut encoder);
         self.hdr_foreground(&ctx, &mut encoder);
         self.hdr_post_effects(&ctx, &mut encoder);
+        self.hdr_exposure(&ctx, &mut encoder);
         self.hdr_tonemap_resolve(&ctx, &mut encoder);
         self.hdr_scene_overlays(&ctx, &mut encoder);
         self.hdr_final_overlay(&ctx, &mut encoder);
@@ -4086,6 +4089,73 @@ impl ViewportRenderer {
                 dof_pass.draw(0..3, 0..1);
             }
         }
+    }
+
+    /// Resolve the pre-tone-map exposure multiplier into the per-viewport
+    /// exposure state buffer, which the tone map reads (binding 9).
+    ///
+    /// Manual / PhysicalCamera compute the multiplier on the CPU and write the
+    /// buffer directly. Automatic writes the metering params and dispatches the
+    /// clear -> build -> resolve compute passes here, in the same submission,
+    /// before the tone map — so a single dirty render is correctly exposed on
+    /// its own frame (no CPU readback, no cross-frame dependency).
+    fn hdr_exposure(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let frame = ctx.frame;
+        let queue = ctx.queue;
+        let vp_idx = ctx.vp_idx;
+        let exposure = frame.effects.exposure;
+        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+
+        // Manual / PhysicalCamera: write the exposure state buffer directly.
+        if let Some(mult) = exposure.manual_multiplier() {
+            let ev_used = exposure.base_ev100().unwrap_or(0.0) - exposure.compensation;
+            let state = crate::resources::gpu::exposure::ExposureState {
+                exposure: mult,
+                current_ev: ev_used,
+                target_ev: ev_used,
+                adapting: 0.0,
+            };
+            queue.write_buffer(
+                &slot_hdr.exposure_state_buf,
+                0,
+                bytemuck::cast_slice(&[state]),
+            );
+            return;
+        }
+
+        // Automatic: fill the metering params and dispatch the compute passes.
+        let auto = match exposure.mode {
+            crate::renderer::types::ExposureMode::Automatic(a) => a,
+            // `manual_multiplier()` returned `None` only for `Automatic`.
+            _ => return,
+        };
+        let [sw, sh] = slot_hdr.scene_size;
+        let range = crate::resources::gpu::exposure::LOG_LUM_MAX
+            - crate::resources::gpu::exposure::LOG_LUM_MIN;
+        let params = crate::resources::gpu::exposure::ExposureParams {
+            min_log_lum: crate::resources::gpu::exposure::LOG_LUM_MIN,
+            inv_log_lum_range: 1.0 / range,
+            log_lum_range: range,
+            k_factor: crate::renderer::types::METER_CALIBRATION_K,
+            min_ev: auto.min_ev,
+            max_ev: auto.max_ev.max(auto.min_ev),
+            compensation: exposure.compensation,
+            exposure_boost: crate::renderer::types::INTERIM_EXPOSURE_BOOST,
+            speed_up: auto.speed_up.max(0.0),
+            speed_down: auto.speed_down.max(0.0),
+            dt: auto.dt,
+            low_percent: auto.low_percent.clamp(0.0, 0.98),
+            high_percent: auto.high_percent.clamp(0.02, 1.0),
+            tex_width: sw as f32,
+            tex_height: sh as f32,
+            _pad: 0.0,
+        };
+        self.resources
+            .exposure
+            .write_params(queue, &slot_hdr.exposure_params_buf, &params);
+        self.resources
+            .exposure
+            .dispatch(encoder, &slot_hdr.exposure_bind_group, sw, sh);
     }
 
     fn hdr_tonemap_resolve(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {

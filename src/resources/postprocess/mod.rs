@@ -605,6 +605,20 @@ impl DeviceResources {
                         },
                         count: None,
                     },
+                    // binding 9: exposure state buffer (read-only). Holds the
+                    // linear exposure multiplier the tone map applies. Written
+                    // CPU-side (Manual/PhysicalCamera) or by the auto-exposure
+                    // resolve compute pass (Automatic).
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -1840,6 +1854,9 @@ impl DeviceResources {
             usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // Auto-exposure per-viewport buffers (bind group built after `hdr_view`).
+        let (exposure_histogram_buf, exposure_state_buf, exposure_params_buf) =
+            crate::resources::gpu::exposure::ExposureResources::create_viewport_buffers(device);
         let bloom_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("bloom_uniform_buf"),
             size: std::mem::size_of::<BloomUniform>() as u64,
@@ -2045,6 +2062,10 @@ impl DeviceResources {
                             .as_ref()
                             .expect("ensure_hdr_shared not called"),
                     ),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 9,
+                    resource: exposure_state_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2622,6 +2643,17 @@ impl DeviceResources {
         let decal_depth_bg =
             self.create_decal_depth_bg(device, &hdr_depth_only_view, &hdr_stencil_only_view);
 
+        // Auto-exposure compute bind group. Metering reads the sharp scene HDR
+        // (`hdr_view`), never the DOF-blurred copy. The buffers are allocated
+        // earlier so the tone-map bind group can bind `exposure_state_buf`.
+        let exposure_bind_group = self.exposure.create_bind_group(
+            device,
+            &hdr_view,
+            &exposure_params_buf,
+            &exposure_histogram_buf,
+            &exposure_state_buf,
+        );
+
         ViewportHdrState {
             hdr_texture: hdr_tex,
             hdr_view,
@@ -2691,6 +2723,10 @@ impl DeviceResources {
             bloom_v_uniform_buf,
             ssao_uniform_buf,
             contact_shadow_uniform_buf: cs_uniform_buf,
+            exposure_state_buf,
+            exposure_histogram_buf,
+            exposure_params_buf,
+            exposure_bind_group,
             lic_vector_texture: lic_vector_tex,
             lic_vector_view,
             lic_output_texture: lic_output_tex,
@@ -2820,6 +2856,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 8,
                     resource: crate::gpu::BindingResource::TextureView(foreground_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 9,
+                    resource: hdr.exposure_state_buf.as_entire_binding(),
                 },
             ],
         });

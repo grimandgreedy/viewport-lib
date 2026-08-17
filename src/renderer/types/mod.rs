@@ -177,6 +177,12 @@ impl FrameData {
         self
     }
 
+    /// Override the exposure settings (manual EV, physical camera, or auto).
+    pub fn with_exposure(mut self, exposure: ExposureSettings) -> Self {
+        self.effects.exposure = exposure;
+        self
+    }
+
     /// Override the ground plane configuration.
     pub fn with_ground_plane(mut self, ground: GroundPlane) -> Self {
         self.effects.ground_plane = ground;

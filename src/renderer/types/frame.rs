@@ -874,6 +874,9 @@ pub struct EffectsFrame {
     pub cap_fill_enabled: bool,
     /// Post-processing settings. Default: enabled (HDR pipeline active, all effects off).
     pub post_process: PostProcessSettings,
+    /// Physical-camera exposure (manual EV, physical camera, or auto-exposure).
+    /// Default: neutral manual EV 0.
+    pub exposure: ExposureSettings,
     /// Foreground pass configuration (projection override). Default: None.
     /// The pass itself is driven by `SceneFrame::foreground_items`; this only
     /// carries pass-wide settings.
@@ -900,6 +903,7 @@ impl Default for EffectsFrame {
             clip_objects: Vec::new(),
             cap_fill_enabled: true,
             post_process: PostProcessSettings::default(),
+            exposure: ExposureSettings::default(),
             foreground: None,
             compute_filter_items: Vec::new(),
             environment: None,
@@ -949,6 +953,8 @@ pub struct ViewportEffects<'a> {
     pub cap_fill_enabled: bool,
     /// Optional post-processing settings (tone mapping, bloom, SSAO).
     pub post_process: &'a PostProcessSettings,
+    /// Physical-camera exposure settings.
+    pub exposure: &'a ExposureSettings,
     /// Foreground pass configuration (projection override).
     pub foreground: &'a Option<ForegroundPass>,
     /// Ground plane configuration for this viewport.
@@ -982,6 +988,7 @@ impl EffectsFrame {
                 clip_objects: &self.clip_objects,
                 cap_fill_enabled: self.cap_fill_enabled,
                 post_process: &self.post_process,
+                exposure: &self.exposure,
                 foreground: &self.foreground,
                 ground_plane: &self.ground_plane,
                 show_shadow_atlas: self.show_shadow_atlas,

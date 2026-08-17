@@ -683,3 +683,13 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 **Sidebar:** Light intensity; hemisphere fill; PBR metallic (rebuilds the PBR row).
 
 **Drift:** None.
+
+## 59. Exposure & Auto-Exposure  (`showcase_59_exposure.rs`, ~290 lines)
+
+**Demos:** The physical-camera exposure model. One lit scene (a ground plane and a row of spheres running dark to bright albedo, with cast shadows for a genuinely dark region) is viewed under the three `ExposureMode`s. **Manual EV** holds a fixed EV100, so cranking the scene-brightness slider clips or crushes the image like a camera on manual. **Physical camera** derives EV100 from aperture / shutter / ISO through the camera triangle (`EV100 = log2(N^2 / t) + log2(100 / ISO)`), with the resulting EV shown in the readout. **Automatic** meters the HDR target's log-luminance histogram each frame and adapts the exposure to hold a steady mid-grey no matter how bright the scene gets; `dt <= 0` snaps (the dirty-only default) and the "smooth adaptation" toggle eases over time. Exposure runs fully GPU-side (histogram + resolve compute -> a one-float exposure buffer the tone map reads) in the same submission as the tone map.
+
+**Uses:** `ExposureSettings`, `ExposureMode`, `AutoExposure`, `FrameData::effects.exposure`, `LightSource`, `LightingSettings`, `primitives::sphere`, `Scene`.
+
+**Sidebar:** Scene brightness (light intensity); exposure compensation; mode radio (Manual / Physical camera / Automatic); per-mode controls (EV; aperture / shutter / ISO; EV clamps, adapt speeds, meter clips, smoothing); EV readout.
+
+**Drift:** Interim neutral exposure (EV 0 maps to a `1.0` multiplier, reproducing the retired default) is temporary until photometric units are pinned; the auto-exposure EV readout is GPU-metered (not surfaced in the panel).

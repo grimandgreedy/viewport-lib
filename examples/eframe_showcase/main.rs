@@ -76,6 +76,7 @@ mod showcase_55_foreground_pass;
 mod showcase_56_submesh_materials;
 mod showcase_57_light_falloff;
 mod showcase_58_shading_parity;
+mod showcase_59_exposure;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -241,6 +242,7 @@ fn main() -> eframe::Result {
                 submesh_state: showcase_56_submesh_materials::SubmeshState::default(),
                 lf_state: showcase_57_light_falloff::LfState::default(),
                 parity_state: showcase_58_shading_parity::ParityState::default(),
+                exposure_state: showcase_59_exposure::ExposureShowcaseState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -313,6 +315,7 @@ enum ShowcaseMode {
     SubmeshMaterials,
     LightFalloff,
     ShadingParity,
+    Exposure,
 }
 
 impl ShowcaseMode {
@@ -376,6 +379,7 @@ impl ShowcaseMode {
             Self::SubmeshMaterials => "56: Submesh Materials",
             Self::LightFalloff => "57: Light Falloff",
             Self::ShadingParity => "58: Shading Model Parity",
+            Self::Exposure => "59: Exposure & Auto-Exposure",
         }
     }
 }
@@ -570,6 +574,9 @@ pub(crate) struct App {
 
     // --- Showcase 58 ---
     pub(crate) parity_state: showcase_58_shading_parity::ParityState,
+
+    // --- Showcase 59 ---
+    pub(crate) exposure_state: showcase_59_exposure::ExposureShowcaseState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -777,6 +784,7 @@ impl eframe::App for App {
                     ShowcaseMode::SubmeshMaterials,
                     ShowcaseMode::LightFalloff,
                     ShowcaseMode::ShadingParity,
+                    ShowcaseMode::Exposure,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1649,7 +1657,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 58] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 59] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1708,6 +1716,7 @@ impl App {
             ShowcaseMode::SubmeshMaterials,
             ShowcaseMode::LightFalloff,
             ShowcaseMode::ShadingParity,
+            ShowcaseMode::Exposure,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1850,6 +1859,7 @@ impl App {
             ShowcaseMode::SubmeshMaterials => !self.submesh_state.built,
             ShowcaseMode::LightFalloff => !self.lf_state.built,
             ShowcaseMode::ShadingParity => !self.parity_state.built,
+            ShowcaseMode::Exposure => !self.exposure_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2424,6 +2434,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::Exposure => {
+                self.build_exposure_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(6.0, 0.4, 0.7),
+                    distance: 17.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.2),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2542,6 +2562,7 @@ impl App {
             }
             ShowcaseMode::LightFalloff => showcase_57_light_falloff::controls_lf(self, ui),
             ShowcaseMode::ShadingParity => showcase_58_shading_parity::controls_parity(self, ui),
+            ShowcaseMode::Exposure => showcase_59_exposure::controls_exposure(self, ui),
         }
     }
 }
@@ -3454,10 +3475,7 @@ impl App {
                 )
             }
             ShowcaseMode::LightFalloff => {
-                let items = self
-                    .lf_state
-                    .scene
-                    .collect_render_items(&Selection::new());
+                let items = self.lf_state.scene.collect_render_items(&Selection::new());
                 let lighting = self.lf_state.lighting();
                 let sg = self.lf_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
@@ -3469,6 +3487,15 @@ impl App {
                     .collect_render_items(&Selection::new());
                 let lighting = self.parity_state.lighting();
                 let sg = self.parity_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
+            ShowcaseMode::Exposure => {
+                let items = self
+                    .exposure_state
+                    .scene
+                    .collect_render_items(&Selection::new());
+                let lighting = self.exposure_state.lighting();
+                let sg = self.exposure_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };
@@ -3800,6 +3827,16 @@ impl App {
                         _t
                     };
                 }
+            }
+            ShowcaseMode::Exposure => {
+                // Drive the exposure model from the showcase controls. The HDR
+                // pipeline stays enabled (default) so the tone map / exposure
+                // buffer path runs.
+                fd.effects.exposure = self.exposure_state.settings();
+                let mut rc = RenderCamera::from_camera(&self.camera);
+                rc.far = (self.camera.distance * 3.0).max(60.0);
+                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                fd.camera.render_camera = rc;
             }
             ShowcaseMode::BackfacePolicy => {}
             // Decals require the full HDR pipeline so the decal pass (which reads

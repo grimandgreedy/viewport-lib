@@ -145,6 +145,19 @@ pub(crate) struct ViewportHdrState {
     pub ssao_uniform_buf: crate::gpu::Buffer,
     pub contact_shadow_uniform_buf: crate::gpu::Buffer,
 
+    // --- Auto-exposure (per-viewport) ---
+    /// 16-byte `ExposureState`: the linear exposure multiplier the tone map
+    /// reads (binding 9) plus persistent adaptation state. Written CPU-side for
+    /// Manual/PhysicalCamera, or by the resolve compute pass for Automatic.
+    pub exposure_state_buf: crate::gpu::Buffer,
+    /// 256-bin log-luminance histogram, cleared and filled each Automatic frame.
+    pub exposure_histogram_buf: crate::gpu::Buffer,
+    /// Per-frame `ExposureParams` uniform for the metering/adapt compute passes.
+    pub exposure_params_buf: crate::gpu::Buffer,
+    /// Compute bind group (hdr_view + the three buffers above). Rebuilt when the
+    /// HDR target is (re)allocated.
+    pub exposure_bind_group: crate::gpu::BindGroup,
+
     // --- Post-tone-map depth buffer (native resolution) ---
     // When scene_size == output_size (render_scale = 1.0) this is None and
     // hdr_depth_view is used directly for post-tone-map passes.
@@ -624,6 +637,10 @@ pub struct DeviceResources {
     /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
     /// group expose this state to every lit pipeline.
     pub(crate) clustered: crate::resources::gpu::clustered::ClusteredResources,
+    /// Auto-exposure state: shared clear/build/resolve compute pipelines and the
+    /// bind group layout. Per-viewport histogram / adaptation buffers live on
+    /// `ViewportHdrState`.
+    pub(crate) exposure: crate::resources::gpu::exposure::ExposureResources,
     /// Bind group (group 0) binding camera, light, clip-plane, and shadow uniforms.
     pub(crate) camera_bind_group: crate::gpu::BindGroup,
     /// Bind group layout for group 0 (shared by all scene pipelines).

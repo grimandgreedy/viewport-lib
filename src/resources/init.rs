@@ -928,6 +928,10 @@ impl DeviceResources {
 
         mark("clustered");
 
+        let exposure = crate::resources::gpu::exposure::ExposureResources::new(device);
+
+        mark("exposure");
+
         let camera_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
             layout: &camera_bgl,
@@ -2464,6 +2468,7 @@ impl DeviceResources {
             light_probe_volume_buf: None,
             light_probe_volume_fallback,
             clustered,
+            exposure,
             camera_bind_group,
             camera_bind_group_layout: camera_bgl,
             object_bind_group_layout: object_bgl,
