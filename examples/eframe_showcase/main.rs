@@ -136,6 +136,11 @@ fn main() -> eframe::Result {
             // Several showcases (Picking Levels, Tensor Glyphs) use the CPU
             // renderer.pick()/pick_rect() path, which needs the pick cache.
             renderer.set_cpu_pick_cache(true);
+            // Compile the custom-shading plugin pipelines now, at startup,
+            // rather than on the frame that showcase opens: the ~45 pipeline
+            // builds would otherwise stall that frame. See
+            // prewarm_custom_shading_plugins.
+            showcase_54_custom_shading::prewarm_custom_shading_plugins(&device, &mut renderer);
             wgpu_render_state
                 .renderer
                 .write()
