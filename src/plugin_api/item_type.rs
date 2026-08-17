@@ -123,6 +123,65 @@ pub struct PaintContext<'a> {
     pub frame_index: u64,
 }
 
+/// Information forwarded to a plugin's `paint_depth_read`.
+///
+/// The read-only-depth pass runs after the opaque scene (and the built-in
+/// sprite passes) and before OIT, with the scene depth attachment bound
+/// read-only so the plugin's fragment shader can sample it. The pass has the
+/// shared group-0 bind group bound on entry.
+///
+/// The context carries the scene depth as bindable resources. The fragment
+/// shader samples the depth and reconstructs linear view-space depth through
+/// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL),
+/// which matches the built-in soft-particle path so results agree with the
+/// `Soft` sprite sub-mode.
+///
+/// Two ways to bind the depth, depending on whether the plugin has a spare
+/// bind group (the default `max_bind_groups` is 4):
+///
+/// - **Fold into an existing group** (works even at four groups): declare the
+///   depth texture + sampler at free binding indices inside a group the plugin
+///   already owns, and build that group's bind group from
+///   [`scene_depth`](Self::scene_depth) and
+///   [`scene_depth_sampler`](Self::scene_depth_sampler).
+/// - **Dedicated group** (when a group is free): bind the ready-made
+///   [`scene_depth_bind_group`](Self::scene_depth_bind_group) at that group,
+///   whose layout is
+///   [`depth_read_bind_group_layout`](crate::resources::DeviceResources::depth_read_bind_group_layout);
+///   list that layout at the matching slot of `extra_bind_group_layouts` when
+///   building the pipeline via
+///   [`build_depth_read_pipeline`](crate::resources::DeviceResources::build_depth_read_pipeline).
+#[non_exhaustive]
+pub struct DepthReadContext<'a> {
+    /// Active render-camera snapshot for this viewport.
+    pub camera: &'a crate::RenderCamera,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Multi-viewport slot index.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+    /// Read-only depth-aspect view of the scene depth buffer (the opaque
+    /// scene depth, plus the built-in sprite depth writes). Depth format,
+    /// `TextureAspect::DepthOnly`. Bake this into a bind group of the plugin's
+    /// own, or use the ready-made
+    /// [`scene_depth_bind_group`](Self::scene_depth_bind_group).
+    pub scene_depth: &'a crate::gpu::TextureView,
+    /// Non-filtering clamp sampler matching the depth view. Pair it with
+    /// [`scene_depth`](Self::scene_depth) when building a bind group; the same
+    /// sampler backs [`scene_depth_bind_group`](Self::scene_depth_bind_group).
+    pub scene_depth_sampler: &'a crate::gpu::Sampler,
+    /// Ready-to-bind group carrying [`scene_depth`](Self::scene_depth) at
+    /// binding 0 and [`scene_depth_sampler`](Self::scene_depth_sampler) at
+    /// binding 1, matching
+    /// [`depth_read_bind_group_layout`](crate::resources::DeviceResources::depth_read_bind_group_layout).
+    /// A convenience for plugins with a spare bind group; bind it at that
+    /// group. Plugins already using all four groups fold the two bindings into
+    /// an existing group with [`scene_depth`](Self::scene_depth) +
+    /// [`scene_depth_sampler`](Self::scene_depth_sampler) instead.
+    pub scene_depth_bind_group: &'a crate::gpu::BindGroup,
+}
+
 /// Information forwarded to a plugin's `cast_shadow_pass`.
 ///
 /// The lib's shadow render pass is already begun on entry. The plugin
@@ -202,8 +261,9 @@ pub struct PickPassContext<'a> {
 /// [`SceneFrame`](crate::renderer::SceneFrame).
 ///
 /// Beyond `init_gpu`, `prepare`, and `paint`, the trait exposes
-/// `paint_transparent`, `outline_mask`, `cull`, `cast_shadow_pass`, and
-/// `pick` as default-empty hooks; implement the ones an item type needs.
+/// `paint_transparent`, `paint_depth_read`, `paint_foreground`,
+/// `outline_mask`, `cull`, `cast_shadow_pass`, and `pick` as default-empty
+/// hooks; implement the ones an item type needs.
 ///
 /// Registration model: item-type plugins are singleton-by-type. The
 /// `type_name` is the identity scene items reference to route themselves to a
@@ -299,6 +359,47 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
         &'a self,
         _pass: &mut crate::gpu::RenderPass<'a>,
         _ctx: &PaintContext<'a>,
+        _items: &'a dyn PluginItemCollection,
+    ) {
+    }
+
+    /// `true` when this plugin draws in the read-only-depth pass.
+    ///
+    /// The renderer opens that pass only when some plugin opts in;
+    /// implementing [`paint_depth_read`](Self::paint_depth_read) without
+    /// overriding this to `true` means the hook is never called, and a frame
+    /// with no opted-in plugin issues no extra pass.
+    fn draws_depth_read(&self) -> bool {
+        false
+    }
+
+    /// Issue draw calls inside the lib's read-only-depth pass.
+    ///
+    /// The pass runs after the opaque scene (and the built-in sprite passes)
+    /// and before OIT, with the scene depth attachment bound read-only so the
+    /// plugin can sample it: the fragment shader compares its own fragment
+    /// depth against the already-rendered opaque scene (soft particles,
+    /// contact effects, depth-aware fog). The pass loads the HDR scene colour
+    /// and blends over it; it tests against opaque depth but writes none.
+    ///
+    /// The pass has a group-0 bind group bound on entry. Build a compatible
+    /// pipeline via
+    /// [`build_depth_read_pipeline`](crate::resources::DeviceResources::build_depth_read_pipeline)
+    /// and sample the depth through
+    /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL).
+    /// The plugin binds the scene depth in a group it owns: either the
+    /// ready-made [`DepthReadContext::scene_depth_bind_group`] at a spare group,
+    /// or, if it already uses all four bind groups, the two depth bindings
+    /// folded into an existing group from
+    /// [`DepthReadContext::scene_depth`] + [`DepthReadContext::scene_depth_sampler`].
+    /// Plugins must restore group 0 if they rebind it.
+    ///
+    /// Only called when [`draws_depth_read`](Self::draws_depth_read) returns
+    /// `true`.
+    fn paint_depth_read<'a>(
+        &'a self,
+        _pass: &mut crate::gpu::RenderPass<'a>,
+        _ctx: &DepthReadContext<'a>,
         _items: &'a dyn PluginItemCollection,
     ) {
     }

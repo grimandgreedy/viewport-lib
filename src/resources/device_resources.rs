@@ -801,6 +801,15 @@ pub struct DeviceResources {
     pub(crate) material_sampler: crate::gpu::Sampler,
     /// Shared linear-clamp sampler for colourmap LUT lookups.
     pub(crate) lut_sampler: crate::gpu::Sampler,
+    /// Non-filtering clamp sampler for the read-only-depth plugin pass. Bound
+    /// with the scene depth-only view so plugin shaders sample scene depth.
+    pub(crate) depth_read_sampler: crate::gpu::Sampler,
+    /// Bind group layout for the read-only-depth plugin pass (binding 0: depth
+    /// texture, binding 1: non-filtering sampler). A convenience for plugins
+    /// with a spare bind group; the renderer builds the matching bind group
+    /// each frame from the depth-only view. Plugins already using all four
+    /// groups fold the two bindings into an existing group instead.
+    pub(crate) depth_read_bgl: crate::gpu::BindGroupLayout,
     /// Uploaded GPU assets and their handle registries (textures, geometry /
     /// scivis stores, colourmap and matcap tables, fallback LUT and attribute buffers).
     pub(crate) content: ContentResources,

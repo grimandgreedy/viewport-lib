@@ -3,8 +3,8 @@
 //! See [`crate::plugin_api`] for the published types these methods return.
 
 use crate::plugin_api::{
-    ForegroundTargetDesc, MaskTargetDesc, OitTargetDesc, OpaqueTargetDesc, PickTargetDesc,
-    ShadowTargetDesc, SharedBindings,
+    DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OitTargetDesc, OpaqueTargetDesc,
+    PickTargetDesc, ShadowTargetDesc, SharedBindings,
     target_desc::{OIT_ACCUM_BLEND, OIT_REVEAL_BLEND},
 };
 use crate::resources::DeviceResources;
@@ -76,6 +76,15 @@ impl DeviceResources {
         }
     }
 
+    /// Render-target descriptor for the read-only-depth plugin pass.
+    pub fn depth_read_target_desc(&self) -> DepthReadTargetDesc {
+        DepthReadTargetDesc {
+            color_format: HDR_COLOR_FORMAT,
+            depth_format: SCENE_DEPTH_FORMAT,
+            sample_count: self.sample_count,
+        }
+    }
+
     /// Render-target descriptor for the outline-mask pass.
     pub fn mask_target_desc(&self) -> MaskTargetDesc {
         MaskTargetDesc {
@@ -143,6 +152,34 @@ impl DeviceResources {
     /// textures the same way `Material` does (linear filter, repeat wrap).
     pub fn material_sampler(&self) -> &crate::gpu::Sampler {
         &self.material_sampler
+    }
+
+    /// Non-filtering clamp sampler for the read-only-depth pass.
+    ///
+    /// Pair it with the scene depth-only view to build a bind group matching
+    /// [`depth_read_bind_group_layout`](Self::depth_read_bind_group_layout).
+    /// The renderer already builds that bind group each frame and hands it
+    /// over as
+    /// [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group);
+    /// use this only when building your own.
+    pub fn depth_read_sampler(&self) -> &crate::gpu::Sampler {
+        &self.depth_read_sampler
+    }
+
+    /// Bind group layout for the read-only-depth pass: binding 0 is the scene
+    /// depth texture (`texture_depth_2d`), binding 1 the non-filtering sampler.
+    /// Matches [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group).
+    ///
+    /// A convenience for plugins that have a spare bind group: place this at
+    /// whatever free slot of `extra_bind_group_layouts` when building the
+    /// pipeline with [`build_depth_read_pipeline`](Self::build_depth_read_pipeline),
+    /// declare the matching `@group(K) @binding(0/1)` in the shader, and bind
+    /// the ready-made bind group there. A plugin already using all four bind
+    /// groups skips this and folds the depth texture + sampler into an existing
+    /// group instead (see
+    /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL)).
+    pub fn depth_read_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
+        &self.depth_read_bgl
     }
 
     /// Shared linear-clamp sampler used by the lib for colormap LUTs.
@@ -327,6 +364,64 @@ impl DeviceResources {
                     desc.depth_format,
                     false,
                     crate::gpu::CompareFunction::LessEqual,
+                )),
+                multisample: crate::gpu::MultisampleState {
+                    count: desc.sample_count,
+                    ..Default::default()
+                },
+                cache: None,
+            },
+        )
+    }
+
+    /// Build a pipeline that draws into the read-only-depth pass.
+    ///
+    /// One colour target (the HDR scene buffer) with the caller's blend state,
+    /// and the scene depth attachment bound read-only: the pipeline tests
+    /// against opaque depth (`opts.depth_compare`, `LessEqual` by default) but
+    /// never writes it, since the pass binds depth read-only. Set
+    /// `opts.color_blend` to alpha blending for soft particles.
+    ///
+    /// The plugin lists its own bind group layouts in
+    /// `opts.extra_bind_group_layouts` as usual. The scene depth read is not a
+    /// fixed group: the plugin either adds
+    /// [`depth_read_bind_group_layout`](Self::depth_read_bind_group_layout) at a
+    /// spare slot, or folds the two depth bindings into one of its existing
+    /// layouts. It reconstructs depth through
+    /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL).
+    pub fn build_depth_read_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        opts: &PluginPipelineOpts<'_>,
+    ) -> crate::gpu::RenderPipeline {
+        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
+        let desc = self.depth_read_target_desc();
+        crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: opts.label.unwrap_or_default(),
+                layout: &layout,
+                vertex: crate::gpu::VertexState {
+                    module: opts.shader,
+                    entry_point: Some(opts.vs_entry),
+                    buffers: opts.vertex_layouts,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(crate::gpu::FragmentState {
+                    module: opts.shader,
+                    entry_point: Some(opts.fs_entry),
+                    targets: &[Some(crate::gpu::ColorTargetState {
+                        format: desc.color_format,
+                        blend: opts.color_blend,
+                        write_mask: crate::gpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: opts.primitive,
+                depth_stencil: Some(crate::resources::builders::depth_stencil(
+                    desc.depth_format,
+                    false,
+                    opts.depth_compare,
                 )),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,

@@ -1872,6 +1872,36 @@ impl DeviceResources {
         // Clamp-to-edge sampler for colourmap LUT lookups (prevents wrap artifact at scalar extremes).
         let lut_sampler = crate::resources::builders::clamp_linear_sampler(device, "lut_sampler");
 
+        // Read-only-depth plugin pass: non-filtering clamp sampler + group-1
+        // BGL (depth texture + sampler). The renderer builds the matching bind
+        // group each frame from the scene depth-only view.
+        let depth_read_sampler =
+            crate::resources::builders::clamp_nearest_sampler(device, "depth_read_sampler");
+        let depth_read_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("depth_read_bgl"),
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Depth,
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Sampler(
+                            crate::gpu::SamplerBindingType::NonFiltering,
+                        ),
+                        count: None,
+                    },
+                ],
+            });
+
         // ------------------------------------------------------------------
         // Fallback normal map: 1x1 [128, 128, 255, 255] : flat tangent-space normal
         // ------------------------------------------------------------------
@@ -2533,6 +2563,8 @@ impl DeviceResources {
             fallback_emissive_texture_view,
             material_sampler,
             lut_sampler,
+            depth_read_sampler,
+            depth_read_bgl,
             content: crate::resources::types::ContentResources {
                 material_bind_groups: std::collections::HashMap::new(),
                 textures: crate::resources::material::texture_store::TextureStore::new(),

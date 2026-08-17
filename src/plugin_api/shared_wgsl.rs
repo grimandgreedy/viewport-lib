@@ -675,6 +675,92 @@ fn viewport_oit_pack(color: vec3<f32>, alpha: f32, view_z: f32) -> OitOutput {
 }
 "#;
 
+/// Scene-depth reconstruction helpers for the read-only-depth pass.
+///
+/// A plugin drawing in [`paint_depth_read`](crate::plugin_api::ItemTypePlugin::paint_depth_read)
+/// includes this after [`SHARED_BINDINGS_WGSL`] (it reads `camera` for the
+/// inverse view-projection). The helpers are **binding-agnostic**: they take a
+/// depth value the plugin already sampled, so the plugin declares the scene
+/// depth texture + sampler in whatever bind group it owns and at whatever
+/// index is free. This matters because a plugin already using all four bind
+/// groups (the default `max_bind_groups`) has no spare group for a dedicated
+/// depth binding: it appends the two depth bindings to an existing group
+/// instead. The plugin builds that group's bind group from
+/// [`DepthReadContext::scene_depth`](crate::plugin_api::DepthReadContext::scene_depth)
+/// and [`scene_depth_sampler`](crate::plugin_api::DepthReadContext::scene_depth_sampler).
+///
+/// Declare the depth binding and sample it yourself, then pass the value in:
+///
+/// ```wgsl
+/// // In a group the plugin owns, at any free binding index:
+/// @group(2) @binding(4) var scene_depth_tex:  texture_depth_2d;
+/// @group(2) @binding(5) var scene_depth_samp: sampler;
+/// // ...
+/// let screen_uv    = frag_pos.xy / viewport_size;
+/// let scene_ndc_z  = textureSample(scene_depth_tex, scene_depth_samp, screen_uv);
+/// let fade         = viewport_soft_fade_from_ndc(world_pos, screen_uv, scene_ndc_z, soft_dist);
+/// ```
+///
+/// The reconstruction matches the built-in soft-particle sprite path exactly,
+/// so plugin results agree with the `Soft` sprite sub-mode:
+///
+/// - `viewport_view_z(world_pos)` gives positive linear view-space depth
+///   (distance in front of the camera) of a world point.
+/// - `viewport_scene_view_z_from_ndc(screen_uv, scene_ndc_z)` reconstructs the
+///   same for the sampled scene surface via `camera.inv_view_proj` then
+///   `camera.view`.
+/// - `viewport_soft_fade_from_ndc(world_pos, screen_uv, scene_ndc_z, soft_dist)`
+///   returns a `0..1` fade that ramps to zero as `world_pos` approaches the
+///   scene surface over `soft_dist` world units; `soft_dist <= 0` returns 1.
+///
+/// `screen_uv` is the fragment's `@builtin(position).xy` divided by the
+/// viewport size in pixels (`clip_planes.viewport_width/height` from group 0,
+/// or the value passed to the draw).
+pub const SHARED_DEPTH_READ_WGSL: &str = r#"
+// @viewport-wgsl-version: 1
+// Scene depth reconstruction for the read-only-depth pass. Requires
+// SHARED_BINDINGS_WGSL (uses `camera`). Binding-agnostic: the plugin samples
+// its own depth texture (declared in a group it owns) and passes the value in.
+
+// Positive linear view-space depth (distance in front of the camera) of a
+// world-space point.
+fn viewport_view_z(world_pos: vec3<f32>) -> f32 {
+    return -(camera.view * vec4<f32>(world_pos, 1.0)).z;
+}
+
+// Positive linear view-space depth of the opaque scene surface under
+// `screen_uv`, given its raw non-linear depth `scene_ndc_z` (the value from
+// textureSample on the scene depth texture).
+fn viewport_scene_view_z_from_ndc(screen_uv: vec2<f32>, scene_ndc_z: f32) -> f32 {
+    let ndc = vec4<f32>(
+        screen_uv.x * 2.0 - 1.0,
+        1.0 - screen_uv.y * 2.0,
+        scene_ndc_z,
+        1.0,
+    );
+    let world_h = camera.inv_view_proj * ndc;
+    let scene_world = world_h.xyz / world_h.w;
+    return -(camera.view * vec4<f32>(scene_world, 1.0)).z;
+}
+
+// Soft-particle style fade: 1.0 in open space, ramping to 0.0 as `world_pos`
+// meets the sampled scene surface over `soft_dist` world units. `scene_ndc_z`
+// is the raw depth sampled under `screen_uv`. Matches the built-in Soft sprite
+// sub-mode.
+fn viewport_soft_fade_from_ndc(
+    world_pos: vec3<f32>,
+    screen_uv: vec2<f32>,
+    scene_ndc_z: f32,
+    soft_dist: f32,
+) -> f32 {
+    if soft_dist <= 0.0 {
+        return 1.0;
+    }
+    let scene_view_z = viewport_scene_view_z_from_ndc(screen_uv, scene_ndc_z);
+    return smoothstep(0.0, soft_dist, scene_view_z - viewport_view_z(world_pos));
+}
+"#;
+
 /// Fragment helper for the outline mask pass.
 ///
 /// A plugin's mask pipeline reuses its scene-pass vertex stage and uses

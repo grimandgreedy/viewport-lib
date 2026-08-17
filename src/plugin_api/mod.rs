@@ -5,8 +5,8 @@
 //! drop into the lib's existing render passes. A plugin reuses:
 //!
 //! - Target descriptors ([`OpaqueTargetDesc`], [`ForegroundTargetDesc`],
-//!   [`OitTargetDesc`], [`MaskTargetDesc`], [`PickTargetDesc`],
-//!   [`ShadowTargetDesc`]) describe
+//!   [`OitTargetDesc`], [`DepthReadTargetDesc`], [`MaskTargetDesc`],
+//!   [`PickTargetDesc`], [`ShadowTargetDesc`]) describe
 //!   the render-target formats, blend states, and depth-stencil state each
 //!   lib pass expects. Pipelines built against these are compatible with the
 //!   corresponding pass.
@@ -99,12 +99,12 @@ pub mod target_desc;
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use install::{PluginInstallCtx, ViewportPlugin, install_plugin};
 pub use item_type::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickPassContext, PickRay,
-    PluginItemCollection, ShadowCastContext,
+    DepthReadContext, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickPassContext, PickRay, PluginItemCollection, ShadowCastContext,
 };
 pub use target_desc::{
-    ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND, OitTargetDesc,
-    OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
+    DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND,
+    OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
 };
 
 /// Group-0 bind layout shared by every scene pipeline.

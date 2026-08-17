@@ -57,6 +57,26 @@ pub struct OitTargetDesc {
     pub sample_count: u32,
 }
 
+/// Targets used by the read-only-depth plugin pass.
+///
+/// The pass runs after the opaque scene (and the built-in sprite passes) and
+/// before OIT, with the scene depth attachment bound read-only so the plugin's
+/// fragment shader can sample it. A pipeline built against this descriptor
+/// draws one colour target over the finished opaque scene colour and depth-tests
+/// against the opaque depth without writing it.
+#[derive(Clone, Copy, Debug)]
+pub struct DepthReadTargetDesc {
+    /// Colour target format. `Rgba16Float` on the HDR path; matches the
+    /// swap-chain format on the LDR path.
+    pub color_format: crate::gpu::TextureFormat,
+    /// Depth-stencil attachment, bound read-only (`depth_ops: None`). The
+    /// pipeline tests against it but must not write; `Depth24PlusStencil8`.
+    pub depth_format: crate::gpu::TextureFormat,
+    /// MSAA sample count. The pass runs at the scene sample count (the SSAA
+    /// target on the HDR path), matching the opaque depth it samples.
+    pub sample_count: u32,
+}
+
 /// Targets used by the outline mask pass (stage 1 of the selection outline).
 ///
 /// Selected items rasterise a single value (1.0) into an `R8Unorm` mask. The
