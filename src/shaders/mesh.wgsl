@@ -916,8 +916,13 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             let n_dot_l = max(dot(N, light_dir), 0.0);
             let n_dot_h = max(dot(N, H), 0.0);
 
-            let diffuse_contrib  = object.diffuse  * n_dot_l * shadow;
-            let specular_contrib = object.specular * pow(n_dot_h, object.shininess) * shadow;
+            // Energy-normalised Blinn-Phong so it matches the PBR path's
+            // brightness under the same light: the diffuse lobe carries the 1/pi
+            // Lambert factor, and the specular lobe the (shininess + 8) / (8 pi)
+            // normalisation so a tighter highlight does not add energy.
+            let diffuse_contrib  = object.diffuse  * n_dot_l * shadow * INV_PI;
+            let specular_contrib = object.specular * pow(n_dot_h, object.shininess)
+                                 * (object.shininess + 8.0) * INV_PI * 0.125 * shadow;
 
             // Subtractive lightmap: the main directional light is baked in, so skip
             // its realtime direct (its shadow still darkens the baked term below).

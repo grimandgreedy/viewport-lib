@@ -320,12 +320,14 @@ pub struct Material {
     /// `Mask(cutoff)` discards fragments below the cutoff using the alpha channel.
     /// `Blend` routes the mesh through the OIT transparent pass.
     pub alpha_mode: AlphaMode,
-    /// Which lit shading model evaluates this surface. Default [`ShadingModel::Phong`].
+    /// Which lit shading model evaluates this surface. Default [`ShadingModel::Pbr`].
     ///
-    /// `Phong` uses Blinn-Phong; `Pbr` uses Cook-Torrance GGX driven by `metallic`
-    /// and `roughness`; `Matcap(id)` replaces the lit path with a matcap texture
-    /// lookup. The `unlit` per-item bypass on [`ItemSettings`] is checked
-    /// independently and takes precedence over any value here.
+    /// `Pbr` uses Cook-Torrance GGX driven by `metallic` and `roughness`; `Phong`
+    /// uses Blinn-Phong (a cheaper model with a distinct highlight, energy-matched
+    /// to PBR's diffuse so the two read at the same brightness under a given
+    /// light); `Matcap(id)` replaces the lit path with a matcap texture lookup.
+    /// The `unlit` per-item bypass on [`ItemSettings`] is checked independently
+    /// and takes precedence over any value here.
     pub shading_model: ShadingModel,
     /// UV parameterization visualization. When set, replaces albedo/lighting with a
     /// procedural pattern in UV space : useful for inspecting parameterization quality.
@@ -447,7 +449,7 @@ impl Default for Material {
             emissive: [0.0, 0.0, 0.0],
             emissive_texture_id: None,
             alpha_mode: AlphaMode::Opaque,
-            shading_model: ShadingModel::Phong,
+            shading_model: ShadingModel::Pbr,
             param_vis: None,
             backface_policy: BackfacePolicy::Cull,
             uv_offset: [0.0, 0.0],
@@ -635,7 +637,7 @@ mod tests {
         assert!((m.base_colour[0] - 0.7).abs() < 1e-6);
         assert!((m.ambient - 0.15).abs() < 1e-6);
         assert!((m.diffuse - 0.75).abs() < 1e-6);
-        assert!(!m.is_pbr());
+        assert!(m.is_pbr());
         assert!(m.texture_id.is_none());
         assert!(m.normal_map_id.is_none());
         assert!(m.ao_map_id.is_none());
@@ -735,7 +737,7 @@ mod tests {
         assert_eq!(m.texture_id, Some(crate::resources::TextureId(42)));
         let def = Material::default();
         assert!((m.base_colour[0] - def.base_colour[0]).abs() < 1e-6);
-        assert!(!m.is_pbr());
+        assert!(m.is_pbr());
     }
 
     #[test]

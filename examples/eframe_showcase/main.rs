@@ -75,6 +75,7 @@ mod showcase_54_custom_shading;
 mod showcase_55_foreground_pass;
 mod showcase_56_submesh_materials;
 mod showcase_57_light_falloff;
+mod showcase_58_shading_parity;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -239,6 +240,7 @@ fn main() -> eframe::Result {
                 fg_state: showcase_55_foreground_pass::ForegroundState::default(),
                 submesh_state: showcase_56_submesh_materials::SubmeshState::default(),
                 lf_state: showcase_57_light_falloff::LfState::default(),
+                parity_state: showcase_58_shading_parity::ParityState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -310,6 +312,7 @@ enum ShowcaseMode {
     Foreground,
     SubmeshMaterials,
     LightFalloff,
+    ShadingParity,
 }
 
 impl ShowcaseMode {
@@ -372,6 +375,7 @@ impl ShowcaseMode {
             Self::Foreground => "55: Foreground Composite Pass",
             Self::SubmeshMaterials => "56: Submesh Materials",
             Self::LightFalloff => "57: Light Falloff",
+            Self::ShadingParity => "58: Shading Model Parity",
         }
     }
 }
@@ -563,6 +567,9 @@ pub(crate) struct App {
 
     // --- Showcase 57 ---
     pub(crate) lf_state: showcase_57_light_falloff::LfState,
+
+    // --- Showcase 58 ---
+    pub(crate) parity_state: showcase_58_shading_parity::ParityState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -769,6 +776,7 @@ impl eframe::App for App {
                     ShowcaseMode::Foreground,
                     ShowcaseMode::SubmeshMaterials,
                     ShowcaseMode::LightFalloff,
+                    ShowcaseMode::ShadingParity,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1641,7 +1649,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 57] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 58] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1699,6 +1707,7 @@ impl App {
             ShowcaseMode::Foreground,
             ShowcaseMode::SubmeshMaterials,
             ShowcaseMode::LightFalloff,
+            ShowcaseMode::ShadingParity,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1840,6 +1849,7 @@ impl App {
             ShowcaseMode::Foreground => !self.fg_state.built,
             ShowcaseMode::SubmeshMaterials => !self.submesh_state.built,
             ShowcaseMode::LightFalloff => !self.lf_state.built,
+            ShowcaseMode::ShadingParity => !self.parity_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2404,6 +2414,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::ShadingParity => {
+                self.build_shading_parity_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(5.2, 0.0, 0.6),
+                    distance: 16.0,
+                    orientation: glam::Quat::from_rotation_z(0.5)
+                        * glam::Quat::from_rotation_x(1.15),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2521,6 +2541,7 @@ impl App {
                 showcase_56_submesh_materials::controls_submesh(self, ui)
             }
             ShowcaseMode::LightFalloff => showcase_57_light_falloff::controls_lf(self, ui),
+            ShowcaseMode::ShadingParity => showcase_58_shading_parity::controls_parity(self, ui),
         }
     }
 }
@@ -3439,6 +3460,15 @@ impl App {
                     .collect_render_items(&Selection::new());
                 let lighting = self.lf_state.lighting();
                 let sg = self.lf_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
+            ShowcaseMode::ShadingParity => {
+                let items = self
+                    .parity_state
+                    .scene
+                    .collect_render_items(&Selection::new());
+                let lighting = self.parity_state.lighting();
+                let sg = self.parity_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };

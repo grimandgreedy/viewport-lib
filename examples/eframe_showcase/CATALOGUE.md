@@ -671,3 +671,15 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 **Sidebar:** Light type (point/spot/directional); intensity; range (reach, not brightness); source radius (near clamp); light height; hemisphere fill.
 
 **Drift:** None.
+
+---
+
+## 58. Shading Model Parity  (`showcase_58_shading_parity.rs`, ~215 lines)
+
+**Demos:** That `Pbr` and `Phong` reflect the same brightness under a given light. Two rows of spheres sit under one directional light, sharing a per-column roughness: the back row is PBR, the front row is Blinn-Phong. Because both models now carry the `albedo/pi` diffuse normalisation, the two rows read at the same lightness column for column, so switching a material's `shading_model` no longer changes how bright it is. What still differs by design is the highlight: Phong keeps its cheaper Blinn specular lobe (now energy-bounded by `(shininess + 8) / (8 pi)`), so its highlight has a different shape from PBR's Cook-Torrance one. The Phong materials use `diffuse = 1.0` so their diffuse albedo weight matches PBR's rather than the lower Phong default (which would only make the row uniformly dimmer, not a model difference).
+
+**Uses:** `Material` with `ShadingModel::Pbr` / `Phong`, `LightSource`, `LightingSettings`, `primitives::sphere`, `Scene`.
+
+**Sidebar:** Light intensity; hemisphere fill; PBR metallic (rebuilds the PBR row).
+
+**Drift:** None.

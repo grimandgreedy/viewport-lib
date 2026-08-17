@@ -151,10 +151,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         let H = normalize(L + V);
-        let diff  = max(dot(N, L), 0.0);
-        // Blinn-Phong specular; map roughness [0,1] -> shininess [2, 128].
+        // Energy-normalised Blinn-Phong so this matches the mesh paths' brightness
+        // under the same light: 1/pi on diffuse, (shine + 8) / (8 pi) on specular.
+        let diff  = max(dot(N, L), 0.0) * INV_PI;
+        // Map roughness [0,1] -> shininess [2, 128].
         let shine = mix(128.0, 2.0, material.roughness);
-        let spec  = pow(max(dot(N, H), 0.0), shine) * (1.0 - material.roughness) * 0.3;
+        let spec  = pow(max(dot(N, H), 0.0), shine)
+                  * (1.0 - material.roughness) * (shine + 8.0) * INV_PI * 0.125;
 
         diffuse  += light_rgb * diff;
         specular += light_rgb * spec;

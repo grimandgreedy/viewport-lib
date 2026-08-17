@@ -28,6 +28,10 @@
 //   - Remove any local `SingleLight` and `Lights` struct definitions and
 //     `// #include "scene_lighting.wgsl"` near the top of the file instead.
 
+// 1/pi. The Lambert diffuse normalisation, shared by every lit path so Phong
+// and PBR reflect the same brightness for a given light.
+const INV_PI: f32 = 0.31830989;
+
 struct SingleLight {
     light_view_proj:   mat4x4<f32>,
     pos_or_dir:        vec3<f32>,
@@ -249,7 +253,9 @@ fn apply_scene_lighting(
         if !ev.in_range { continue; }
         let raw = dot(normal, ev.l);
         let n_dot_l = select(max(raw, 0.0), abs(raw), two_sided);
-        direct = direct + ev.radiance * n_dot_l;
+        // Lambert diffuse carries the 1/pi factor so this simple lit path
+        // matches the PBR and Phong diffuse energy for the same light.
+        direct = direct + ev.radiance * n_dot_l * INV_PI;
     }
     return base_colour * (ambient + direct);
 }
