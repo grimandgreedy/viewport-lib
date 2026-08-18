@@ -19,8 +19,8 @@ use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
 use viewport_lib::{
-    ExposureSettings, LightSource, LightingSettings, Lumen, Lux, Material, ViewportRenderer,
-    scene::Scene,
+    AutoExposure, ExposureMode, ExposureSettings, LightSource, LightingSettings, Lumen, Lux,
+    Material, ViewportRenderer, scene::Scene,
 };
 
 const COLUMNS: usize = 5;
@@ -173,9 +173,11 @@ impl PhotometricState {
         let mut l = LightingSettings::default();
         l.lights = lights;
         l.shadows_enabled = true;
-        // Sky fill scaled to the chosen sky so shadows stay readable without
-        // washing the scene flat. (Provisional ambient until IBL carries nits.)
-        l.hemisphere_intensity = self.sky.illuminance().0 * 0.15;
+        // A modest sky fill (~15% of the direct illuminance) so shadows stay
+        // readable without washing the scene flat. Ambient is added without the
+        // diffuse 1/pi, so the fraction here is smaller than it looks.
+        // (Provisional ambient until IBL carries nits.)
+        l.hemisphere_intensity = self.sky.illuminance().0 * 0.05;
         l.sky_colour = self.sky.colour();
         l.ground_colour = [0.28, 0.26, 0.24];
         l
@@ -183,14 +185,20 @@ impl PhotometricState {
 
     pub(crate) fn settings(&self) -> ExposureSettings {
         if self.auto_exposure {
-            let mut s = ExposureSettings::automatic();
-            // Smooth adaptation so switching presets eases rather than snaps.
-            if let viewport_lib::ExposureMode::Automatic(a) = &mut s.mode {
-                a.dt = self.frame_dt;
-            }
-            s
+            // Full adaptation (strength 1.0) so every preset - across a
+            // ~400,000x lux range - is driven to mid-grey. The library default
+            // is partial (0.5) for framing stability, which deliberately does
+            // NOT normalise a wide brightness range; a photometric scene that
+            // must stay viewable from moonlight to noon wants full adaptation.
+            let auto = AutoExposure {
+                adaptation: 1.0,
+                dt: self.frame_dt,
+                ..AutoExposure::default()
+            };
+            ExposureSettings::from_mode(ExposureMode::Automatic(auto))
         } else {
-            // A fixed sunny-daylight camera (roughly the "sunny 16" rule).
+            // A fixed sunny-daylight camera (roughly the "sunny 16" rule):
+            // exposes full daylight correctly and leaves dimmer presets dark.
             ExposureSettings::physical(16.0, 1.0 / 125.0, 100.0)
         }
     }
@@ -302,7 +310,7 @@ pub(crate) fn controls_photometric(app: &mut App, ui: &mut egui::Ui) {
         ));
     }
     if st.auto_exposure {
-        ui.label("Exposure: automatic (metered on the GPU each frame).");
+        ui.label("Exposure: automatic, full adaptation (each preset -> mid-grey).");
     } else {
         ui.label("Exposure: fixed f/16, 1/125 s, ISO 100 (~EV 15).");
     }

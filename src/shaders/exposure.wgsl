@@ -192,11 +192,14 @@ fn resolve_main() {
     // content has left the frame (camera orbiting past the ground into mostly
     // excluded background) must not flare the exposure up, but a brighter reading
     // (scene genuinely got brighter) is always honoured so highlights stay
-    // protected. The gate reaches zero at low lit fraction, which fully FREEZES
-    // the held EV there - important in snap mode (dt<=0), where a partial gate
-    // would let `cur` ratchet down toward the flare one frame at a time. Full
-    // brightening resumes once the frame is genuinely full of (even dim) content.
-    let brighten_gate = smoothstep(0.15, 0.40, lit_fraction);
+    // protected. When smoothing (dt>0) the gate is a soft ramp so brightening
+    // eases in as content fills the frame. In snap mode (dt<=0) a partial gate
+    // would instead ratchet `cur` toward the target one frame at a time - a
+    // gradual change where the caller asked for an instant one - so there the
+    // gate is a hard decision: honour the brighter target once enough of the
+    // frame is lit scene, otherwise fully freeze the held EV (the flare guard).
+    let gate_soft = smoothstep(0.15, 0.40, lit_fraction);
+    let brighten_gate = select(gate_soft, step(0.275, lit_fraction), params.dt <= 0.0);
     if target_ev < cur {
         target_ev = mix(cur, target_ev, brighten_gate);
     }

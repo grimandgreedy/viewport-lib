@@ -30,9 +30,9 @@
 use eframe::{egui, wgpu};
 use viewport_lib::input::adapters::from_egui;
 use viewport_lib::{
-    AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings,
-    Material, Modifiers, OrbitCameraController, ViewportContext, ViewportEvent, ViewportInstance,
-    primitives,
+    AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings, Lumen,
+    Lux, Material, Modifiers, OrbitCameraController, ViewportContext, ViewportEvent,
+    ViewportInstance, primitives,
 };
 
 const COLUMNS: usize = 6;
@@ -129,13 +129,13 @@ fn main() -> eframe::Result {
             let cam = session.camera_mut();
             cam.center = glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7);
             cam.distance = 17.0;
-            cam.orientation =
-                glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2);
+            cam.orientation = glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.2);
 
             Ok(Box::new(App {
                 session,
                 orbit: OrbitCameraController::viewport_all(),
                 target: None,
+                tab: Tab::Exposure,
                 light_intensity: 4.0,
                 mode: ModeSel::Automatic,
                 compensation: 0.0,
@@ -145,6 +145,12 @@ fn main() -> eframe::Result {
                 iso: 3200.0,
                 auto: AutoExposure::default(),
                 smooth: true,
+                sky: SkyPreset::FullDaylight,
+                bulb_on: false,
+                bulb: BulbPreset::Incandescent60W,
+                photo_auto: true,
+                photo_smoothing: SmoothSel::Medium,
+                photo_adaptation: 0.5,
             }))
         }),
     )
@@ -161,6 +167,128 @@ enum ModeSel {
     Automatic,
 }
 
+/// Which panel/scene the app is showing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Exposure,
+    Photometric,
+}
+
+/// Adaptation speed for the photometric tab's auto-exposure. `Off` snaps
+/// (`dt = 0`); the others ease over time at increasing `speed_up`/`speed_down`
+/// rates - the "eye adjusting" feel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SmoothSel {
+    Off,
+    Slow,
+    Medium,
+    Fast,
+}
+
+impl SmoothSel {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off (snap)",
+            Self::Slow => "Slow",
+            Self::Medium => "Medium",
+            Self::Fast => "Fast",
+        }
+    }
+
+    /// Whether this setting eases over time (vs snapping instantly).
+    fn eases(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    /// Adaptation rates (per second) toward a brighter / darker target. Unused
+    /// when `Off` (which snaps regardless).
+    fn speeds(self) -> (f32, f32) {
+        match self {
+            Self::Off | Self::Medium => (3.0, 1.0), // Medium = the library default
+            Self::Slow => (0.8, 0.5),
+            Self::Fast => (8.0, 5.0),
+        }
+    }
+}
+
+/// A directional-light preset: a real illuminance in lux plus a matching tint
+/// and elevation. Authored with `LightSource::directional_lux`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SkyPreset {
+    FullDaylight,
+    Overcast,
+    SunriseSunset,
+    FullMoon,
+}
+
+impl SkyPreset {
+    fn label(self) -> &'static str {
+        match self {
+            Self::FullDaylight => "Full daylight (~100,000 lx)",
+            Self::Overcast => "Overcast sky (~1,000 lx)",
+            Self::SunriseSunset => "Sunrise / sunset (~400 lx)",
+            Self::FullMoon => "Full moon (~0.25 lx)",
+        }
+    }
+    fn illuminance(self) -> Lux {
+        match self {
+            Self::FullDaylight => Lux::FULL_DAYLIGHT,
+            Self::Overcast => Lux::OVERCAST,
+            Self::SunriseSunset => Lux::SUNRISE_SUNSET,
+            Self::FullMoon => Lux::FULL_MOON,
+        }
+    }
+    fn direction(self) -> [f32; 3] {
+        match self {
+            Self::FullDaylight => [0.35, 0.3, 1.5],
+            Self::Overcast => [0.2, 0.1, 1.5],
+            Self::SunriseSunset => [1.3, 0.25, 0.35],
+            Self::FullMoon => [-0.6, -0.3, 0.9],
+        }
+    }
+    fn colour(self) -> [f32; 3] {
+        match self {
+            Self::FullDaylight => [1.0, 0.98, 0.95],
+            Self::Overcast => [0.9, 0.94, 1.0],
+            Self::SunriseSunset => [1.0, 0.6, 0.35],
+            Self::FullMoon => [0.6, 0.72, 1.0],
+        }
+    }
+}
+
+/// An indoor bulb preset, authored from its rated luminous flux in lumens with
+/// `LightSource::point_lumens`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BulbPreset {
+    Candle,
+    Incandescent60W,
+    Led10W,
+}
+
+impl BulbPreset {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Candle => "Candle (~12 lm)",
+            Self::Incandescent60W => "60 W incandescent (~800 lm)",
+            Self::Led10W => "10 W LED (~900 lm)",
+        }
+    }
+    fn flux(self) -> Lumen {
+        match self {
+            Self::Candle => Lumen::CANDLE,
+            Self::Incandescent60W => Lumen::INCANDESCENT_60W,
+            Self::Led10W => Lumen::LED_10W,
+        }
+    }
+    fn colour(self) -> [f32; 3] {
+        match self {
+            Self::Candle => [1.0, 0.55, 0.25],
+            Self::Incandescent60W => [1.0, 0.82, 0.62],
+            Self::Led10W => [1.0, 0.98, 0.95],
+        }
+    }
+}
+
 /// The app-owned offscreen render target and its egui texture registration.
 struct Target {
     _texture: wgpu::Texture,
@@ -174,6 +302,9 @@ struct App {
     orbit: OrbitCameraController,
     target: Option<Target>,
 
+    // Which tab (and scene lighting/exposure model) is active.
+    tab: Tab,
+
     // Scene
     light_intensity: f32,
 
@@ -186,6 +317,14 @@ struct App {
     iso: f32,
     auto: AutoExposure,
     smooth: bool,
+
+    // Photometric presets tab
+    sky: SkyPreset,
+    bulb_on: bool,
+    bulb: BulbPreset,
+    photo_auto: bool,
+    photo_smoothing: SmoothSel,
+    photo_adaptation: f32,
 }
 
 impl App {
@@ -223,6 +362,57 @@ impl App {
             }
         };
         ExposureSettings::from_mode(mode).with_compensation(self.compensation)
+    }
+
+    /// Lighting for the photometric-presets tab: a sky preset authored in lux
+    /// plus an optional bulb authored in lumens.
+    fn photometric_lighting(&self) -> LightingSettings {
+        let mut sun = LightSource::directional_lux(self.sky.direction(), self.sky.illuminance());
+        sun.colour = self.sky.colour();
+        sun.cast_shadows = true;
+
+        let mut lights = vec![sun];
+        if self.bulb_on {
+            let span = (COLUMNS - 1) as f32 * COL_SPACING;
+            let mut bulb =
+                LightSource::point_lumens([span * 0.5, 0.9, 3.2], self.bulb.flux(), 25.0, 0.15);
+            bulb.colour = self.bulb.colour();
+            bulb.cast_shadows = true;
+            lights.push(bulb);
+        }
+
+        let mut l = LightingSettings::default();
+        l.lights = lights;
+        l.shadows_enabled = true;
+        // ~15% sky fill (ambient carries no 1/pi, so the factor is smaller than
+        // it looks); provisional until IBL carries nits.
+        l.hemisphere_intensity = self.sky.illuminance().0 * 0.05;
+        l.sky_colour = self.sky.colour();
+        l.ground_colour = [0.28, 0.26, 0.24];
+        l
+    }
+
+    /// Exposure for the photometric-presets tab. Auto uses *full* adaptation so
+    /// each preset - across a ~400,000x lux range - resolves to mid-grey; the
+    /// fixed camera exposes daylight correctly and leaves dimmer presets dark.
+    fn photometric_exposure(&self, dt: f32) -> ExposureSettings {
+        if self.photo_auto {
+            let (speed_up, speed_down) = self.photo_smoothing.speeds();
+            let auto = AutoExposure {
+                adaptation: self.photo_adaptation,
+                dt: if self.photo_smoothing.eases() {
+                    dt
+                } else {
+                    0.0
+                },
+                speed_up,
+                speed_down,
+                ..AutoExposure::default()
+            };
+            ExposureSettings::from_mode(ExposureMode::Automatic(auto))
+        } else {
+            ExposureSettings::physical(16.0, 1.0 / 125.0, 100.0)
+        }
     }
 
     fn readout_ev(&self) -> Option<f32> {
@@ -324,10 +514,15 @@ impl eframe::App for App {
                     }
                 });
 
-                // Per-frame exposure + lighting (both driven by live controls).
+                // Per-frame exposure + lighting (both driven by live controls),
+                // selected by the active tab.
                 let dt = ctx.input(|i| i.stable_dt).min(0.1);
-                let lighting = self.build_lighting();
-                let exposure = self.build_exposure(dt);
+                let (lighting, exposure) = match self.tab {
+                    Tab::Exposure => (self.build_lighting(), self.build_exposure(dt)),
+                    Tab::Photometric => {
+                        (self.photometric_lighting(), self.photometric_exposure(dt))
+                    }
+                };
                 let eff = self.session.effects_mut();
                 eff.lighting = lighting;
                 eff.exposure = exposure;
@@ -363,6 +558,18 @@ impl eframe::App for App {
 
 impl App {
     fn ui_panel(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.tab, Tab::Exposure, "Exposure");
+            ui.selectable_value(&mut self.tab, Tab::Photometric, "Photometric presets");
+        });
+        ui.separator();
+        match self.tab {
+            Tab::Exposure => self.ui_exposure(ui),
+            Tab::Photometric => self.ui_photometric(ui),
+        }
+    }
+
+    fn ui_exposure(&mut self, ui: &mut egui::Ui) {
         ui.heading("Exposure");
         ui.separator();
         ui.label("One lit scene under three exposure modes. Drive the scene-brightness slider and watch how each mode responds.");
@@ -373,7 +580,10 @@ impl App {
                 .logarithmic(true)
                 .text("Scene brightness (light intensity)"),
         );
-        ui.add(egui::Slider::new(&mut self.compensation, -3.0..=3.0).text("Exposure compensation (stops)"));
+        ui.add(
+            egui::Slider::new(&mut self.compensation, -3.0..=3.0)
+                .text("Exposure compensation (stops)"),
+        );
         ui.separator();
 
         ui.horizontal(|ui| {
@@ -405,22 +615,121 @@ impl App {
             }
             ModeSel::Automatic => {
                 ui.checkbox(&mut self.smooth, "Smooth adaptation (dt > 0)");
-                ui.add(egui::Slider::new(&mut self.auto.adaptation, 0.0..=1.0).text("Adaptation strength"));
+                ui.add(
+                    egui::Slider::new(&mut self.auto.adaptation, 0.0..=1.0)
+                        .text("Adaptation strength"),
+                );
                 ui.add(egui::Slider::new(&mut self.auto.min_ev, -10.0..=6.0).text("EV min"));
                 ui.add(egui::Slider::new(&mut self.auto.max_ev, 4.0..=20.0).text("EV max"));
-                ui.add(egui::Slider::new(&mut self.auto.speed_up, 0.1..=10.0).text("Adapt speed (brighten)"));
-                ui.add(egui::Slider::new(&mut self.auto.speed_down, 0.1..=10.0).text("Adapt speed (darken)"));
-                ui.add(egui::Slider::new(&mut self.auto.low_percent, 0.0..=0.9).text("Meter low clip"));
-                ui.add(egui::Slider::new(&mut self.auto.high_percent, 0.1..=1.0).text("Meter high clip"));
-                ui.add(egui::Slider::new(&mut self.auto.center_weight, 0.0..=1.0).text("Center weighting"));
+                ui.add(
+                    egui::Slider::new(&mut self.auto.speed_up, 0.1..=10.0)
+                        .text("Adapt speed (brighten)"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.auto.speed_down, 0.1..=10.0)
+                        .text("Adapt speed (darken)"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.auto.low_percent, 0.0..=0.9).text("Meter low clip"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.auto.high_percent, 0.1..=1.0)
+                        .text("Meter high clip"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.auto.center_weight, 0.0..=1.0)
+                        .text("Center weighting"),
+                );
                 ui.label("Metering holds the image steady while scene brightness moves. dt<=0 snaps; smoothing eases. Center weighting keeps exposure stable on zoom/pan (set 0 to meter the whole frame).");
             }
         }
 
         ui.separator();
         match self.readout_ev() {
-            Some(ev) => ui.label(format!("EV100: {ev:.2}  (before {:+.1} stops compensation)", self.compensation)),
+            Some(ev) => ui.label(format!(
+                "EV100: {ev:.2}  (before {:+.1} stops compensation)",
+                self.compensation
+            )),
             None => ui.label("EV100: metered on the GPU each frame (adapts live)."),
         };
+    }
+
+    fn ui_photometric(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Photometric presets");
+        ui.separator();
+        ui.label(
+            "Lights authored in real units: directional in lux, bulbs in lumens. Auto-exposure \
+             (full adaptation) maps every preset to mid-grey; turn it off to see the same physical \
+             scale under a fixed daylight camera.",
+        );
+        ui.add_space(6.0);
+
+        ui.label("Sky (directional, lux):");
+        for preset in [
+            SkyPreset::FullDaylight,
+            SkyPreset::Overcast,
+            SkyPreset::SunriseSunset,
+            SkyPreset::FullMoon,
+        ] {
+            ui.selectable_value(&mut self.sky, preset, preset.label());
+        }
+        ui.separator();
+
+        ui.checkbox(&mut self.bulb_on, "Indoor bulb (point light, lumens)");
+        ui.add_enabled_ui(self.bulb_on, |ui| {
+            for preset in [
+                BulbPreset::Candle,
+                BulbPreset::Incandescent60W,
+                BulbPreset::Led10W,
+            ] {
+                ui.selectable_value(&mut self.bulb, preset, preset.label());
+            }
+        });
+        ui.separator();
+
+        ui.checkbox(
+            &mut self.photo_auto,
+            "Auto-exposure (off = fixed daylight camera)",
+        );
+        ui.add_enabled_ui(self.photo_auto, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Adaptation speed:");
+                for sel in [
+                    SmoothSel::Off,
+                    SmoothSel::Slow,
+                    SmoothSel::Medium,
+                    SmoothSel::Fast,
+                ] {
+                    ui.selectable_value(&mut self.photo_smoothing, sel, sel.label());
+                }
+            });
+            ui.add(
+                egui::Slider::new(&mut self.photo_adaptation, 0.0..=1.0)
+                    .text("Adaptation strength"),
+            );
+        });
+        ui.separator();
+
+        ui.label(format!(
+            "Sun illuminance: {:.0} lx",
+            self.sky.illuminance().0
+        ));
+        if self.bulb_on {
+            let flux = self.bulb.flux();
+            let cd = flux.to_point_candela();
+            ui.label(format!(
+                "Bulb: {:.0} lm -> {:.1} cd (over the full sphere)",
+                flux.0, cd.0
+            ));
+        }
+        if self.photo_auto {
+            ui.label(format!(
+                "Exposure: automatic, adaptation {:.2} (1.0 maps every preset to \
+                 mid-grey; lower keeps some real brightness difference).",
+                self.photo_adaptation
+            ));
+        } else {
+            ui.label("Exposure: fixed f/16, 1/125 s, ISO 100 (~EV 15).");
+        }
     }
 }
