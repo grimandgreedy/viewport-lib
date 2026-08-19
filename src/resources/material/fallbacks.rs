@@ -23,9 +23,13 @@ pub(crate) struct MaterialFallbacks {
     pub(crate) ao_map_view: crate::gpu::TextureView,
     /// Fallback 1x1 metallic-roughness texture [0, 255, 255, 255].
     /// G=1.0 and B=1.0 so scalar factors pass through unchanged when no ORM texture is set.
+    /// Kept alive for `metallic_roughness_view`; not read directly after construction.
+    #[allow(dead_code)]
     pub(crate) metallic_roughness: crate::gpu::Texture,
     pub(crate) metallic_roughness_view: crate::gpu::TextureView,
     /// Fallback 1x1 emissive texture [0, 0, 0, 255] (no emission).
+    /// Kept alive for `emissive_view`; not read directly after construction.
+    #[allow(dead_code)]
     pub(crate) emissive: crate::gpu::Texture,
     pub(crate) emissive_view: crate::gpu::TextureView,
     /// Shared linear-repeat sampler for material textures.
