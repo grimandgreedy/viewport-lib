@@ -8,6 +8,8 @@
 /// Directional-cascade and point-light shadow resources.
 pub(crate) struct ShadowResources {
     /// Shadow atlas depth texture (Depth32Float, atlas_size x atlas_size, 2x2 tile grid).
+    /// Kept alive for `map_view`; not read directly outside construction.
+    #[allow(dead_code)]
     pub(crate) map_texture: crate::gpu::Texture,
     /// Depth texture view for binding as a shader resource (sampling).
     pub(crate) map_view: crate::gpu::TextureView,
@@ -15,6 +17,7 @@ pub(crate) struct ShadowResources {
     pub(crate) sampler: crate::gpu::Sampler,
     /// Cubemap-array depth texture for point-light shadows. Layered as
     /// `MAX_POINT_SHADOW_LIGHTS * 6` faces of `POINT_SHADOW_FACE_SIZE` px.
+    #[allow(dead_code)]
     pub(crate) point_cube_texture: crate::gpu::Texture,
     /// `texture_depth_cube_array` view bound to the lit-pass bind group.
     pub(crate) point_cube_view: crate::gpu::TextureView,
@@ -27,6 +30,7 @@ pub(crate) struct ShadowResources {
     pub(crate) point_pipeline: crate::gpu::RenderPipeline,
     /// Bind group layout for the point-shadow per-face uniform (group 0
     /// of the point shadow pass). Kept for pipeline rebuilds.
+    #[allow(dead_code)]
     pub(crate) point_face_bgl: crate::gpu::BindGroupLayout,
     /// Per-face uniform buffer holding `view_proj`, `light_pos`, `range`
     /// for every (slot, face) of the point shadow array. Sized as
@@ -61,6 +65,7 @@ pub(crate) struct ShadowResources {
     #[allow(dead_code)]
     pub(crate) atlas_size: u32,
     /// Non-comparison sampler for reading depth values as float (atlas viewer).
+    #[allow(dead_code)]
     pub(crate) atlas_depth_sampler: crate::gpu::Sampler,
     /// Pipeline for the shadow atlas corner overlay.
     pub(crate) atlas_viewer_pipeline: crate::gpu::RenderPipeline,
