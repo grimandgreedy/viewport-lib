@@ -1672,12 +1672,12 @@ impl DeviceResources {
                 self.sample_count,
                 None,
             );
-            self.solid_pipeline = ldr.solid;
-            self.solid_two_sided_pipeline = ldr.solid_two_sided;
-            self.transparent_pipeline = ldr.transparent;
-            self.wireframe_pipeline = ldr.wireframe;
+            self.scene.solid = ldr.solid;
+            self.scene.solid_two_sided = ldr.solid_two_sided;
+            self.scene.transparent = ldr.transparent;
+            self.scene.wireframe = ldr.wireframe;
 
-            if self.hdr_solid_pipeline.is_some() {
+            if self.scene.hdr_solid.is_some() {
                 let hdr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
                     device,
                     "hdr_mesh_pipeline_layout",
@@ -1690,10 +1690,10 @@ impl DeviceResources {
                     &hdr_layout,
                     &shader,
                 );
-                self.hdr_solid_pipeline = Some(hdr.solid);
-                self.hdr_solid_two_sided_pipeline = Some(hdr.solid_two_sided);
-                self.hdr_transparent_pipeline = Some(hdr.transparent);
-                self.hdr_wireframe_pipeline = Some(hdr.wireframe);
+                self.scene.hdr_solid = Some(hdr.solid);
+                self.scene.hdr_solid_two_sided = Some(hdr.solid_two_sided);
+                self.scene.hdr_transparent = Some(hdr.transparent);
+                self.scene.hdr_wireframe = Some(hdr.wireframe);
             }
         }
 
@@ -2125,8 +2125,8 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
-        let solid_before: *const crate::gpu::RenderPipeline = &renderer.resources().solid_pipeline;
-        let wf_before: *const crate::gpu::RenderPipeline = &renderer.resources().wireframe_pipeline;
+        let solid_before: *const crate::gpu::RenderPipeline = &renderer.resources().scene.solid;
+        let wf_before: *const crate::gpu::RenderPipeline = &renderer.resources().scene.wireframe;
 
         let body = "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if (deform_slot_stride(0u) > 0u) {\n        o.position.z = o.position.z + deform_read_f32(0u, v.vertex_index, 0u);\n    }\n    return o;\n}\n";
         let desc = DeformerDesc {
@@ -2145,8 +2145,8 @@ mod tests {
             .resources_mut()
             .flush_mesh_pipeline_rebuild(&device);
 
-        let solid_after: *const crate::gpu::RenderPipeline = &renderer.resources().solid_pipeline;
-        let wf_after: *const crate::gpu::RenderPipeline = &renderer.resources().wireframe_pipeline;
+        let solid_after: *const crate::gpu::RenderPipeline = &renderer.resources().scene.solid;
+        let wf_after: *const crate::gpu::RenderPipeline = &renderer.resources().scene.wireframe;
         // The fields themselves moved during the swap, so the addresses
         // stay the same. Instead, confirm that `solid_pipeline` and
         // `wireframe_pipeline` are still live wgpu handles by hashing

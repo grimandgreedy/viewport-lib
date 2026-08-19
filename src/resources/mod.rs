@@ -25,6 +25,8 @@ pub(crate) mod overlay;
 mod pick_pipelines;
 mod plugin_builders;
 mod postprocess;
+/// Core scene mesh pipelines (base LDR set plus HDR variants).
+pub(crate) mod scene_pipelines;
 mod scivis;
 /// Shadow-map GPU resources (cascade atlas, point-shadow cube array, debug viewer).
 pub(crate) mod shadow;

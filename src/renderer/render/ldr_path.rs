@@ -186,7 +186,7 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                         if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                            render_pass.set_pipeline(&self.resources.wireframe_pipeline);
+                            render_pass.set_pipeline(&self.resources.scene.wireframe);
                             bind_deform_group!(
                                 render_pass,
                                 self.resources,
@@ -362,9 +362,9 @@ impl ViewportRenderer {
 
                 for (idx, item) in opaque.iter().chain(transparent.iter()) {
                     let solid_pl = if item.material.is_two_sided() {
-                        &resources.solid_two_sided_pipeline
+                        &resources.scene.solid_two_sided
                     } else {
-                        &resources.solid_pipeline
+                        &resources.scene.solid
                     };
                     let obj_bg = slot
                         .foreground_objects
@@ -381,9 +381,9 @@ impl ViewportRenderer {
                         false,
                         false,
                         solid_pl,
-                        &resources.solid_two_sided_pipeline,
-                        &resources.transparent_pipeline,
-                        &resources.wireframe_pipeline,
+                        &resources.scene.solid_two_sided,
+                        &resources.scene.transparent,
+                        &resources.scene.wireframe,
                         // Foreground items draw through the positional
                         // foreground_objects cache, which has no per-range
                         // entries; they render with the single item material.

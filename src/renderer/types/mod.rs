@@ -400,7 +400,7 @@ macro_rules! emit_draw_calls {
                         for item in scene_items {
                             if item.settings.hidden { continue; }
                             let Some(mesh) = resources.mesh_store.get(item.mesh_id) else { continue };
-                            render_pass.set_pipeline(&resources.wireframe_pipeline);
+                            render_pass.set_pipeline(&resources.scene.wireframe);
                             bind_deform_group!(
                                 render_pass,
                                 resources,
@@ -452,11 +452,11 @@ macro_rules! emit_draw_calls {
                                     &pp.ldr.solid
                                 }
                             } else if is_blended {
-                                &resources.transparent_pipeline
+                                &resources.scene.transparent
                             } else if item.material.is_two_sided() {
-                                &resources.solid_two_sided_pipeline
+                                &resources.scene.solid_two_sided
                             } else {
-                                &resources.solid_pipeline
+                                &resources.scene.solid
                             };
                             if cur_pipeline != Some(pipeline as *const _) {
                                 render_pass.set_pipeline(pipeline);
@@ -524,11 +524,11 @@ macro_rules! emit_draw_calls {
                                                 &pp.ldr.solid
                                             }
                                         } else if blended_r {
-                                            &resources.transparent_pipeline
+                                            &resources.scene.transparent
                                         } else if mat.is_two_sided() {
-                                            &resources.solid_two_sided_pipeline
+                                            &resources.scene.solid_two_sided
                                         } else {
-                                            &resources.solid_pipeline
+                                            &resources.scene.solid
                                         };
                                     if cur_pipeline != Some(pl as *const _) {
                                         render_pass.set_pipeline(pl);
@@ -689,7 +689,7 @@ macro_rules! emit_draw_calls {
 
                         if frame.viewport.wireframe_mode {
                             if let Some(edge_buf) = &mesh.edge_index_buffer {
-                                set_pipeline_cached!(&resources.wireframe_pipeline);
+                                set_pipeline_cached!(&resources.scene.wireframe);
                                 set_deform_cached!(deform_bg);
                                 render_pass.set_vertex_buffer(0, resources.geometry.vertex_slice(mesh.vertex_span));
                                 render_pass.set_index_buffer(
@@ -749,11 +749,11 @@ macro_rules! emit_draw_calls {
                                                 &pp.ldr.solid
                                             }
                                         } else if blended_r {
-                                            &resources.transparent_pipeline
+                                            &resources.scene.transparent
                                         } else if mat.is_two_sided() {
-                                            &resources.solid_two_sided_pipeline
+                                            &resources.scene.solid_two_sided
                                         } else {
-                                            &resources.solid_pipeline
+                                            &resources.scene.solid
                                         };
                                     set_pipeline_cached!(pl);
                                     // Prefer the range's own bind group + index;
@@ -818,7 +818,7 @@ macro_rules! emit_draw_calls {
                         if item.show_normals {
                             if let Some(ref nl_buf) = mesh.normal_line_buffer {
                                 if mesh.normal_line_count > 0 {
-                                    set_pipeline_cached!(&resources.wireframe_pipeline);
+                                    set_pipeline_cached!(&resources.scene.wireframe);
                                     set_deform_cached!(&resources.deform.dummy_bind_group);
                                     render_pass.set_bind_group(1, &mesh.normal_bind_group, &[]);
                                     render_pass.set_vertex_buffer(0, nl_buf.slice(..));
@@ -839,9 +839,9 @@ macro_rules! emit_draw_calls {
                             &pp.ldr.solid
                         }
                     } else if entry.1.material.is_two_sided() {
-                        &resources.solid_two_sided_pipeline
+                        &resources.scene.solid_two_sided
                     } else {
-                        &resources.solid_pipeline
+                        &resources.scene.solid
                     };
                     draw_item!((entry.0, entry.1), pl);
                 }
@@ -851,7 +851,7 @@ macro_rules! emit_draw_calls {
                     {
                         &pp.ldr.transparent
                     } else {
-                        &resources.transparent_pipeline
+                        &resources.scene.transparent
                     };
                     draw_item!((entry.0, entry.1), pl);
                 }

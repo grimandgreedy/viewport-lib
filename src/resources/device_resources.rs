@@ -587,14 +587,10 @@ pub struct DeviceResources {
     /// across runs with `ViewportRenderer::pipeline_cache_data` to skip shader
     /// recompilation on later launches.
     pub(crate) pipeline_cache: Option<crate::gpu::PipelineCache>,
-    /// Solid-shaded render pipeline (TriangleList topology, no blending).
-    pub(crate) solid_pipeline: crate::gpu::RenderPipeline,
-    /// Solid-shaded render pipeline with back-face culling disabled (two-sided surfaces).
-    pub(crate) solid_two_sided_pipeline: crate::gpu::RenderPipeline,
-    /// Transparent render pipeline (TriangleList topology, alpha blending).
-    pub(crate) transparent_pipeline: crate::gpu::RenderPipeline,
-    /// Wireframe render pipeline (LineList topology, same shader).
-    pub(crate) wireframe_pipeline: crate::gpu::RenderPipeline,
+    /// Core scene mesh pipelines: base LDR set (solid, two-sided, transparent,
+    /// wireframe) and their lazily-built HDR variants. See
+    /// `resources::scene_pipelines::SceneCorePipelines`.
+    pub(crate) scene: crate::resources::scene_pipelines::SceneCorePipelines,
     /// Uniform buffer holding the per-frame `CameraUniform` (view-proj + eye position).
     pub(crate) camera_uniform_buf: crate::gpu::Buffer,
     /// Uniform buffer holding the per-frame `LightsUniform` header (count +
@@ -763,21 +759,6 @@ pub struct DeviceResources {
     // --- Surface LIC shared resources ---
     /// Surface LIC pipelines and layouts (surface + advect passes).
     pub(crate) lic: crate::resources::postprocess::LicResources,
-
-    /// HDR-format variants of core scene pipelines.
-    pub(crate) hdr_solid_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// HDR two-sided variant (cull_mode: None) for analytical surfaces.
-    pub(crate) hdr_solid_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Discard-free twins of the per-object HDR solid pipelines (early-Z fast
-    /// path). Selected for plain-opaque per-object draws when the frame renders
-    /// no clip geometry, so occluded fragments are depth-rejected before
-    /// shading. The instanced paths carry their own nodiscard twins.
-    pub(crate) hdr_solid_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) hdr_solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) hdr_transparent_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) hdr_wireframe_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// HDR overlay pipeline (TriangleList, Rgba16Float, alpha blending) for cap fill in HDR path.
-    pub(crate) hdr_overlay_pipeline: Option<crate::gpu::RenderPipeline>,
 
     // --- Gaussian splat pipelines (lazily created) ---
     /// Gaussian splat render/sort pipelines and their bind group layouts.

@@ -950,7 +950,7 @@ impl ViewportRenderer {
                     let _ = &transparent_batches; // suppress unused warning
 
                     if frame.viewport.wireframe_mode {
-                        if let Some(ref hdr_wf) = resources.hdr_wireframe_pipeline {
+                        if let Some(ref hdr_wf) = resources.scene.hdr_wireframe {
                             let mut wf_idx = 0usize;
                             for item in scene_items {
                                 if item.settings.hidden {
@@ -989,8 +989,8 @@ impl ViewportRenderer {
                             }
                         }
                     } else if let (Some(hdr_solid), Some(hdr_solid_two_sided)) = (
-                        &resources.hdr_solid_pipeline,
-                        &resources.hdr_solid_two_sided_pipeline,
+                        &resources.scene.hdr_solid,
+                        &resources.scene.hdr_solid_two_sided,
                     ) {
                         // Clip geometry disables the discard-free early-Z twin
                         // (the clip discards would be stripped). Computed here
@@ -1031,8 +1031,8 @@ impl ViewportRenderer {
                                 )
                                 && item.active_attribute.is_none()
                                 && item.submesh_materials.is_none()
-                                && resources.hdr_solid_nodiscard_pipeline.is_some()
-                                && resources.hdr_solid_two_sided_nodiscard_pipeline.is_some();
+                                && resources.scene.hdr_solid_nodiscard.is_some()
+                                && resources.scene.hdr_solid_two_sided_nodiscard.is_some();
                             let pipeline = if let Some((pp, _)) = plug {
                                 if item.material.is_two_sided() {
                                     &pp.hdr.solid_two_sided
@@ -1042,11 +1042,12 @@ impl ViewportRenderer {
                             } else if no_discard {
                                 if item.material.is_two_sided() {
                                     resources
-                                        .hdr_solid_two_sided_nodiscard_pipeline
+                                        .scene
+                                        .hdr_solid_two_sided_nodiscard
                                         .as_ref()
                                         .unwrap()
                                 } else {
-                                    resources.hdr_solid_nodiscard_pipeline.as_ref().unwrap()
+                                    resources.scene.hdr_solid_nodiscard.as_ref().unwrap()
                                 }
                             } else if item.material.is_two_sided() {
                                 hdr_solid_two_sided
@@ -1166,7 +1167,7 @@ impl ViewportRenderer {
                     // Normal-line overlays for instanced items with show_normals set.
                     // Instanced batch draws skip per-item logic, so these are drawn
                     // here after all batches finish.
-                    if let Some(hdr_wf) = &resources.hdr_wireframe_pipeline {
+                    if let Some(hdr_wf) = &resources.scene.hdr_wireframe {
                         for item in scene_items
                             .iter()
                             .filter(|i| i.show_normals && !i.settings.hidden)
@@ -1259,10 +1260,10 @@ impl ViewportRenderer {
                         Some(hdr_trans),
                         Some(hdr_wf),
                     ) = (
-                        &resources.hdr_solid_pipeline,
-                        &resources.hdr_solid_two_sided_pipeline,
-                        &resources.hdr_transparent_pipeline,
-                        &resources.hdr_wireframe_pipeline,
+                        &resources.scene.hdr_solid,
+                        &resources.scene.hdr_solid_two_sided,
+                        &resources.scene.hdr_transparent,
+                        &resources.scene.hdr_wireframe,
                     ) {
                         for (item_idx, item) in &opaque {
                             let solid_pl = if item.material.is_two_sided() {
@@ -1301,7 +1302,7 @@ impl ViewportRenderer {
 
             // Cap fill pass (HDR path : section view cross-section fill).
             if !slot.cap_buffers.is_empty() {
-                if let Some(ref hdr_overlay) = resources.hdr_overlay_pipeline {
+                if let Some(ref hdr_overlay) = resources.scene.hdr_overlay {
                     render_pass.set_pipeline(hdr_overlay);
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.cap_buffers {
@@ -1403,7 +1404,7 @@ impl ViewportRenderer {
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let (Some(tvm_bg), Some(hdr_wf)) = (
                     &self.mesh_uniforms.tvm_wireframe_bg,
-                    &resources.hdr_wireframe_pipeline,
+                    &resources.scene.hdr_wireframe,
                 ) {
                     for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                         if let Some(mesh) = resources.mesh_store.get(*mesh_id) {
@@ -3837,10 +3838,10 @@ impl ViewportRenderer {
             return;
         };
         let (Some(hdr_solid), Some(hdr_solid_two_sided), Some(hdr_trans), Some(hdr_wf)) = (
-            &resources.hdr_solid_pipeline,
-            &resources.hdr_solid_two_sided_pipeline,
-            &resources.hdr_transparent_pipeline,
-            &resources.hdr_wireframe_pipeline,
+            &resources.scene.hdr_solid,
+            &resources.scene.hdr_solid_two_sided,
+            &resources.scene.hdr_transparent,
+            &resources.scene.hdr_wireframe,
         ) else {
             return;
         };

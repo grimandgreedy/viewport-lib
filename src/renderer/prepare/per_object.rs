@@ -952,8 +952,8 @@ impl ViewportRenderer {
                 break 'plan None;
             }
             if hdr
-                && (self.resources.hdr_solid_pipeline.is_none()
-                    || self.resources.hdr_solid_two_sided_pipeline.is_none())
+                && (self.resources.scene.hdr_solid.is_none()
+                    || self.resources.scene.hdr_solid_two_sided.is_none())
             {
                 break 'plan None;
             }
@@ -1024,11 +1024,8 @@ impl ViewportRenderer {
                 && !clipping_active
                 && !any_mask
                 && !self.resources.force_po_discard
-                && self.resources.hdr_solid_nodiscard_pipeline.is_some()
-                && self
-                    .resources
-                    .hdr_solid_two_sided_nodiscard_pipeline
-                    .is_some();
+                && self.resources.scene.hdr_solid_nodiscard.is_some()
+                && self.resources.scene.hdr_solid_two_sided_nodiscard.is_some();
             no_discard.hash(&mut h);
             Some((h.finish(), transparent, no_discard))
         };
@@ -1129,28 +1126,20 @@ impl ViewportRenderer {
         };
         let (solid, solid_two_sided) = if hdr && no_discard {
             (
+                self.resources.scene.hdr_solid_nodiscard.as_ref().unwrap(),
                 self.resources
-                    .hdr_solid_nodiscard_pipeline
-                    .as_ref()
-                    .unwrap(),
-                self.resources
-                    .hdr_solid_two_sided_nodiscard_pipeline
+                    .scene
+                    .hdr_solid_two_sided_nodiscard
                     .as_ref()
                     .unwrap(),
             )
         } else if hdr {
             (
-                self.resources.hdr_solid_pipeline.as_ref().unwrap(),
-                self.resources
-                    .hdr_solid_two_sided_pipeline
-                    .as_ref()
-                    .unwrap(),
+                self.resources.scene.hdr_solid.as_ref().unwrap(),
+                self.resources.scene.hdr_solid_two_sided.as_ref().unwrap(),
             )
         } else {
-            (
-                &resources.solid_pipeline,
-                &resources.solid_two_sided_pipeline,
-            )
+            (&resources.scene.solid, &resources.scene.solid_two_sided)
         };
         let mut enc = crate::resources::builders::render_bundle_encoder(
             device,

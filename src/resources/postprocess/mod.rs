@@ -1309,13 +1309,13 @@ impl DeviceResources {
 
         self.oit.pipeline = Some(oit_pipeline);
         self.oit.composite_pipeline = Some(oit_composite_pipeline);
-        self.hdr_solid_pipeline = Some(hdr_solid_pipeline);
-        self.hdr_solid_two_sided_pipeline = Some(hdr_solid_two_sided_pipeline);
-        self.hdr_solid_nodiscard_pipeline = Some(hdr_solid_nodiscard_pipeline);
-        self.hdr_solid_two_sided_nodiscard_pipeline = Some(hdr_solid_two_sided_nodiscard_pipeline);
-        self.hdr_transparent_pipeline = Some(hdr_transparent_pipeline);
-        self.hdr_wireframe_pipeline = Some(hdr_wireframe_pipeline);
-        self.hdr_overlay_pipeline = Some(hdr_overlay_pipeline);
+        self.scene.hdr_solid = Some(hdr_solid_pipeline);
+        self.scene.hdr_solid_two_sided = Some(hdr_solid_two_sided_pipeline);
+        self.scene.hdr_solid_nodiscard = Some(hdr_solid_nodiscard_pipeline);
+        self.scene.hdr_solid_two_sided_nodiscard = Some(hdr_solid_two_sided_nodiscard_pipeline);
+        self.scene.hdr_transparent = Some(hdr_transparent_pipeline);
+        self.scene.hdr_wireframe = Some(hdr_wireframe_pipeline);
+        self.scene.hdr_overlay = Some(hdr_overlay_pipeline);
         self.outline.composite_pipeline_single = Some(outline_composite_pipeline_single);
         self.outline.composite_pipeline_msaa = Some(outline_composite_pipeline_msaa);
         self.outline.composite_pipeline_hdr = Some(outline_composite_pipeline_hdr);
