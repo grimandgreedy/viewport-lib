@@ -479,13 +479,13 @@ impl ViewportRenderer {
     /// Sampled by every lit mesh path: opaque and transparent, per-object and
     /// instanced.
     pub fn set_light_probes(&mut self, probes: crate::resources::LightProbeSet) {
-        self.resources.light_probes = Some(probes);
+        self.resources.lighting.probes = Some(probes);
     }
 
     /// Remove the uploaded light-probe field. Objects revert to global IBL /
     /// hemisphere ambient.
     pub fn clear_light_probes(&mut self) {
-        self.resources.light_probes = None;
+        self.resources.lighting.probes = None;
     }
 
     /// Bake SH light probes at the given world positions.
@@ -554,7 +554,7 @@ impl ViewportRenderer {
         volume: &crate::resources::LightProbeVolume,
     ) {
         let gpu = volume.to_gpu();
-        self.resources.light_probe_volume_buf = Some(device.create_buffer_init(
+        self.resources.lighting.probe_volume_buf = Some(device.create_buffer_init(
             &crate::gpu::util::BufferInitDescriptor {
                 label: Some("light_probe_volume_buf"),
                 contents: bytemuck::cast_slice(&gpu),
@@ -567,7 +567,7 @@ impl ViewportRenderer {
     /// Remove the uploaded probe volume. Objects that opted into it fall back to
     /// no indirect (a disabled header is bound in its place).
     pub fn clear_light_probe_volume(&mut self, device: &crate::gpu::Device) {
-        self.resources.light_probe_volume_buf = None;
+        self.resources.lighting.probe_volume_buf = None;
         self.rebuild_camera_bind_groups(device);
     }
 

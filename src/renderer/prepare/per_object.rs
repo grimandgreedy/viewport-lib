@@ -235,7 +235,7 @@ pub(super) fn prepare_light_probe_sh(
 ) -> Vec<Option<u32>> {
     use crate::renderer::IndirectLightSource;
     let mut indices = vec![None; scene_items.len()];
-    let probes = resources.light_probes.as_ref().filter(|p| !p.is_empty());
+    let probes = resources.lighting.probes.as_ref().filter(|p| !p.is_empty());
     let mut sh_gpu: Vec<[f32; 4]> = Vec::new();
     let mut count = 0u32;
     for (idx, item) in scene_items.iter().enumerate() {
@@ -263,7 +263,7 @@ pub(super) fn prepare_light_probe_sh(
     }
     if !sh_gpu.is_empty() {
         queue.write_buffer(
-            &resources.indirect_light_buf,
+            &resources.lighting.indirect_buf,
             0,
             bytemuck::cast_slice(&sh_gpu),
         );

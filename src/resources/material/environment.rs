@@ -190,7 +190,7 @@ pub fn set_environment_zones(
             })
             .collect();
         queue.write_buffer(
-            &resources.indirect_light_buf,
+            &resources.lighting.indirect_buf,
             ENV_ZONE_REGION_OFFSET_BYTES,
             bytemuck::cast_slice(&gpu),
         );

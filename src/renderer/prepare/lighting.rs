@@ -723,7 +723,7 @@ impl ViewportRenderer {
             _pad_dbg: [0u32; 2],
         };
         queue.write_buffer(
-            &resources.light_uniform_buf,
+            &resources.lighting.uniform_buf,
             0,
             bytemuck::cast_slice(&[lights_uniform]),
         );
@@ -732,7 +732,7 @@ impl ViewportRenderer {
         // `lights_uniform.count` so stale tail entries are never sampled.
         if !lights_packed.is_empty() {
             queue.write_buffer(
-                &resources.light_storage_buf,
+                &resources.lighting.storage_buf,
                 0,
                 bytemuck::cast_slice(&lights_packed),
             );

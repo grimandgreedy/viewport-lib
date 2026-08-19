@@ -593,33 +593,9 @@ pub struct DeviceResources {
     pub(crate) scene: crate::resources::scene_pipelines::SceneCorePipelines,
     /// Uniform buffer holding the per-frame `CameraUniform` (view-proj + eye position).
     pub(crate) camera_uniform_buf: crate::gpu::Buffer,
-    /// Uniform buffer holding the per-frame `LightsUniform` header (count +
-    /// hemisphere + IBL + debug params). The per-light array lives in
-    /// `light_storage_buf` (binding 13).
-    pub(crate) light_uniform_buf: crate::gpu::Buffer,
-    /// Storage buffer of per-light `SingleLightUniform` entries (binding 13).
-    ///
-    /// Sized for `MAX_SCENE_LIGHTS`. The renderer truncates the consumer's
-    /// light list to this cap each frame, ranking surplus lights by
-    /// `LightSource::importance * proximity_weight`.
-    pub(crate) light_storage_buf: crate::gpu::Buffer,
-    /// Uploaded SH light-probe field, sampled per object at prepare time. `None`
-    /// until `set_light_probes` is called.
-    pub(crate) light_probes: Option<crate::resources::LightProbeSet>,
-    /// Indirect-lighting storage buffer (group 0 binding 18). First region: the
-    /// per-object blended SH, one 9-`vec4` block per light-probe-lit object,
-    /// written each frame. Second region (from `MAX_LIGHT_PROBE_OBJECTS *
-    /// SH_GPU_STRIDE_BYTES`): the environment-selection zones, `env_zone_count`
-    /// live. Sharing one buffer keeps the fragment stage within the storage-buffer
-    /// budget; see `load_env_zone` in `scene_lighting.wgsl`.
-    pub(crate) indirect_light_buf: crate::gpu::Buffer,
-    /// Uploaded adaptive probe volume (group 0 binding 20): a header plus SH per
-    /// grid cell, sampled per fragment by world position. `None` until
-    /// `set_light_probe_volume`; the fallback (a disabled 3-`vec4` header) is
-    /// bound in its place so the binding is always valid.
-    pub(crate) light_probe_volume_buf: Option<crate::gpu::Buffer>,
-    /// Disabled 3-`vec4` header bound at binding 20 when no volume is set.
-    pub(crate) light_probe_volume_fallback: crate::gpu::Buffer,
+    /// Scene lighting buffers, SH light-probe field, adaptive probe volume, and
+    /// the shared indirect-light buffer. See `resources::lighting::LightingResources`.
+    pub(crate) lighting: crate::resources::lighting::LightingResources,
     /// Clustered-shading state: cluster grid, global light index list, and the
     /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
     /// group expose this state to every lit pipeline.
@@ -1198,7 +1174,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: self.light_uniform_buf.as_entire_binding(),
+                    resource: self.lighting.uniform_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 4,
@@ -1238,7 +1214,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 13,
-                    resource: self.light_storage_buf.as_entire_binding(),
+                    resource: self.lighting.storage_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 14,
@@ -1260,14 +1236,15 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 18,
-                    resource: self.indirect_light_buf.as_entire_binding(),
+                    resource: self.lighting.indirect_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 20,
                     resource: self
-                        .light_probe_volume_buf
+                        .lighting
+                        .probe_volume_buf
                         .as_ref()
-                        .unwrap_or(&self.light_probe_volume_fallback)
+                        .unwrap_or(&self.lighting.probe_volume_fallback)
                         .as_entire_binding(),
                 },
             ],

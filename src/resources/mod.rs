@@ -13,6 +13,8 @@ pub mod gpu;
 pub mod handle;
 mod init;
 pub mod light_probes;
+/// Scene lighting buffers, light-probe field, and adaptive probe volume.
+pub(crate) mod lighting;
 /// Baked lightmap consumption (per-mesh UV1 sidecar + lightmap texture).
 pub mod lightmap;
 /// Texture, matcap, colourmap, and environment/IBL resources.
