@@ -541,6 +541,7 @@ impl ViewportRenderer {
         self.hdr_decals(&ctx, &mut encoder);
         self.hdr_decal_outline(&ctx, &mut encoder);
         self.hdr_sub_highlight(&ctx, &mut encoder);
+        self.hdr_depth_read_pass(&ctx, &mut encoder);
         self.hdr_oit(&ctx, &mut encoder);
         self.hdr_scatter(&ctx, &mut encoder);
         self.hdr_lic(&ctx, &mut encoder);
@@ -2524,6 +2525,102 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
+
+    /// Read-only-depth plugin pass. Runs after the opaque scene (and the
+    /// built-in sprite passes) and before OIT, with the scene depth attachment
+    /// bound read-only so opted-in `ItemTypePlugin`s can sample it while they
+    /// draw (soft particles, contact effects, depth-aware fog). Blends over the
+    /// HDR scene colour; tests against opaque depth but writes none.
+    ///
+    /// Fully skipped when no plugin returns `draws_depth_read()`: no render
+    /// pass begins and the depth attachment sees no transition.
+    fn hdr_depth_read_pass(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let frame = ctx.frame;
+        if !self.any_plugin_draws_depth_read(frame) {
+            return;
+        }
+        let device = ctx.device;
+        let vp_idx = ctx.vp_idx;
+        let ssaa_factor = ctx.ssaa_factor;
+        let resources = &self.resources;
+        let slot = &self.viewport_slots[vp_idx];
+        let camera_bg = &slot.camera_bind_group;
+        let slot_hdr = slot.hdr.as_ref().unwrap();
+
+        // Match the sprite soft path: target the ssaa_* colour/depth views when
+        // SSAA is active so plugin draws land at supersampled resolution and
+        // resolve with the rest of the scene; otherwise the hdr_* views.
+        let use_ssaa = ssaa_factor > 1
+            && slot_hdr.ssaa_colour_view.is_some()
+            && slot_hdr.ssaa_depth_view.is_some()
+            && slot_hdr.ssaa_depth_only_view.is_some();
+        let colour_view = if use_ssaa {
+            slot_hdr.ssaa_colour_view.as_ref().unwrap()
+        } else {
+            &slot_hdr.hdr_view
+        };
+        let depth_view = if use_ssaa {
+            slot_hdr.ssaa_depth_view.as_ref().unwrap()
+        } else {
+            &slot_hdr.hdr_depth_view
+        };
+        let depth_only_view = if use_ssaa {
+            slot_hdr.ssaa_depth_only_view.as_ref().unwrap()
+        } else {
+            &slot_hdr.hdr_depth_only_view
+        };
+
+        // Prebuilt group handed to plugins that have a spare bind group. Plugins
+        // at the four-group limit ignore it and bake the same depth-only view +
+        // sampler into a group of their own.
+        let depth_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("plugin_depth_read_bg"),
+            layout: &resources.depth_read_bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: crate::gpu::BindingResource::TextureView(depth_only_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::gpu::BindingResource::Sampler(&resources.depth_read_sampler),
+                },
+            ],
+        });
+
+        // Depth attachment read-only (`depth_ops: None`) so `depth_only_view`,
+        // a depth-aspect view of the same buffer, can be sampled in the pass.
+        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+            #[cfg(feature = "wgpu29")]
+            multiview_mask: None,
+            label: Some("hdr_depth_read_pass"),
+            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                view: colour_view,
+                resolve_target: None,
+                ops: crate::gpu::Operations {
+                    load: crate::gpu::LoadOp::Load,
+                    store: crate::gpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: None,
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_bind_group(0, camera_bg, &[]);
+
+        self.dispatch_plugin_paint_depth_read(
+            &mut pass,
+            frame,
+            depth_only_view,
+            &resources.depth_read_sampler,
+            &depth_bg,
+        );
     }
 
     fn hdr_oit(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {

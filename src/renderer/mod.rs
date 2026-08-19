@@ -1666,6 +1666,65 @@ impl ViewportRenderer {
         }
     }
 
+    /// `true` when the read-only-depth pass has work this frame: a registered
+    /// depth-read-drawing plugin with a non-empty collection. Gates
+    /// `hdr_depth_read_pass` so a frame with no opted-in plugin begins no extra
+    /// pass and triggers no depth-attachment transition.
+    pub(crate) fn any_plugin_draws_depth_read(&self, frame: &FrameData) -> bool {
+        !self.item_type_plugins.is_empty()
+            && self.item_type_plugins.iter().any(|(name, plugin)| {
+                plugin.draws_depth_read()
+                    && frame
+                        .scene
+                        .plugin_items
+                        .get(*name)
+                        .is_some_and(|items| !items.is_empty())
+            })
+    }
+
+    /// Walk registered plugins and invoke `paint_depth_read` for each
+    /// depth-read-drawing plugin whose collection is on `frame.scene`.
+    ///
+    /// Called from inside the read-only-depth pass after the built-in draws.
+    /// The scene depth is bound read-only as the pass's depth attachment, so
+    /// the plugin samples `scene_depth` (a depth-only view of the same buffer)
+    /// instead of writing it. The caller hands over the view + sampler and a
+    /// prebuilt bind group so the plugin can either bake the depth into a group
+    /// of its own or bind the ready-made group at a spare slot.
+    pub(crate) fn dispatch_plugin_paint_depth_read<'rp>(
+        &'rp self,
+        pass: &mut crate::gpu::RenderPass<'rp>,
+        frame: &'rp FrameData,
+        scene_depth: &'rp crate::gpu::TextureView,
+        scene_depth_sampler: &'rp crate::gpu::Sampler,
+        scene_depth_bind_group: &'rp crate::gpu::BindGroup,
+    ) {
+        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+            return;
+        }
+        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
+        if !self.render_advances_state() {
+            return;
+        }
+        let ctx = crate::plugin_api::DepthReadContext {
+            camera: &frame.camera.render_camera,
+            viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+            viewport_index: frame.camera.viewport_index,
+            frame_index: self.plugin_frame_index,
+            scene_depth,
+            scene_depth_sampler,
+            scene_depth_bind_group,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if !plugin.draws_depth_read() {
+                continue;
+            }
+            if let Some(items) = frame.scene.plugin_items.get(*name) {
+                plugin.paint_depth_read(pass, &ctx, items.as_ref());
+            }
+        }
+    }
+
     /// Walk registered plugins and invoke `render_pick` for each one whose
     /// collection is on `frame.scene`.
     ///
