@@ -2,6 +2,8 @@
 pub mod colourmap_data;
 /// IBL precomputation and environment map upload.
 pub mod environment;
+/// Fallback material textures, shared samplers, and the texture-group layout.
+pub(crate) mod fallbacks;
 /// GPU compute path for IBL precomputation (selected at runtime when supported).
 mod ibl_compute;
 /// Built-in matcap texture data (procedurally generated).

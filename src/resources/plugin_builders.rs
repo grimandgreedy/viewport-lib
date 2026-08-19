@@ -152,7 +152,7 @@ impl DeviceResources {
     /// Use this when building a plugin bind group that samples user
     /// textures the same way `Material` does (linear filter, repeat wrap).
     pub fn material_sampler(&self) -> &crate::gpu::Sampler {
-        &self.material_sampler
+        &self.material.sampler
     }
 
     /// Non-filtering clamp sampler for the read-only-depth pass.
@@ -164,7 +164,7 @@ impl DeviceResources {
     /// [`DepthReadContext::scene_depth_bind_group`](crate::plugin_api::DepthReadContext::scene_depth_bind_group);
     /// use this only when building your own.
     pub fn depth_read_sampler(&self) -> &crate::gpu::Sampler {
-        &self.depth_read_sampler
+        &self.material.depth_read_sampler
     }
 
     /// Bind group layout for the read-only-depth pass: binding 0 is the scene
@@ -180,7 +180,7 @@ impl DeviceResources {
     /// group instead (see
     /// [`SHARED_DEPTH_READ_WGSL`](crate::plugin_api::shared_wgsl::SHARED_DEPTH_READ_WGSL)).
     pub fn depth_read_bind_group_layout(&self) -> &crate::gpu::BindGroupLayout {
-        &self.depth_read_bgl
+        &self.material.depth_read_bgl
     }
 
     /// Shared linear-clamp sampler used by the lib for colormap LUTs.
@@ -188,7 +188,7 @@ impl DeviceResources {
     /// Use this when sampling 1D LUT-style data (colourmaps, transfer
     /// functions) where the texture should not wrap.
     pub fn lut_sampler(&self) -> &crate::gpu::Sampler {
-        &self.lut_sampler
+        &self.material.lut_sampler
     }
 
     /// Comparison sampler used for PCF shadow filtering.

@@ -618,23 +618,23 @@ impl ViewportRenderer {
                     crate::gpu::BindGroupEntry {
                         binding: 1,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_texture.view,
+                            &resources.material.texture.view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&resources.material_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&resources.material.sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_normal_map_view,
+                            &resources.material.normal_map_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 4,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_ao_map_view,
+                            &resources.material.ao_map_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
@@ -654,7 +654,7 @@ impl ViewportRenderer {
                                 .content
                                 .fallback_matcap_view
                                 .as_ref()
-                                .unwrap_or(&resources.fallback_texture.view),
+                                .unwrap_or(&resources.material.texture.view),
                         ),
                     },
                     crate::gpu::BindGroupEntry {
@@ -670,18 +670,20 @@ impl ViewportRenderer {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 10,
-                        resource: crate::gpu::BindingResource::Sampler(&resources.lut_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(
+                            &resources.material.lut_sampler,
+                        ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 11,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_metallic_roughness_texture_view,
+                            &resources.material.metallic_roughness_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 12,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_emissive_texture_view,
+                            &resources.material.emissive_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
@@ -708,13 +710,13 @@ impl ViewportRenderer {
                     crate::gpu::BindGroupEntry {
                         binding: 17,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_texture_array_view,
+                            &resources.material.texture_array_view,
                         ),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 18,
                         resource: crate::gpu::BindingResource::TextureView(
-                            &resources.fallback_texture_array_view,
+                            &resources.material.texture_array_view,
                         ),
                     },
                 ],

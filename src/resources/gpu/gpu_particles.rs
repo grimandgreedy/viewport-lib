@@ -501,7 +501,7 @@ impl crate::resources::DeviceResources {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 2,
-                            resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                            resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 3,
@@ -519,7 +519,7 @@ impl crate::resources::DeviceResources {
                         Some(id) if self.content.textures.get(id).is_some() => {
                             &self.content.textures.get(id).unwrap().view
                         }
-                        _ => &self.fallback_normal_map_view,
+                        _ => &self.material.normal_map_view,
                     };
                     sprite_lit_normal_bg =
                         Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -533,7 +533,7 @@ impl crate::resources::DeviceResources {
                                 crate::gpu::BindGroupEntry {
                                     binding: 1,
                                     resource: crate::gpu::BindingResource::Sampler(
-                                        &self.material_sampler,
+                                        &self.material.sampler,
                                     ),
                                 },
                             ],
@@ -572,7 +572,7 @@ impl crate::resources::DeviceResources {
                     Some(id) if self.content.textures.get(id).is_some() => {
                         &self.content.textures.get(id).unwrap().view
                     }
-                    _ => &self.fallback_texture.view,
+                    _ => &self.material.texture.view,
                 };
                 let mesh_bgl = self
                     .particle
@@ -593,7 +593,7 @@ impl crate::resources::DeviceResources {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 2,
-                            resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                            resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 3,
@@ -892,12 +892,12 @@ impl crate::resources::DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: crate::gpu::BindingResource::TextureView(
-                        &self.fallback_normal_map_view,
+                        &self.material.normal_map_view,
                     ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                 },
             ],
         });

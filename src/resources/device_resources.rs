@@ -715,40 +715,10 @@ pub struct DeviceResources {
     pub(crate) axes_vertex_count: u32,
 
     // --- Texture system ---
-    /// Bind group layout for texture group (group 2: albedo + sampler + normal_map + ao_map).
-    pub(crate) texture_bind_group_layout: crate::gpu::BindGroupLayout,
-    /// Fallback 1x1 white texture used when material.texture_id is None.
-    pub(crate) fallback_texture: GpuTexture,
-    /// D2Array view of `fallback_texture`, bound at lightmap bindings 17/18 for
-    /// meshes without a lightmap. Those bindings are `texture_2d_array` so a
-    /// multi-page lightmap can select an atlas layer per vertex.
-    pub(crate) fallback_texture_array_view: crate::gpu::TextureView,
-    /// Fallback 1x1 flat normal map [128,128,255,255] (tangent-space neutral).
-    pub(crate) fallback_normal_map: crate::gpu::Texture,
-    pub(crate) fallback_normal_map_view: crate::gpu::TextureView,
-    /// Fallback 1x1 AO map [255,255,255,255] (no occlusion).
-    pub(crate) fallback_ao_map: crate::gpu::Texture,
-    pub(crate) fallback_ao_map_view: crate::gpu::TextureView,
-    /// Fallback 1x1 metallic-roughness texture [0, 255, 255, 255].
-    /// G=1.0 and B=1.0 so scalar factors pass through unchanged when no ORM texture is set.
-    pub(crate) fallback_metallic_roughness_texture: crate::gpu::Texture,
-    pub(crate) fallback_metallic_roughness_texture_view: crate::gpu::TextureView,
-    /// Fallback 1x1 emissive texture [0, 0, 0, 255] (no emission).
-    pub(crate) fallback_emissive_texture: crate::gpu::Texture,
-    pub(crate) fallback_emissive_texture_view: crate::gpu::TextureView,
-    /// Shared linear-repeat sampler for material textures.
-    pub(crate) material_sampler: crate::gpu::Sampler,
-    /// Shared linear-clamp sampler for colourmap LUT lookups.
-    pub(crate) lut_sampler: crate::gpu::Sampler,
-    /// Non-filtering clamp sampler for the read-only-depth plugin pass. Bound
-    /// with the scene depth-only view so plugin shaders sample scene depth.
-    pub(crate) depth_read_sampler: crate::gpu::Sampler,
-    /// Bind group layout for the read-only-depth plugin pass (binding 0: depth
-    /// texture, binding 1: non-filtering sampler). A convenience for plugins
-    /// with a spare bind group; the renderer builds the matching bind group
-    /// each frame from the depth-only view. Plugins already using all four
-    /// groups fold the two bindings into an existing group instead.
-    pub(crate) depth_read_bgl: crate::gpu::BindGroupLayout,
+    /// Fallback material textures (1x1 neutral maps), shared material / LUT /
+    /// depth-read samplers, and the texture-group and depth-read bind group
+    /// layouts. See `material::fallbacks::MaterialFallbacks`.
+    pub(crate) material: crate::resources::material::fallbacks::MaterialFallbacks,
     /// Uploaded GPU assets and their handle registries (textures, geometry /
     /// scivis stores, colourmap and matcap tables, fallback LUT and attribute buffers).
     pub(crate) content: ContentResources,
@@ -762,9 +732,6 @@ pub struct DeviceResources {
     /// Grouped into one struct so the async bookkeeping is a single field
     /// rather than a score of flat ones; see `upload_jobs::JobResults`.
     pub(crate) job_results: super::upload_jobs::JobResults,
-
-    /// Whether fallback normal map / AO map pixels have been uploaded.
-    pub(crate) fallback_textures_uploaded: bool,
 
     // --- Shared post-processing pipelines / layouts / samplers ---
     /// FXAA/SSAA, bloom, SSAO, tone-map, DoF, contact shadows, placeholders,

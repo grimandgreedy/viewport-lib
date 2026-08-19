@@ -296,7 +296,7 @@ impl DeviceResources {
         );
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("lightmap_array_bg"),
-            layout: &self.texture_bind_group_layout,
+            layout: &self.material.texture_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -309,12 +309,12 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 2,
                     resource: crate::gpu::BindingResource::TextureView(
-                        &self.fallback_normal_map_view,
+                        &self.material.normal_map_view,
                     ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: crate::gpu::BindingResource::TextureView(&self.fallback_ao_map_view),
+                    resource: crate::gpu::BindingResource::TextureView(&self.material.ao_map_view),
                 },
             ],
         });
@@ -486,10 +486,10 @@ impl DeviceResources {
         // Clone the fallback views and the bind-group layout into the job
         // so its stages can build the GpuTexture and bind group without
         // touching `self`.
-        let bgl = self.texture_bind_group_layout.clone();
-        let fallback_albedo_view = self.fallback_texture.view.clone();
-        let fallback_normal_view = self.fallback_normal_map_view.clone();
-        let fallback_ao_view = self.fallback_ao_map_view.clone();
+        let bgl = self.material.texture_bgl.clone();
+        let fallback_albedo_view = self.material.texture.view.clone();
+        let fallback_normal_view = self.material.normal_map_view.clone();
+        let fallback_ao_view = self.material.ao_map_view.clone();
         let TextureUploadSpec {
             width,
             height,
@@ -775,10 +775,10 @@ impl DeviceResources {
             crate::gpu::TextureFormat::Rgba8UnormSrgb,
             false,
             std::slice::from_ref(&rgba_data.to_vec()),
-            &self.texture_bind_group_layout,
-            &self.fallback_texture.view,
-            &self.fallback_normal_map_view,
-            &self.fallback_ao_map_view,
+            &self.material.texture_bgl,
+            &self.material.texture.view,
+            &self.material.normal_map_view,
+            &self.material.ao_map_view,
         );
         let bytes = rgba_data.len() as u64;
         if self
@@ -1149,24 +1149,24 @@ impl DeviceResources {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_texture.view,
+                _ => &self.material.texture.view,
             };
             let normal_view = match normal_map_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_normal_map_view,
+                _ => &self.material.normal_map_view,
             };
             let ao_view = match ao_map_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_ao_map_view,
+                _ => &self.material.ao_map_view,
             };
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("material_bg"),
-                layout: &self.texture_bind_group_layout,
+                layout: &self.material.texture_bgl,
                 entries: &[
                     crate::gpu::BindGroupEntry {
                         binding: 0,
@@ -1174,7 +1174,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 1,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
@@ -1284,19 +1284,19 @@ impl DeviceResources {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_texture.view,
+            _ => &self.material.texture.view,
         };
         let normal_view = match normal_map_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_normal_map_view,
+            _ => &self.material.normal_map_view,
         };
         let ao_view = match ao_map_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_ao_map_view,
+            _ => &self.material.ao_map_view,
         };
         let lut_view = match lut_id {
             Some(id) if id.0 < self.content.colourmap_views.len() => {
@@ -1320,13 +1320,13 @@ impl DeviceResources {
             .map(|t| t.texture.create_view(&lightmap_array_desc));
         let lightmap_view: &crate::gpu::TextureView = lightmap_owned
             .as_ref()
-            .unwrap_or(&self.fallback_texture_array_view);
+            .unwrap_or(&self.material.texture_array_view);
         let lightmap_dir_owned = lightmap_dir_tex_id
             .and_then(|id| self.content.textures.get(id))
             .map(|t| t.texture.create_view(&lightmap_array_desc));
         let lightmap_dir_view: &crate::gpu::TextureView = lightmap_dir_owned
             .as_ref()
-            .unwrap_or(&self.fallback_texture_array_view);
+            .unwrap_or(&self.material.texture_array_view);
 
         let Some(mesh) = self.mesh_store.get_mut(mesh_id) else {
             return;
@@ -1360,7 +1360,7 @@ impl DeviceResources {
                 .content
                 .fallback_matcap_view
                 .as_ref()
-                .unwrap_or(&self.fallback_texture.view),
+                .unwrap_or(&self.material.texture.view),
         };
 
         let warp_buf: &crate::gpu::Buffer = match warp_attr {
@@ -1392,13 +1392,13 @@ impl DeviceResources {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_metallic_roughness_texture_view,
+            _ => &self.material.metallic_roughness_view,
         };
         let emissive_view: &crate::gpu::TextureView = match emissive_texture_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_emissive_texture_view,
+            _ => &self.material.emissive_view,
         };
 
         mesh.object_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1415,7 +1415,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
@@ -1447,7 +1447,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: crate::gpu::BindingResource::Sampler(&self.lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material.lut_sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 11,
@@ -1597,19 +1597,19 @@ impl DeviceResources {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_texture.view,
+            _ => &self.material.texture.view,
         };
         let normal_view = match normal_map_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_normal_map_view,
+            _ => &self.material.normal_map_view,
         };
         let ao_view = match ao_map_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_ao_map_view,
+            _ => &self.material.ao_map_view,
         };
         let lut_view = match lut_id {
             Some(id) if id.0 < self.content.colourmap_views.len() => {
@@ -1645,7 +1645,7 @@ impl DeviceResources {
                 .content
                 .fallback_matcap_view
                 .as_ref()
-                .unwrap_or(&self.fallback_texture.view),
+                .unwrap_or(&self.material.texture.view),
         };
 
         let warp_buf: &crate::gpu::Buffer = match warp_attr {
@@ -1688,7 +1688,7 @@ impl DeviceResources {
             .map(|t| t.texture.create_view(&lightmap_array_desc));
         let lightmap_view: &crate::gpu::TextureView = lightmap_owned
             .as_ref()
-            .unwrap_or(&self.fallback_texture_array_view);
+            .unwrap_or(&self.material.texture_array_view);
         let lightmap_dir_owned = mesh
             .lightmap
             .as_ref()
@@ -1697,19 +1697,19 @@ impl DeviceResources {
             .map(|t| t.texture.create_view(&lightmap_array_desc));
         let lightmap_dir_view: &crate::gpu::TextureView = lightmap_dir_owned
             .as_ref()
-            .unwrap_or(&self.fallback_texture_array_view);
+            .unwrap_or(&self.material.texture_array_view);
 
         let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_metallic_roughness_texture_view,
+            _ => &self.material.metallic_roughness_view,
         };
         let emissive_view: &crate::gpu::TextureView = match emissive_texture_id {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_emissive_texture_view,
+            _ => &self.material.emissive_view,
         };
 
         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1726,7 +1726,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
@@ -1758,7 +1758,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: crate::gpu::BindingResource::Sampler(&self.lut_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material.lut_sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 11,
@@ -2014,7 +2014,8 @@ impl DeviceResources {
         // first uploaded texture (a plain white 1x1 is fine as fallback).
         if self.content.fallback_matcap_view.is_none() {
             self.content.fallback_matcap_view = Some(
-                self.fallback_texture
+                self.material
+                    .texture
                     .texture
                     .create_view(&crate::gpu::TextureViewDescriptor::default()),
             );

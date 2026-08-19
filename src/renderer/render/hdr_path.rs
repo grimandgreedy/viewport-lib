@@ -2576,7 +2576,7 @@ impl ViewportRenderer {
         // sampler into a group of their own.
         let depth_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("plugin_depth_read_bg"),
-            layout: &resources.depth_read_bgl,
+            layout: &resources.material.depth_read_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -2584,7 +2584,9 @@ impl ViewportRenderer {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(&resources.depth_read_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(
+                        &resources.material.depth_read_sampler,
+                    ),
                 },
             ],
         });
@@ -2618,7 +2620,7 @@ impl ViewportRenderer {
             &mut pass,
             frame,
             depth_only_view,
-            &resources.depth_read_sampler,
+            &resources.material.depth_read_sampler,
             &depth_bg,
         );
     }

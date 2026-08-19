@@ -289,7 +289,7 @@ impl DeviceResources {
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         // --- Fallback textures (one-time uploads) ---
-        if !self.fallback_textures_uploaded {
+        if !self.material.uploaded {
             let upload = |tex: &crate::gpu::Texture, data: &[u8]| {
                 queue.write_texture(
                     crate::gpu::TexelCopyTextureInfo {
@@ -311,13 +311,13 @@ impl DeviceResources {
                     },
                 );
             };
-            upload(&self.fallback_normal_map, &[128u8, 128u8, 255u8, 255u8]);
-            upload(&self.fallback_ao_map, &[255u8, 255u8, 255u8, 255u8]);
+            upload(&self.material.normal_map, &[128u8, 128u8, 255u8, 255u8]);
+            upload(&self.material.ao_map, &[255u8, 255u8, 255u8, 255u8]);
             upload(
-                &self.fallback_texture.texture,
+                &self.material.texture.texture,
                 &[255u8, 255u8, 255u8, 255u8],
             );
-            self.fallback_textures_uploaded = true;
+            self.material.uploaded = true;
         }
 
         // --- Placeholder textures (one-time) ---

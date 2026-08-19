@@ -1005,19 +1005,19 @@ impl DeviceResources {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_texture.view,
+                _ => &self.material.texture.view,
             };
             let normal_view = match normal_map_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_normal_map_view,
+                _ => &self.material.normal_map_view,
             };
             let ao_view = match ao_map_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_ao_map_view,
+                _ => &self.material.ao_map_view,
             };
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1034,7 +1034,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -1082,19 +1082,19 @@ impl DeviceResources {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_texture.view,
+                _ => &self.material.texture.view,
             };
             let normal_view = match normal_map_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_normal_map_view,
+                _ => &self.material.normal_map_view,
             };
             let ao_view = match ao_map_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_ao_map_view,
+                _ => &self.material.ao_map_view,
             };
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1111,7 +1111,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -1160,19 +1160,19 @@ impl DeviceResources {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_texture.view,
+                _ => &self.material.texture.view,
             };
             let normal_view = match normal_map_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_normal_map_view,
+                _ => &self.material.normal_map_view,
             };
             let ao_view = match ao_map_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
                     &self.content.textures.get(id).unwrap().view
                 }
-                _ => &self.fallback_ao_map_view,
+                _ => &self.material.ao_map_view,
             };
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1189,7 +1189,7 @@ impl DeviceResources {
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 2,
-                        resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                        resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                     },
                     crate::gpu::BindGroupEntry {
                         binding: 3,
@@ -1349,7 +1349,7 @@ impl DeviceResources {
             Some(id) if self.content.textures.get(id).is_some() => {
                 &self.content.textures.get(id).unwrap().view
             }
-            _ => &self.fallback_texture.view,
+            _ => &self.material.texture.view,
         };
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("mesh_instance_bg"),
@@ -1365,17 +1365,17 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
                     resource: crate::gpu::BindingResource::TextureView(
-                        &self.fallback_normal_map_view,
+                        &self.material.normal_map_view,
                     ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 4,
-                    resource: crate::gpu::BindingResource::TextureView(&self.fallback_ao_map_view),
+                    resource: crate::gpu::BindingResource::TextureView(&self.material.ao_map_view),
                 },
             ],
         });

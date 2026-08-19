@@ -593,7 +593,7 @@ impl DeviceResources {
         let resolve_tex = |id: Option<crate::resources::TextureId>| -> &crate::gpu::TextureView {
             id.and_then(|i| self.content.textures.get(i))
                 .map(|t| &t.view)
-                .unwrap_or(&self.fallback_texture.view)
+                .unwrap_or(&self.material.texture.view)
         };
 
         let tex_view = self
@@ -601,7 +601,7 @@ impl DeviceResources {
             .textures
             .get(item.texture_id)
             .map(|t| &t.view)
-            .unwrap_or(&self.fallback_texture.view);
+            .unwrap_or(&self.material.texture.view);
         let normal_view = resolve_tex(item.normal_texture_id);
         let roughness_view = resolve_tex(item.roughness_texture_id);
         let metallic_view = resolve_tex(item.metallic_texture_id);

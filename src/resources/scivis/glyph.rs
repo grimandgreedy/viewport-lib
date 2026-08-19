@@ -273,7 +273,7 @@ impl DeviceResources {
             })
             .unwrap_or(&self.content.fallback_lut_view);
 
-        let lut_sampler = &self.material_sampler;
+        let lut_sampler = &self.material.sampler;
 
         let bgl1 = self
             .glyph
@@ -669,7 +669,7 @@ impl DeviceResources {
             })
             .unwrap_or(&self.content.fallback_lut_view);
 
-        let lut_sampler = &self.material_sampler;
+        let lut_sampler = &self.material.sampler;
 
         let bgl1 = self
             .tensor_glyph

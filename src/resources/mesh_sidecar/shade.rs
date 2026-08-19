@@ -885,7 +885,7 @@ impl crate::resources::DeviceResources {
                     .get(t as usize)
                     .and_then(|id| self.content.textures.get(*id))
                     .map(|tex| &tex.view)
-                    .unwrap_or(&self.fallback_texture.view);
+                    .unwrap_or(&self.material.texture.view);
                 entries.push(crate::gpu::BindGroupEntry {
                     binding: t + 2,
                     resource: crate::gpu::BindingResource::TextureView(view),
