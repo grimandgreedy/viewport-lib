@@ -43,6 +43,7 @@ impl DeviceResources {
     pub fn shared_bindings(&self) -> SharedBindings<'_> {
         SharedBindings {
             group0_layout: &self.camera_bind_group_layout,
+            sample_count: self.sample_count,
         }
     }
 

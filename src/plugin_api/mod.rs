@@ -120,6 +120,23 @@ pub struct SharedBindings<'a> {
     /// The group-0 `BindGroupLayout`. Pass by reference when calling
     /// `device.create_pipeline_layout`.
     pub group0_layout: &'a crate::gpu::BindGroupLayout,
+    /// MSAA sample count of the renderer's HDR scene target, as configured by
+    /// [`ViewportRenderer::with_sample_count`](crate::renderer::ViewportRenderer::with_sample_count)
+    /// (1 when MSAA is off).
+    ///
+    /// A plugin that hand-rolls a render pipeline (rather than building through
+    /// the `DeviceResources::build_*_pipeline` helpers, which already apply
+    /// this) must set its `multisample.count` to this value for the HDR colour
+    /// passes: `paint`, `paint_transparent`, and `paint_depth_read`. The stock
+    /// helpers read the same field, so pipelines built through them need no
+    /// change.
+    ///
+    /// This applies to the HDR colour passes only. The shadow, pick, and
+    /// outline-mask passes always render single-sampled (the library's own
+    /// descriptors peg them to 1), so a plugin's `cast_shadow_pass`,
+    /// `render_pick`, and `outline_mask` pipelines use `sample_count: 1`
+    /// regardless of this value.
+    pub sample_count: u32,
 }
 
 impl<'a> SharedBindings<'a> {
