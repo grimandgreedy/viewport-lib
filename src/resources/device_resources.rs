@@ -870,60 +870,9 @@ pub struct DeviceResources {
     pub(crate) scatter: crate::resources::volume::scatter_volume::ScatterResources,
 
     // --- IBL / environment map resources ---
-    /// IBL irradiance equirect array view, all layers (binding 7). None until the
-    /// default environment is uploaded (layer 0). Its `is_some()` gates `ibl_enabled`.
-    pub(crate) ibl_irradiance_view: Option<crate::gpu::TextureView>,
-    /// IBL prefiltered specular equirect array view, all layers (binding 8). None
-    /// until the default environment is uploaded.
-    pub(crate) ibl_prefiltered_view: Option<crate::gpu::TextureView>,
-    /// BRDF integration LUT texture view (binding 9). None until the first
-    /// `upload_environment_map`; cached across subsequent uploads (the LUT is
-    /// scene-independent: function of roughness x N.V only).
-    pub(crate) ibl_brdf_lut_view: Option<crate::gpu::TextureView>,
-    /// IBL linear-clamp sampler (binding 10).
-    pub(crate) ibl_sampler: crate::gpu::Sampler,
-    /// Skybox / full-res environment equirect texture view (binding 11). None until uploaded.
-    pub(crate) ibl_skybox_view: Option<crate::gpu::TextureView>,
-    /// Fallback 1x1 black Rgba16Float texture for the skybox slot (binding 11)
-    /// when no environment is loaded.
-    #[allow(dead_code)]
-    pub(crate) ibl_fallback_texture: crate::gpu::Texture,
-    /// View of ibl_fallback_texture.
-    pub(crate) ibl_fallback_view: crate::gpu::TextureView,
-    /// Fallback 1x1x1 black `2d-array` texture for the irradiance / prefiltered
-    /// array slots (bindings 7-8) before the default environment is uploaded.
-    #[allow(dead_code)]
-    pub(crate) ibl_fallback_array_texture: crate::gpu::Texture,
-    /// `2d-array` view of ibl_fallback_array_texture.
-    pub(crate) ibl_fallback_array_view: crate::gpu::TextureView,
-    /// Fallback 1x1 BRDF LUT placeholder; swapped for the real 128x128 LUT
-    /// on the first `upload_environment_map` call. Bound to satisfy the bind
-    /// group layout when no environment map has been uploaded yet.
-    #[allow(dead_code)]
-    pub(crate) ibl_fallback_brdf_texture: crate::gpu::Texture,
-    pub(crate) ibl_fallback_brdf_view: crate::gpu::TextureView,
-    /// Irradiance array texture (owned, kept alive for the view). Holds every
-    /// environment layer; created on the first environment upload.
-    #[allow(dead_code)]
-    pub(crate) ibl_irradiance_texture: Option<crate::gpu::Texture>,
-    /// Prefiltered specular array texture (owned). Holds every environment layer.
-    #[allow(dead_code)]
-    pub(crate) ibl_prefiltered_texture: Option<crate::gpu::Texture>,
-    /// Next free array layer for an extra environment (`upload_environment`).
-    /// Starts at 1; layer 0 is reserved for the scene default.
-    pub(crate) ibl_env_next_layer: u32,
-    /// Number of active environment zones written to the env-zone region of
-    /// `indirect_light_buf`. 0 = default environment everywhere; the shaders skip
-    /// the per-fragment zone loop.
-    pub(crate) env_zone_count: u32,
-    /// Uploaded BRDF LUT texture (owned).
-    #[allow(dead_code)]
-    pub(crate) ibl_brdf_lut_texture: Option<crate::gpu::Texture>,
-    /// Uploaded skybox equirect texture (owned).
-    #[allow(dead_code)]
-    pub(crate) ibl_skybox_texture: Option<crate::gpu::Texture>,
-    /// Skybox fullscreen render pipeline (renders equirect environment as background).
-    pub(crate) skybox_pipeline: crate::gpu::RenderPipeline,
+    /// Image-based-lighting views, fallbacks, owned array textures, environment
+    /// zone count, and the skybox pipeline. See `material::environment::IblResources`.
+    pub(crate) ibl: crate::resources::material::environment::IblResources,
 
     // --- Ground plane ---
     /// Full-screen ground plane render pipeline (alpha blending, LessEqual depth).
@@ -1304,21 +1253,25 @@ impl DeviceResources {
         label: &str,
     ) -> crate::gpu::BindGroup {
         let irr = self
-            .ibl_irradiance_view
+            .ibl
+            .irradiance_view
             .as_ref()
-            .unwrap_or(&self.ibl_fallback_array_view);
+            .unwrap_or(&self.ibl.fallback_array_view);
         let spec = self
-            .ibl_prefiltered_view
+            .ibl
+            .prefiltered_view
             .as_ref()
-            .unwrap_or(&self.ibl_fallback_array_view);
+            .unwrap_or(&self.ibl.fallback_array_view);
         let brdf = self
-            .ibl_brdf_lut_view
+            .ibl
+            .brdf_lut_view
             .as_ref()
-            .unwrap_or(&self.ibl_fallback_brdf_view);
+            .unwrap_or(&self.ibl.fallback_brdf_view);
         let skybox = self
-            .ibl_skybox_view
+            .ibl
+            .skybox_view
             .as_ref()
-            .unwrap_or(&self.ibl_fallback_view);
+            .unwrap_or(&self.ibl.fallback_view);
 
         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some(label),
@@ -1366,7 +1319,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 10,
-                    resource: crate::gpu::BindingResource::Sampler(&self.ibl_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.ibl.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 11,

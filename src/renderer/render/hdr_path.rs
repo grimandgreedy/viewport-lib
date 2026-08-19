@@ -696,7 +696,7 @@ impl ViewportRenderer {
                 .environment
                 .as_ref()
                 .is_some_and(|e| e.show_skybox)
-                && resources.ibl_skybox_view.is_some();
+                && resources.ibl.skybox_view.is_some();
 
             let use_instancing = self.instancing.use_instancing;
             let batches = &self.instancing.batches;
@@ -1436,7 +1436,7 @@ impl ViewportRenderer {
             // composites over the sky instead of being painted over by it.
             if show_skybox {
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                render_pass.set_pipeline(&resources.skybox_pipeline);
+                render_pass.set_pipeline(&resources.ibl.skybox_pipeline);
                 render_pass.draw(0..3, 0..1);
             }
 

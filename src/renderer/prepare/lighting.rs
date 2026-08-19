@@ -676,7 +676,7 @@ impl ViewportRenderer {
         // IBL fields from environment map settings.
         let (ibl_enabled, ibl_intensity, ibl_rotation, show_skybox) =
             if let Some(env) = scene_fx.environment {
-                if resources.ibl_irradiance_view.is_some() {
+                if resources.ibl.irradiance_view.is_some() {
                     (
                         1u32,
                         env.intensity,
@@ -719,7 +719,7 @@ impl ViewportRenderer {
             } else {
                 0.5
             },
-            env_zone_count: resources.env_zone_count,
+            env_zone_count: resources.ibl.env_zone_count,
             _pad_dbg: [0u32; 2],
         };
         queue.write_buffer(

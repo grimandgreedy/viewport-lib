@@ -20,6 +20,69 @@ use super::ibl_compute::{
     IBL_ENV_CAPACITY, IBL_IRR_H, IBL_IRR_W, IBL_PREFILTER_H, IBL_PREFILTER_MIPS, IBL_PREFILTER_W,
 };
 
+/// Image-based-lighting and environment-map GPU resources.
+///
+/// The `*_view` slots are `None` until the first `upload_environment_map`; the
+/// `fallback_*` textures satisfy the lit-pass bind group in the meantime. Owned
+/// array textures are kept alive alongside their views. Grouped off
+/// `DeviceResources` as a plain data holder; upload logic lives in this module.
+pub(crate) struct IblResources {
+    /// Irradiance equirect array view, all layers (binding 7). None until the
+    /// default environment is uploaded (layer 0). Its `is_some()` gates `ibl_enabled`.
+    pub(crate) irradiance_view: Option<crate::gpu::TextureView>,
+    /// Prefiltered specular equirect array view, all layers (binding 8). None
+    /// until the default environment is uploaded.
+    pub(crate) prefiltered_view: Option<crate::gpu::TextureView>,
+    /// BRDF integration LUT texture view (binding 9). None until the first
+    /// `upload_environment_map`; cached across subsequent uploads (the LUT is
+    /// scene-independent: function of roughness x N.V only).
+    pub(crate) brdf_lut_view: Option<crate::gpu::TextureView>,
+    /// Linear-clamp sampler (binding 10).
+    pub(crate) sampler: crate::gpu::Sampler,
+    /// Skybox / full-res environment equirect texture view (binding 11). None until uploaded.
+    pub(crate) skybox_view: Option<crate::gpu::TextureView>,
+    /// Fallback 1x1 black Rgba16Float texture for the skybox slot (binding 11)
+    /// when no environment is loaded.
+    #[allow(dead_code)]
+    pub(crate) fallback_texture: crate::gpu::Texture,
+    /// View of `fallback_texture`.
+    pub(crate) fallback_view: crate::gpu::TextureView,
+    /// Fallback 1x1x1 black `2d-array` texture for the irradiance / prefiltered
+    /// array slots (bindings 7-8) before the default environment is uploaded.
+    #[allow(dead_code)]
+    pub(crate) fallback_array_texture: crate::gpu::Texture,
+    /// `2d-array` view of `fallback_array_texture`.
+    pub(crate) fallback_array_view: crate::gpu::TextureView,
+    /// Fallback 1x1 BRDF LUT placeholder; swapped for the real 128x128 LUT
+    /// on the first `upload_environment_map` call. Bound to satisfy the bind
+    /// group layout when no environment map has been uploaded yet.
+    #[allow(dead_code)]
+    pub(crate) fallback_brdf_texture: crate::gpu::Texture,
+    pub(crate) fallback_brdf_view: crate::gpu::TextureView,
+    /// Irradiance array texture (owned, kept alive for the view). Holds every
+    /// environment layer; created on the first environment upload.
+    #[allow(dead_code)]
+    pub(crate) irradiance_texture: Option<crate::gpu::Texture>,
+    /// Prefiltered specular array texture (owned). Holds every environment layer.
+    #[allow(dead_code)]
+    pub(crate) prefiltered_texture: Option<crate::gpu::Texture>,
+    /// Next free array layer for an extra environment (`upload_environment`).
+    /// Starts at 1; layer 0 is reserved for the scene default.
+    pub(crate) env_next_layer: u32,
+    /// Number of active environment zones written to the env-zone region of
+    /// `indirect_light_buf`. 0 = default environment everywhere; the shaders skip
+    /// the per-fragment zone loop.
+    pub(crate) env_zone_count: u32,
+    /// Uploaded BRDF LUT texture (owned).
+    #[allow(dead_code)]
+    pub(crate) brdf_lut_texture: Option<crate::gpu::Texture>,
+    /// Uploaded skybox equirect texture (owned).
+    #[allow(dead_code)]
+    pub(crate) skybox_texture: Option<crate::gpu::Texture>,
+    /// Skybox fullscreen render pipeline (renders equirect environment as background).
+    pub(crate) skybox_pipeline: crate::gpu::RenderPipeline,
+}
+
 /// Handle to one environment in the indexed set.
 ///
 /// Layer 0 is the scene default (uploaded via [`upload_environment_map`]); extra
@@ -132,13 +195,13 @@ pub fn set_environment_zones(
             bytemuck::cast_slice(&gpu),
         );
     }
-    resources.env_zone_count = n as u32;
+    resources.ibl.env_zone_count = n as u32;
 }
 
 /// Clear all environment-selection zones. Fragments revert to the default
 /// environment (array layer 0).
 pub fn clear_environment_zones(resources: &mut crate::resources::DeviceResources) {
-    resources.env_zone_count = 0;
+    resources.ibl.env_zone_count = 0;
 }
 
 // -------------------------------------------------------------------------
@@ -284,7 +347,7 @@ fn begin_upload_layer(
     }
 
     let compute_supported = super::ibl_compute::compute_supported(device);
-    let needs_brdf = resources.ibl_brdf_lut_texture.is_none();
+    let needs_brdf = resources.ibl.brdf_lut_texture.is_none();
     let (irr_array, pref_array) = ensure_ibl_arrays(resources, device, compute_supported);
     let is_default = env == EnvironmentMapId::DEFAULT;
     let layer = env.0;
@@ -339,25 +402,25 @@ fn ensure_ibl_arrays(
     device: &crate::gpu::Device,
     compute: bool,
 ) -> (crate::gpu::Texture, crate::gpu::Texture) {
-    if resources.ibl_irradiance_texture.is_none() {
+    if resources.ibl.irradiance_texture.is_none() {
         let (irr, pref) = super::ibl_compute::create_ibl_arrays(device, compute);
-        resources.ibl_irradiance_texture = Some(irr);
-        resources.ibl_prefiltered_texture = Some(pref);
+        resources.ibl.irradiance_texture = Some(irr);
+        resources.ibl.prefiltered_texture = Some(pref);
     }
     (
-        resources.ibl_irradiance_texture.clone().unwrap(),
-        resources.ibl_prefiltered_texture.clone().unwrap(),
+        resources.ibl.irradiance_texture.clone().unwrap(),
+        resources.ibl.prefiltered_texture.clone().unwrap(),
     )
 }
 
 /// Reserve the next free array layer for an extra environment. Layer 0 is the
 /// default, so allocation starts at 1. Returns `None` once the cap is reached.
 fn alloc_env_layer(resources: &mut crate::resources::DeviceResources) -> Option<u32> {
-    let next = resources.ibl_env_next_layer.max(1);
+    let next = resources.ibl.env_next_layer.max(1);
     if next >= IBL_ENV_CAPACITY {
         return None;
     }
-    resources.ibl_env_next_layer = next + 1;
+    resources.ibl.env_next_layer = next + 1;
     Some(next)
 }
 
@@ -368,18 +431,20 @@ fn alloc_env_layer(resources: &mut crate::resources::DeviceResources) -> Option<
 fn apply_layer_bake(result: super::ibl_compute::LayerBakeResult, is_default: bool) -> ApplyFn {
     Box::new(move |resources: &mut crate::resources::DeviceResources| {
         if let (Some(brdf_tex), Some(brdf_view)) = (result.brdf_texture, result.brdf_view) {
-            resources.ibl_brdf_lut_view = Some(brdf_view);
-            resources.ibl_brdf_lut_texture = Some(brdf_tex);
+            resources.ibl.brdf_lut_view = Some(brdf_view);
+            resources.ibl.brdf_lut_texture = Some(brdf_tex);
         }
         if is_default {
-            resources.ibl_skybox_texture = Some(result.skybox_texture);
-            resources.ibl_skybox_view = Some(result.skybox_view);
-            resources.ibl_irradiance_view = resources
-                .ibl_irradiance_texture
+            resources.ibl.skybox_texture = Some(result.skybox_texture);
+            resources.ibl.skybox_view = Some(result.skybox_view);
+            resources.ibl.irradiance_view = resources
+                .ibl
+                .irradiance_texture
                 .as_ref()
                 .map(super::ibl_compute::array_binding_view);
-            resources.ibl_prefiltered_view = resources
-                .ibl_prefiltered_texture
+            resources.ibl.prefiltered_view = resources
+                .ibl
+                .prefiltered_texture
                 .as_ref()
                 .map(super::ibl_compute::array_binding_view);
         }
@@ -479,20 +544,22 @@ fn run_cpu_path(
         submission,
         Box::new(move |resources: &mut crate::resources::DeviceResources| {
             if let (Some(tex), Some(view)) = (brdf_tex, brdf_view) {
-                resources.ibl_brdf_lut_view = Some(view);
-                resources.ibl_brdf_lut_texture = Some(tex);
+                resources.ibl.brdf_lut_view = Some(view);
+                resources.ibl.brdf_lut_texture = Some(tex);
             }
             if is_default {
                 if let Some((tex, view)) = skybox {
-                    resources.ibl_skybox_texture = Some(tex);
-                    resources.ibl_skybox_view = Some(view);
+                    resources.ibl.skybox_texture = Some(tex);
+                    resources.ibl.skybox_view = Some(view);
                 }
-                resources.ibl_irradiance_view = resources
-                    .ibl_irradiance_texture
+                resources.ibl.irradiance_view = resources
+                    .ibl
+                    .irradiance_texture
                     .as_ref()
                     .map(super::ibl_compute::array_binding_view);
-                resources.ibl_prefiltered_view = resources
-                    .ibl_prefiltered_texture
+                resources.ibl.prefiltered_view = resources
+                    .ibl
+                    .prefiltered_texture
                     .as_ref()
                     .map(super::ibl_compute::array_binding_view);
             }
@@ -952,6 +1019,31 @@ mod tests {
     }
 
     #[test]
+    fn ibl_fallbacks_wired_before_any_upload() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let resources = make_resources(&device);
+        let ibl = &resources.ibl;
+        // Before any environment upload the view slots are empty but the
+        // fallbacks and the environment-layer cursor are wired, so the lit-pass
+        // bind group stays valid. Guards the init-assembly nesting for the
+        // always-present IBL fields.
+        assert!(ibl.irradiance_view.is_none());
+        assert!(ibl.prefiltered_view.is_none());
+        assert!(ibl.brdf_lut_view.is_none());
+        assert!(ibl.skybox_view.is_none());
+        assert_eq!(ibl.env_next_layer, 1, "layer 0 reserved for scene default");
+        assert_eq!(ibl.env_zone_count, 0);
+        assert_eq!(
+            ibl.fallback_array_texture.depth_or_array_layers(),
+            1,
+            "fallback array is a single black layer"
+        );
+    }
+
+    #[test]
     fn invalid_size_returns_error_synchronously() {
         let Some((device, queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");
@@ -981,7 +1073,7 @@ mod tests {
             return;
         };
         let mut resources = make_resources(&device);
-        assert!(resources.ibl_irradiance_view.is_none());
+        assert!(resources.ibl.irradiance_view.is_none());
 
         let pixels = make_solid_env(8, 4, [0.5, 0.6, 0.7]);
         let id =
@@ -1009,10 +1101,10 @@ mod tests {
             }
         }
 
-        assert!(resources.ibl_irradiance_view.is_some());
-        assert!(resources.ibl_prefiltered_view.is_some());
-        assert!(resources.ibl_skybox_view.is_some());
-        assert!(resources.ibl_brdf_lut_view.is_some());
+        assert!(resources.ibl.irradiance_view.is_some());
+        assert!(resources.ibl.prefiltered_view.is_some());
+        assert!(resources.ibl.skybox_view.is_some());
+        assert!(resources.ibl.brdf_lut_view.is_some());
         assert_eq!(resources.uploads_pending(), 0);
     }
 
@@ -1027,11 +1119,11 @@ mod tests {
         let pixels = make_solid_env(8, 4, [0.2, 0.4, 0.8]);
         upload_environment_map(&mut resources, &device, &queue, &pixels, 8, 4).unwrap();
 
-        assert!(resources.ibl_irradiance_view.is_some());
-        assert!(resources.ibl_prefiltered_view.is_some());
-        assert!(resources.ibl_skybox_view.is_some());
+        assert!(resources.ibl.irradiance_view.is_some());
+        assert!(resources.ibl.prefiltered_view.is_some());
+        assert!(resources.ibl.skybox_view.is_some());
         // BRDF LUT is scene-independent and computed on first upload.
-        assert!(resources.ibl_brdf_lut_view.is_some());
+        assert!(resources.ibl.brdf_lut_view.is_some());
         assert!(resources.all_uploads_complete());
     }
 
@@ -1045,7 +1137,7 @@ mod tests {
 
         let pixels_a = make_solid_env(8, 4, [0.5, 0.5, 0.5]);
         upload_environment_map(&mut resources, &device, &queue, &pixels_a, 8, 4).unwrap();
-        assert!(resources.ibl_brdf_lut_texture.is_some());
+        assert!(resources.ibl.brdf_lut_texture.is_some());
 
         // Second upload completes without falling over and leaves the BRDF
         // LUT present. The internal `needs_brdf` flag decides whether the
@@ -1053,8 +1145,8 @@ mod tests {
         // resulting state is "BRDF available".
         let pixels_b = make_solid_env(8, 4, [0.1, 0.9, 0.4]);
         upload_environment_map(&mut resources, &device, &queue, &pixels_b, 8, 4).unwrap();
-        assert!(resources.ibl_brdf_lut_texture.is_some());
-        assert!(resources.ibl_skybox_view.is_some());
+        assert!(resources.ibl.brdf_lut_texture.is_some());
+        assert!(resources.ibl.skybox_view.is_some());
     }
 
     #[test]
@@ -1068,7 +1160,7 @@ mod tests {
         // The default occupies layer 0.
         let default_px = make_solid_env(8, 4, [0.5, 0.5, 0.5]);
         upload_environment_map(&mut resources, &device, &queue, &default_px, 8, 4).unwrap();
-        assert!(resources.ibl_irradiance_view.is_some());
+        assert!(resources.ibl.irradiance_view.is_some());
 
         // An extra environment bakes into layer 1 and does not disturb the
         // default skybox / array views.
@@ -1076,7 +1168,7 @@ mod tests {
         let id = upload_environment(&mut resources, &device, &queue, &extra_px, 8, 4).unwrap();
         assert_eq!(id.index(), 1);
         assert_ne!(id, super::EnvironmentMapId::DEFAULT);
-        assert!(resources.ibl_skybox_view.is_some());
+        assert!(resources.ibl.skybox_view.is_some());
         assert!(resources.all_uploads_complete());
     }
 
@@ -1133,14 +1225,14 @@ mod tests {
             parallax: true,
         };
         set_environment_zones(&mut resources, &queue, &[zone]);
-        assert_eq!(resources.env_zone_count, 1);
+        assert_eq!(resources.ibl.env_zone_count, 1);
 
         // Over the cap: the live count clamps to MAX_ENV_ZONES.
         let many = vec![zone; MAX_ENV_ZONES + 5];
         set_environment_zones(&mut resources, &queue, &many);
-        assert_eq!(resources.env_zone_count, MAX_ENV_ZONES as u32);
+        assert_eq!(resources.ibl.env_zone_count, MAX_ENV_ZONES as u32);
 
         clear_environment_zones(&mut resources);
-        assert_eq!(resources.env_zone_count, 0);
+        assert_eq!(resources.ibl.env_zone_count, 0);
     }
 }
