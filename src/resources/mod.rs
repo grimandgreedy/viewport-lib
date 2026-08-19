@@ -9,6 +9,8 @@ pub(crate) mod device_resources;
 pub(crate) mod gizmo;
 /// GPU compute resources: clustered shading, hierarchical-Z, particles, and dynamic resolution.
 pub mod gpu;
+/// Ground-plane pipeline, uniform, and bind group.
+pub(crate) mod ground_plane;
 /// Shared generational handle primitive and the `ContentHandle` interface.
 pub mod handle;
 mod init;

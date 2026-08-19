@@ -747,14 +747,9 @@ pub struct DeviceResources {
     pub(crate) ibl: crate::resources::material::environment::IblResources,
 
     // --- Ground plane ---
-    /// Full-screen ground plane render pipeline (alpha blending, LessEqual depth).
-    pub(crate) ground_plane_pipeline: crate::gpu::RenderPipeline,
-    /// Bind group layout for the ground plane (binding 0: uniform, 1: shadow depth, 2: comparison sampler).
-    pub(crate) _ground_plane_bgl: crate::gpu::BindGroupLayout,
-    /// Uniform buffer for GroundPlaneUniform (256 bytes, written each frame in prepare()).
-    pub(crate) ground_plane_uniform_buf: crate::gpu::Buffer,
-    /// Bind group for the ground plane pass (rebuilt when shadow atlas changes).
-    pub(crate) ground_plane_bind_group: crate::gpu::BindGroup,
+    /// Full-screen ground-plane pipeline, uniform, and bind group.
+    /// See `resources::ground_plane::GroundPlaneResources`.
+    pub(crate) ground: crate::resources::ground_plane::GroundPlaneResources,
 
     // --- GPU implicit surface (lazily created) ---
     /// Implicit-surface ray-march pipeline, layout, and outline mask.

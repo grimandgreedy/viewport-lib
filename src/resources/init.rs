@@ -2567,10 +2567,12 @@ impl DeviceResources {
                 axes_vertex_count: 0,
                 constraint_lines: Vec::new(),
             },
-            ground_plane_pipeline,
-            _ground_plane_bgl: ground_plane_bgl,
-            ground_plane_uniform_buf,
-            ground_plane_bind_group,
+            ground: crate::resources::ground_plane::GroundPlaneResources {
+                pipeline: ground_plane_pipeline,
+                bgl: ground_plane_bgl,
+                uniform_buf: ground_plane_uniform_buf,
+                bind_group: ground_plane_bind_group,
+            },
             material: crate::resources::material::fallbacks::MaterialFallbacks {
                 texture_bgl,
                 texture: fallback_texture,

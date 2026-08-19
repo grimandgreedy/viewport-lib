@@ -259,8 +259,8 @@ macro_rules! emit_draw_calls {
             frame.effects.ground_plane.mode,
             crate::renderer::types::GroundPlaneMode::None
         ) {
-            render_pass.set_pipeline(&resources.ground_plane_pipeline);
-            render_pass.set_bind_group(0, &resources.ground_plane_bind_group, &[]);
+            render_pass.set_pipeline(&resources.ground.pipeline);
+            render_pass.set_bind_group(0, &resources.ground.bind_group, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
         }

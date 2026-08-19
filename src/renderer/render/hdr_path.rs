@@ -4466,8 +4466,8 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            gp_pass.set_pipeline(&self.resources.ground_plane_pipeline);
-            gp_pass.set_bind_group(0, &self.resources.ground_plane_bind_group, &[]);
+            gp_pass.set_pipeline(&self.resources.ground.pipeline);
+            gp_pass.set_bind_group(0, &self.resources.ground.bind_group, &[]);
             gp_pass.draw(0..3, 0..1);
         }
 

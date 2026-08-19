@@ -287,7 +287,7 @@ impl ViewportRenderer {
                     colour2: gp.tile_colour2,
                 };
                 queue.write_buffer(
-                    &resources.ground_plane_uniform_buf,
+                    &resources.ground.uniform_buf,
                     0,
                     bytemuck::cast_slice(&[gp_uniform]),
                 );
