@@ -485,7 +485,7 @@ impl ViewportRenderer {
                 let layer = fc.slot * 6 + fc.face;
                 let offset = layer as u64 * POINT_FACE_STRIDE;
                 queue.write_buffer(
-                    &resources.shadow_point_face_buf,
+                    &resources.shadow.point_face_buf,
                     offset,
                     bytemuck::cast_slice(&[entry]),
                 );
@@ -647,7 +647,7 @@ impl ViewportRenderer {
                 atlas_rects,
             };
             queue.write_buffer(
-                &resources.shadow_info_buf,
+                &resources.shadow.info_buf,
                 0,
                 bytemuck::cast_slice(&[shadow_atlas_uniform]),
             );
@@ -919,7 +919,7 @@ impl ViewportRenderer {
         const SHADOW_SLOT_STRIDE: u64 = 256;
         for c in 0..4usize {
             queue.write_buffer(
-                &resources.shadow_uniform_buf,
+                &resources.shadow.uniform_buf,
                 c as u64 * SHADOW_SLOT_STRIDE,
                 bytemuck::cast_slice(&cascade_view_projs[c].to_cols_array_2d()),
             );

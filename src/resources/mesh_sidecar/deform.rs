@@ -1737,19 +1737,19 @@ impl DeviceResources {
                 device,
                 "shadow_pipeline_layout",
                 &[
-                    &self.shadow_camera_bind_group_layout,
+                    &self.shadow.camera_bgl,
                     &self.object_bind_group_layout,
                     &self.deform.bind_group_layout,
                 ],
             );
-            self.shadow_pipeline = crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
+            self.shadow.pipeline = crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
                 device,
                 &layout,
                 &shader,
                 Some(crate::gpu::Face::Front),
                 None,
             );
-            self.shadow_pipeline_two_sided =
+            self.shadow.pipeline_two_sided =
                 crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
                     device, &layout, &shader, None, None,
                 );

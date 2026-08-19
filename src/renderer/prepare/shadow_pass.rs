@@ -58,7 +58,7 @@ impl ViewportRenderer {
                 label: Some("shadow_clear_pass"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                    view: &resources.shadow_map_view,
+                    view: &resources.shadow.map_view,
                     depth_ops: Some(crate::gpu::Operations {
                         load: crate::gpu::LoadOp::Clear(1.0),
                         store: crate::gpu::StoreOp::Store,
@@ -264,7 +264,7 @@ impl ViewportRenderer {
                         color_attachments: &[],
                         depth_stencil_attachment: Some(
                             crate::gpu::RenderPassDepthStencilAttachment {
-                                view: &resources.shadow_map_view,
+                                view: &resources.shadow.map_view,
                                 depth_ops: Some(crate::gpu::Operations {
                                     load: crate::gpu::LoadOp::Clear(1.0),
                                     store: crate::gpu::StoreOp::Store,
@@ -821,7 +821,7 @@ impl ViewportRenderer {
                         );
                         shadow_pass.set_bind_group(
                             0,
-                            &resources.shadow_bind_group,
+                            &resources.shadow.bind_group,
                             &[cascade as u32 * 256],
                         );
 
@@ -874,9 +874,9 @@ impl ViewportRenderer {
                             // caster-side bias keeps the surface from
                             // self-shadowing where it is its own receiver.
                             if item.material.is_two_sided() {
-                                shadow_pass.set_pipeline(&resources.shadow_pipeline_two_sided);
+                                shadow_pass.set_pipeline(&resources.shadow.pipeline_two_sided);
                             } else {
-                                shadow_pass.set_pipeline(&resources.shadow_pipeline);
+                                shadow_pass.set_pipeline(&resources.shadow.pipeline);
                             }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             bind_deform_group!(
@@ -921,7 +921,7 @@ impl ViewportRenderer {
 
                         shadow_pass.set_bind_group(
                             0,
-                            &resources.shadow_bind_group,
+                            &resources.shadow.bind_group,
                             &[cascade as u32 * 256],
                         );
 
@@ -953,9 +953,9 @@ impl ViewportRenderer {
                             // Two-sided materials cast through the cull-none
                             // pipeline (see the instanced path above).
                             if item.material.is_two_sided() {
-                                shadow_pass.set_pipeline(&resources.shadow_pipeline_two_sided);
+                                shadow_pass.set_pipeline(&resources.shadow.pipeline_two_sided);
                             } else {
-                                shadow_pass.set_pipeline(&resources.shadow_pipeline);
+                                shadow_pass.set_pipeline(&resources.shadow.pipeline);
                             }
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             bind_deform_group!(
@@ -1005,7 +1005,7 @@ impl ViewportRenderer {
                         );
                         shadow_pass.set_bind_group(
                             0,
-                            &resources.shadow_bind_group,
+                            &resources.shadow.bind_group,
                             &[cascade as u32 * 256],
                         );
                         let ctx = crate::plugin_api::ShadowCastContext {
@@ -1173,7 +1173,7 @@ impl ViewportRenderer {
                 let last_face = rendered.len() - 1;
                 for (face_idx, fc) in rendered.iter().enumerate() {
                     let layer = fc.slot * 6 + fc.face;
-                    let view = &resources.point_shadow_face_views[layer as usize];
+                    let view = &resources.shadow.point_face_views[layer as usize];
                     // One slot spans all faces: begin on the first face pass, end
                     // on the last, so the readback sees the whole cubemap cost
                     // (up to casters x 6 depth passes) as one duration.
@@ -1210,9 +1210,9 @@ impl ViewportRenderer {
                         timestamp_writes: ts_writes,
                         occlusion_query_set: None,
                     });
-                    pass.set_pipeline(&resources.shadow_point_pipeline);
+                    pass.set_pipeline(&resources.shadow.point_pipeline);
                     let dyn_offset = layer * POINT_FACE_STRIDE as u32;
-                    pass.set_bind_group(0, &resources.shadow_point_face_bind_group, &[dyn_offset]);
+                    pass.set_bind_group(0, &resources.shadow.point_face_bind_group, &[dyn_offset]);
 
                     let face_frustum =
                         crate::camera::frustum::Frustum::from_view_proj(&fc.view_proj);
@@ -1259,7 +1259,7 @@ impl ViewportRenderer {
                 target: "viewport_lib::shadow",
                 ms = shadow_start.elapsed().as_secs_f32() * 1000.0,
                 cascades = light.effective_cascade_count,
-                atlas = resources.shadow_atlas_size,
+                atlas = resources.shadow.atlas_size,
                 draws = last_stats.shadow_draw_calls,
                 point_faces = light.point_shadow_faces.len(),
                 "shadow pass + gpu completion"

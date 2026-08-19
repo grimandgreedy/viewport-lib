@@ -26,6 +26,10 @@ mod pick_pipelines;
 mod plugin_builders;
 mod postprocess;
 mod scivis;
+/// Shadow-map GPU resources (cascade atlas, point-shadow cube array, debug viewer).
+pub(crate) mod shadow;
+#[cfg(test)]
+mod test_support;
 mod types;
 /// Background runner for long-running uploads.
 pub mod upload_jobs;

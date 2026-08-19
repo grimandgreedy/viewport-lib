@@ -196,7 +196,7 @@ impl DeviceResources {
     /// Plugins that sample the shadow atlas directly (rather than through
     /// `viewport_sample_csm`) use this sampler when binding the atlas.
     pub fn shadow_filter_sampler(&self) -> &crate::gpu::Sampler {
-        &self.shadow_sampler
+        &self.shadow.sampler
     }
 
     /// Bind group layout for the per-vertex deformation sidecar.

@@ -657,70 +657,9 @@ pub struct DeviceResources {
     pub(crate) material_plugins:
         std::collections::HashMap<u32, crate::resources::mesh_sidecar::shade::MaterialPluginGpu>,
     // --- Shadow map resources ---
-    /// Shadow atlas depth texture (Depth32Float, atlas_size x atlas_size, 2x2 tile grid).
-    pub(crate) shadow_map_texture: crate::gpu::Texture,
-    /// Depth texture view for binding as a shader resource (sampling).
-    pub(crate) shadow_map_view: crate::gpu::TextureView,
-    /// Comparison sampler for PCF shadow filtering.
-    pub(crate) shadow_sampler: crate::gpu::Sampler,
-    /// Cubemap-array depth texture for point-light shadows. Layered as
-    /// `MAX_POINT_SHADOW_LIGHTS * 6` faces of `POINT_SHADOW_FACE_SIZE` px.
-    pub(crate) point_shadow_cube_texture: crate::gpu::Texture,
-    /// `texture_depth_cube_array` view bound to the lit-pass bind group.
-    pub(crate) point_shadow_cube_view: crate::gpu::TextureView,
-    /// One 2D-array view per face, used as the depth attachment during the
-    /// shadow render pass. `len() == MAX_POINT_SHADOW_LIGHTS * 6`, indexed
-    /// as `slot * 6 + face`.
-    pub(crate) point_shadow_face_views: Vec<crate::gpu::TextureView>,
-    /// Render pipeline for the point-shadow depth pass. Same vertex layout
-    /// as the cascade shadow pipeline; writes linear distance-to-light.
-    pub(crate) shadow_point_pipeline: crate::gpu::RenderPipeline,
-    /// Bind group layout for the point-shadow per-face uniform (group 0
-    /// of the point shadow pass). Kept for pipeline rebuilds.
-    pub(crate) shadow_point_face_bind_group_layout: crate::gpu::BindGroupLayout,
-    /// Per-face uniform buffer holding `view_proj`, `light_pos`, `range`
-    /// for every (slot, face) of the point shadow array. Sized as
-    /// `MAX_POINT_SHADOW_LIGHTS * 6 * 256` bytes (256-byte dynamic-offset
-    /// stride).
-    pub(crate) shadow_point_face_buf: crate::gpu::Buffer,
-    /// Bind group for the point-shadow per-face uniform. Stride is 256;
-    /// the per-face render pass sets a dynamic offset.
-    pub(crate) shadow_point_face_bind_group: crate::gpu::BindGroup,
-    /// Render pipeline for the shadow depth pass (depth-only, no fragment output).
-    ///
-    /// Culls front faces, so closed solids cast shadow from their back face
-    /// and a solid's own front face is never compared against itself in the
-    /// shadow map. Two-sided materials (`BackfacePolicy::Identical` and
-    /// friends) are routed to `shadow_pipeline_two_sided` instead so both
-    /// sides of cloth, foliage, and planar surfaces cast shadows.
-    pub(crate) shadow_pipeline: crate::gpu::RenderPipeline,
-    /// Shadow caster pipeline for two-sided materials. Same layout and shader
-    /// as `shadow_pipeline` but with `cull_mode: None` and a larger caster-side
-    /// depth bias (`CSM_SHADOW_BIAS_TWO_SIDED`) so both sides of a two-sided
-    /// mesh rasterise into the shadow atlas without the surface self-shadowing
-    /// where it is its own receiver.
-    pub(crate) shadow_pipeline_two_sided: crate::gpu::RenderPipeline,
-    /// Bind group layout for the shadow camera uniform (group 0 of the
-    /// shadow pass). Kept on the renderer so `register_deformer` can rebuild
-    /// the shadow pipeline from a freshly composed shader module.
-    pub(crate) shadow_camera_bind_group_layout: crate::gpu::BindGroupLayout,
-    /// Uniform buffer holding the per-cascade light-space view-projection matrix (64 bytes).
-    pub(crate) shadow_uniform_buf: crate::gpu::Buffer,
-    /// Bind group for the shadow pass (group 0: light uniform).
-    pub(crate) shadow_bind_group: crate::gpu::BindGroup,
-    /// Uniform buffer for the ShadowAtlasUniform (binding 5 of camera_bgl, 416 bytes).
-    pub(crate) shadow_info_buf: crate::gpu::Buffer,
-    /// Current shadow atlas texture size. Used to detect when atlas needs recreation.
-    #[allow(dead_code)]
-    pub(crate) shadow_atlas_size: u32,
-    /// Non-comparison sampler for reading depth values as float (atlas viewer).
-    pub(crate) shadow_atlas_depth_sampler: crate::gpu::Sampler,
-    /// Pipeline for the shadow atlas corner overlay.
-    pub(crate) shadow_atlas_viewer_pipeline: crate::gpu::RenderPipeline,
-    /// Bind group for the atlas viewer (uniform + depth texture + sampler).
-    pub(crate) shadow_atlas_viewer_bg: crate::gpu::BindGroup,
-    /// Uniform buffer: NDC rect of the atlas viewer quad.
-    pub(crate) shadow_atlas_viewer_buf: crate::gpu::Buffer,
+    /// Cascade shadow atlas, point-light shadow cube array, their depth passes,
+    /// and the atlas debug viewer. See `resources::shadow::ShadowResources`.
+    pub(crate) shadow: crate::resources::shadow::ShadowResources,
     /// 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
     pub(crate) debug_frag_sentinel_buf: crate::gpu::Buffer,
 
@@ -1391,11 +1330,11 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(&self.shadow_map_view),
+                    resource: crate::gpu::BindingResource::TextureView(&self.shadow.map_view),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.shadow_sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&self.shadow.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
@@ -1456,7 +1395,7 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 17,
                     resource: crate::gpu::BindingResource::TextureView(
-                        &self.point_shadow_cube_view,
+                        &self.shadow.point_cube_view,
                     ),
                 },
                 crate::gpu::BindGroupEntry {
