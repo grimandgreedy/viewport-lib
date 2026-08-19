@@ -2641,7 +2641,7 @@ impl ViewportRenderer {
             gizmo_uniform_buf.unmap();
             let gizmo_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("vp_gizmo_bind_group"),
-                layout: &self.resources.gizmo_bind_group_layout,
+                layout: &self.resources.gizmo.bgl,
                 entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: gizmo_uniform_buf.as_entire_binding(),

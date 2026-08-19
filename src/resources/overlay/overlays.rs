@@ -23,16 +23,16 @@ impl DeviceResources {
         let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
 
         // Recreate buffers if the new mesh is larger than the current allocation.
-        if vert_bytes.len() as u64 > self.gizmo_vertex_buffer.size() {
-            self.gizmo_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
+        if vert_bytes.len() as u64 > self.gizmo.vertex_buffer.size() {
+            self.gizmo.vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("gizmo_vertex_buf"),
                 size: vert_bytes.len() as u64,
                 usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
-        if idx_bytes.len() as u64 > self.gizmo_index_buffer.size() {
-            self.gizmo_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
+        if idx_bytes.len() as u64 > self.gizmo.index_buffer.size() {
+            self.gizmo.index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
                 label: Some("gizmo_index_buf"),
                 size: idx_bytes.len() as u64,
                 usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
@@ -40,9 +40,9 @@ impl DeviceResources {
             });
         }
 
-        queue.write_buffer(&self.gizmo_vertex_buffer, 0, vert_bytes);
-        queue.write_buffer(&self.gizmo_index_buffer, 0, idx_bytes);
-        self.gizmo_index_count = indices.len() as u32;
+        queue.write_buffer(&self.gizmo.vertex_buffer, 0, vert_bytes);
+        queue.write_buffer(&self.gizmo.index_buffer, 0, idx_bytes);
+        self.gizmo.index_count = indices.len() as u32;
     }
 
     /// Update the gizmo model matrix uniform (translation to gizmo center + scale for screen size).
@@ -50,7 +50,7 @@ impl DeviceResources {
         let uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
             model: model.to_cols_array_2d(),
         };
-        queue.write_buffer(&self.gizmo_uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
+        queue.write_buffer(&self.gizmo.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
     }
 
     /// Create a line-list overlay for an active transform constraint.

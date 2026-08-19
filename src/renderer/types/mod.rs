@@ -861,7 +861,7 @@ macro_rules! emit_draw_calls {
         // Gizmo pass.
         if let Some(slot) = _vp_slot {
             if frame.interaction.gizmo_model.is_some() && slot.gizmo_index_count > 0 {
-                render_pass.set_pipeline(&resources.gizmo_pipeline);
+                render_pass.set_pipeline(&resources.gizmo.pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 render_pass.set_bind_group(1, &slot.gizmo_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, slot.gizmo_vertex_buffer.slice(..));

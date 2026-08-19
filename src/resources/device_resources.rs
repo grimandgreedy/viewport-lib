@@ -660,20 +660,9 @@ pub struct DeviceResources {
     pub(crate) debug_frag_sentinel_buf: crate::gpu::Buffer,
 
     // --- Gizmo resources ---
-    /// Gizmo render pipeline (TriangleList, depth_compare Always : always on top).
-    pub(crate) gizmo_pipeline: crate::gpu::RenderPipeline,
-    /// Gizmo vertex buffer (3 axis arrows, regenerated when hovered axis changes).
-    pub(crate) gizmo_vertex_buffer: crate::gpu::Buffer,
-    /// Gizmo index buffer.
-    pub(crate) gizmo_index_buffer: crate::gpu::Buffer,
-    /// Number of indices in the gizmo index buffer.
-    pub(crate) gizmo_index_count: u32,
-    /// Gizmo uniform buffer (model matrix: positions gizmo at selected object, scaled to screen size).
-    pub(crate) gizmo_uniform_buf: crate::gpu::Buffer,
-    /// Bind group for gizmo uniform (group 1).
-    pub(crate) gizmo_bind_group: crate::gpu::BindGroup,
-    /// Bind group layout for gizmo uniforms : stored so per-viewport gizmo bind groups can be created.
-    pub(crate) gizmo_bind_group_layout: crate::gpu::BindGroupLayout,
+    /// Transform-gizmo pipeline, axis-arrow geometry, and uniform bindings.
+    /// See `resources::gizmo::GizmoResources`.
+    pub(crate) gizmo: crate::resources::gizmo::GizmoResources,
 
     // --- Overlay resources ---
     /// Overlay render pipeline (TriangleList with alpha blending : for semi-transparent BC quads).

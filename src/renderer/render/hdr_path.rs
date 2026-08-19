@@ -4562,7 +4562,7 @@ impl ViewportRenderer {
                     });
 
                 if frame.interaction.gizmo_model.is_some() && slot.gizmo_index_count > 0 {
-                    overlay_pass.set_pipeline(&self.resources.gizmo_pipeline);
+                    overlay_pass.set_pipeline(&self.resources.gizmo.pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     overlay_pass.set_bind_group(1, &slot.gizmo_bind_group, &[]);
                     overlay_pass.set_vertex_buffer(0, slot.gizmo_vertex_buffer.slice(..));

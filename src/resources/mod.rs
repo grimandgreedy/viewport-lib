@@ -5,6 +5,8 @@ pub(crate) mod builders;
 pub(crate) mod decal;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
 pub(crate) mod device_resources;
+/// Transform-gizmo GPU resources (pipeline, axis geometry, uniform bindings).
+pub(crate) mod gizmo;
 /// GPU compute resources: clustered shading, hierarchical-Z, particles, and dynamic resolution.
 pub mod gpu;
 /// Shared generational handle primitive and the `ContentHandle` interface.
