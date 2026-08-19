@@ -96,7 +96,7 @@ impl DeviceResources {
         let mesh = Self::create_mesh(
             device,
             &mut self.geometry,
-            &self.object_bind_group_layout,
+            &self.binds.object_bgl,
             &self.material.texture.view,
             &self.material.texture_array_view,
             &self.material.normal_map_view,
@@ -251,7 +251,7 @@ impl DeviceResources {
         let mut mesh = Self::create_mesh_with_normals(
             device,
             &mut self.geometry,
-            &self.object_bind_group_layout,
+            &self.binds.object_bgl,
             &self.material.texture.view,
             &self.material.texture_array_view,
             &self.material.normal_map_view,
@@ -448,7 +448,7 @@ impl DeviceResources {
                             resources.frame_upload_bytes += upload_bytes;
                             let mut mesh = DeviceResources::create_mesh_from_buffers(
                                 &device,
-                                &resources.object_bind_group_layout,
+                                &resources.binds.object_bgl,
                                 &resources.material.texture.view,
                                 &resources.material.texture_array_view,
                                 &resources.material.normal_map_view,
@@ -1381,7 +1381,7 @@ impl DeviceResources {
         let mut new_mesh = Self::create_mesh_with_normals(
             device,
             &mut self.geometry,
-            &self.object_bind_group_layout,
+            &self.binds.object_bgl,
             &self.material.texture.view,
             &self.material.texture_array_view,
             &self.material.normal_map_view,

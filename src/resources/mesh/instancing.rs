@@ -222,7 +222,7 @@ impl DeviceResources {
         let instanced_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "instanced_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &instance_bgl,
             self.deform
                 .enabled
@@ -429,7 +429,7 @@ impl DeviceResources {
         let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             instance_bgl,
             self.deform
                 .enabled
@@ -496,7 +496,7 @@ impl DeviceResources {
             crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                 device,
                 "oit_instanced_pipeline_layout",
-                &self.camera_bind_group_layout,
+                &self.binds.camera_bgl,
                 instance_bgl,
                 self.deform
                     .enabled
@@ -715,7 +715,7 @@ impl DeviceResources {
         let inst_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_cull_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &cull_bgl,
             self.deform
                 .enabled
@@ -770,7 +770,7 @@ impl DeviceResources {
         let oit_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "oit_instanced_cull_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &cull_bgl,
             self.deform
                 .enabled

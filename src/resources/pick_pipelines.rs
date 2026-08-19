@@ -662,7 +662,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "sprite_pick_pipeline_layout",
-            &[&self.camera_bind_group_layout, sprite_bgl, &pick_id_bgl],
+            &[&self.binds.camera_bgl, sprite_bgl, &pick_id_bgl],
         );
 
         // Position vertex buffer: one vec3 per sprite, instance-stepped, exactly
@@ -899,7 +899,7 @@ impl DeviceResources {
         // Group 0 is the full scene camera layout (camera + clip volume, both
         // FRAGMENT-visible here), not the minimal pick camera: the volume pick
         // fragment reads `view_proj` for the hit depth and the clip volume.
-        let camera_bgl = &self.camera_bind_group_layout;
+        let camera_bgl = &self.binds.camera_bgl;
         let volume_bgl = self.volume.bgl.as_ref().expect("checked is_some above");
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -1014,7 +1014,7 @@ impl DeviceResources {
 
         // Group 0 is the full scene camera layout: the fragment reads
         // `inv_view_proj` and `view_proj` to reconstruct and depth-project the ray.
-        let camera_bgl = &self.camera_bind_group_layout;
+        let camera_bgl = &self.binds.camera_bgl;
         let implicit_bgl = self.implicit.bgl.as_ref().expect("checked is_some above");
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -1222,7 +1222,7 @@ impl DeviceResources {
             }],
         });
 
-        let camera_bgl = &self.camera_bind_group_layout;
+        let camera_bgl = &self.binds.camera_bgl;
         let pc_bgl = self
             .point_cloud_bgl
             .as_ref()

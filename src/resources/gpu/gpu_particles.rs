@@ -797,7 +797,7 @@ impl crate::resources::DeviceResources {
         let draw_layout = crate::resources::builders::standard_scene_layout(
             device,
             "particle_draw_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &draw_bgl,
         );
 
@@ -854,7 +854,7 @@ impl crate::resources::DeviceResources {
         let lit_layout = crate::resources::builders::pipeline_layout(
             device,
             "particle_draw_lit_layout",
-            &[&self.camera_bind_group_layout, &draw_bgl, &lit_bgl],
+            &[&self.binds.camera_bgl, &draw_bgl, &lit_bgl],
         );
 
         let make_lit_draw = |blend: crate::gpu::BlendState, label: &str| {
@@ -964,7 +964,7 @@ impl crate::resources::DeviceResources {
         let mesh_layout = crate::resources::builders::standard_scene_layout(
             device,
             "particle_mesh_draw_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &mesh_draw_bgl,
         );
 

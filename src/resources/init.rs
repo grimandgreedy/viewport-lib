@@ -2497,7 +2497,15 @@ impl DeviceResources {
             deform,
             shade_hooks: Vec::new(),
             material_plugins: std::collections::HashMap::new(),
-            camera_uniform_buf,
+            binds: crate::resources::scene_bindings::SceneBindings {
+                camera_uniform_buf,
+                camera_bg: camera_bind_group,
+                camera_bgl,
+                object_bgl,
+                clip_planes_buf: clip_planes_uniform_buf,
+                clip_volume_buf: clip_volume_uniform_buf,
+                debug_frag_sentinel_buf,
+            },
             lighting: crate::resources::lighting::LightingResources {
                 uniform_buf: light_uniform_buf,
                 storage_buf: light_storage_buf,
@@ -2507,9 +2515,6 @@ impl DeviceResources {
                 probe_volume_fallback: light_probe_volume_fallback,
             },
             clustered,
-            camera_bind_group,
-            camera_bind_group_layout: camera_bgl,
-            object_bind_group_layout: object_bgl,
             mesh_store: {
                 let mut store = crate::resources::mesh::mesh_store::MeshStore::new();
                 store.insert(cube_mesh);
@@ -2540,7 +2545,6 @@ impl DeviceResources {
                 atlas_viewer_bg: shadow_atlas_viewer_bg,
                 atlas_viewer_buf: shadow_atlas_viewer_buf,
             },
-            debug_frag_sentinel_buf,
             gizmo: crate::resources::gizmo::GizmoResources {
                 pipeline: gizmo_pipeline,
                 vertex_buffer: gizmo_vertex_buffer,
@@ -2625,8 +2629,6 @@ impl DeviceResources {
             jobs: std::sync::Mutex::new(crate::resources::upload_jobs::JobRunner::new()),
             job_results: crate::resources::upload_jobs::JobResults::default(),
             post: crate::resources::postprocess::PostProcessResources::default(),
-            clip_planes_uniform_buf,
-            clip_volume_uniform_buf,
             outline: crate::resources::types::OutlineResources {
                 bind_group_layout: outline_bgl,
                 mask_pipeline: outline_mask_pipeline,

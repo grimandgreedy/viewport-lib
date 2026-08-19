@@ -187,7 +187,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "sprite_pipeline_layout",
-            &[&self.camera_bind_group_layout, &bgl, &soft_bgl],
+            &[&self.binds.camera_bgl, &bgl, &soft_bgl],
         );
 
         // Position vertex buffer: one vec3 per sprite, Instance stepping.
@@ -295,7 +295,7 @@ impl DeviceResources {
         let refraction_layout = crate::resources::builders::pipeline_layout(
             device,
             "sprite_refraction_pipeline_layout",
-            &[&self.camera_bind_group_layout, bgl_ref, &refraction_bgl],
+            &[&self.binds.camera_bgl, bgl_ref, &refraction_bgl],
         );
 
         let refraction_pipeline = crate::resources::builders::render_pipeline(
@@ -363,7 +363,7 @@ impl DeviceResources {
             device,
             "sprite_lit_pipeline_layout",
             &[
-                &self.camera_bind_group_layout,
+                &self.binds.camera_bgl,
                 sprite_bgl_ref,
                 soft_bgl_ref,
                 &lit_bgl,
@@ -701,7 +701,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "sprite_outline_mask_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             bgl,
         );
 

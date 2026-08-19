@@ -78,11 +78,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "glyph_pipeline_layout",
-            &[
-                &self.camera_bind_group_layout,
-                &glyph_bgl,
-                &glyph_instance_bgl,
-            ],
+            &[&self.binds.camera_bgl, &glyph_bgl, &glyph_instance_bgl],
         );
 
         self.glyph.bgl = Some(glyph_bgl);
@@ -441,7 +437,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "tensor_glyph_pipeline_layout",
-            &[&self.camera_bind_group_layout, &tg_bgl, &tg_instance_bgl],
+            &[&self.binds.camera_bgl, &tg_bgl, &tg_instance_bgl],
         );
 
         self.tensor_glyph.bgl = Some(tg_bgl);
@@ -756,11 +752,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "glyph_outline_mask_pipeline_layout",
-            &[
-                &self.camera_bind_group_layout,
-                glyph_bgl,
-                glyph_instance_bgl,
-            ],
+            &[&self.binds.camera_bgl, glyph_bgl, glyph_instance_bgl],
         );
 
         self.glyph.outline_mask_pipeline =
@@ -809,7 +801,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "tensor_glyph_outline_mask_pipeline_layout",
-            &[&self.camera_bind_group_layout, tg_bgl, tg_instance_bgl],
+            &[&self.binds.camera_bgl, tg_bgl, tg_instance_bgl],
         );
 
         self.tensor_glyph.outline_mask_pipeline =

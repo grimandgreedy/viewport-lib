@@ -92,12 +92,12 @@ impl ViewportRenderer {
                 }
                 // Also write to shared buffers for legacy single-viewport callers.
                 queue.write_buffer(
-                    &resources.clip_planes_uniform_buf,
+                    &resources.binds.clip_planes_buf,
                     0,
                     bytemuck::cast_slice(&[clip_uniform]),
                 );
                 queue.write_buffer(
-                    &resources.clip_volume_uniform_buf,
+                    &resources.binds.clip_volume_buf,
                     0,
                     bytemuck::cast_slice(&[clip_vols_uniform]),
                 );
@@ -113,7 +113,7 @@ impl ViewportRenderer {
             }
             // Write to shared buffer for legacy single-viewport callers.
             queue.write_buffer(
-                &resources.camera_uniform_buf,
+                &resources.binds.camera_uniform_buf,
                 0,
                 bytemuck::cast_slice(&[camera_uniform]),
             );

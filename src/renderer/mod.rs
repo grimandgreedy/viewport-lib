@@ -2459,13 +2459,13 @@ impl ViewportRenderer {
     /// `begin_upload_environment_map` should call this themselves once the
     /// matching job reports `Ready`.
     pub fn rebuild_camera_bind_groups(&mut self, device: &crate::gpu::Device) {
-        self.resources.camera_bind_group = self.resources.create_camera_bind_group(
+        self.resources.binds.camera_bg = self.resources.create_camera_bind_group(
             device,
-            &self.resources.camera_uniform_buf,
-            &self.resources.clip_planes_uniform_buf,
+            &self.resources.binds.camera_uniform_buf,
+            &self.resources.binds.clip_planes_buf,
             &self.resources.shadow.info_buf,
-            &self.resources.clip_volume_uniform_buf,
-            &self.resources.debug_frag_sentinel_buf,
+            &self.resources.binds.clip_volume_buf,
+            &self.resources.binds.debug_frag_sentinel_buf,
             "camera_bind_group",
         );
 
@@ -2473,7 +2473,7 @@ impl ViewportRenderer {
             let dbg_buf = slot
                 .debug_frag_buf
                 .as_ref()
-                .unwrap_or(&self.resources.debug_frag_sentinel_buf);
+                .unwrap_or(&self.resources.binds.debug_frag_sentinel_buf);
             slot.camera_bind_group = self.resources.create_camera_bind_group(
                 device,
                 &slot.camera_buf,
@@ -2550,7 +2550,7 @@ impl ViewportRenderer {
                 &clip_planes_buf,
                 &shadow_info_buf,
                 &clip_volume_buf,
-                &self.resources.debug_frag_sentinel_buf,
+                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_camera_bg",
             );
 
@@ -2580,7 +2580,7 @@ impl ViewportRenderer {
                 &foreground_clip_planes_buf,
                 &shadow_info_buf,
                 &foreground_clip_volume_buf,
-                &self.resources.debug_frag_sentinel_buf,
+                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_foreground_camera_bg",
             );
 
@@ -2938,7 +2938,7 @@ impl ViewportRenderer {
         self.viewport_slots
             .get(viewport_index)
             .map(|slot| &slot.camera_bind_group)
-            .unwrap_or(&self.resources.camera_bind_group)
+            .unwrap_or(&self.resources.binds.camera_bg)
     }
 
     /// Return a reference to the grid bind group for the given viewport slot.

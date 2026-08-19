@@ -335,7 +335,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "decal_pipeline_layout",
-            &[&self.camera_bind_group_layout, depth_bgl, &item_bgl],
+            &[&self.binds.camera_bgl, depth_bgl, &item_bgl],
         );
 
         // No depth attachment: decals read depth as a texture, they do not write
@@ -425,7 +425,7 @@ impl DeviceResources {
         let mask_layout = crate::resources::builders::pipeline_layout(
             device,
             "decal_outline_mask_layout",
-            &[&self.camera_bind_group_layout, depth_bgl, item_bgl],
+            &[&self.binds.camera_bgl, depth_bgl, item_bgl],
         );
         let mask_pipeline = crate::resources::builders::build_fullscreen_pipeline(
             device,
@@ -687,7 +687,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "decal_exclude_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &obj_bgl,
         );
 

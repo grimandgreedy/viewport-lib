@@ -413,7 +413,7 @@ impl crate::resources::DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "scatter_volume_pipeline_layout",
-            &[&self.camera_bind_group_layout, per_vol, per_tex, frame_bgl],
+            &[&self.binds.camera_bgl, per_vol, per_tex, frame_bgl],
         );
 
         // Premultiplied alpha-over: per-volume draws composite into the
@@ -977,7 +977,7 @@ impl crate::resources::DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "scatter_refraction_pipeline_layout",
-            &[&self.camera_bind_group_layout, per_vol, source_bgl],
+            &[&self.binds.camera_bgl, per_vol, source_bgl],
         );
 
         // Replace blend: the distorted sample overwrites the HDR pixel before

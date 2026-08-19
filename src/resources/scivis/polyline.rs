@@ -44,7 +44,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "polyline_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &pl_bgl,
         );
 
@@ -196,7 +196,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "polyline_wireframe_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &wf_bgl,
         );
 
@@ -676,7 +676,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "polyline_no_clip_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             pl_bgl,
         );
 
@@ -799,7 +799,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "polyline_outline_mask_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             pl_bgl,
         );
 

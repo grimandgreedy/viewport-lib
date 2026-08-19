@@ -32,7 +32,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "pt_pipeline_layout",
-            &[&self.camera_bind_group_layout, bgl, lut_bgl],
+            &[&self.binds.camera_bgl, bgl, lut_bgl],
         );
 
         // Blend states match the existing OIT mesh pipeline.

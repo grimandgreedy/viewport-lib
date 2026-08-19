@@ -147,7 +147,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "implicit_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &implicit_bgl,
         );
 
@@ -197,7 +197,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "implicit_outline_mask_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             implicit_bgl,
         );
 

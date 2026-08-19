@@ -1073,8 +1073,8 @@ impl crate::resources::DeviceResources {
             device,
             label.as_str(),
             &[
-                &self.camera_bind_group_layout,
-                &self.object_bind_group_layout,
+                &self.binds.camera_bgl,
+                &self.binds.object_bgl,
                 &self.deform.bind_group_layout,
                 &gpu.bind_group_layout,
             ],
@@ -1512,8 +1512,8 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             &device,
             "builtin_hook_test_layout",
-            &resources.camera_bind_group_layout,
-            &resources.object_bind_group_layout,
+            &resources.binds.camera_bgl,
+            &resources.binds.object_bgl,
             Some(&resources.deform.bind_group_layout),
         );
         let (_pipelines, captured) =
@@ -1644,8 +1644,8 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
         let layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             &device,
             "shade_test_layout",
-            &resources.camera_bind_group_layout,
-            &resources.object_bind_group_layout,
+            &resources.binds.camera_bgl,
+            &resources.binds.object_bgl,
             Some(&resources.deform.bind_group_layout),
         );
         let (_pipelines, captured) =

@@ -591,8 +591,11 @@ pub struct DeviceResources {
     /// wireframe) and their lazily-built HDR variants. See
     /// `resources::scene_pipelines::SceneCorePipelines`.
     pub(crate) scene: crate::resources::scene_pipelines::SceneCorePipelines,
-    /// Uniform buffer holding the per-frame `CameraUniform` (view-proj + eye position).
-    pub(crate) camera_uniform_buf: crate::gpu::Buffer,
+    // --- Scene bind plumbing (group 0/1: camera, per-object, clip) ---
+    /// Camera uniform + group-0/1 bind groups and layouts, clip-plane and
+    /// clip-volume uniforms, and the debug-fragment sentinel.
+    /// See `resources::scene_bindings::SceneBindings`.
+    pub(crate) binds: crate::resources::scene_bindings::SceneBindings,
     /// Scene lighting buffers, SH light-probe field, adaptive probe volume, and
     /// the shared indirect-light buffer. See `resources::lighting::LightingResources`.
     pub(crate) lighting: crate::resources::lighting::LightingResources,
@@ -600,12 +603,6 @@ pub struct DeviceResources {
     /// per-frame cluster build pipeline. Bindings 14/15/16 of the camera bind
     /// group expose this state to every lit pipeline.
     pub(crate) clustered: crate::resources::gpu::clustered::ClusteredResources,
-    /// Bind group (group 0) binding camera, light, clip-plane, and shadow uniforms.
-    pub(crate) camera_bind_group: crate::gpu::BindGroup,
-    /// Bind group layout for group 0 (shared by all scene pipelines).
-    pub(crate) camera_bind_group_layout: crate::gpu::BindGroupLayout,
-    /// Bind group layout for group 1 (per-object uniform: model, material, selection).
-    pub(crate) object_bind_group_layout: crate::gpu::BindGroupLayout,
     /// Scene meshes (slotted storage with free-list removal).
     pub(crate) mesh_store: crate::resources::mesh::mesh_store::MeshStore,
     /// Shared vertex/index geometry buffers. Each mesh's `vertex_span` /
@@ -632,8 +629,6 @@ pub struct DeviceResources {
     /// Cascade shadow atlas, point-light shadow cube array, their depth passes,
     /// and the atlas debug viewer. See `resources::shadow::ShadowResources`.
     pub(crate) shadow: crate::resources::shadow::ShadowResources,
-    /// 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
-    pub(crate) debug_frag_sentinel_buf: crate::gpu::Buffer,
 
     // --- Gizmo resources ---
     /// Transform-gizmo pipeline, axis-arrow geometry, and uniform bindings.
@@ -669,12 +664,6 @@ pub struct DeviceResources {
     /// PP samplers, depth blit, and dyn-res upscale. Viewport-sized targets and
     /// per-frame uniforms live on `ViewportHdrState`.
     pub(crate) post: crate::resources::postprocess::PostProcessResources,
-
-    // --- Clip planes ---
-    /// Uniform buffer for clip planes (binding 4 of camera bind group).
-    pub(crate) clip_planes_uniform_buf: crate::gpu::Buffer,
-    /// Uniform buffer for the extended clip volume (binding 6 of camera bind group, 128 bytes).
-    pub(crate) clip_volume_uniform_buf: crate::gpu::Buffer,
 
     // --- Outline & x-ray resources ---
     // The volume outline mask pipeline lives on `volume.outline_mask_pipeline`;
@@ -1158,7 +1147,7 @@ impl DeviceResources {
 
         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some(label),
-            layout: &self.camera_bind_group_layout,
+            layout: &self.binds.camera_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,

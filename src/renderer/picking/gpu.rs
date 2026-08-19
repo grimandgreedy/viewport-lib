@@ -1949,7 +1949,7 @@ impl ViewportRenderer {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 6,
-                    resource: self.resources.clip_volume_uniform_buf.as_entire_binding(),
+                    resource: self.resources.binds.clip_volume_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2143,7 +2143,7 @@ impl ViewportRenderer {
         if let Some(sprite_pipeline) = self.resources.sprite.pick_pipeline.as_ref() {
             if !draw_set.sprite_draws.is_empty() {
                 pick_pass.set_pipeline(sprite_pipeline);
-                pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
                 for sd in &draw_set.sprite_draws {
                     pick_pass.set_bind_group(1, sd.sprite_bind_group, &[]);
                     pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
@@ -2175,7 +2175,7 @@ impl ViewportRenderer {
         if let Some(volume_pipeline) = self.resources.pick.volume_pipeline.as_ref() {
             if !draw_set.volume_draws.is_empty() {
                 pick_pass.set_pipeline(volume_pipeline);
-                pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
                 for vd in &draw_set.volume_draws {
                     pick_pass.set_bind_group(1, vd.render_bind_group, &[]);
                     pick_pass.set_bind_group(2, &vd.id_bind_group, &[]);
@@ -2197,7 +2197,7 @@ impl ViewportRenderer {
         if let Some(implicit_pipeline) = self.resources.pick.implicit_pipeline.as_ref() {
             if !draw_set.implicit_draws.is_empty() {
                 pick_pass.set_pipeline(implicit_pipeline);
-                pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
                 for id in &draw_set.implicit_draws {
                     pick_pass.set_bind_group(1, id.render_bind_group, &[]);
                     pick_pass.set_bind_group(2, &id.id_bind_group, &[]);
@@ -2230,7 +2230,7 @@ impl ViewportRenderer {
         if let Some(point_cloud_pipeline) = self.resources.pick.point_cloud_pipeline.as_ref() {
             if !draw_set.point_cloud_draws.is_empty() {
                 pick_pass.set_pipeline(point_cloud_pipeline);
-                pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+                pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
                 for pcd in &draw_set.point_cloud_draws {
                     pick_pass.set_bind_group(1, pcd.render_bind_group, &[]);
                     pick_pass.set_bind_group(2, &pcd.id_bind_group, &[]);
@@ -2302,7 +2302,7 @@ impl ViewportRenderer {
         // camera bind group (the same one the sprite draws use) before
         // handing them the pass.
         if draw_set.has_plugin_pick {
-            pick_pass.set_bind_group(0, &self.resources.camera_bind_group, &[]);
+            pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
             self.dispatch_plugin_pick(pick_pass, frame, draw_set.mask);
         }
     }

@@ -79,7 +79,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "image_slice_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &bgl,
         );
 
@@ -904,7 +904,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "volume_surface_slice_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &bgl,
         );
 

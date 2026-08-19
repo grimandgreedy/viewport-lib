@@ -53,7 +53,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "streamtube_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &streamtube_bgl,
         );
 
@@ -69,7 +69,7 @@ impl DeviceResources {
         let ribbon_layout = crate::resources::builders::standard_scene_layout(
             device,
             "ribbon_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &ribbon_bgl,
         );
 

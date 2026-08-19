@@ -29,6 +29,8 @@ pub(crate) mod overlay;
 mod pick_pipelines;
 mod plugin_builders;
 mod postprocess;
+/// Group-0/1 camera, per-object, and clip bind plumbing.
+pub(crate) mod scene_bindings;
 /// Core scene mesh pipelines (base LDR set plus HDR variants).
 pub(crate) mod scene_pipelines;
 mod scivis;

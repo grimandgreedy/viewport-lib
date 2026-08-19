@@ -428,7 +428,7 @@ impl DeviceResources {
         let pipeline_layout = crate::resources::builders::standard_scene_layout(
             device,
             "volume_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &bgl,
         );
 
@@ -495,7 +495,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "volume_outline_mask_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             bgl,
         );
 

@@ -609,7 +609,7 @@ impl ViewportRenderer {
             });
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("tvm_wireframe_bg"),
-                layout: &resources.object_bind_group_layout,
+                layout: &resources.binds.object_bgl,
                 entries: &[
                     crate::gpu::BindGroupEntry {
                         binding: 0,

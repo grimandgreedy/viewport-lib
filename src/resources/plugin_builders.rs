@@ -42,7 +42,7 @@ impl DeviceResources {
     /// when building a plugin pipeline layout.
     pub fn shared_bindings(&self) -> SharedBindings<'_> {
         SharedBindings {
-            group0_layout: &self.camera_bind_group_layout,
+            group0_layout: &self.binds.camera_bgl,
             sample_count: self.sample_count,
         }
     }
@@ -672,7 +672,7 @@ fn build_layout(
     extras: &[&crate::gpu::BindGroupLayout],
 ) -> crate::gpu::PipelineLayout {
     let mut bgls: Vec<&crate::gpu::BindGroupLayout> = Vec::with_capacity(1 + extras.len());
-    bgls.push(&res.camera_bind_group_layout);
+    bgls.push(&res.binds.camera_bgl);
     bgls.extend(extras.iter().copied());
     crate::resources::builders::pipeline_layout(device, label, &bgls)
 }

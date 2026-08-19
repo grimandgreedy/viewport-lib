@@ -236,7 +236,7 @@ impl crate::resources::DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "external_instances_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &draw_bgl,
         );
 

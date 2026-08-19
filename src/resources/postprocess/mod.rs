@@ -944,8 +944,8 @@ impl DeviceResources {
         let oit_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "oit_pipeline_layout",
-            &self.camera_bind_group_layout,
-            &self.object_bind_group_layout,
+            &self.binds.camera_bgl,
+            &self.binds.object_bgl,
             self.deform
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
@@ -1003,8 +1003,8 @@ impl DeviceResources {
         let hdr_pipeline_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
             device,
             "hdr_mesh_pipeline_layout",
-            &self.camera_bind_group_layout,
-            &self.object_bind_group_layout,
+            &self.binds.camera_bgl,
+            &self.binds.object_bgl,
             self.deform
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
@@ -1038,7 +1038,7 @@ impl DeviceResources {
         let hdr_overlay_layout = crate::resources::builders::pipeline_layout(
             device,
             "hdr_overlay_pipeline_layout",
-            &[&self.camera_bind_group_layout, &self.guides.overlay_bgl],
+            &[&self.binds.camera_bgl, &self.guides.overlay_bgl],
         );
         let hdr_overlay_pipeline = crate::resources::builders::render_pipeline(
             device,
@@ -1398,7 +1398,7 @@ impl DeviceResources {
                 let layout = crate::resources::builders::pipeline_layout(
                     device,
                     "lic_surface_layout",
-                    &[&self.camera_bind_group_layout, surface_bgl],
+                    &[&self.binds.camera_bgl, surface_bgl],
                 );
                 // Vertex buffer 0: full Vertex stride, position at location 0.
                 let lic_vertex_layout = crate::gpu::VertexBufferLayout {

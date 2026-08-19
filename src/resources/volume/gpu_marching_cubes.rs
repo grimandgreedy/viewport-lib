@@ -393,7 +393,7 @@ impl DeviceResources {
         let surface_layout = crate::resources::builders::standard_scene_layout(
             device,
             "mc_surface_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &render_bgl,
         );
 
@@ -441,7 +441,7 @@ impl DeviceResources {
         let wireframe_layout = crate::resources::builders::standard_scene_layout(
             device,
             "mc_wireframe_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &wireframe_render_bgl,
         );
         // ----------------------------------------------------------------
@@ -905,10 +905,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "mc_outline_mask_pipeline_layout",
-            &[
-                &self.camera_bind_group_layout,
-                &self.outline.bind_group_layout,
-            ],
+            &[&self.binds.camera_bgl, &self.outline.bind_group_layout],
         );
 
         let vert_attrs = [crate::gpu::VertexAttribute {

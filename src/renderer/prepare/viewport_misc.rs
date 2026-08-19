@@ -184,7 +184,7 @@ impl ViewportRenderer {
                 self.viewport_slots[vp_idx].debug_frag_dims = (vw, vh);
                 self.viewport_slots[vp_idx].camera_bind_group = new_bg;
             } else if !debug_active && slot.debug_frag_buf.is_some() {
-                let sentinel = &self.resources.debug_frag_sentinel_buf;
+                let sentinel = &self.resources.binds.debug_frag_sentinel_buf;
                 let new_bg = self.resources.create_camera_bind_group(
                     device,
                     &self.viewport_slots[vp_idx].camera_buf,

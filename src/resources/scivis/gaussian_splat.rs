@@ -286,7 +286,7 @@ impl DeviceResources {
         let render_layout = crate::resources::builders::standard_scene_layout(
             device,
             "gaussian_splat_pipeline_layout",
-            &self.camera_bind_group_layout,
+            &self.binds.camera_bgl,
             &splat_bgl,
         );
 

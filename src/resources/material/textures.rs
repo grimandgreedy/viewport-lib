@@ -1403,7 +1403,7 @@ impl DeviceResources {
 
         mesh.object_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("object_bind_group"),
-            layout: &self.object_bind_group_layout,
+            layout: &self.binds.object_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -1714,7 +1714,7 @@ impl DeviceResources {
 
         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("per_item_object_bind_group"),
-            layout: &self.object_bind_group_layout,
+            layout: &self.binds.object_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
