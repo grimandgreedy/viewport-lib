@@ -631,9 +631,6 @@ pub struct DeviceResources {
     pub(crate) shadow: crate::resources::shadow::ShadowResources,
 
     // --- Gizmo resources ---
-    /// Transform-gizmo pipeline, axis-arrow geometry, and uniform bindings.
-    /// See `resources::gizmo::GizmoResources`.
-    pub(crate) gizmo: crate::resources::gizmo::GizmoResources,
 
     // --- Overlay guide resources (grid, axes, base overlay, constraint lines) ---
     /// Floor grid, axes indicator, base overlay pipelines, and constraint guide

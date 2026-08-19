@@ -1507,15 +1507,9 @@ impl ViewportRenderer {
             None
         };
 
-        // Gizmo mesh + uniform (built here, written to slot buffers below).
-        let gizmo_update = frame.interaction.gizmo_model.map(|model| {
-            let (verts, indices) = crate::interaction::manipulation::gizmo::build_gizmo_mesh(
-                frame.interaction.gizmo_mode,
-                frame.interaction.gizmo_hovered,
-                frame.interaction.gizmo_space_orientation,
-            );
-            (verts, indices, model)
-        });
+        // The transform gizmo is generated as 2D overlay primitives during the
+        // overlay prepare (see `gizmo_overlay::build_gizmo_overlays`); no
+        // per-viewport mesh upload happens here anymore.
 
         // ------------------------------------------------------------------
         // Assign all interaction state to the per-viewport slot.
@@ -1558,37 +1552,6 @@ impl ViewportRenderer {
                 slot.axes_vertex_count = verts.len() as u32;
             } else {
                 slot.axes_vertex_count = 0;
-            }
-
-            // Gizmo: resize buffers if needed, then upload mesh + uniform.
-            if let Some((verts, indices, model)) = gizmo_update {
-                let vert_bytes: &[u8] = bytemuck::cast_slice(&verts);
-                let idx_bytes: &[u8] = bytemuck::cast_slice(&indices);
-                if vert_bytes.len() as u64 > slot.gizmo_vertex_buffer.size() {
-                    slot.gizmo_vertex_buffer =
-                        device.create_buffer(&crate::gpu::BufferDescriptor {
-                            label: Some("vp_gizmo_vertex_buf"),
-                            size: vert_bytes.len() as u64,
-                            usage: crate::gpu::BufferUsages::VERTEX
-                                | crate::gpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        });
-                }
-                if idx_bytes.len() as u64 > slot.gizmo_index_buffer.size() {
-                    slot.gizmo_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-                        label: Some("vp_gizmo_index_buf"),
-                        size: idx_bytes.len() as u64,
-                        usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                }
-                queue.write_buffer(&slot.gizmo_vertex_buffer, 0, vert_bytes);
-                queue.write_buffer(&slot.gizmo_index_buffer, 0, idx_bytes);
-                slot.gizmo_index_count = indices.len() as u32;
-                let uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
-                    model: model.to_cols_array_2d(),
-                };
-                queue.write_buffer(&slot.gizmo_uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
             }
         }
     }

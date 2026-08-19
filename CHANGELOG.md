@@ -1,5 +1,92 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **Submesh material ranges** - one mesh can draw with several materials.
+  `MeshData::submeshes` partitions the index buffer into ranges;
+  `SceneRenderItem::submesh_materials` (or `Scene::set_submesh_materials` on a
+  node) binds one material per range, and the renderer issues one draw per
+  range on the HDR, LDR, and OIT paths. Opaque and blend ranges of one mesh
+  split across the right passes, material plugins select per range, and
+  skinning/deformers are shared across all ranges (one weight buffer, one
+  palette). For triangles that arrive interleaved,
+  `MeshData::sort_triangles_into_submeshes` sorts them by material id, permutes
+  per-triangle attributes alongside, and builds the ranges. Items with range
+  materials draw per-object (no instancing). Everything is additive: meshes and
+  items that never set the fields behave exactly as before. See showcase 56.
+- **On-GPU environment capture** - `capture_hdr_gpu` and `capture_equirect_gpu`
+  render a scene capture straight into a GPU texture and resolve the six cube
+  faces into an equirect panorama on the GPU, with no CPU round-trip, so a
+  capture can feed the IBL prefilter without leaving the GPU. `read_captured_hdr`
+  reads a capture back to `f32` when floats are wanted. The existing
+  `capture_hdr` / `capture_equirect` (CPU readback) are unchanged.
+- **Path-tracer mesh instancing** - `RtScene::add_mesh_geometry` registers a
+  mesh once and `add_instance` places it many times with a transform. The
+  software tracer builds a two-level BVH (one structure per mesh plus a
+  top-level one over the instances) and transforms rays into each instance's
+  space, so a scene with many copies of a mesh stores its triangles once instead
+  of per copy. `add_mesh` is unchanged (one identity instance).
+- **Shared geometry slab and draw collapse** - mesh geometry is packed into a
+  few shared vertex/index buffers instead of one pair per mesh, so a pass binds
+  geometry once and draws each mesh with per-mesh offsets rather than rebinding
+  buffers per mesh. On backends that support native multi-draw
+  (`MULTI_DRAW_INDIRECT_COUNT`, e.g. Vulkan/DX12) the per-batch indirect draws
+  collapse into `multi_draw_indexed_indirect`; other backends keep the per-batch
+  loop. This cuts CPU draw encoding on scenes with many distinct meshes and on
+  the shadow cascades. No API change; the geometry storage is internal.
+- **Indexed per-object draw data** - the non-instanced (per-object) mesh path
+  now reads its transform and material from one shared storage array indexed per
+  draw, instead of a per-item uniform buffer behind a per-item bind group. Items
+  that share a material reuse one group-1 bind group, so the draw loop stops
+  rebinding per draw and the per-item uniform writes go away. Scenes with many
+  distinct-material two-sided/scalar/matcap/override items (the unbatchable
+  path) encode markedly faster. Output is unchanged.
+
+### Breaking changes
+
+- **`DeviceResources::update_gizmo_mesh` and `update_gizmo_uniform` are gone.**
+  The transform gizmo no longer renders through a dedicated 3D pipeline. It is
+  now generated as 2D overlay primitives each frame from
+  `frame.interaction.gizmo_*` (mode, model matrix, hovered axis, space
+  orientation), so nothing needs to upload gizmo geometry. Hosts that already
+  set those `InteractionFrame` fields need no change; the two `update_gizmo_*`
+  methods (and the internal gizmo pipeline, shader, and per-viewport buffers)
+  were removed. `Gizmo::hit_test`, `compute_gizmo_scale`, and the drag solvers
+  are unchanged. The projection routine is public as
+  `interaction::manipulation::gizmo_overlay::build_gizmo_overlays` for hosts that
+  want to place gizmo overlays themselves.
+
+- **The device must provide `max_storage_buffers_per_shader_stage >= 10`.** The
+  lit mesh fragment shader now binds more storage buffers per stage (the
+  per-object data moved into an indexed storage array), above wgpu's default
+  limit of 8. A device created with the default limits fails to build the mesh
+  pipeline on backends that enforce the limit (Vulkan, DX12); `ViewportRenderer`
+  construction now panics up front with a clear message naming the missing limit
+  instead of a deep wgpu validation error. Fix: create the device with
+  `required_limits: ViewportRenderer::recommended_device_limits(&adapter)` (new)
+  in the `DeviceDescriptor`, or request `adapter.limits()`. Metal did not enforce
+  the limit before, so apps that only ran there and used default limits now need
+  the same fix. `ViewportRenderer::REQUIRED_STORAGE_BUFFERS_PER_STAGE` exposes
+  the required count.
+
+### Fixes
+
+- **Scene captures could permanently strand a streaming consumer's mesh
+  bindings** - `bake_light_probes`, `capture_equirect`, `capture_reflection_probe(s)`,
+  and `bake_light_probe_volume` ran full internal render passes that advanced
+  the async upload pipeline as a side effect. A consumer that queued mesh
+  uploads and bound each `MeshId` onto its scene node when the upload promoted
+  could have that promotion silently consumed by a capture running before the
+  upload's completion was observed, leaving the mesh uploaded but never bound
+  to anything - a permanently blank viewport with no error or warning. Capture
+  and bake calls now read the currently resident scene without advancing
+  shared per-frame state (the upload pipeline, frame counter, occlusion
+  history, or frame stats), so this can no longer happen. New `mesh_resident`
+  and `frame_fully_resident` queries let a consumer check residency directly
+  instead of relying on upload-completion polling.
+
 ## [0.20.0]
 
 The big themes this release are baked lighting, custom fragment shading, and viewport runners, on top of a round of many-light performance work.

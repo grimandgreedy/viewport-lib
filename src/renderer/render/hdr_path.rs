@@ -4525,9 +4525,7 @@ impl ViewportRenderer {
         {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
-            let has_editor_overlays = (frame.interaction.gizmo_model.is_some()
-                && slot.gizmo_index_count > 0)
-                || !slot.constraint_line_buffers.is_empty()
+            let has_editor_overlays = !slot.constraint_line_buffers.is_empty()
                 || !slot.clip_plane_fill_buffers.is_empty()
                 || !slot.clip_plane_line_buffers.is_empty()
                 || !slot.xray_object_buffers.is_empty();
@@ -4560,18 +4558,6 @@ impl ViewportRenderer {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
-
-                if frame.interaction.gizmo_model.is_some() && slot.gizmo_index_count > 0 {
-                    overlay_pass.set_pipeline(&self.resources.gizmo.pipeline);
-                    overlay_pass.set_bind_group(0, camera_bg, &[]);
-                    overlay_pass.set_bind_group(1, &slot.gizmo_bind_group, &[]);
-                    overlay_pass.set_vertex_buffer(0, slot.gizmo_vertex_buffer.slice(..));
-                    overlay_pass.set_index_buffer(
-                        slot.gizmo_index_buffer.slice(..),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    overlay_pass.draw_indexed(0..slot.gizmo_index_count, 0, 0..1);
-                }
 
                 if !slot.constraint_line_buffers.is_empty() {
                     overlay_pass.set_pipeline(&self.resources.guides.overlay_line_pipeline);

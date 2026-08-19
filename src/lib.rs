@@ -142,6 +142,7 @@ pub use interaction::input;
 pub use interaction::manipulation;
 pub use interaction::manipulation::clip_plane;
 pub use interaction::manipulation::gizmo;
+pub use interaction::manipulation::gizmo_overlay;
 pub use interaction::query::picking;
 pub use interaction::query::snap;
 pub use interaction::select::selection;

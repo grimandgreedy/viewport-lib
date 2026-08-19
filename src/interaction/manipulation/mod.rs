@@ -26,6 +26,7 @@
 pub mod clip_plane;
 /// Transform gizmo (translate, rotate, scale) with hit testing.
 pub mod gizmo;
+pub mod gizmo_overlay;
 mod session;
 pub mod solvers;
 pub mod types;

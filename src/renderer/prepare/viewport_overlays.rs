@@ -27,6 +27,43 @@ fn upload_overlay_vbuf<T: bytemuck::Pod>(
 }
 
 impl ViewportRenderer {
+    /// Build the transform-gizmo overlay items for this frame, if a gizmo is
+    /// active. Returns `(shapes, polylines)` in the overlay coordinate space,
+    /// ready to merge into the viewport's overlay batches. Empty when
+    /// `frame.interaction.gizmo_model` is `None`.
+    ///
+    /// The gizmo used to draw through its own always-on-top 3D pipeline; it now
+    /// projects to 2D overlay primitives here so no dedicated GPU resources are
+    /// needed. Centre and screen scale come straight out of the gizmo model
+    /// matrix the host already supplies (translation and uniform scale).
+    fn gizmo_overlay_items(
+        &self,
+        frame: &FrameData,
+    ) -> (
+        Vec<crate::renderer::types::OverlayShapeItem>,
+        Vec<crate::renderer::types::OverlayPolylineItem>,
+    ) {
+        let mut shapes = Vec::new();
+        let mut polylines = Vec::new();
+        if let Some(model) = frame.interaction.gizmo_model {
+            let (scale, _rot, translation) = model.to_scale_rotation_translation();
+            let cam = &frame.camera.render_camera;
+            crate::interaction::manipulation::gizmo_overlay::build_gizmo_overlays(
+                frame.interaction.gizmo_mode,
+                cam.view_proj(),
+                glam::Vec3::from(cam.forward),
+                frame.camera.viewport_size,
+                translation,
+                scale.x,
+                frame.interaction.gizmo_hovered,
+                frame.interaction.gizmo_space_orientation,
+                &mut shapes,
+                &mut polylines,
+            );
+        }
+        (shapes, polylines)
+    }
+
     pub(super) fn prepare_overlay_labels(
         &mut self,
         device: &crate::gpu::Device,
@@ -42,9 +79,11 @@ impl ViewportRenderer {
         // but above HUD labels at 0).
         self.label_gpu_data = None;
         self.overlay_rect_gpu_data = None;
+        let (_, gizmo_polylines) = self.gizmo_overlay_items(frame);
         let has_overlay = !frame.overlays.labels.is_empty()
             || !frame.overlays.rects.is_empty()
-            || !frame.overlays.polylines.is_empty();
+            || !frame.overlays.polylines.is_empty()
+            || !gizmo_polylines.is_empty();
         if has_overlay {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
@@ -106,7 +145,9 @@ impl ViewportRenderer {
                 }
 
                 // --- Polylines (between rects and labels in z order) ---
-                for poly in &frame.overlays.polylines {
+                // The gizmo's rings, plane quads, cube faces, and centre handle
+                // ride along here as generated polylines.
+                for poly in frame.overlays.polylines.iter().chain(gizmo_polylines.iter()) {
                     if poly.points.len() < 2 || poly.opacity <= 0.0 {
                         continue;
                     }
@@ -957,17 +998,21 @@ impl ViewportRenderer {
         // SDF overlay shapes
         // ------------------------------------------------------------------
         self.overlay_shape_gpu_data = None;
+        // The gizmo's arrow shafts and cone heads are generated as overlay
+        // shapes; they merge into the shape batch here (see `gizmo_overlay`).
+        let (gizmo_shapes, _) = self.gizmo_overlay_items(frame);
         let has_textured_polyline_fill = frame
             .overlays
             .polylines
             .iter()
             .any(|p| p.closed && p.texture.is_some() && p.opacity > 0.0 && p.points.len() >= 3);
-        if !frame.overlays.shapes.is_empty() || has_textured_polyline_fill {
+        if !frame.overlays.shapes.is_empty() || !gizmo_shapes.is_empty() || has_textured_polyline_fill
+        {
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
             if vp_w > 0.0 && vp_h > 0.0 {
                 let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> =
-                    frame.overlays.shapes.iter().collect();
+                    frame.overlays.shapes.iter().chain(gizmo_shapes.iter()).collect();
                 sorted.sort_by_key(|s| s.z_order);
 
                 let has_solid = sorted

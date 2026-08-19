@@ -7,8 +7,12 @@
 //! current mode (translate/rotate/scale), which axis is hovered or active, and the
 //! transform snapshot captured at drag start for undo.
 //!
-//! Rendering is handled by `gizmo_pipeline` in `DeviceResources`, which uses
-//! `depth_compare: Always` so the gizmo always appears on top of scene geometry.
+//! Rendering goes through the 2D overlay system: `gizmo_overlay::build_gizmo_overlays`
+//! projects the handles to overlay shapes and polylines each frame, so the gizmo
+//! draws on top of the scene without a dedicated GPU pipeline. This module keeps
+//! the CPU state, the shared proportions/colours, `compute_gizmo_scale`, and hit
+//! testing; the overlay builder reuses all of them so what is drawn matches what
+//! is picked.
 //!
 //! Hit testing uses cylinder-distance approximation via `parry3d`-style math:
 //! we compute the closest-approach distance from the ray to each axis line segment,
@@ -281,8 +285,8 @@ impl Gizmo {
                 }
 
                 // --- Plane handles (small quads at axis-pair corners) ---
-                let plane_offset = gizmo_scale * 0.25;
-                let plane_size = gizmo_scale * 0.15;
+                let plane_offset = gizmo_scale * PLANE_OFFSET;
+                let plane_size = gizmo_scale * PLANE_SIZE;
 
                 let plane_handles = [
                     (GizmoAxis::XY, dirs[0], dirs[1], dirs[2]),
@@ -410,11 +414,8 @@ fn ray_segment_t(
 }
 
 // ---------------------------------------------------------------------------
-// Gizmo mesh generation (mode-aware)
+// Gizmo colours (shared by the overlay gizmo builder)
 // ---------------------------------------------------------------------------
-
-/// Vertex type reused from resources module (position, normal, colour).
-pub(crate) use crate::resources::Vertex;
 
 /// Axis colour definitions (per UI-SPEC).
 /// X = red, Y = green, Z = blue; brightened variants for hover.
@@ -432,7 +433,7 @@ const PLANE_ALPHA: f32 = 0.3;
 const PLANE_ALPHA_HOV: f32 = 0.5;
 
 /// Select the base or hover colour for an axis based on whether it's hovered.
-fn axis_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
+pub(crate) fn axis_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
     let is_hovered = axis == hovered;
     match axis {
         GizmoAxis::X => {
@@ -469,7 +470,7 @@ fn axis_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
 
 /// Get the colour for a plane handle, blending the two axis colours.
 /// On hover, RGB is brightened by 1.3x (clamped) in addition to the alpha bump.
-fn plane_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
+pub(crate) fn plane_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
     let is_hovered = axis == hovered;
     let alpha = if is_hovered {
         PLANE_ALPHA_HOV
@@ -491,412 +492,24 @@ fn plane_colour(axis: GizmoAxis, hovered: GizmoAxis) -> [f32; 4] {
     ]
 }
 
-/// Build gizmo mesh for the specified mode.
-///
-/// - **Translate:** arrows + plane quads + center square
-/// - **Rotate:** torus ring segments around each axis
-/// - **Scale:** arrows with cube tips instead of cones
-///
-/// All geometry is in gizmo-local space. The `space_orientation` quaternion
-/// rotates axis geometry for local-space mode (identity for world space).
-///
-/// Returns `(vertices, indices)`.
-pub(crate) fn build_gizmo_mesh(
-    mode: GizmoMode,
-    hovered: GizmoAxis,
-    space_orientation: glam::Quat,
-) -> (Vec<Vertex>, Vec<u32>) {
-    let mut vertices: Vec<Vertex> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-
-    match mode {
-        GizmoMode::Translate => {
-            build_arrows(
-                &mut vertices,
-                &mut indices,
-                hovered,
-                space_orientation,
-                false,
-            );
-            build_plane_quads(&mut vertices, &mut indices, hovered, space_orientation);
-            build_screen_handle(&mut vertices, &mut indices, hovered);
-        }
-        GizmoMode::Rotate => {
-            build_rotation_rings(&mut vertices, &mut indices, hovered, space_orientation);
-        }
-        GizmoMode::Scale => {
-            build_arrows(
-                &mut vertices,
-                &mut indices,
-                hovered,
-                space_orientation,
-                true,
-            );
-        }
-    }
-
-    (vertices, indices)
-}
-
-/// Arrow proportions in gizmo-local units.
-const SHAFT_RADIUS: f32 = 0.035;
-const SHAFT_LENGTH: f32 = 0.70;
+/// Arrow proportions in gizmo-local units. Shared by the overlay gizmo builder
+/// (`gizmo_overlay`) so the drawn handles match the CPU `hit_test` extents.
+pub(crate) const SHAFT_RADIUS: f32 = 0.035;
+pub(crate) const SHAFT_LENGTH: f32 = 0.70;
 /// Major radius of the rotation rings : used in both mesh generation and hit testing.
 pub const ROTATION_RING_RADIUS: f32 = 0.85;
-const CONE_RADIUS: f32 = 0.09;
-const CONE_LENGTH: f32 = 0.30;
-const CUBE_HALF: f32 = 0.06;
-const SEGMENTS: u32 = 8;
-
-/// Build arrow geometry for all 3 axes. If `cube_tips` is true, use cubes
-/// instead of cones (for Scale mode).
-fn build_arrows(
-    vertices: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    hovered: GizmoAxis,
-    orientation: glam::Quat,
-    cube_tips: bool,
-) {
-    let base_axes = [
-        (GizmoAxis::X, glam::Vec3::X, glam::Vec3::Y),
-        (GizmoAxis::Y, glam::Vec3::Y, glam::Vec3::X),
-        (GizmoAxis::Z, glam::Vec3::Z, glam::Vec3::Y),
-    ];
-
-    for (axis, raw_dir, raw_up) in &base_axes {
-        let axis_dir = orientation * *raw_dir;
-        let up_hint = orientation * *raw_up;
-        let colour = axis_colour(*axis, hovered);
-
-        let tangent = if axis_dir.abs().dot(orientation * glam::Vec3::Y) > 0.9 {
-            axis_dir.cross(up_hint).normalize()
-        } else {
-            axis_dir.cross(orientation * glam::Vec3::Y).normalize()
-        };
-        let bitangent = axis_dir.cross(tangent).normalize();
-
-        let base_index = vertices.len() as u32;
-
-        // --- Shaft cylinder ---
-        let shaft_bottom = glam::Vec3::ZERO;
-        let shaft_top = axis_dir * SHAFT_LENGTH;
-
-        for i in 0..SEGMENTS {
-            let angle = (i as f32) * std::f32::consts::TAU / (SEGMENTS as f32);
-            let radial = tangent * angle.cos() + bitangent * angle.sin();
-
-            vertices.push(Vertex {
-                position: (shaft_bottom + radial * SHAFT_RADIUS).to_array(),
-                normal: radial.to_array(),
-                colour,
-                uv: [0.0, 0.0],
-                tangent: [0.0, 0.0, 0.0, 1.0],
-            });
-            vertices.push(Vertex {
-                position: (shaft_top + radial * SHAFT_RADIUS).to_array(),
-                normal: radial.to_array(),
-                colour,
-                uv: [0.0, 0.0],
-                tangent: [0.0, 0.0, 0.0, 1.0],
-            });
-        }
-
-        // Shaft side indices.
-        for i in 0..SEGMENTS {
-            let next = (i + 1) % SEGMENTS;
-            let b0 = base_index + i * 2;
-            let t0 = base_index + i * 2 + 1;
-            let b1 = base_index + next * 2;
-            let t1 = base_index + next * 2 + 1;
-            indices.extend_from_slice(&[b0, b1, t0, t0, b1, t1]);
-        }
-
-        // Shaft bottom cap.
-        let shaft_bottom_center = vertices.len() as u32;
-        vertices.push(Vertex {
-            position: shaft_bottom.to_array(),
-            normal: (-axis_dir).to_array(),
-            colour,
-            uv: [0.0, 0.0],
-            tangent: [0.0, 0.0, 0.0, 1.0],
-        });
-        for i in 0..SEGMENTS {
-            let next = (i + 1) % SEGMENTS;
-            let v0 = base_index + i * 2;
-            let v1 = base_index + next * 2;
-            indices.extend_from_slice(&[shaft_bottom_center, v1, v0]);
-        }
-
-        // --- Tip ---
-        let tip_base = shaft_top;
-        if cube_tips {
-            build_cube_tip(
-                vertices, indices, tip_base, axis_dir, tangent, bitangent, colour,
-            );
-        } else {
-            build_cone_tip(
-                vertices, indices, tip_base, axis_dir, tangent, bitangent, colour,
-            );
-        }
-    }
-}
-
-/// Build a cone tip for translate arrows.
-fn build_cone_tip(
-    vertices: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    base_center: glam::Vec3,
-    axis_dir: glam::Vec3,
-    tangent: glam::Vec3,
-    bitangent: glam::Vec3,
-    colour: [f32; 4],
-) {
-    let cone_tip = base_center + axis_dir * CONE_LENGTH;
-    let cone_base_start = vertices.len() as u32;
-
-    // Base ring.
-    for i in 0..SEGMENTS {
-        let angle = (i as f32) * std::f32::consts::TAU / (SEGMENTS as f32);
-        let radial = tangent * angle.cos() + bitangent * angle.sin();
-        vertices.push(Vertex {
-            position: (base_center + radial * CONE_RADIUS).to_array(),
-            normal: (-axis_dir).to_array(),
-            colour,
-            uv: [0.0, 0.0],
-            tangent: [0.0, 0.0, 0.0, 1.0],
-        });
-    }
-
-    // Base cap center.
-    let base_cap_center = vertices.len() as u32;
-    vertices.push(Vertex {
-        position: base_center.to_array(),
-        normal: (-axis_dir).to_array(),
-        colour,
-        uv: [0.0, 0.0],
-        tangent: [0.0, 0.0, 0.0, 1.0],
-    });
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        indices.extend_from_slice(&[base_cap_center, cone_base_start + i, cone_base_start + next]);
-    }
-
-    // Tip vertex + side triangles.
-    let tip_idx = vertices.len() as u32;
-    vertices.push(Vertex {
-        position: cone_tip.to_array(),
-        normal: axis_dir.to_array(),
-        colour,
-        uv: [0.0, 0.0],
-        tangent: [0.0, 0.0, 0.0, 1.0],
-    });
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        indices.extend_from_slice(&[cone_base_start + i, cone_base_start + next, tip_idx]);
-    }
-}
-
-/// Build a cube tip for scale arrows.
-fn build_cube_tip(
-    vertices: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    center: glam::Vec3,
-    axis_dir: glam::Vec3,
-    tangent: glam::Vec3,
-    bitangent: glam::Vec3,
-    colour: [f32; 4],
-) {
-    let cube_center = center + axis_dir * CUBE_HALF;
-    let h = CUBE_HALF;
-
-    // 8 corners of the cube.
-    let corners = [
-        cube_center + axis_dir * (-h) + tangent * (-h) + bitangent * (-h),
-        cube_center + axis_dir * h + tangent * (-h) + bitangent * (-h),
-        cube_center + axis_dir * h + tangent * h + bitangent * (-h),
-        cube_center + axis_dir * (-h) + tangent * h + bitangent * (-h),
-        cube_center + axis_dir * (-h) + tangent * (-h) + bitangent * h,
-        cube_center + axis_dir * h + tangent * (-h) + bitangent * h,
-        cube_center + axis_dir * h + tangent * h + bitangent * h,
-        cube_center + axis_dir * (-h) + tangent * h + bitangent * h,
-    ];
-
-    // 6 faces (each face = 4 vertices with face normal + 2 triangles).
-    let faces: [([usize; 4], glam::Vec3); 6] = [
-        ([1, 2, 6, 5], axis_dir),   // +axis
-        ([0, 4, 7, 3], -axis_dir),  // -axis
-        ([2, 3, 7, 6], tangent),    // +tangent
-        ([0, 1, 5, 4], -tangent),   // -tangent
-        ([4, 5, 6, 7], bitangent),  // +bitangent
-        ([0, 3, 2, 1], -bitangent), // -bitangent
-    ];
-
-    for (corner_ids, normal) in &faces {
-        let base = vertices.len() as u32;
-        for &ci in corner_ids {
-            vertices.push(Vertex {
-                position: corners[ci].to_array(),
-                normal: normal.to_array(),
-                colour,
-                uv: [0.0, 0.0],
-                tangent: [0.0, 0.0, 0.0, 1.0],
-            });
-        }
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-}
-
-/// Build small transparent plane-handle quads at axis-pair corners.
-fn build_plane_quads(
-    vertices: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    hovered: GizmoAxis,
-    orientation: glam::Quat,
-) {
-    let plane_offset = 0.25_f32;
-    let plane_size = 0.15_f32;
-
-    let planes = [
-        (GizmoAxis::XY, glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z),
-        (GizmoAxis::XZ, glam::Vec3::X, glam::Vec3::Z, glam::Vec3::Y),
-        (GizmoAxis::YZ, glam::Vec3::Y, glam::Vec3::Z, glam::Vec3::X),
-    ];
-
-    for (axis, dir_a, dir_b, normal_dir) in &planes {
-        let a = orientation * *dir_a;
-        let b = orientation * *dir_b;
-        let n = orientation * *normal_dir;
-        let center = a * plane_offset + b * plane_offset;
-        let colour = plane_colour(*axis, hovered);
-
-        let base = vertices.len() as u32;
-        let corners = [
-            center + a * (-plane_size) + b * (-plane_size),
-            center + a * plane_size + b * (-plane_size),
-            center + a * plane_size + b * plane_size,
-            center + a * (-plane_size) + b * plane_size,
-        ];
-        for c in &corners {
-            vertices.push(Vertex {
-                position: c.to_array(),
-                normal: n.to_array(),
-                colour,
-                uv: [0.0, 0.0],
-                tangent: [0.0, 0.0, 0.0, 1.0],
-            });
-        }
-        // Two triangles (double-sided via two-face winding).
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
-    }
-}
-
-/// Build a small center square for screen-space translate.
-fn build_screen_handle(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, hovered: GizmoAxis) {
-    let size = 0.08_f32;
-    let colour = axis_colour(GizmoAxis::Screen, hovered);
-    let base = vertices.len() as u32;
-
-    // Small quad in XY plane at the origin. The gizmo uniform will orient it
-    // toward the camera via billboard, but for simplicity we emit in XY.
-    let corners = [
-        glam::Vec3::new(-size, -size, 0.0),
-        glam::Vec3::new(size, -size, 0.0),
-        glam::Vec3::new(size, size, 0.0),
-        glam::Vec3::new(-size, size, 0.0),
-    ];
-    for c in &corners {
-        vertices.push(Vertex {
-            position: c.to_array(),
-            normal: [0.0, 0.0, 1.0],
-            colour,
-            uv: [0.0, 0.0],
-            tangent: [0.0, 0.0, 0.0, 1.0],
-        });
-    }
-    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
-}
-
-/// Build torus ring segments for rotation mode.
-fn build_rotation_rings(
-    vertices: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    hovered: GizmoAxis,
-    orientation: glam::Quat,
-) {
-    let ring_radius = ROTATION_RING_RADIUS; // major radius
-    let tube_radius = 0.025_f32; // minor radius
-    let ring_segments = 40_u32;
-    let tube_segments = 8_u32;
-
-    let axis_data = [
-        (GizmoAxis::X, glam::Vec3::X),
-        (GizmoAxis::Y, glam::Vec3::Y),
-        (GizmoAxis::Z, glam::Vec3::Z),
-    ];
-
-    for (axis, raw_dir) in &axis_data {
-        let axis_dir = orientation * *raw_dir;
-        let colour = axis_colour(*axis, hovered);
-
-        // Build two perpendicular vectors in the plane of the ring.
-        let (ring_u, ring_v) = perpendicular_pair(axis_dir);
-
-        let base = vertices.len() as u32;
-
-        for i in 0..ring_segments {
-            let theta = (i as f32) * std::f32::consts::TAU / (ring_segments as f32);
-            let cos_t = theta.cos();
-            let sin_t = theta.sin();
-            // Point on the ring centerline.
-            let ring_center = (ring_u * cos_t + ring_v * sin_t) * ring_radius;
-            // Outward direction from the torus center.
-            let outward = (ring_u * cos_t + ring_v * sin_t).normalize();
-
-            for j in 0..tube_segments {
-                let phi = (j as f32) * std::f32::consts::TAU / (tube_segments as f32);
-                let cos_p = phi.cos();
-                let sin_p = phi.sin();
-                let normal = outward * cos_p + axis_dir * sin_p;
-                let pos = ring_center + normal * tube_radius;
-
-                vertices.push(Vertex {
-                    position: pos.to_array(),
-                    normal: normal.to_array(),
-                    colour,
-                    uv: [0.0, 0.0],
-                    tangent: [0.0, 0.0, 0.0, 1.0],
-                });
-            }
-        }
-
-        // Indices: connect adjacent ring segments.
-        for i in 0..ring_segments {
-            let next_i = (i + 1) % ring_segments;
-            for j in 0..tube_segments {
-                let next_j = (j + 1) % tube_segments;
-                let v00 = base + i * tube_segments + j;
-                let v01 = base + i * tube_segments + next_j;
-                let v10 = base + next_i * tube_segments + j;
-                let v11 = base + next_i * tube_segments + next_j;
-                indices.extend_from_slice(&[v00, v10, v01, v01, v10, v11]);
-            }
-        }
-    }
-}
-
-/// Compute two perpendicular unit vectors to the given axis.
-fn perpendicular_pair(axis: glam::Vec3) -> (glam::Vec3, glam::Vec3) {
-    let hint = if axis.dot(glam::Vec3::Z).abs() > 0.9 {
-        glam::Vec3::X
-    } else {
-        glam::Vec3::Z
-    };
-    let u = axis.cross(hint).normalize();
-    let v = axis.cross(u).normalize();
-    (u, v)
-}
+/// Tube (minor) radius of the rotation rings, in gizmo-local units.
+pub(crate) const RING_TUBE_RADIUS: f32 = 0.025;
+pub(crate) const CONE_RADIUS: f32 = 0.09;
+pub(crate) const CONE_LENGTH: f32 = 0.30;
+pub(crate) const CUBE_HALF: f32 = 0.06;
+/// Distance from the gizmo centre to the plane-handle centre, in gizmo-local units.
+pub(crate) const PLANE_OFFSET: f32 = 0.25;
+/// Half-extent of a plane handle, in gizmo-local units.
+pub(crate) const PLANE_SIZE: f32 = 0.15;
+/// Half-extent of the drawn screen-space centre handle, in gizmo-local units.
+/// The hit-test grab area is deliberately larger (see `hit_test`).
+pub(crate) const SCREEN_HANDLE_SIZE: f32 = 0.08;
 
 // ---------------------------------------------------------------------------
 // Gizmo scale computation
@@ -922,18 +535,6 @@ pub fn compute_gizmo_scale(
     // Target: 100 pixels = gizmo total length.
     let target_px = 100.0_f32;
     world_per_px * target_px
-}
-
-// ---------------------------------------------------------------------------
-// GizmoUniform (mirrors the WGSL struct)
-// ---------------------------------------------------------------------------
-
-/// Uniform data for the gizmo shader: model matrix positioning the gizmo.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct GizmoUniform {
-    /// World-space model matrix (Translation * Scale; no rotation for world-space gizmo).
-    pub(crate) model: [[f32; 4]; 4],
 }
 
 // ---------------------------------------------------------------------------
@@ -1240,50 +841,6 @@ mod tests {
             axis,
             GizmoAxis::Screen,
             "ray at center should hit Screen handle"
-        );
-    }
-
-    #[test]
-    fn test_build_mesh_translate_has_plane_quads() {
-        let (verts, idxs) =
-            build_gizmo_mesh(GizmoMode::Translate, GizmoAxis::None, glam::Quat::IDENTITY);
-        // Translate mode has arrows + plane quads + screen handle : substantially more geometry.
-        assert!(
-            verts.len() > 80,
-            "translate mesh should have significant vertex count, got {}",
-            verts.len()
-        );
-        assert!(!idxs.is_empty());
-    }
-
-    #[test]
-    fn test_build_mesh_rotate_produces_rings() {
-        let (verts, _) = build_gizmo_mesh(GizmoMode::Rotate, GizmoAxis::None, glam::Quat::IDENTITY);
-        // 3 rings x 40 ring_segments x 8 tube_segments = 960 vertices.
-        assert!(
-            verts.len() >= 960,
-            "rotate mesh should have ring vertices, got {}",
-            verts.len()
-        );
-    }
-
-    #[test]
-    fn test_build_mesh_scale_has_cubes() {
-        let (verts_translate, _) =
-            build_gizmo_mesh(GizmoMode::Translate, GizmoAxis::None, glam::Quat::IDENTITY);
-        let (verts_scale, _) =
-            build_gizmo_mesh(GizmoMode::Scale, GizmoAxis::None, glam::Quat::IDENTITY);
-        // Scale mode has cube tips (6 faces x 4 verts = 24 per axis = 72 for cube tips)
-        // instead of cone tips (segments + 1 + segments per axis). Different counts expected.
-        assert!(
-            verts_scale.len() > 50,
-            "scale mesh should have geometry, got {}",
-            verts_scale.len()
-        );
-        assert_ne!(
-            verts_translate.len(),
-            verts_scale.len(),
-            "translate and scale should have different vertex counts (cone vs cube tips)"
         );
     }
 

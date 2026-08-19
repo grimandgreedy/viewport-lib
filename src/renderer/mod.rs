@@ -217,16 +217,6 @@ pub(crate) struct ViewportSlot {
     pub axes_vertex_buffer: crate::gpu::Buffer,
     /// Number of vertices in the axes indicator buffer.
     pub axes_vertex_count: u32,
-    /// Gizmo model-matrix uniform buffer.
-    pub gizmo_uniform_buf: crate::gpu::Buffer,
-    /// Gizmo bind group (group 1: model matrix uniform).
-    pub gizmo_bind_group: crate::gpu::BindGroup,
-    /// Gizmo vertex buffer.
-    pub gizmo_vertex_buffer: crate::gpu::Buffer,
-    /// Gizmo index buffer.
-    pub gizmo_index_buffer: crate::gpu::Buffer,
-    /// Number of indices in the current gizmo mesh.
-    pub gizmo_index_count: u32,
 
     // --- Sub-object highlight (per-viewport, generation-cached) ---
     /// Per-viewport dynamic resolution intermediate render target.
@@ -2593,60 +2583,8 @@ impl ViewportRenderer {
                 }],
             });
 
-            // Per-viewport gizmo buffers (initial mesh: Translate, no hover, identity orientation).
-            let (gizmo_verts, gizmo_indices) =
-                crate::interaction::manipulation::gizmo::build_gizmo_mesh(
-                    crate::interaction::manipulation::gizmo::GizmoMode::Translate,
-                    crate::interaction::manipulation::gizmo::GizmoAxis::None,
-                    glam::Quat::IDENTITY,
-                );
-            let gizmo_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("vp_gizmo_vertex_buf"),
-                size: (std::mem::size_of::<crate::resources::Vertex>() * gizmo_verts.len().max(1))
-                    as u64,
-                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            crate::resources::builders::write_mapped(
-                gizmo_vertex_buffer.slice(..),
-                bytemuck::cast_slice(&gizmo_verts),
-            );
-            gizmo_vertex_buffer.unmap();
-            let gizmo_index_count = gizmo_indices.len() as u32;
-            let gizmo_index_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("vp_gizmo_index_buf"),
-                size: (std::mem::size_of::<u32>() * gizmo_indices.len().max(1)) as u64,
-                usage: crate::gpu::BufferUsages::INDEX | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            crate::resources::builders::write_mapped(
-                gizmo_index_buffer.slice(..),
-                bytemuck::cast_slice(&gizmo_indices),
-            );
-            gizmo_index_buffer.unmap();
-            let gizmo_uniform = crate::interaction::manipulation::gizmo::GizmoUniform {
-                model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            };
-            let gizmo_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("vp_gizmo_uniform_buf"),
-                size: std::mem::size_of::<crate::interaction::manipulation::gizmo::GizmoUniform>()
-                    as u64,
-                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            crate::resources::builders::write_mapped(
-                gizmo_uniform_buf.slice(..),
-                bytemuck::cast_slice(&[gizmo_uniform]),
-            );
-            gizmo_uniform_buf.unmap();
-            let gizmo_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                label: Some("vp_gizmo_bind_group"),
-                layout: &self.resources.gizmo.bgl,
-                entries: &[crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: gizmo_uniform_buf.as_entire_binding(),
-                }],
-            });
+            // The transform gizmo now draws through the 2D overlay system, so
+            // no per-viewport gizmo geometry buffers are needed.
 
             // Per-viewport axes vertex buffer (2048 vertices = enough for all axes geometry).
             let axes_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -2696,11 +2634,6 @@ impl ViewportRenderer {
                 clip_plane_line_buffers: Vec::new(),
                 axes_vertex_buffer,
                 axes_vertex_count: 0,
-                gizmo_uniform_buf,
-                gizmo_bind_group,
-                gizmo_vertex_buffer,
-                gizmo_index_buffer,
-                gizmo_index_count,
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
                 dyn_res: None,
