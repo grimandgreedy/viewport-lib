@@ -1,11 +1,20 @@
 use super::*;
 
+/// Point-cloud render pipeline and its bind group layout, both built lazily on
+/// the first point-cloud submission. Grouped off `DeviceResources`.
+pub(crate) struct PointCloudResources {
+    /// Point cloud render pipeline. None until first point cloud is submitted.
+    pub(crate) pipeline: Option<crate::resources::DualPipeline>,
+    /// Bind group layout for point cloud uniforms (group 1).
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
+}
+
 impl DeviceResources {
     /// Lazily create the point cloud render pipeline (PointList topology).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.point_clouds` is non-empty.
     pub(crate) fn ensure_point_cloud_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.point_cloud_pipeline.is_some() {
+        if self.point_cloud.pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -106,7 +115,7 @@ impl DeviceResources {
             }],
         };
 
-        self.point_cloud_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+        self.point_cloud.pipeline = Some(crate::resources::builders::build_dual_pipeline(
             device,
             &crate::resources::builders::DualPipelineDesc {
                 label: "point_cloud_pipeline",
@@ -124,7 +133,7 @@ impl DeviceResources {
                 ldr_format: self.target_format,
             },
         ));
-        self.point_cloud_bgl = Some(pc_bgl);
+        self.point_cloud.bgl = Some(pc_bgl);
     }
 
     /// Upload one [`PointCloudItem`] to the GPU and return draw data.
@@ -327,7 +336,8 @@ impl DeviceResources {
         let lut_sampler = &self.material.sampler;
 
         let bgl = self
-            .point_cloud_bgl
+            .point_cloud
+            .bgl
             .as_ref()
             .expect("ensure_point_cloud_pipeline not called");
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -492,6 +502,22 @@ mod tests {
         ))
         .ok()?;
         pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
+    }
+
+    /// Both lazily-built pipeline pairs start empty at construction, and their
+    /// bind group layouts too. Guards the init-assembly grouping of
+    /// `point_cloud` and `compute_filter`.
+    #[test]
+    fn lazy_pipeline_pairs_start_empty() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        assert!(res.point_cloud.pipeline.is_none());
+        assert!(res.point_cloud.bgl.is_none());
+        assert!(res.compute_filter.pipeline.is_none());
+        assert!(res.compute_filter.bgl.is_none());
     }
 
     fn sample_point_cloud() -> PointCloudItem {

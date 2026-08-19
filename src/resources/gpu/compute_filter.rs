@@ -1,5 +1,14 @@
 //! GPU compute-filter pipeline for Clip/Threshold index compaction.
 
+/// Compute-filter pipeline and its bind group layout, built lazily on first
+/// Clip/Threshold use. Grouped off `DeviceResources`.
+pub(crate) struct ComputeFilterResources {
+    /// Compute pipeline for Clip / Threshold index compaction. None until first use.
+    pub(crate) pipeline: Option<crate::gpu::ComputePipeline>,
+    /// Bind group layout for the compute filter shader (group 0). None until first use.
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
+}
+
 /// Output from a single GPU compute filter dispatch.
 ///
 /// Contains a compacted index buffer (triangles that passed the filter)
@@ -15,7 +24,7 @@ pub struct ComputeFilterResult {
 
 impl crate::resources::DeviceResources {
     fn ensure_compute_filter_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.compute_filter_pipeline.is_some() {
+        if self.compute_filter.pipeline.is_some() {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
@@ -110,8 +119,8 @@ impl crate::resources::DeviceResources {
             "main",
         );
 
-        self.compute_filter_bgl = Some(bgl);
-        self.compute_filter_pipeline = Some(pipeline);
+        self.compute_filter.bgl = Some(bgl);
+        self.compute_filter.pipeline = Some(pipeline);
     }
 
     /// Dispatch GPU compute filters for all items in the list.
@@ -311,7 +320,7 @@ impl crate::resources::DeviceResources {
             };
 
             // Build bind group.
-            let bgl = self.compute_filter_bgl.as_ref().unwrap();
+            let bgl = self.compute_filter.bgl.as_ref().unwrap();
             let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("compute_filter_bg"),
                 layout: bgl,
@@ -350,7 +359,7 @@ impl crate::resources::DeviceResources {
                 });
 
             {
-                let pipeline = self.compute_filter_pipeline.as_ref().unwrap();
+                let pipeline = self.compute_filter.pipeline.as_ref().unwrap();
                 let mut cpass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                     label: Some("compute_filter_pass"),
                     timestamp_writes: None,

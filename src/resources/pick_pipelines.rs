@@ -1204,7 +1204,7 @@ impl DeviceResources {
             return;
         }
         self.ensure_pick_pipeline(device);
-        if self.point_cloud_bgl.is_none() {
+        if self.point_cloud.bgl.is_none() {
             return;
         }
 
@@ -1224,7 +1224,8 @@ impl DeviceResources {
 
         let camera_bgl = &self.binds.camera_bgl;
         let pc_bgl = self
-            .point_cloud_bgl
+            .point_cloud
+            .bgl
             .as_ref()
             .expect("checked is_some above");
         let shader = crate::resources::builders::wgsl_module(

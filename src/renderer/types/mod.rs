@@ -1005,7 +1005,7 @@ macro_rules! emit_scivis_draw_calls {
 
         // Point cloud pass.
         if !$pc_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.point_cloud_pipeline {
+            if let Some(ref dual) = resources.point_cloud.pipeline {
                 render_pass.set_pipeline(dual.for_format(_is_hdr));
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for pc in $pc_gpu_data.iter() {

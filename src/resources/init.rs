@@ -2657,8 +2657,10 @@ impl DeviceResources {
             gaussian_splat:
                 crate::resources::scivis::gaussian_splat::GaussianSplatResources::default(),
             sprite: crate::resources::scivis::sprite::SpriteResources::default(),
-            point_cloud_pipeline: None,
-            point_cloud_bgl: None,
+            point_cloud: crate::resources::scivis::point_cloud::PointCloudResources {
+                pipeline: None,
+                bgl: None,
+            },
             glyph: crate::resources::scivis::glyph::GlyphResources::default(),
             tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::default(),
             volume: crate::resources::volume::volumes::VolumeResources::default(),
@@ -2666,8 +2668,10 @@ impl DeviceResources {
             streamtube: crate::resources::scivis::tube::StreamtubeResources::default(),
             ribbon: crate::resources::scivis::tube::RibbonResources::default(),
             image_slice: crate::resources::types::ImageSliceResources::default(),
-            compute_filter_pipeline: None,
-            compute_filter_bgl: None,
+            compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
+                pipeline: None,
+                bgl: None,
+            },
             oit: crate::resources::postprocess::OitResources::default(),
             pt: crate::resources::types::ProjectedTetResources::default(),
             // Scatter-volume (participating media) pipeline (lazily created).

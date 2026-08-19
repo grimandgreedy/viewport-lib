@@ -694,10 +694,8 @@ pub struct DeviceResources {
     // The polyline outline mask pipeline lives on `polyline.outline_mask_pipeline`.
 
     // --- point cloud pipelines (lazily created) ---
-    /// Point cloud render pipeline. None until first point cloud is submitted.
-    pub(crate) point_cloud_pipeline: Option<DualPipeline>,
-    /// Bind group layout for point cloud uniforms (group 1).
-    pub(crate) point_cloud_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Point-cloud render pipeline and bind group layout (lazy).
+    pub(crate) point_cloud: crate::resources::scivis::point_cloud::PointCloudResources,
 
     // --- glyph rendering (lazily created) ---
     /// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
@@ -722,10 +720,8 @@ pub struct DeviceResources {
     pub(crate) volume: crate::resources::volume::volumes::VolumeResources,
 
     // --- GPU compute filtering (lazily created) ---
-    /// Compute pipeline for Clip / Threshold index compaction. None until first use.
-    pub(crate) compute_filter_pipeline: Option<crate::gpu::ComputePipeline>,
-    /// Bind group layout for the compute filter shader (group 0). None until first use.
-    pub(crate) compute_filter_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Compute-filter pipeline and bind group layout (lazy).
+    pub(crate) compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources,
 
     // --- Order-independent transparency (OIT) : lazily created ---
     // The viewport-sized accum/reveal textures, composite bind group, and target
