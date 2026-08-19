@@ -243,7 +243,7 @@ impl ViewportRenderer {
                     }
                     // Also write to shared buffer for legacy callers.
                     queue.write_buffer(
-                        &resources.grid_uniform_buf,
+                        &resources.guides.grid_uniform_buf,
                         0,
                         bytemuck::cast_slice(&[uniform]),
                     );

@@ -664,40 +664,10 @@ pub struct DeviceResources {
     /// See `resources::gizmo::GizmoResources`.
     pub(crate) gizmo: crate::resources::gizmo::GizmoResources,
 
-    // --- Overlay resources ---
-    /// Overlay render pipeline (TriangleList with alpha blending : for semi-transparent BC quads).
-    pub(crate) overlay_pipeline: crate::gpu::RenderPipeline,
-    /// Overlay wireframe pipeline (LineList, no alpha blending needed).
-    pub(crate) overlay_line_pipeline: crate::gpu::RenderPipeline,
-    /// Full-screen analytical grid pipeline (no vertex buffer : positions hardcoded in shader).
-    pub(crate) grid_pipeline: crate::gpu::RenderPipeline,
-    /// Uniform buffer for the grid shader (GridUniform : written every frame in prepare()).
-    pub(crate) grid_uniform_buf: crate::gpu::Buffer,
-    /// Bind group for the grid uniform (group 0, single binding).
-    pub(crate) grid_bind_group: crate::gpu::BindGroup,
-    /// Bind group layout for the grid uniform (stored so per-viewport grid bind groups can be created).
-    pub(crate) grid_bind_group_layout: crate::gpu::BindGroupLayout,
-    /// Bind group layout for overlay uniforms (group 1: model + colour uniform).
-    pub(crate) overlay_bind_group_layout: crate::gpu::BindGroupLayout,
-
-    // --- Constraint guide lines ---
-    /// Transient constraint guide lines, rebuilt each frame in prepare().
-    /// Each entry: (vertex_buffer, index_buffer, index_count, uniform_buffer, bind_group).
-    pub(crate) constraint_line_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
-
-    // --- Axes indicator ---
-    /// Screen-space axes indicator pipeline (TriangleList, no depth, alpha blending).
-    pub(crate) axes_pipeline: crate::gpu::RenderPipeline,
-    /// Vertex buffer for axes indicator geometry (rebuilt each frame).
-    pub(crate) axes_vertex_buffer: crate::gpu::Buffer,
-    /// Number of vertices in the axes indicator buffer.
-    pub(crate) axes_vertex_count: u32,
+    // --- Overlay guide resources (grid, axes, base overlay, constraint lines) ---
+    /// Floor grid, axes indicator, base overlay pipelines, and constraint guide
+    /// lines. See `resources::overlay::guides::OverlayGuideResources`.
+    pub(crate) guides: crate::resources::overlay::guides::OverlayGuideResources,
 
     // --- Texture system ---
     /// Fallback material textures (1x1 neutral maps), shared material / LUT /

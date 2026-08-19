@@ -247,7 +247,7 @@ macro_rules! emit_draw_calls {
         // occludes it. No vertex buffer; depth is written via @builtin(frag_depth).
         // Camera bind group is restored immediately after for subsequent passes.
         if frame.viewport.show_grid {
-            render_pass.set_pipeline(&resources.grid_pipeline);
+            render_pass.set_pipeline(&resources.guides.grid_pipeline);
             render_pass.set_bind_group(0, grid_bg, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
@@ -876,7 +876,7 @@ macro_rules! emit_draw_calls {
         // Constraint guide line pass.
         if let Some(slot) = _vp_slot {
             if !slot.constraint_line_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.overlay_line_pipeline);
+                render_pass.set_pipeline(&resources.guides.overlay_line_pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (vbuf, ibuf, index_count, _ubuf, bg) in &slot.constraint_line_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
@@ -890,7 +890,7 @@ macro_rules! emit_draw_calls {
         // Cap fill pass (section view cross-section fill).
         if let Some(slot) = _vp_slot {
             if !slot.cap_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.overlay_pipeline);
+                render_pass.set_pipeline(&resources.guides.overlay_pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.cap_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
@@ -904,7 +904,7 @@ macro_rules! emit_draw_calls {
         // Clip plane handle fill pass (semi-transparent quad fills, alpha blended).
         if let Some(slot) = _vp_slot {
             if !slot.clip_plane_fill_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.overlay_pipeline);
+                render_pass.set_pipeline(&resources.guides.overlay_pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_fill_buffers {
                     render_pass.set_bind_group(1, bg, &[]);
@@ -918,7 +918,7 @@ macro_rules! emit_draw_calls {
         // Clip plane handle border and normal indicator pass (line list).
         if let Some(slot) = _vp_slot {
             if !slot.clip_plane_line_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.overlay_line_pipeline);
+                render_pass.set_pipeline(&resources.guides.overlay_line_pipeline);
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_line_buffers {
                     render_pass.set_bind_group(1, bg, &[]);

@@ -1038,10 +1038,7 @@ impl DeviceResources {
         let hdr_overlay_layout = crate::resources::builders::pipeline_layout(
             device,
             "hdr_overlay_pipeline_layout",
-            &[
-                &self.camera_bind_group_layout,
-                &self.overlay_bind_group_layout,
-            ],
+            &[&self.camera_bind_group_layout, &self.guides.overlay_bgl],
         );
         let hdr_overlay_pipeline = crate::resources::builders::render_pipeline(
             device,

@@ -4429,7 +4429,7 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            grid_pass.set_pipeline(&self.resources.grid_pipeline);
+            grid_pass.set_pipeline(&self.resources.guides.grid_pipeline);
             grid_pass.set_bind_group(0, grid_bg, &[]);
             grid_pass.draw(0..3, 0..1);
         }
@@ -4574,7 +4574,7 @@ impl ViewportRenderer {
                 }
 
                 if !slot.constraint_line_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.overlay_line_pipeline);
+                    overlay_pass.set_pipeline(&self.resources.guides.overlay_line_pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     for (vbuf, ibuf, index_count, _ubuf, bg) in &slot.constraint_line_buffers {
                         overlay_pass.set_bind_group(1, bg, &[]);
@@ -4586,7 +4586,7 @@ impl ViewportRenderer {
                 }
 
                 if !slot.clip_plane_fill_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.overlay_pipeline);
+                    overlay_pass.set_pipeline(&self.resources.guides.overlay_pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_fill_buffers {
                         overlay_pass.set_bind_group(1, bg, &[]);
@@ -4598,7 +4598,7 @@ impl ViewportRenderer {
                 }
 
                 if !slot.clip_plane_line_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.overlay_line_pipeline);
+                    overlay_pass.set_pipeline(&self.resources.guides.overlay_line_pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
                     for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_line_buffers {
                         overlay_pass.set_bind_group(1, bg, &[]);

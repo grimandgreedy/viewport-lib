@@ -255,7 +255,7 @@ impl ViewportSlot {
         show_axes_indicator: bool,
     ) {
         if show_axes_indicator && self.axes_vertex_count > 0 {
-            render_pass.set_pipeline(&resources.axes_pipeline);
+            render_pass.set_pipeline(&resources.guides.axes_pipeline);
             render_pass.set_vertex_buffer(0, self.axes_vertex_buffer.slice(..));
             render_pass.draw(0..self.axes_vertex_count, 0..1);
         }
@@ -2586,7 +2586,7 @@ impl ViewportRenderer {
 
             let grid_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("vp_grid_bind_group"),
-                layout: &self.resources.grid_bind_group_layout,
+                layout: &self.resources.guides.grid_bgl,
                 entries: &[crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: grid_buf.as_entire_binding(),
@@ -2948,7 +2948,7 @@ impl ViewportRenderer {
         self.viewport_slots
             .get(viewport_index)
             .map(|slot| &slot.grid_bind_group)
-            .unwrap_or(&self.resources.grid_bind_group)
+            .unwrap_or(&self.resources.guides.grid_bind_group)
     }
 
     /// Ensure the dyn-res intermediate render target exists for `vp_idx` at the

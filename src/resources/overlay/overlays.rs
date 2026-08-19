@@ -144,7 +144,7 @@ impl DeviceResources {
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("constraint_overlay_bg"),
-            layout: &self.overlay_bind_group_layout,
+            layout: &self.guides.overlay_bgl,
             entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
@@ -234,7 +234,7 @@ impl DeviceResources {
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("clip_plane_fill_bg"),
-            layout: &self.overlay_bind_group_layout,
+            layout: &self.guides.overlay_bgl,
             entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
@@ -357,7 +357,7 @@ impl DeviceResources {
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("clip_plane_line_bg"),
-            layout: &self.overlay_bind_group_layout,
+            layout: &self.guides.overlay_bgl,
             entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
@@ -432,7 +432,7 @@ impl DeviceResources {
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("cap_bg"),
-            layout: &self.overlay_bind_group_layout,
+            layout: &self.guides.overlay_bgl,
             entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
