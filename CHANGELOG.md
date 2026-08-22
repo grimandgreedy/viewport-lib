@@ -37,9 +37,22 @@ lighting posture returns to a faithful "colour is data" baseline.
   again, the default `ExposureSettings` is neutral `Manual { ev: 0 }`, and the
   default light intensity and hemisphere fill are modest values that read at EV 0
   ("colour is data"). Opt into the cinematic daylight look with
-  `LightingSettings::daylight()` + `ExposureSettings::automatic()`. Photometric
+  `EffectsFrame::with_posture(LightingPosture::PhysicalDaylight)` (see New). Photometric
   magnitudes (`Lux`/`Candela`/`Lumen`) remain available and are unchanged.
+- **Punctual falloff is now physical inverse-square.** Point and spot lights use
+  `1/d^2` (clamped by source `radius`) with a Karis reach window instead of the old
+  `(1 - d/range)^2`, matching the path tracer. `range` is reach, not brightness;
+  `LightKind::Point`/`Spot` gain a `radius`. Point/spot lights authored against the
+  old curve need re-tuning.
 - **Config structs now derive `serde` uniformly** under the `serde` feature.
+
+### New
+
+- **`LightingPosture` + `EffectsFrame::with_posture` / `FrameData::with_posture`.**
+  One call sets `effects.lighting` and the exposure on `effects.display` as a
+  matched pair, so light magnitudes and the camera cannot disagree. `Faithful` (the
+  default) is nominal magnitudes at neutral exposure; `PhysicalDaylight` is
+  `LightingSettings::daylight()` + `ExposureSettings::automatic()`.
 
 ## [0.20.0]
 

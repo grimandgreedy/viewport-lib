@@ -171,6 +171,13 @@ impl FrameData {
         self
     }
 
+    /// Apply a [`LightingPosture`], setting the lighting and exposure together as
+    /// a matched pair. See [`EffectsFrame::with_posture`].
+    pub fn with_posture(mut self, posture: LightingPosture) -> Self {
+        self.effects = core::mem::take(&mut self.effects).with_posture(posture);
+        self
+    }
+
     /// Override the post-processing settings.
     pub fn with_post_process(mut self, post: PostProcessSettings) -> Self {
         self.effects.post_process = post;

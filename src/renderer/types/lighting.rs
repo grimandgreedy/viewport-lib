@@ -451,7 +451,11 @@ impl LightingSettings {
     /// proportional sky fill. These are real photometric magnitudes and clip to
     /// white under the neutral default exposure, so pair this with an exposure
     /// that maps daylight down - typically [`ExposureSettings::automatic`] (or a
-    /// [`ExposureSettings::physical`] daylight camera):
+    /// [`ExposureSettings::physical`] daylight camera). To set this preset and a
+    /// matching camera together in one call, prefer
+    /// [`EffectsFrame::with_posture`](crate::EffectsFrame::with_posture) with
+    /// [`LightingPosture::PhysicalDaylight`](crate::LightingPosture); pair them by
+    /// hand only when you need a non-default exposure:
     ///
     /// ```no_run
     /// # use viewport_lib::{EffectsFrame, LightingSettings, ExposureSettings};

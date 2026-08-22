@@ -1012,7 +1012,63 @@ pub struct ViewportEffects<'a> {
     pub debug: &'a EffectsDebug,
 }
 
+/// A coherent lighting + exposure starting point.
+///
+/// Whether a scene is "faithful" or "physical daylight" is not one field - it
+/// emerges from the light magnitudes in [`EffectsFrame::lighting`] agreeing with
+/// the exposure in [`EffectsFrame::display`]. Setting one without the other is the
+/// common footgun: real-lux lights under the neutral default exposure clip to
+/// white, and an adaptive daylight camera over nominal magnitudes silently loses
+/// the "colour is data" look. `LightingPosture` sets both halves together via
+/// [`EffectsFrame::with_posture`] so they cannot disagree.
+///
+/// This governs lighting and exposure only. The per-material
+/// [`ShadingModel`](crate::ShadingModel) is chosen independently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum LightingPosture {
+    /// "Colour is data": nominal light magnitudes shown at a fixed neutral
+    /// exposure with no camera adaptation, so authored colours read on screen
+    /// roughly as-is. The default posture, matching [`EffectsFrame::default`].
+    #[default]
+    Faithful,
+    /// Physically-scaled daylight: real photometric magnitudes
+    /// ([`LightingSettings::daylight`]) mapped down by an adaptive camera
+    /// ([`ExposureSettings::automatic`]) so the sun does not clip to white.
+    PhysicalDaylight,
+}
+
 impl EffectsFrame {
+    /// Apply a [`LightingPosture`], setting [`EffectsFrame::lighting`] and the
+    /// exposure on [`EffectsFrame::display`] as a matched pair.
+    ///
+    /// Pick the intent in one call instead of hand-pairing light magnitudes with
+    /// an exposure mode - the two must agree or the scene clips (real lux at
+    /// neutral exposure) or loses the colour-is-data look (nominal magnitudes
+    /// under an adaptive camera). Call it early, then author your own lights
+    /// (push onto `effects.lighting.lights`) and adjust other display fields:
+    ///
+    /// ```no_run
+    /// # use viewport_lib::{EffectsFrame, LightingPosture};
+    /// let effects = EffectsFrame::default().with_posture(LightingPosture::PhysicalDaylight);
+    /// ```
+    ///
+    /// Leaves other display fields (pipeline mode, tone-map operator) and the
+    /// per-material [`ShadingModel`](crate::ShadingModel) untouched.
+    pub fn with_posture(mut self, posture: LightingPosture) -> Self {
+        match posture {
+            LightingPosture::Faithful => {
+                self.lighting = LightingSettings::default();
+                self.display.exposure = ExposureSettings::default();
+            }
+            LightingPosture::PhysicalDaylight => {
+                self.lighting = LightingSettings::daylight();
+                self.display.exposure = ExposureSettings::automatic();
+            }
+        }
+        self
+    }
+
     /// Decompose into scene-global and per-viewport effect references.
     ///
     /// Both halves borrow from `self` and cannot outlive the `EffectsFrame`.
