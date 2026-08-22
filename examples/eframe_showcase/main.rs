@@ -74,11 +74,8 @@ mod showcase_53_vertex_colours;
 mod showcase_54_custom_shading;
 mod showcase_55_foreground_pass;
 mod showcase_56_submesh_materials;
-mod showcase_57_light_falloff;
-mod showcase_58_shading_parity;
-mod showcase_59_exposure;
-mod showcase_60_photometric;
-mod showcase_61_emissive_env;
+mod showcase_57_photometric_lighting;
+mod showcase_58_physically_based_surfaces;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -242,11 +239,10 @@ fn main() -> eframe::Result {
                 cs_state: showcase_54_custom_shading::CustomShadingState::default(),
                 fg_state: showcase_55_foreground_pass::ForegroundState::default(),
                 submesh_state: showcase_56_submesh_materials::SubmeshState::default(),
-                lf_state: showcase_57_light_falloff::LfState::default(),
-                parity_state: showcase_58_shading_parity::ParityState::default(),
-                exposure_state: showcase_59_exposure::ExposureShowcaseState::default(),
-                photometric_state: showcase_60_photometric::PhotometricState::default(),
-                emissive_env_state: showcase_61_emissive_env::EmissiveEnvState::default(),
+                lighting_state: showcase_57_photometric_lighting::PhotometricLightingState::default(
+                ),
+                surfaces_state:
+                    showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -317,11 +313,8 @@ enum ShowcaseMode {
     CustomShading,
     Foreground,
     SubmeshMaterials,
-    LightFalloff,
-    ShadingParity,
-    Exposure,
-    Photometric,
-    EmissiveEnv,
+    PhotometricLighting,
+    PhysicallyBasedSurfaces,
 }
 
 impl ShowcaseMode {
@@ -383,11 +376,8 @@ impl ShowcaseMode {
             Self::CustomShading => "54: Custom Shading Plugins",
             Self::Foreground => "55: Foreground Composite Pass",
             Self::SubmeshMaterials => "56: Submesh Materials",
-            Self::LightFalloff => "57: Light Falloff",
-            Self::ShadingParity => "58: Shading Model Parity",
-            Self::Exposure => "59: Exposure & Auto-Exposure",
-            Self::Photometric => "60: Photometric Presets",
-            Self::EmissiveEnv => "61: Emissive & Environment",
+            Self::PhotometricLighting => "57: Photometric Lighting",
+            Self::PhysicallyBasedSurfaces => "58: Physically-Based Surfaces",
         }
     }
 }
@@ -577,20 +567,11 @@ pub(crate) struct App {
     pub(crate) fg_state: showcase_55_foreground_pass::ForegroundState,
     pub(crate) submesh_state: showcase_56_submesh_materials::SubmeshState,
 
-    // --- Showcase 57 ---
-    pub(crate) lf_state: showcase_57_light_falloff::LfState,
+    // --- Showcase 57: Photometric Lighting (units/presets + falloff + exposure) ---
+    pub(crate) lighting_state: showcase_57_photometric_lighting::PhotometricLightingState,
 
-    // --- Showcase 58 ---
-    pub(crate) parity_state: showcase_58_shading_parity::ParityState,
-
-    // --- Showcase 59 ---
-    pub(crate) exposure_state: showcase_59_exposure::ExposureShowcaseState,
-
-    // --- Showcase 60 ---
-    pub(crate) photometric_state: showcase_60_photometric::PhotometricState,
-
-    // --- Showcase 61 ---
-    pub(crate) emissive_env_state: showcase_61_emissive_env::EmissiveEnvState,
+    // --- Showcase 58: Physically-Based Surfaces (shading parity + emissive/IBL) ---
+    pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -796,11 +777,8 @@ impl eframe::App for App {
                     ShowcaseMode::CustomShading,
                     ShowcaseMode::Foreground,
                     ShowcaseMode::SubmeshMaterials,
-                    ShowcaseMode::LightFalloff,
-                    ShowcaseMode::ShadingParity,
-                    ShowcaseMode::Exposure,
-                    ShowcaseMode::Photometric,
-                    ShowcaseMode::EmissiveEnv,
+                    ShowcaseMode::PhotometricLighting,
+                    ShowcaseMode::PhysicallyBasedSurfaces,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1602,9 +1580,8 @@ impl eframe::App for App {
                 // renderer is on-demand, so without a repaint request a slider change
                 // is dropped until something else re-renders. Auto-exposure smoothing
                 // also needs continuous frames.
-                if self.mode == ShowcaseMode::Exposure
-                    || self.mode == ShowcaseMode::Photometric
-                    || self.mode == ShowcaseMode::EmissiveEnv
+                if self.mode == ShowcaseMode::PhotometricLighting
+                    || self.mode == ShowcaseMode::PhysicallyBasedSurfaces
                 {
                     ctx.request_repaint();
                 }
@@ -1685,7 +1662,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 61] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 58] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1742,11 +1719,8 @@ impl App {
             ShowcaseMode::CustomShading,
             ShowcaseMode::Foreground,
             ShowcaseMode::SubmeshMaterials,
-            ShowcaseMode::LightFalloff,
-            ShowcaseMode::ShadingParity,
-            ShowcaseMode::Exposure,
-            ShowcaseMode::Photometric,
-            ShowcaseMode::EmissiveEnv,
+            ShowcaseMode::PhotometricLighting,
+            ShowcaseMode::PhysicallyBasedSurfaces,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1887,11 +1861,8 @@ impl App {
             ShowcaseMode::CustomShading => !self.cs_state.built,
             ShowcaseMode::Foreground => !self.fg_state.built,
             ShowcaseMode::SubmeshMaterials => !self.submesh_state.built,
-            ShowcaseMode::LightFalloff => !self.lf_state.built,
-            ShowcaseMode::ShadingParity => !self.parity_state.built,
-            ShowcaseMode::Exposure => !self.exposure_state.built,
-            ShowcaseMode::Photometric => !self.photometric_state.built,
-            ShowcaseMode::EmissiveEnv => !self.emissive_env_state.built,
+            ShowcaseMode::PhotometricLighting => !self.lighting_state.built(),
+            ShowcaseMode::PhysicallyBasedSurfaces => !self.surfaces_state.built(),
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2445,56 +2416,12 @@ impl App {
                     ..Camera::default()
                 };
             }
-            ShowcaseMode::LightFalloff => {
-                self.build_light_falloff_scene(renderer);
-                // Frame the row from the side so the near-to-far dimming reads.
-                self.camera = Camera {
-                    center: glam::Vec3::new(9.0, 0.0, 0.5),
-                    distance: 22.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.15),
-                    ..Camera::default()
-                };
+            ShowcaseMode::PhotometricLighting => {
+                // Builds the active sub-scene and frames the camera for it.
+                self.build_photometric_lighting_scene(renderer);
             }
-            ShowcaseMode::ShadingParity => {
-                self.build_shading_parity_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(5.2, 0.0, 0.6),
-                    distance: 16.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.15),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Exposure => {
-                self.build_exposure_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(6.0, 0.4, 0.7),
-                    distance: 17.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.2),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Photometric => {
-                self.build_photometric_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(4.8, 0.4, 0.7),
-                    distance: 16.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.2),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::EmissiveEnv => {
-                self.build_emissive_env_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(4.8, 0.5, 0.8),
-                    distance: 17.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.2),
-                    ..Camera::default()
-                };
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                self.build_physically_based_surfaces_scene(renderer);
             }
             _ => {}
         }
@@ -2612,11 +2539,12 @@ impl App {
             ShowcaseMode::SubmeshMaterials => {
                 showcase_56_submesh_materials::controls_submesh(self, ui)
             }
-            ShowcaseMode::LightFalloff => showcase_57_light_falloff::controls_lf(self, ui),
-            ShowcaseMode::ShadingParity => showcase_58_shading_parity::controls_parity(self, ui),
-            ShowcaseMode::Exposure => showcase_59_exposure::controls_exposure(self, ui),
-            ShowcaseMode::Photometric => showcase_60_photometric::controls_photometric(self, ui),
-            ShowcaseMode::EmissiveEnv => showcase_61_emissive_env::controls_emissive_env(self, ui),
+            ShowcaseMode::PhotometricLighting => {
+                showcase_57_photometric_lighting::controls_photometric_lighting(self, ui)
+            }
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                showcase_58_physically_based_surfaces::controls_physically_based_surfaces(self, ui)
+            }
         }
     }
 }
@@ -3528,46 +3456,22 @@ impl App {
                     0,
                 )
             }
-            ShowcaseMode::LightFalloff => {
-                let items = self.lf_state.scene.collect_render_items(&Selection::new());
-                let lighting = self.lf_state.lighting();
-                let sg = self.lf_state.scene.version();
+            ShowcaseMode::PhotometricLighting => {
+                let items = self
+                    .lighting_state
+                    .scene_mut()
+                    .collect_render_items(&Selection::new());
+                let lighting = self.lighting_state.lighting();
+                let sg = self.lighting_state.scene().version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
-            ShowcaseMode::ShadingParity => {
+            ShowcaseMode::PhysicallyBasedSurfaces => {
                 let items = self
-                    .parity_state
-                    .scene
+                    .surfaces_state
+                    .scene_mut()
                     .collect_render_items(&Selection::new());
-                let lighting = self.parity_state.lighting();
-                let sg = self.parity_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
-            }
-            ShowcaseMode::Exposure => {
-                let items = self
-                    .exposure_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                let lighting = self.exposure_state.lighting();
-                let sg = self.exposure_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
-            }
-            ShowcaseMode::Photometric => {
-                let items = self
-                    .photometric_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                let lighting = self.photometric_state.lighting();
-                let sg = self.photometric_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
-            }
-            ShowcaseMode::EmissiveEnv => {
-                let items = self
-                    .emissive_env_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                let lighting = self.emissive_env_state.lighting();
-                let sg = self.emissive_env_state.scene.version();
+                let lighting = self.surfaces_state.lighting();
+                let sg = self.surfaces_state.scene().version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };
@@ -3894,30 +3798,29 @@ impl App {
                     };
                 }
             }
-            ShowcaseMode::Exposure => {
-                // Drive the exposure model from the showcase controls. The HDR
+            ShowcaseMode::PhotometricLighting => {
+                // Drive the exposure model from the active sub's controls. The HDR
                 // pipeline stays enabled (default) so the tone map / exposure
                 // buffer path runs.
-                fd.effects.display.exposure = self.exposure_state.settings();
+                fd.effects.display.exposure = self.lighting_state.exposure_settings();
                 let mut rc = RenderCamera::from_camera(&self.camera);
                 rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
             }
-            ShowcaseMode::Photometric => {
-                fd.effects.display.exposure = self.photometric_state.settings();
-                let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = (self.camera.distance * 3.0).max(60.0);
-                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                fd.camera.render_camera = rc;
-            }
-            ShowcaseMode::EmissiveEnv => {
-                fd.effects.display.exposure = self.emissive_env_state.exposure();
-                fd.effects.environment = Some(self.emissive_env_state.environment());
-                let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = (self.camera.distance * 3.0).max(60.0);
-                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                fd.camera.render_camera = rc;
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                // The Emissive & IBL sub drives exposure and an environment; the
+                // Parity sub leaves the frame default.
+                if let Some(exp) = self.surfaces_state.exposure_override() {
+                    fd.effects.display.exposure = exp;
+                }
+                if let Some(env) = self.surfaces_state.environment() {
+                    fd.effects.environment = Some(env);
+                    let mut rc = RenderCamera::from_camera(&self.camera);
+                    rc.far = (self.camera.distance * 3.0).max(60.0);
+                    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                    fd.camera.render_camera = rc;
+                }
             }
             ShowcaseMode::BackfacePolicy => {}
             // Decals require the full HDR pipeline so the decal pass (which reads

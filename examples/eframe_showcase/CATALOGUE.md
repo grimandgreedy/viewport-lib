@@ -662,34 +662,24 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 ---
 
-## 57. Light Falloff  (`showcase_57_light_falloff.rs`, ~203 lines)
+## 57. Photometric Lighting  (`showcase_57_photometric_lighting.rs`)
 
-**Demos:** The punctual-light falloff model. A row of ten identical white spheres recedes in +X from a single light above the near end, so the physical inverse-square attenuation reads directly as each sphere being dimmer than the last. Three sliders isolate the knobs: `intensity` is a plain linear brightness multiplier (it becomes a photometric unit in a later phase); `range` is reach, windowing the falloff smoothly to zero and culling beyond it without scaling brightness (lower it below the row length and the far spheres go dark); `radius` is the source size that clamps the inverse-square term near the light (raise it to soften and cap the closest spheres instead of letting them blow out). The light-type radio switches between point, spot (aimed down the row), and a flat directional reference with no distance term. Point and spot share one falloff formula (`scene_lighting.wgsl::eval_light`), the same one the path tracer uses.
+**Demos:** The light-authoring and camera side of the photometric pipeline, in one scene with three sub-tabs. **Units & Presets** authors lights in real units - directional in **lux** (`Lux`), bulbs in **lumens** -> candela (`Lumen`/`Candela`) - and picks a sky preset (full daylight down to full moon, a ~400,000x range) plus an optional indoor bulb; auto-exposure adapts every preset to mid-grey, or a fixed daylight camera exposes daylight and leaves dimmer presets dark. **Falloff** recedes a row of identical spheres from a punctual light so the physical inverse-square attenuation reads directly: `intensity`, `range` (reach, not brightness, windowed to zero and culled beyond), and `radius` (source size, near-clamp), with point/spot/directional selectable. **Exposure** views one lit scene under the three `ExposureMode`s - Manual EV, Physical camera (aperture/shutter/ISO through the camera triangle), and Automatic (GPU-metered histogram + adaptation) - with the resulting EV100 read out.
 
-**Uses:** `LightKind::Point` / `Spot` / `Directional` (with the new `radius` field), `LightSource`, `LightingSettings`, `primitives::sphere`, `Material`, `Scene`.
+**Uses:** `Lux` / `Candela` / `Lumen` and the `directional_lux` / `point_lumens` constructors, `ExposureSettings` / `ExposureMode` / `AutoExposure`, `LightKind::Point` / `Spot` / `Directional` (with `radius`), `LightingSettings`, `primitives::sphere`, `Material`, `Scene`.
 
-**Sidebar:** Light type (point/spot/directional); intensity; range (reach, not brightness); source radius (near clamp); light height; hemisphere fill.
+**Sidebar:** Sub-tab selector (Units & Presets / Falloff / Exposure); per-sub controls (sky and bulb presets + auto-exposure toggle; light type / intensity / range / radius / height / hemisphere fill; scene brightness / compensation / exposure mode + per-mode controls + EV readout).
 
-**Drift:** None.
+**Drift:** Interim neutral exposure (EV 0 maps to a `1.0` multiplier) and the abstract "scene brightness" in the Exposure sub are temporary until photometric units are pinned; the auto-exposure EV readout is GPU-metered (not surfaced in the panel).
 
 ---
 
-## 58. Shading Model Parity  (`showcase_58_shading_parity.rs`, ~215 lines)
+## 58. Physically-Based Surfaces  (`showcase_58_physically_based_surfaces.rs`)
 
-**Demos:** That `Pbr` and `Phong` reflect the same brightness under a given light. Two rows of spheres sit under one directional light, sharing a per-column roughness: the back row is PBR, the front row is Blinn-Phong. Because both models now carry the `albedo/pi` diffuse normalisation, the two rows read at the same lightness column for column, so switching a material's `shading_model` no longer changes how bright it is. What still differs by design is the highlight: Phong keeps its cheaper Blinn specular lobe (now energy-bounded by `(shininess + 8) / (8 pi)`), so its highlight has a different shape from PBR's Cook-Torrance one. The Phong materials use `diffuse = 1.0` so their diffuse albedo weight matches PBR's rather than the lower Phong default (which would only make the row uniformly dimmer, not a model difference).
+**Demos:** How surfaces turn light into pixels, in two sub-tabs. **Shading Parity** puts a PBR row and a Blinn-Phong row of spheres under one directional light, sharing per-column roughness: because both carry the `albedo/pi` diffuse normalisation, the rows read at the same lightness column for column, so switching `shading_model` no longer changes brightness - only the highlight shape differs (Phong keeps its energy-bounded Blinn lobe). **Emissive & IBL** shows the two sources that carry luminance rather than illuminance: an emissive nits ladder (20 -> 20,000, glowing surfaces that bloom past the white point) and an image-based environment whose `EnvironmentSettings::intensity` is an absolute nits scale driving the sky, its ambient, and a chrome sphere's reflection, with auto-exposure re-balancing as either changes.
 
-**Uses:** `Material` with `ShadingModel::Pbr` / `Phong`, `LightSource`, `LightingSettings`, `primitives::sphere`, `Scene`.
+**Uses:** `Material` with `ShadingModel::Pbr` / `Phong`, `Material::emissive` (nits), `EnvironmentSettings`, `upload_environment_map`, `ExposureSettings` / `AutoExposure`, `LightSource` / `directional_lux`, `LightingSettings`, `primitives::sphere`, `Scene`.
 
-**Sidebar:** Light intensity; hemisphere fill; PBR metallic (rebuilds the PBR row).
+**Sidebar:** Sub-tab selector (Shading Parity / Emissive & IBL); per-sub controls (light intensity / hemisphere fill / PBR metallic; emissive ladder readout + environment intensity + skybox toggle).
 
 **Drift:** None.
-
-## 59. Exposure & Auto-Exposure  (`showcase_59_exposure.rs`, ~290 lines)
-
-**Demos:** The physical-camera exposure model. One lit scene (a ground plane and a row of spheres running dark to bright albedo, with cast shadows for a genuinely dark region) is viewed under the three `ExposureMode`s. **Manual EV** holds a fixed EV100, so cranking the scene-brightness slider clips or crushes the image like a camera on manual. **Physical camera** derives EV100 from aperture / shutter / ISO through the camera triangle (`EV100 = log2(N^2 / t) + log2(100 / ISO)`), with the resulting EV shown in the readout. **Automatic** meters the HDR target's log-luminance histogram each frame and adapts the exposure to hold a steady mid-grey no matter how bright the scene gets; `dt <= 0` snaps (the dirty-only default) and the "smooth adaptation" toggle eases over time. Exposure runs fully GPU-side (histogram + resolve compute -> a one-float exposure buffer the tone map reads) in the same submission as the tone map.
-
-**Uses:** `ExposureSettings`, `ExposureMode`, `AutoExposure`, `FrameData::effects.exposure`, `LightSource`, `LightingSettings`, `primitives::sphere`, `Scene`.
-
-**Sidebar:** Scene brightness (light intensity); exposure compensation; mode radio (Manual / Physical camera / Automatic); per-mode controls (EV; aperture / shutter / ISO; EV clamps, adapt speeds, meter clips, smoothing); EV readout.
-
-**Drift:** Interim neutral exposure (EV 0 maps to a `1.0` multiplier, reproducing the retired default) is temporary until photometric units are pinned; the auto-exposure EV readout is GPU-metered (not surfaced in the panel).
