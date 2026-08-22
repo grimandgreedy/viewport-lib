@@ -44,25 +44,26 @@ mod hidden_tests;
 mod lod_instance_tests;
 
 pub use self::types::{
-    AnimTrack, AtlasViewerCorner, AutoExposure, BorderMode, CameraFrame, Candela, ClipObject,
-    ClipShape, ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode,
-    DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
-    DisplaySettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode,
-    ExposureReadback, ExposureSettings, ExternalInstancesItem, FilterMode, ForceField,
-    ForegroundPass, ForegroundProjection, FrameData, GaussianSplatData, GaussianSplatId,
-    GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType, GpuImplicitItem, GpuMarchingCubesJob,
-    GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
-    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
-    LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LineJoin, LoadingBarAnchor,
-    LoadingBarItem, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem, OverlayShape,
-    OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack,
-    PickId, PipelineMode, PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode,
-    PolylineCap, PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode,
-    RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
-    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ScreenImageItem, ShDegree, ShadowFilter, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
+    AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode, CameraFrame, Candela,
+    ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind, ContactShadowSettings,
+    CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode,
+    DecalItem, DecalProjection, DisplaySettings, DofSettings, EdlSettings, EffectsFrame,
+    EmitterConfig, EnvironmentSettings, ExposureMode, ExposureReadback, ExposureSettings,
+    ExternalInstancesItem, FilterMode, ForceField, ForegroundPass, ForegroundProjection, FrameData,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType,
+    GpuImplicitItem, GpuMarchingCubesJob, GpuParticleSystemItem, GradientStop, GroundPlane,
+    GroundPlaneMode, ImageAnchor, ImageSliceItem, IndirectLightSource, InteractionFrame,
+    LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
+    LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, Lumen, Lux,
+    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
+    OverlayImageItem, OverlayPolylineItem, OverlayRectItem, OverlayShape, OverlayShapeItem,
+    OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack, PickId, PipelineMode,
+    PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem, RibbonRefItem,
+    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
+    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
+    ShDegree, ShadowFilter, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
     SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
     SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern,
     SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
@@ -630,6 +631,13 @@ pub struct ViewportRenderer {
     /// render pass cannot host the cleared-depth foreground pass, so
     /// submitted foreground items are reported once instead of every frame.
     foreground_paint_to_warned: std::sync::atomic::AtomicBool,
+    /// One-shot latch: item-type plugins are HDR-only, so plugin items submitted
+    /// while the LDR pipeline (`PipelineMode::Direct`) is active are dropped and
+    /// reported once instead of silently.
+    ldr_plugin_items_warned: std::sync::atomic::AtomicBool,
+    /// One-shot latch: transparent volume meshes need the OIT pass, which only
+    /// exists in the HDR pipeline, so on the LDR pipeline they are reported once.
+    ldr_volume_transparency_warned: std::sync::atomic::AtomicBool,
     /// Snapshot of the written mask for the queries currently resolved into the
     /// staging buffer, carried alongside the delayed readback so the reader
     /// knows which slots are valid.
@@ -934,6 +942,8 @@ impl ViewportRenderer {
             frame_main_buffer_binds: std::sync::atomic::AtomicU32::new(0),
             frame_main_draw_commands: std::sync::atomic::AtomicU32::new(0),
             foreground_paint_to_warned: std::sync::atomic::AtomicBool::new(false),
+            ldr_plugin_items_warned: std::sync::atomic::AtomicBool::new(false),
+            ldr_volume_transparency_warned: std::sync::atomic::AtomicBool::new(false),
             ts_pending_mask: 0,
             degradation_tier: 0,
             degradation_shadows_skipped: false,

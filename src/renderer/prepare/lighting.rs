@@ -616,7 +616,7 @@ impl ViewportRenderer {
             shadow.last_cascade_splits = cascade_split_distances;
             shadow.last_shadow_extent = shadow_extent;
             shadow.last_shadow_atlas_resolution = lighting.shadows.atlas_resolution.max(64);
-            shadow.last_contact_shadow_active = frame.effects.post_process.contact_shadows;
+            shadow.last_contact_shadow_active = frame.effects.post_process.contact_shadows.enabled;
         }
 
         // Atlas tile layout (2x2 grid):

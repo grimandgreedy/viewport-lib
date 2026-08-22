@@ -129,9 +129,9 @@ fn bloom_glows_into_empty_background() {
         item.material.emissive = [6.0, 6.0, 6.0];
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
-        frame.effects.post_process.bloom = bloom;
-        frame.effects.post_process.bloom_threshold = 0.7;
-        frame.effects.post_process.bloom_intensity = 2.0;
+        frame.effects.post_process.bloom.enabled = bloom;
+        frame.effects.post_process.bloom.threshold = 0.7;
+        frame.effects.post_process.bloom.intensity = 2.0;
         renderer.render_offscreen(&device, &queue, &frame, size, size)
     };
 
@@ -304,8 +304,8 @@ fn foreground_item_survives_post_effects() {
 
     let mut frame = foreground_frame();
     frame.effects.post_process.ssao = true;
-    frame.effects.post_process.bloom = true;
-    frame.effects.post_process.dof_enabled = true;
+    frame.effects.post_process.bloom.enabled = true;
+    frame.effects.post_process.dof.enabled = true;
     let occluder = coloured_item(
         mesh_id,
         [0.1, 0.1, 0.9],
@@ -660,7 +660,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
-    frame.effects.post_process.bloom = true;
+    frame.effects.post_process.bloom.enabled = true;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
@@ -676,10 +676,10 @@ fn bloom_firefly_cap_bounds_blob_size() {
             .count()
     };
 
-    frame.effects.post_process.bloom_max_brightness = f32::MAX;
+    frame.effects.post_process.bloom.max_brightness = f32::MAX;
     let uncapped = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    frame.effects.post_process.bloom_max_brightness = 4.0;
+    frame.effects.post_process.bloom.max_brightness = 4.0;
     let capped = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
     let (u, c) = (bright_pixels(&uncapped), bright_pixels(&capped));

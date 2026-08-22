@@ -3834,10 +3834,10 @@ impl App {
                 if self.pp_state.dof_enabled {
                     fd.effects.post_process = {
                         let mut _t = PostProcessSettings::default();
-                        _t.dof_enabled = true;
-                        _t.dof_focal_distance = self.pp_state.dof_focal_dist;
-                        _t.dof_focal_range = self.pp_state.dof_focal_range;
-                        _t.dof_max_blur_radius = self.pp_state.dof_max_blur;
+                        _t.dof.enabled = true;
+                        _t.dof.focal_distance = self.pp_state.dof_focal_dist;
+                        _t.dof.focal_range = self.pp_state.dof_focal_range;
+                        _t.dof.max_blur_radius = self.pp_state.dof_max_blur;
                         _t
                     };
                 }
@@ -3846,10 +3846,10 @@ impl App {
                 fd.effects.display.mode = viewport_lib::PipelineMode::Direct;
                 fd.effects.post_process = {
                     let mut _t = PostProcessSettings::default();
-                    _t.contact_shadows = self.shd_state.contact_on;
-                    _t.contact_shadow_max_distance = 0.18;
-                    _t.contact_shadow_steps = 32;
-                    _t.contact_shadow_thickness = 0.04;
+                    _t.contact_shadows.enabled = self.shd_state.contact_on;
+                    _t.contact_shadows.max_distance = 0.18;
+                    _t.contact_shadows.steps = 32;
+                    _t.contact_shadows.thickness = 0.04;
                     _t
                 };
                 // Cap far plane for better cascade distribution, but track orbit
@@ -3887,9 +3887,9 @@ impl App {
                 if self.lights_state.edl_enabled {
                     fd.effects.post_process = {
                         let mut _t = PostProcessSettings::default();
-                        _t.edl_enabled = true;
-                        _t.edl_radius = self.lights_state.edl_radius;
-                        _t.edl_strength = self.lights_state.edl_strength;
+                        _t.edl.enabled = true;
+                        _t.edl.radius = self.lights_state.edl_radius;
+                        _t.edl.strength = self.lights_state.edl_strength;
                         _t
                     };
                 }

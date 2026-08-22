@@ -1,5 +1,47 @@
 # Changelog
 
+## [Unreleased]
+
+Photometric lighting units land this cycle (directional in lux, point/spot in
+candela, emissive/IBL in nits, plus a physical-camera exposure model). Alongside
+them the per-frame effects configuration is regrouped by concern and the default
+lighting posture returns to a faithful "colour is data" baseline. See
+`MIGRATION.md` for the full field-move table and the light re-authoring notes.
+
+### Breaking changes
+
+- **HDR display transform grouped under `effects.display`.** `effects.exposure`
+  moves to `effects.display.exposure`; `effects.post_process.tone_mapping` becomes
+  `effects.display.operator`; and the `effects.post_process.enabled` bool becomes
+  `effects.display.mode: PipelineMode` (`Hdr` | `Direct`). `PipelineMode::Hdr` is
+  the default and the only first-class pipeline; `Direct` is the constrained LDR
+  passthrough (host-owned passes / cheap inline), which drops all post effects,
+  OIT, the skybox, exposure, tone mapping, and item-type plugins.
+- **`PostProcessSettings` effects are nested.** `bloom*`, `dof_*`,
+  `contact_shadow*`, and `edl_*` become `bloom`, `dof`, `contact_shadows`, and
+  `edl` sub-structs (e.g. `post_process.bloom_threshold` ->
+  `post_process.bloom.threshold`, `post_process.dof_enabled` ->
+  `post_process.dof.enabled`). `ssao`, `fxaa`, and `ssaa_factor` stay flat.
+- **Shadow settings split out of `LightingSettings`.** The `shadow_*` fields group
+  into `lighting.shadows: ShadowSettings` and drop the prefix
+  (`lighting.shadow_filter` -> `lighting.shadows.filter`, `lighting.shadows_enabled`
+  -> `lighting.shadows.enabled`).
+- **Clip and debug fields grouped.** `effects.clip_objects` /
+  `effects.cap_fill_enabled` -> `effects.clip.objects` /
+  `effects.clip.cap_fill_enabled`; `effects.show_shadow_atlas` /
+  `atlas_viewer_*` -> `effects.debug.*`.
+- **`EnvironmentMap` renamed to `EnvironmentSettings`** (the texture handle already
+  lives in `EnvironmentMapId`).
+- **`ScatterSettings` is now scene-global** (`SceneEffects.scatter`), no longer on
+  `ViewportEffects`.
+- **Faithful default lighting posture.** The default `ShadingModel` is `Phong`
+  again, the default `ExposureSettings` is neutral `Manual { ev: 0 }`, and the
+  default light intensity and hemisphere fill are modest values that read at EV 0
+  ("colour is data"). Opt into the cinematic daylight look with
+  `LightingSettings::daylight()` + `ExposureSettings::automatic()`. Photometric
+  magnitudes (`Lux`/`Candela`/`Lumen`) remain available and are unchanged.
+- **Config structs now derive `serde` uniformly** under the `serde` feature.
+
 ## [0.20.0]
 
 The big themes this release are baked lighting, custom fragment shading, and viewport runners, on top of a round of many-light performance work.

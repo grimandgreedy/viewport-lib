@@ -315,9 +315,9 @@ impl ApplicationHandler for App {
                 effects.lighting = LightingSettings::default();
                 effects.post_process = {
                     let mut _t = PostProcessSettings::default();
-                    _t.bloom = state.bloom;
-                    _t.bloom_threshold = 1.0;
-                    _t.bloom_intensity = 0.15;
+                    _t.bloom.enabled = state.bloom;
+                    _t.bloom.threshold = 1.0;
+                    _t.bloom.intensity = 0.15;
                     _t.fxaa = state.fxaa;
                     _t.ssao = state.ssao;
                     _t

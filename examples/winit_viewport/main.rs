@@ -301,9 +301,9 @@ impl ApplicationHandler for App {
                 frame_data.effects.lighting = LightingSettings::default();
                 frame_data.effects.post_process = {
                     let mut _t = PostProcessSettings::default();
-                    _t.bloom = true;
-                    _t.bloom_threshold = 1.0;
-                    _t.bloom_intensity = 0.15;
+                    _t.bloom.enabled = true;
+                    _t.bloom.threshold = 1.0;
+                    _t.bloom.intensity = 0.15;
                     _t
                 };
                 frame_data.viewport.show_grid = true;

@@ -323,12 +323,12 @@ impl ViewportRenderer {
             // (binding 9), not this field; kept at 1.0 for layout stability.
             exposure: 1.0,
             mode,
-            bloom_enabled: if pp.bloom { 1 } else { 0 },
+            bloom_enabled: if pp.bloom.enabled { 1 } else { 0 },
             ssao_enabled: if pp.ssao { 1 } else { 0 },
-            contact_shadows_enabled: if pp.contact_shadows { 1 } else { 0 },
-            edl_enabled: if pp.edl_enabled { 1 } else { 0 },
-            edl_radius: pp.edl_radius,
-            edl_strength: pp.edl_strength,
+            contact_shadows_enabled: if pp.contact_shadows.enabled { 1 } else { 0 },
+            edl_enabled: if pp.edl.enabled { 1 } else { 0 },
+            edl_radius: pp.edl.radius,
+            edl_strength: pp.edl.strength,
             background_colour: bg_colour,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
@@ -375,7 +375,7 @@ impl ViewportRenderer {
             }
 
             // Upload contact shadow uniform if needed.
-            if pp.contact_shadows {
+            if pp.contact_shadows.enabled {
                 let proj = frame.camera.render_camera.projection;
                 let inv_proj = proj.inverse();
                 let light_dir_world: glam::Vec3 =
@@ -404,9 +404,9 @@ impl ViewportRenderer {
                     light_dir_view: [light_dir_view.x, light_dir_view.y, light_dir_view.z, 0.0],
                     world_up_view: [world_up_view.x, world_up_view.y, world_up_view.z, 0.0],
                     params: [
-                        pp.contact_shadow_max_distance,
-                        pp.contact_shadow_steps as f32,
-                        pp.contact_shadow_thickness,
+                        pp.contact_shadows.max_distance,
+                        pp.contact_shadows.steps as f32,
+                        pp.contact_shadows.thickness,
                         0.0,
                     ],
                 };
@@ -418,27 +418,27 @@ impl ViewportRenderer {
             }
 
             // Upload bloom uniform if needed.
-            if pp.bloom {
+            if pp.bloom.enabled {
                 let bloom_u = crate::resources::BloomUniform {
-                    threshold: pp.bloom_threshold,
-                    intensity: pp.bloom_intensity,
+                    threshold: pp.bloom.threshold,
+                    intensity: pp.bloom.intensity,
                     horizontal: 0,
-                    max_brightness: pp.bloom_max_brightness,
+                    max_brightness: pp.bloom.max_brightness,
                 };
                 queue.write_buffer(&hdr.bloom_uniform_buf, 0, bytemuck::cast_slice(&[bloom_u]));
             }
         }
 
         // Upload DoF uniform when enabled.
-        if pp.dof_enabled {
+        if pp.dof.enabled {
             let (w, h) = {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 (hdr.scene_size[0] as f32, hdr.scene_size[1] as f32)
             };
             let dof_uniform = crate::resources::DofUniform {
-                focal_distance: pp.dof_focal_distance,
-                focal_range: pp.dof_focal_range,
-                max_blur_radius: pp.dof_max_blur_radius,
+                focal_distance: pp.dof.focal_distance,
+                focal_range: pp.dof.focal_range,
+                max_blur_radius: pp.dof.max_blur_radius,
                 near_plane: frame.camera.render_camera.near,
                 far_plane: frame.camera.render_camera.far,
                 viewport_width: w,
@@ -476,13 +476,13 @@ impl ViewportRenderer {
             self.resources.rebuild_tone_map_bind_group(
                 device,
                 hdr,
-                pp.bloom,
+                pp.bloom.enabled,
                 pp.ssao,
-                pp.contact_shadows,
+                pp.contact_shadows.enabled,
                 scene_items
                     .iter()
                     .any(|i| i.lic.is_some() && !i.settings.hidden),
-                pp.dof_enabled,
+                pp.dof.enabled,
                 use_foreground,
             );
         }
@@ -3927,7 +3927,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // Contact shadow pass.
         // -----------------------------------------------------------------------
-        if pp.contact_shadows && !throttle_effects {
+        if pp.contact_shadows.enabled && !throttle_effects {
             if let Some(cs_pipeline) = &self.resources.post.contact_shadow_pipeline {
                 let mut cs_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                     #[cfg(feature = "wgpu29")]
@@ -3955,7 +3955,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // Bloom passes.
         // -----------------------------------------------------------------------
-        if pp.bloom && !throttle_effects {
+        if pp.bloom.enabled && !throttle_effects {
             // Threshold pass: extract bright pixels into bloom_threshold_texture.
             if let Some(bloom_threshold_pipeline) = &self.resources.post.bloom_threshold_pipeline {
                 // The bloom slot begins on the threshold pass and ends on the
@@ -4067,7 +4067,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // Depth of field pass: HDR + depth -> dof_texture (when enabled).
         // -----------------------------------------------------------------------
-        if pp.dof_enabled && !throttle_effects {
+        if pp.dof.enabled && !throttle_effects {
             if let Some(dof_pipeline) = &self.resources.post.dof_pipeline {
                 let mut dof_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                     #[cfg(feature = "wgpu29")]

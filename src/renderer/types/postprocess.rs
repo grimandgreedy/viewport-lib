@@ -330,18 +330,8 @@ impl DisplaySettings {
 pub struct PostProcessSettings {
     /// Enable screen-space ambient occlusion.
     pub ssao: bool,
-    /// Enable bloom.
-    pub bloom: bool,
-    /// HDR luminance threshold for bloom extraction. Default: `1.0`.
-    pub bloom_threshold: f32,
-    /// Bloom contribution multiplier. Default: `0.1`.
-    pub bloom_intensity: f32,
-    /// Firefly cap for bloom extraction: each pixel's luminance is scaled
-    /// down to at most this value before thresholding, so a single very
-    /// bright HDR texel (a tight specular highlight) cannot bloom into a
-    /// large blob after the blur chain. Default: `4.0`. Set to `f32::MAX`
-    /// to disable the cap.
-    pub bloom_max_brightness: f32,
+    /// Bloom (glow) settings.
+    pub bloom: BloomSettings,
     /// Enable FXAA (Fast Approximate Anti-Aliasing) fullscreen pass.
     pub fxaa: bool,
     /// Supersampling anti-aliasing factor. 1 = off, 2 = 2x, 4 = 4x.
@@ -351,60 +341,138 @@ pub struct PostProcessSettings {
     /// the cost of rendering `ssaa_factor^2` times more pixels. Intended for
     /// offline or screenshot use, not interactive rendering.
     pub ssaa_factor: u32,
-    /// Enable screen-space contact shadows (thin shadows at object-ground contact).
-    pub contact_shadows: bool,
-    /// Maximum ray-march distance in view space. Default: `0.5`.
-    pub contact_shadow_max_distance: f32,
-    /// Number of ray-march steps. Default: `16`.
-    pub contact_shadow_steps: u32,
-    /// Depth thickness threshold for occlusion test. Default: `0.1`.
-    pub contact_shadow_thickness: f32,
-    /// Enable Eye-Dome Lighting depth enhancement.
-    ///
-    /// Samples a ring of 8 depth neighbors and darkens pixels at depth
-    /// discontinuities, making point clouds and surface edges easier to read
-    /// at any viewing distance.
-    pub edl_enabled: bool,
-    /// EDL sample ring radius in pixels. Default: `1.0`.
-    pub edl_radius: f32,
-    /// EDL darkening strength (0.0 = none, higher = stronger). Default: `1.0`.
-    pub edl_strength: f32,
-    /// Enable depth of field bokeh blur.
-    ///
-    /// Pixels whose linearized depth is outside
-    /// `[dof_focal_distance - dof_focal_range, dof_focal_distance + dof_focal_range]`
-    /// are blurred with a disc kernel whose radius scales up to `dof_max_blur_radius`
-    /// pixels.
-    pub dof_enabled: bool,
-    /// View-space depth of the in-focus plane (same units as the scene). Default: `5.0`.
-    pub dof_focal_distance: f32,
-    /// Half-width of the sharp band around the focal plane (view-space units). Default: `1.0`.
-    pub dof_focal_range: f32,
-    /// Maximum blur kernel radius in pixels at maximum defocus. Default: `8.0`.
-    pub dof_max_blur_radius: f32,
+    /// Screen-space contact shadow settings.
+    pub contact_shadows: ContactShadowSettings,
+    /// Eye-Dome Lighting (depth-discontinuity darkening) settings.
+    pub edl: EdlSettings,
+    /// Depth-of-field bokeh settings.
+    pub dof: DofSettings,
 }
 
 impl Default for PostProcessSettings {
     fn default() -> Self {
         Self {
             ssao: false,
-            bloom: false,
-            bloom_threshold: 1.0,
-            bloom_intensity: 0.1,
-            bloom_max_brightness: 4.0,
+            bloom: BloomSettings::default(),
             fxaa: false,
             ssaa_factor: 1,
-            contact_shadows: false,
-            contact_shadow_max_distance: 0.5,
-            contact_shadow_steps: 16,
-            contact_shadow_thickness: 0.1,
-            edl_enabled: false,
-            edl_radius: 1.0,
-            edl_strength: 1.0,
-            dof_enabled: false,
-            dof_focal_distance: 5.0,
-            dof_focal_range: 1.0,
-            dof_max_blur_radius: 8.0,
+            contact_shadows: ContactShadowSettings::default(),
+            edl: EdlSettings::default(),
+            dof: DofSettings::default(),
+        }
+    }
+}
+
+/// Bloom (glow) settings, grouped on [`PostProcessSettings::bloom`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BloomSettings {
+    /// Enable bloom. Default: `false`.
+    pub enabled: bool,
+    /// HDR luminance threshold for bloom extraction. Default: `1.0`.
+    pub threshold: f32,
+    /// Bloom contribution multiplier. Default: `0.1`.
+    pub intensity: f32,
+    /// Firefly cap for bloom extraction: each pixel's luminance is scaled
+    /// down to at most this value before thresholding, so a single very
+    /// bright HDR texel (a tight specular highlight) cannot bloom into a
+    /// large blob after the blur chain. Default: `4.0`. Set to `f32::MAX`
+    /// to disable the cap.
+    pub max_brightness: f32,
+}
+
+impl Default for BloomSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: 1.0,
+            intensity: 0.1,
+            max_brightness: 4.0,
+        }
+    }
+}
+
+/// Screen-space contact shadow settings, grouped on
+/// [`PostProcessSettings::contact_shadows`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ContactShadowSettings {
+    /// Enable screen-space contact shadows (thin shadows at object-ground contact).
+    pub enabled: bool,
+    /// Maximum ray-march distance in view space. Default: `0.5`.
+    pub max_distance: f32,
+    /// Number of ray-march steps. Default: `16`.
+    pub steps: u32,
+    /// Depth thickness threshold for occlusion test. Default: `0.1`.
+    pub thickness: f32,
+}
+
+impl Default for ContactShadowSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_distance: 0.5,
+            steps: 16,
+            thickness: 0.1,
+        }
+    }
+}
+
+/// Eye-Dome Lighting settings, grouped on [`PostProcessSettings::edl`].
+///
+/// Samples a ring of 8 depth neighbors and darkens pixels at depth
+/// discontinuities, making point clouds and surface edges easier to read at any
+/// viewing distance.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EdlSettings {
+    /// Enable Eye-Dome Lighting depth enhancement.
+    pub enabled: bool,
+    /// EDL sample ring radius in pixels. Default: `1.0`.
+    pub radius: f32,
+    /// EDL darkening strength (0.0 = none, higher = stronger). Default: `1.0`.
+    pub strength: f32,
+}
+
+impl Default for EdlSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            radius: 1.0,
+            strength: 1.0,
+        }
+    }
+}
+
+/// Depth-of-field bokeh settings, grouped on [`PostProcessSettings::dof`].
+///
+/// Pixels whose linearized depth is outside
+/// `[focal_distance - focal_range, focal_distance + focal_range]` are blurred
+/// with a disc kernel whose radius scales up to `max_blur_radius` pixels.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DofSettings {
+    /// Enable depth of field bokeh blur.
+    pub enabled: bool,
+    /// View-space depth of the in-focus plane (same units as the scene). Default: `5.0`.
+    pub focal_distance: f32,
+    /// Half-width of the sharp band around the focal plane (view-space units). Default: `1.0`.
+    pub focal_range: f32,
+    /// Maximum blur kernel radius in pixels at maximum defocus. Default: `8.0`.
+    pub max_blur_radius: f32,
+}
+
+impl Default for DofSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            focal_distance: 5.0,
+            focal_range: 1.0,
+            max_blur_radius: 8.0,
         }
     }
 }
