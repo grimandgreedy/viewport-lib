@@ -21,7 +21,9 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{LightKind, LightSource, LightingSettings, Material, ViewportRenderer, scene::Scene};
+use viewport_lib::{
+    LightKind, LightSource, LightingSettings, Material, ViewportRenderer, scene::Scene,
+};
 
 // Number of spheres in the receding row and their spacing (world units).
 const ROW_COUNT: i32 = 10;

@@ -16,7 +16,10 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{LightKind, LightSource, LightingSettings, Material, ShadingModel, ViewportRenderer, scene::Scene};
+use viewport_lib::{
+    LightKind, LightSource, LightingSettings, Material, ShadingModel, ViewportRenderer,
+    scene::Scene,
+};
 
 const COLUMNS: usize = 5;
 const COL_SPACING: f32 = 2.6;
@@ -160,7 +163,9 @@ pub(crate) fn controls_parity(app: &mut App, ui: &mut egui::Ui) {
 
     let mut rebuild = false;
     ui.add(egui::Slider::new(&mut app.parity_state.intensity, 0.0..=10.0).text("Light intensity"));
-    ui.add(egui::Slider::new(&mut app.parity_state.hemi_intensity, 0.0..=0.5).text("Hemisphere fill"));
+    ui.add(
+        egui::Slider::new(&mut app.parity_state.hemi_intensity, 0.0..=0.5).text("Hemisphere fill"),
+    );
     if ui
         .add(egui::Slider::new(&mut app.parity_state.metallic, 0.0..=1.0).text("PBR metallic"))
         .changed()

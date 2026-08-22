@@ -136,7 +136,7 @@ pub(super) fn build_object_uniform(
                 0
             }
         },
-        emissive: m.emissive,
+        emissive: m.emissive_nits(),
         use_flat: cm.use_flat,
         alpha_mode: match m.alpha_mode {
             crate::scene::material::AlphaMode::Opaque => 0,

@@ -78,6 +78,7 @@ mod showcase_57_light_falloff;
 mod showcase_58_shading_parity;
 mod showcase_59_exposure;
 mod showcase_60_photometric;
+mod showcase_61_emissive_env;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -245,6 +246,7 @@ fn main() -> eframe::Result {
                 parity_state: showcase_58_shading_parity::ParityState::default(),
                 exposure_state: showcase_59_exposure::ExposureShowcaseState::default(),
                 photometric_state: showcase_60_photometric::PhotometricState::default(),
+                emissive_env_state: showcase_61_emissive_env::EmissiveEnvState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -319,6 +321,7 @@ enum ShowcaseMode {
     ShadingParity,
     Exposure,
     Photometric,
+    EmissiveEnv,
 }
 
 impl ShowcaseMode {
@@ -384,6 +387,7 @@ impl ShowcaseMode {
             Self::ShadingParity => "58: Shading Model Parity",
             Self::Exposure => "59: Exposure & Auto-Exposure",
             Self::Photometric => "60: Photometric Presets",
+            Self::EmissiveEnv => "61: Emissive & Environment",
         }
     }
 }
@@ -584,6 +588,9 @@ pub(crate) struct App {
 
     // --- Showcase 60 ---
     pub(crate) photometric_state: showcase_60_photometric::PhotometricState,
+
+    // --- Showcase 61 ---
+    pub(crate) emissive_env_state: showcase_61_emissive_env::EmissiveEnvState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -793,6 +800,7 @@ impl eframe::App for App {
                     ShowcaseMode::ShadingParity,
                     ShowcaseMode::Exposure,
                     ShowcaseMode::Photometric,
+                    ShowcaseMode::EmissiveEnv,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1594,7 +1602,10 @@ impl eframe::App for App {
                 // renderer is on-demand, so without a repaint request a slider change
                 // is dropped until something else re-renders. Auto-exposure smoothing
                 // also needs continuous frames.
-                if self.mode == ShowcaseMode::Exposure || self.mode == ShowcaseMode::Photometric {
+                if self.mode == ShowcaseMode::Exposure
+                    || self.mode == ShowcaseMode::Photometric
+                    || self.mode == ShowcaseMode::EmissiveEnv
+                {
                     ctx.request_repaint();
                 }
 
@@ -1674,7 +1685,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 60] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 61] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1735,6 +1746,7 @@ impl App {
             ShowcaseMode::ShadingParity,
             ShowcaseMode::Exposure,
             ShowcaseMode::Photometric,
+            ShowcaseMode::EmissiveEnv,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1879,6 +1891,7 @@ impl App {
             ShowcaseMode::ShadingParity => !self.parity_state.built,
             ShowcaseMode::Exposure => !self.exposure_state.built,
             ShowcaseMode::Photometric => !self.photometric_state.built,
+            ShowcaseMode::EmissiveEnv => !self.emissive_env_state.built,
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2473,6 +2486,16 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::EmissiveEnv => {
+                self.build_emissive_env_scene(renderer);
+                self.camera = Camera {
+                    center: glam::Vec3::new(4.8, 0.5, 0.8),
+                    distance: 17.0,
+                    orientation: glam::Quat::from_rotation_z(0.4)
+                        * glam::Quat::from_rotation_x(1.2),
+                    ..Camera::default()
+                };
+            }
             _ => {}
         }
     }
@@ -2593,6 +2616,7 @@ impl App {
             ShowcaseMode::ShadingParity => showcase_58_shading_parity::controls_parity(self, ui),
             ShowcaseMode::Exposure => showcase_59_exposure::controls_exposure(self, ui),
             ShowcaseMode::Photometric => showcase_60_photometric::controls_photometric(self, ui),
+            ShowcaseMode::EmissiveEnv => showcase_61_emissive_env::controls_emissive_env(self, ui),
         }
     }
 }
@@ -3537,6 +3561,15 @@ impl App {
                 let sg = self.photometric_state.scene.version();
                 (items, Some(BG_COLOUR), lighting, sg, 0)
             }
+            ShowcaseMode::EmissiveEnv => {
+                let items = self
+                    .emissive_env_state
+                    .scene
+                    .collect_render_items(&Selection::new());
+                let lighting = self.emissive_env_state.lighting();
+                let sg = self.emissive_env_state.scene.version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
         };
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
@@ -3879,6 +3912,14 @@ impl App {
             }
             ShowcaseMode::Photometric => {
                 fd.effects.exposure = self.photometric_state.settings();
+                let mut rc = RenderCamera::from_camera(&self.camera);
+                rc.far = (self.camera.distance * 3.0).max(60.0);
+                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                fd.camera.render_camera = rc;
+            }
+            ShowcaseMode::EmissiveEnv => {
+                fd.effects.exposure = self.emissive_env_state.exposure();
+                fd.effects.environment = Some(self.emissive_env_state.environment());
                 let mut rc = RenderCamera::from_camera(&self.camera);
                 rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);

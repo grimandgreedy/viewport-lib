@@ -717,7 +717,19 @@ impl Default for GroundPlane {
 /// it as the scene background (skybox).
 #[derive(Clone, Debug)]
 pub struct EnvironmentMap {
-    /// Intensity multiplier for IBL contribution. Default: 1.0.
+    /// Absolute luminance scale in **nits** applied to the sampled environment -
+    /// both the IBL contribution (diffuse irradiance + specular reflections) and
+    /// the skybox background, so the lit surfaces and the visible sky stay
+    /// physically consistent. Default: `1.0`.
+    ///
+    /// The stored environment map carries relative radiance; this scales it to
+    /// the physical brightness the sky should read at, on the same nits scale as
+    /// emissive surfaces (see [`Material::emissive_strength`](crate::Material)).
+    /// A clear daytime sky is on the order of thousands of nits, so under
+    /// photometric exposure a value near `1.0` leaves the environment nearly
+    /// black; raise it to the sky's real luminance. The metering of an HDRI's
+    /// own peaks is unchanged - this is a single physical multiplier, not a
+    /// tonemap.
     pub intensity: f32,
     /// Y-axis rotation in radians. Default: 0.0.
     pub rotation: f32,

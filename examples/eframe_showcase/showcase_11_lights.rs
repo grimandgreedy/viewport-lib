@@ -230,7 +230,9 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                                     ui.add(egui::DragValue::new(&mut direction[2]).speed(0.02));
                                 });
                             }
-                            LightKind::Point { position, range, .. } => {
+                            LightKind::Point {
+                                position, range, ..
+                            } => {
                                 ui.label("Position:");
                                 ui.horizontal(|ui| {
                                     ui.label("X:");

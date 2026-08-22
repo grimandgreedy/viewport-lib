@@ -106,7 +106,9 @@ pub fn build_light_glyphs(
             let world_src = resolve_light_for_glyph(src, world);
             let outline_colour = [colour_rgba[0], colour_rgba[1], colour_rgba[2], 0.8];
             match world_src.kind {
-                LightKind::Point { position, range, .. } => {
+                LightKind::Point {
+                    position, range, ..
+                } => {
                     let mut pl = sphere_wireframe_polyline(position, range, 48, outline_colour);
                     pl.line_width = 1.5;
                     pl.settings.pick_id = PickId(id);
