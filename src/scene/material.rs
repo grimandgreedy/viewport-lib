@@ -306,14 +306,27 @@ pub struct Material {
     /// scalar factor (`roughness`, `metallic`). Only sampled when the material's
     /// `shading_model` is `ShadingModel::Pbr`.
     pub metallic_roughness_texture_id: Option<crate::resources::TextureId>,
-    /// Self-illumination colour added after lighting. Default [0.0, 0.0, 0.0].
+    /// Self-illumination colour, added to outgoing radiance after lighting.
+    /// Default [0.0, 0.0, 0.0].
     ///
-    /// Matches glTF `emissiveFactor`. Applied to both Blinn-Phong and PBR paths.
-    /// When `emissive_texture_id` is set, this value is multiplied by the texture sample.
+    /// Matches glTF `emissiveFactor` (a 0..1 colour). The emitted luminance in
+    /// **nits** is `emissive * emissive_strength`, so this sets the hue and
+    /// `emissive_strength` sets the brightness. Applied to both the Blinn-Phong
+    /// and PBR paths. When `emissive_texture_id` is set, it is multiplied by the
+    /// texture sample.
     pub emissive: [f32; 3],
+    /// Emissive luminance in **nits**, multiplying [`Self::emissive`]. Default
+    /// `1.0`.
+    ///
+    /// Matches glTF `KHR_materials_emissive_strength`. Under photometric exposure
+    /// an emitter must reach a luminance comparable to the lit scene to read as
+    /// glowing: a few hundred nits for a soft indoor glow, thousands to stay
+    /// bright against daylight. `emissive = [0, 0, 0]` emits nothing regardless.
+    pub emissive_strength: f32,
     /// Optional emissive texture identifier. Default None.
     ///
-    /// Matches glTF `emissiveTexture`. Sampled and multiplied by `emissive`.
+    /// Matches glTF `emissiveTexture`. Sampled and multiplied by `emissive`
+    /// (and hence by `emissive_strength`).
     pub emissive_texture_id: Option<crate::resources::TextureId>,
     /// Alpha handling mode. Default [`AlphaMode::Opaque`].
     ///
@@ -322,10 +335,13 @@ pub struct Material {
     pub alpha_mode: AlphaMode,
     /// Which lit shading model evaluates this surface. Default [`ShadingModel::Phong`].
     ///
-    /// `Phong` uses Blinn-Phong; `Pbr` uses Cook-Torrance GGX driven by `metallic`
-    /// and `roughness`; `Matcap(id)` replaces the lit path with a matcap texture
-    /// lookup. The `unlit` per-item bypass on [`ItemSettings`] is checked
-    /// independently and takes precedence over any value here.
+    /// `Phong` uses Blinn-Phong (the faithful default: a cheaper model with a
+    /// distinct highlight, energy-matched to PBR's diffuse so the two read at the
+    /// same brightness under a given light); `Pbr` uses Cook-Torrance GGX driven
+    /// by `metallic` and `roughness`; `Matcap(id)` replaces the lit path with a
+    /// matcap texture lookup.
+    /// The `unlit` per-item bypass on [`ItemSettings`] is checked independently
+    /// and takes precedence over any value here.
     pub shading_model: ShadingModel,
     /// UV parameterization visualization. When set, replaces albedo/lighting with a
     /// procedural pattern in UV space : useful for inspecting parameterization quality.
@@ -445,6 +461,7 @@ impl Default for Material {
             ao_map_id: None,
             metallic_roughness_texture_id: None,
             emissive: [0.0, 0.0, 0.0],
+            emissive_strength: 1.0,
             emissive_texture_id: None,
             alpha_mode: AlphaMode::Opaque,
             shading_model: ShadingModel::Phong,
@@ -488,10 +505,34 @@ impl Material {
         matches!(self.alpha_mode, AlphaMode::Blend)
     }
 
+    /// The emitted luminance in nits: `emissive` scaled by `emissive_strength`.
+    /// This is the value the renderer packs into the GPU material and adds to
+    /// outgoing radiance (an emissive texture, when present, multiplies it too).
+    pub(crate) fn emissive_nits(&self) -> [f32; 3] {
+        [
+            self.emissive[0] * self.emissive_strength,
+            self.emissive[1] * self.emissive_strength,
+            self.emissive[2] * self.emissive_strength,
+        ]
+    }
+
     /// Construct from a plain colour, all other parameters at their defaults.
     pub fn from_colour(colour: [f32; 3]) -> Self {
         Self {
             base_colour: colour,
+            ..Default::default()
+        }
+    }
+
+    /// A self-illuminated material glowing in the given `colour` (0..1 hue) at
+    /// `nits` luminance. `base_colour` is set to the same hue so the surface
+    /// reads consistently where the emission is dim. All other parameters take
+    /// their defaults.
+    pub fn emissive(colour: [f32; 3], nits: f32) -> Self {
+        Self {
+            base_colour: colour,
+            emissive: colour,
+            emissive_strength: nits,
             ..Default::default()
         }
     }

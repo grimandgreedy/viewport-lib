@@ -147,7 +147,12 @@ impl ViewportRenderer {
                 // --- Polylines (between rects and labels in z order) ---
                 // The gizmo's rings, plane quads, cube faces, and centre handle
                 // ride along here as generated polylines.
-                for poly in frame.overlays.polylines.iter().chain(gizmo_polylines.iter()) {
+                for poly in frame
+                    .overlays
+                    .polylines
+                    .iter()
+                    .chain(gizmo_polylines.iter())
+                {
                     if poly.points.len() < 2 || poly.opacity <= 0.0 {
                         continue;
                     }
@@ -1006,13 +1011,19 @@ impl ViewportRenderer {
             .polylines
             .iter()
             .any(|p| p.closed && p.texture.is_some() && p.opacity > 0.0 && p.points.len() >= 3);
-        if !frame.overlays.shapes.is_empty() || !gizmo_shapes.is_empty() || has_textured_polyline_fill
+        if !frame.overlays.shapes.is_empty()
+            || !gizmo_shapes.is_empty()
+            || has_textured_polyline_fill
         {
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
             if vp_w > 0.0 && vp_h > 0.0 {
-                let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> =
-                    frame.overlays.shapes.iter().chain(gizmo_shapes.iter()).collect();
+                let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> = frame
+                    .overlays
+                    .shapes
+                    .iter()
+                    .chain(gizmo_shapes.iter())
+                    .collect();
                 sorted.sort_by_key(|s| s.z_order);
 
                 let has_solid = sorted

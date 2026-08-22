@@ -266,12 +266,11 @@ pub(crate) fn configure_frame(app: &App, fd: &mut viewport_lib::FrameData) {
     // The foreground pass runs in the HDR path, so keep the HDR pipeline active
     // (also required for DoF). DoF itself is toggled separately.
     let mut pp = PostProcessSettings::default();
-    pp.enabled = true;
     if app.fg_state.dof_enabled {
-        pp.dof_enabled = true;
-        pp.dof_focal_distance = app.fg_state.dof_focal_distance;
-        pp.dof_focal_range = app.fg_state.dof_focal_range;
-        pp.dof_max_blur_radius = app.fg_state.dof_max_blur;
+        pp.dof.enabled = true;
+        pp.dof.focal_distance = app.fg_state.dof_focal_distance;
+        pp.dof.focal_range = app.fg_state.dof_focal_range;
+        pp.dof.max_blur_radius = app.fg_state.dof_max_blur;
     }
     fd.effects.post_process = pp;
 

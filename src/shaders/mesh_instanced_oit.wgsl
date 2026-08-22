@@ -487,8 +487,11 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             let H = normalize(ev.l + V);
             let n_dot_l = max(dot(N, ev.l), 0.0);
             let n_dot_h = max(dot(N, H), 0.0);
-            let diffuse_contrib  = inst.diffuse  * n_dot_l;
-            let specular_contrib = inst.specular * pow(n_dot_h, inst.shininess);
+            // Energy-normalised Blinn-Phong (matches the PBR path): 1/pi on the
+            // diffuse lobe, (shininess + 8) / (8 pi) on the specular lobe.
+            let diffuse_contrib  = inst.diffuse  * n_dot_l * INV_PI;
+            let specular_contrib = inst.specular * pow(n_dot_h, inst.shininess)
+                                 * (inst.shininess + 8.0) * INV_PI * 0.125;
             total_colour_contrib += (diffuse_contrib + specular_contrib) * ev.radiance;
         }
         let ambient_contrib = inst.ambient;

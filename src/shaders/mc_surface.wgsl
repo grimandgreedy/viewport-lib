@@ -122,18 +122,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             L = normalize(light.pos_or_dir);
             light_rgb = light.colour * light.intensity;
         } else if light.light_type == 1u {
-            // Point: distance falloff.
+            // Point: physical inverse-square falloff, radius-clamped and windowed
+            // to zero at `range`. Matches scene_lighting.wgsl::eval_light.
             let to_light = light.pos_or_dir - in.world_pos;
             let dist = length(to_light);
             L = to_light / max(dist, 0.0001);
-            let falloff = clamp(1.0 - dist / light.range, 0.0, 1.0);
-            light_rgb = light.colour * light.intensity * falloff * falloff;
+            let r2 = max(light.radius * light.radius, 1.0e-4);
+            let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
+            let atten = win * win / max(dist * dist, r2);
+            light_rgb = light.colour * light.intensity * atten;
         } else {
-            // Spot: distance falloff * cone attenuation.
+            // Spot: inverse-square falloff * cone attenuation.
             let to_light = light.pos_or_dir - in.world_pos;
             let dist = length(to_light);
             L = to_light / max(dist, 0.0001);
-            let dist_falloff = clamp(1.0 - dist / light.range, 0.0, 1.0);
+            let r2 = max(light.radius * light.radius, 1.0e-4);
+            let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
+            let atten = win * win / max(dist * dist, r2);
             let spot_dir = normalize(light.spot_direction);
             let cos_angle = dot(-L, spot_dir);
             let cos_outer = cos(light.outer_angle);
@@ -142,14 +147,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
                 0.0, 1.0,
             );
-            light_rgb = light.colour * light.intensity * dist_falloff * dist_falloff * cone_att;
+            light_rgb = light.colour * light.intensity * atten * cone_att;
         }
 
         let H = normalize(L + V);
-        let diff  = max(dot(N, L), 0.0);
-        // Blinn-Phong specular; map roughness [0,1] -> shininess [2, 128].
+        // Energy-normalised Blinn-Phong so this matches the mesh paths' brightness
+        // under the same light: 1/pi on diffuse, (shine + 8) / (8 pi) on specular.
+        let diff  = max(dot(N, L), 0.0) * INV_PI;
+        // Map roughness [0,1] -> shininess [2, 128].
         let shine = mix(128.0, 2.0, material.roughness);
-        let spec  = pow(max(dot(N, H), 0.0), shine) * (1.0 - material.roughness) * 0.3;
+        let spec  = pow(max(dot(N, H), 0.0), shine)
+                  * (1.0 - material.roughness) * (shine + 8.0) * INV_PI * 0.125;
 
         diffuse  += light_rgb * diff;
         specular += light_rgb * spec;

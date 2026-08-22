@@ -171,9 +171,28 @@ impl FrameData {
         self
     }
 
+    /// Apply a [`LightingPosture`], setting the lighting and exposure together as
+    /// a matched pair. See [`EffectsFrame::with_posture`].
+    pub fn with_posture(mut self, posture: LightingPosture) -> Self {
+        self.effects = core::mem::take(&mut self.effects).with_posture(posture);
+        self
+    }
+
     /// Override the post-processing settings.
     pub fn with_post_process(mut self, post: PostProcessSettings) -> Self {
         self.effects.post_process = post;
+        self
+    }
+
+    /// Override the display transform (pipeline mode, exposure, tone-map operator).
+    pub fn with_display(mut self, display: DisplaySettings) -> Self {
+        self.effects.display = display;
+        self
+    }
+
+    /// Override the exposure settings (manual EV, physical camera, or auto).
+    pub fn with_exposure(mut self, exposure: ExposureSettings) -> Self {
+        self.effects.display.exposure = exposure;
         self
     }
 
@@ -306,7 +325,7 @@ macro_rules! emit_draw_calls {
                             // instance can discard this frame.
                             let clipping_active = frame
                                 .effects
-                                .clip_objects
+                                .clip.objects
                                 .iter()
                                 .any(|o| o.enabled && o.clip_geometry);
                             let nodiscard_pipes = (

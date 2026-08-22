@@ -16,7 +16,7 @@ enum SphereHandle {
 /// An interactive sphere widget with a draggable center and radius handle.
 ///
 /// Use `clip_object()` to get the visual fill/outline (push into
-/// `fd.effects.clip_objects` with `clip_geometry: false`), and `handle_glyphs()`
+/// `fd.effects.clip.objects` with `clip_geometry: false`), and `handle_glyphs()`
 /// for the draggable handle spheres (push into `fd.scene.glyphs`).
 ///
 /// # Usage
@@ -26,7 +26,7 @@ enum SphereHandle {
 ///
 /// // Each frame:
 /// sphere.update(&ctx);
-/// fd.effects.clip_objects.push(sphere.clip_object());
+/// fd.effects.clip.objects.push(sphere.clip_object());
 /// fd.scene.glyphs.push(sphere.handle_glyphs(HANDLE_ID, &ctx));
 /// ```
 pub struct SphereWidget {
@@ -137,7 +137,7 @@ impl SphereWidget {
 
     /// Build a `ClipObject` for the sphere visual (fill + outline).
     ///
-    /// Push into `fd.effects.clip_objects`. `clip_geometry` is set to `false` so
+    /// Push into `fd.effects.clip.objects`. `clip_geometry` is set to `false` so
     /// the sphere only renders as a visual indicator and does not clip geometry.
     pub fn clip_object(&self) -> ClipObject {
         let edge = [self.colour[0], self.colour[1], self.colour[2], 1.0];

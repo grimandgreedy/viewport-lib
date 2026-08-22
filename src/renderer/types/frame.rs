@@ -664,6 +664,7 @@ impl InteractionFrame {
 ///
 /// Ground plane rendering mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GroundPlaneMode {
     /// No ground plane rendered (default, zero overhead).
     #[default]
@@ -681,14 +682,15 @@ pub enum GroundPlaneMode {
 /// Renders a large horizontal plane at a configurable world-space Z height.
 /// Provides spatial grounding without explicit scene geometry.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GroundPlane {
     /// Rendering mode. Default: `None` (plane not drawn).
     pub mode: GroundPlaneMode,
     /// World-space Z coordinate of the ground plane. Default: `0.0`.
     pub height: f32,
-    /// Primary colour for `Tile` and `SolidColour` modes. Default: `[0.3, 0.3, 0.3, 1.0]`.
+    /// Primary colour for `Tile` and `SolidColour` modes. Default: `[1.0, 1.0, 1.0, 1.0]`.
     pub colour: [f32; 4],
-    /// Secondary tile colour for `Tile` mode. Default: `[0.5, 0.5, 0.5, 1.0]`.
+    /// Secondary tile colour for `Tile` mode. Default: `[0.0, 0.0, 0.0, 1.0]`.
     pub tile_colour2: [f32; 4],
     /// Checker tile size in world units (`Tile` mode). Default: `1.0`.
     pub tile_size: f32,
@@ -716,8 +718,21 @@ impl Default for GroundPlane {
 /// map for PBR ambient lighting (irradiance + specular) and optionally renders
 /// it as the scene background (skybox).
 #[derive(Clone, Debug)]
-pub struct EnvironmentMap {
-    /// Intensity multiplier for IBL contribution. Default: 1.0.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EnvironmentSettings {
+    /// Absolute luminance scale in **nits** applied to the sampled environment -
+    /// both the IBL contribution (diffuse irradiance + specular reflections) and
+    /// the skybox background, so the lit surfaces and the visible sky stay
+    /// physically consistent. Default: `1.0`.
+    ///
+    /// The stored environment map carries relative radiance; this scales it to
+    /// the physical brightness the sky should read at, on the same nits scale as
+    /// emissive surfaces (see [`Material::emissive_strength`](crate::Material)).
+    /// A clear daytime sky is on the order of thousands of nits, so under
+    /// photometric exposure a value near `1.0` leaves the environment nearly
+    /// black; raise it to the sky's real luminance. The metering of an HDRI's
+    /// own peaks is unchanged - this is a single physical multiplier, not a
+    /// tonemap.
     pub intensity: f32,
     /// Y-axis rotation in radians. Default: 0.0.
     pub rotation: f32,
@@ -727,7 +742,7 @@ pub struct EnvironmentMap {
     pub show_skybox: bool,
 }
 
-impl Default for EnvironmentMap {
+impl Default for EnvironmentSettings {
     fn default() -> Self {
         Self {
             intensity: 1.0,
@@ -867,12 +882,13 @@ pub struct EffectsFrame {
     pub lighting: LightingSettings,
     /// Participating-media (scatter-volume) quality settings.
     pub scatter: ScatterSettings,
-    /// Active clip objects (planes, boxes, spheres). Max 6 planes + 1 box/sphere.
-    /// Default: empty (no clipping).
-    pub clip_objects: Vec<ClipObject>,
-    /// Whether to render filled caps at clip plane cross-sections. Default: true.
-    pub cap_fill_enabled: bool,
-    /// Post-processing settings. Default: enabled (HDR pipeline active, all effects off).
+    /// Clip objects (planes/box/sphere) and cap-fill toggle. Default: no clipping.
+    pub clip: ClipSettings,
+    /// Display transform: pipeline mode (HDR / Direct), exposure, and tone-map
+    /// operator. Default: HDR pipeline, neutral manual EV 0, KhronosNeutral.
+    pub display: DisplaySettings,
+    /// Post-processing effects (bloom, SSAO, DOF, ...). Default: all off. Every
+    /// effect requires `display.mode == PipelineMode::Hdr`.
     pub post_process: PostProcessSettings,
     /// Foreground pass configuration (projection override). Default: None.
     /// The pass itself is driven by `SceneFrame::foreground_items`; this only
@@ -880,10 +896,59 @@ pub struct EffectsFrame {
     pub foreground: Option<ForegroundPass>,
     /// GPU compute filter items dispatched before the render pass.
     pub compute_filter_items: Vec<ComputeFilterItem>,
-    /// Optional environment map for IBL and skybox. Default: None.
-    pub environment: Option<EnvironmentMap>,
+    /// Optional environment settings for IBL and skybox. Default: None.
+    pub environment: Option<EnvironmentSettings>,
     /// Ground plane configuration. Default: mode = None (not drawn, zero overhead).
     pub ground_plane: GroundPlane,
+    /// Debug overlays (shadow-atlas viewer). Default: off.
+    pub debug: EffectsDebug,
+}
+
+impl Default for EffectsFrame {
+    fn default() -> Self {
+        Self {
+            lighting: LightingSettings::default(),
+            scatter: ScatterSettings::default(),
+            clip: ClipSettings::default(),
+            display: DisplaySettings::default(),
+            post_process: PostProcessSettings::default(),
+            foreground: None,
+            compute_filter_items: Vec::new(),
+            environment: None,
+            ground_plane: GroundPlane::default(),
+            debug: EffectsDebug::default(),
+        }
+    }
+}
+
+/// Clip geometry for one frame: active clip objects plus the cross-section
+/// cap-fill toggle. Grouped on [`EffectsFrame::clip`].
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ClipSettings {
+    /// Active clip objects (planes, boxes, spheres). Max 6 planes + 1 box/sphere.
+    /// Default: empty (no clipping).
+    pub objects: Vec<ClipObject>,
+    /// Whether to render filled caps at clip plane cross-sections. Default: true.
+    pub cap_fill_enabled: bool,
+}
+
+impl Default for ClipSettings {
+    fn default() -> Self {
+        Self {
+            objects: Vec::new(),
+            cap_fill_enabled: true,
+        }
+    }
+}
+
+/// Debug overlays for one frame. Grouped on [`EffectsFrame::debug`] to keep debug
+/// knobs out of the production effect fields.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EffectsDebug {
     /// Show the shadow depth atlas as a corner overlay. Default: false.
     pub show_shadow_atlas: bool,
     /// Corner where the atlas viewer is placed. Default: BottomRight.
@@ -892,18 +957,9 @@ pub struct EffectsFrame {
     pub atlas_viewer_scale: f32,
 }
 
-impl Default for EffectsFrame {
+impl Default for EffectsDebug {
     fn default() -> Self {
         Self {
-            lighting: LightingSettings::default(),
-            scatter: ScatterSettings::default(),
-            clip_objects: Vec::new(),
-            cap_fill_enabled: true,
-            post_process: PostProcessSettings::default(),
-            foreground: None,
-            compute_filter_items: Vec::new(),
-            environment: None,
-            ground_plane: GroundPlane::default(),
             show_shadow_atlas: false,
             atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner::BottomRight,
             atlas_viewer_scale: 0.3,
@@ -924,8 +980,10 @@ impl Default for EffectsFrame {
 pub struct SceneEffects<'a> {
     /// Per-frame lighting configuration (drives the shadow pass and light uniform).
     pub lighting: &'a LightingSettings,
-    /// Optional environment map for IBL and skybox.
-    pub environment: &'a Option<EnvironmentMap>,
+    /// Optional environment settings for IBL and skybox.
+    pub environment: &'a Option<EnvironmentSettings>,
+    /// Participating-media quality settings (scene-global).
+    pub scatter: &'a ScatterSettings,
     /// GPU compute filter items dispatched before the render pass.
     pub compute_filter_items: &'a [ComputeFilterItem],
 }
@@ -940,28 +998,77 @@ pub struct SceneEffects<'a> {
 /// Scene-global effects are passed once via [`SceneEffects`] in
 /// [`ViewportRenderer::prepare_scene`].
 pub struct ViewportEffects<'a> {
-    /// Participating-media quality settings (per-viewport for now; could
-    /// migrate scene-side later if the cost dictates).
-    pub scatter: &'a ScatterSettings,
-    /// Active clip objects (planes, boxes, spheres).
-    pub clip_objects: &'a [ClipObject],
-    /// Whether to render filled caps at clip plane cross-sections.
-    pub cap_fill_enabled: bool,
-    /// Optional post-processing settings (tone mapping, bloom, SSAO).
+    /// Clip objects and cap-fill toggle.
+    pub clip: &'a ClipSettings,
+    /// Display transform: pipeline mode, exposure, tone-map operator.
+    pub display: &'a DisplaySettings,
+    /// Post-processing effects (bloom, SSAO, DOF, ...).
     pub post_process: &'a PostProcessSettings,
     /// Foreground pass configuration (projection override).
     pub foreground: &'a Option<ForegroundPass>,
     /// Ground plane configuration for this viewport.
     pub ground_plane: &'a GroundPlane,
-    /// Show the shadow depth atlas as a corner overlay.
-    pub show_shadow_atlas: bool,
-    /// Corner where the atlas viewer is placed.
-    pub atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner,
-    /// Atlas viewer size as a fraction of viewport width.
-    pub atlas_viewer_scale: f32,
+    /// Debug overlays (shadow-atlas viewer).
+    pub debug: &'a EffectsDebug,
+}
+
+/// A coherent lighting + exposure starting point.
+///
+/// Whether a scene is "faithful" or "physical daylight" is not one field - it
+/// emerges from the light magnitudes in [`EffectsFrame::lighting`] agreeing with
+/// the exposure in [`EffectsFrame::display`]. Setting one without the other is the
+/// common footgun: real-lux lights under the neutral default exposure clip to
+/// white, and an adaptive daylight camera over nominal magnitudes silently loses
+/// the "colour is data" look. `LightingPosture` sets both halves together via
+/// [`EffectsFrame::with_posture`] so they cannot disagree.
+///
+/// This governs lighting and exposure only. The per-material
+/// [`ShadingModel`](crate::ShadingModel) is chosen independently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum LightingPosture {
+    /// "Colour is data": nominal light magnitudes shown at a fixed neutral
+    /// exposure with no camera adaptation, so authored colours read on screen
+    /// roughly as-is. The default posture, matching [`EffectsFrame::default`].
+    #[default]
+    Faithful,
+    /// Physically-scaled daylight: real photometric magnitudes
+    /// ([`LightingSettings::daylight`]) mapped down by an adaptive camera
+    /// ([`ExposureSettings::automatic`]) so the sun does not clip to white.
+    PhysicalDaylight,
 }
 
 impl EffectsFrame {
+    /// Apply a [`LightingPosture`], setting [`EffectsFrame::lighting`] and the
+    /// exposure on [`EffectsFrame::display`] as a matched pair.
+    ///
+    /// Pick the intent in one call instead of hand-pairing light magnitudes with
+    /// an exposure mode - the two must agree or the scene clips (real lux at
+    /// neutral exposure) or loses the colour-is-data look (nominal magnitudes
+    /// under an adaptive camera). Call it early, then author your own lights
+    /// (push onto `effects.lighting.lights`) and adjust other display fields:
+    ///
+    /// ```no_run
+    /// # use viewport_lib::{EffectsFrame, LightingPosture};
+    /// let effects = EffectsFrame::default().with_posture(LightingPosture::PhysicalDaylight);
+    /// ```
+    ///
+    /// Leaves other display fields (pipeline mode, tone-map operator) and the
+    /// per-material [`ShadingModel`](crate::ShadingModel) untouched.
+    pub fn with_posture(mut self, posture: LightingPosture) -> Self {
+        match posture {
+            LightingPosture::Faithful => {
+                self.lighting = LightingSettings::default();
+                self.display.exposure = ExposureSettings::default();
+            }
+            LightingPosture::PhysicalDaylight => {
+                self.lighting = LightingSettings::daylight();
+                self.display.exposure = ExposureSettings::automatic();
+            }
+        }
+        self
+    }
+
     /// Decompose into scene-global and per-viewport effect references.
     ///
     /// Both halves borrow from `self` and cannot outlive the `EffectsFrame`.
@@ -975,18 +1082,16 @@ impl EffectsFrame {
             SceneEffects {
                 lighting: &self.lighting,
                 environment: &self.environment,
+                scatter: &self.scatter,
                 compute_filter_items: &self.compute_filter_items,
             },
             ViewportEffects {
-                scatter: &self.scatter,
-                clip_objects: &self.clip_objects,
-                cap_fill_enabled: self.cap_fill_enabled,
+                clip: &self.clip,
+                display: &self.display,
                 post_process: &self.post_process,
                 foreground: &self.foreground,
                 ground_plane: &self.ground_plane,
-                show_shadow_atlas: self.show_shadow_atlas,
-                atlas_viewer_corner: self.atlas_viewer_corner,
-                atlas_viewer_scale: self.atlas_viewer_scale,
+                debug: &self.debug,
             },
         )
     }

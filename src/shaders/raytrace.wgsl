@@ -48,8 +48,9 @@ struct Material {
 // kind 1; data.w = kind (0 = directional, 1 = point). colour.rgb = radiance;
 // colour.w = point-light range (0 = no falloff).
 struct Light {
-    data: vec4<f32>,
-    colour: vec4<f32>,
+    data: vec4<f32>,    // xyz = position (point) or direction (dir); w = type (0 dir, 1 point)
+    colour: vec4<f32>,  // rgb = radiance; w = range (reach)
+    params: vec4<f32>,  // x = source radius; yzw = reserved
 }
 
 struct Frame {
@@ -630,7 +631,8 @@ fn direct_light(pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>, m: Material, f0: vec
             let dist = length(to);
             l = to / dist;
             let range = lt.colour.w;
-            var atten = 1.0 / max(dist * dist, 1.0e-4);
+            let r2 = max(lt.params.x * lt.params.x, 1.0e-4);
+            var atten = 1.0 / max(dist * dist, r2);
             if range > 0.0 {
                 let f = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
                 atten = atten * f * f;
@@ -978,7 +980,8 @@ fn texel_direct(pos: vec3<f32>, n: vec3<f32>) -> DirectLighting {
             let dist = length(to);
             l = to / dist;
             let range = lt.colour.w;
-            var atten = 1.0 / max(dist * dist, 1.0e-4);
+            let r2 = max(lt.params.x * lt.params.x, 1.0e-4);
+            var atten = 1.0 / max(dist * dist, r2);
             if range > 0.0 {
                 let f = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
                 atten = atten * f * f;

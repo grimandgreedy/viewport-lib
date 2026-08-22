@@ -934,6 +934,10 @@ impl DeviceResources {
 
         mark("clustered");
 
+        let exposure = crate::resources::gpu::exposure::ExposureResources::new(device);
+
+        mark("exposure");
+
         let camera_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
             layout: &camera_bgl,
@@ -2380,6 +2384,7 @@ impl DeviceResources {
                 probe_volume_fallback: light_probe_volume_fallback,
             },
             clustered,
+            exposure,
             mesh_store: {
                 let mut store = crate::resources::mesh::mesh_store::MeshStore::new();
                 store.insert(cube_mesh);

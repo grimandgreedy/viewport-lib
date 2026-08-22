@@ -322,8 +322,8 @@ impl App {
                 _t.intensity = 1.0;
                 _t
             }];
-            _t.shadows_enabled = true;
-            _t.shadow_cascade_count = 4;
+            _t.shadows.enabled = true;
+            _t.shadows.cascade_count = 4;
             _t.hemisphere_intensity = 0.45;
             _t
         }

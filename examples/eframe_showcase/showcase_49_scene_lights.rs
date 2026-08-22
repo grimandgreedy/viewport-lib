@@ -71,9 +71,12 @@ fn default_lights() -> [LightSource; 3] {
         s.kind = LightKind::Point {
             position: [5.0, 0.0, 3.0],
             range: 14.0,
+            radius: 0.1,
         };
         s.colour = [1.0, 0.6, 0.2];
-        s.intensity = 5.0;
+        // Candela-scale under inverse-square: intensity ~= E * d^2 for spheres a
+        // few units from the orbiting light.
+        s.intensity = 40.0;
         s
     };
     let spot = {
@@ -84,9 +87,10 @@ fn default_lights() -> [LightSource; 3] {
             range: 18.0,
             inner_angle: 0.2,
             outer_angle: 0.4,
+            radius: 0.1,
         };
         s.colour = [0.4, 0.7, 1.0];
-        s.intensity = 6.0;
+        s.intensity = 80.0;
         s
     };
     let dir = {
@@ -307,6 +311,7 @@ fn rebuild_stress_lights(state: &mut SlState) {
         src.kind = LightKind::Point {
             position: [x, y, z],
             range: state.stress_radius,
+            radius: 0.1,
         };
         src.colour = colour;
         src.intensity = state.stress_intensity;
@@ -426,7 +431,7 @@ pub(crate) fn sl_collect(app: &mut App) -> (Vec<SceneRenderItem>, LightingSettin
     let items = app.sl_state.scene.collect_render_items(&Selection::new());
     let mut l = LightingSettings::default();
     l.lights = vec![];
-    l.shadows_enabled = false;
+    l.shadows.enabled = false;
     match app.sl_state.active_tab {
         SlTab::Basics => {
             l.hemisphere_intensity = app.sl_state.hemi_intensity;
@@ -566,7 +571,7 @@ fn controls_basics(app: &mut App, ui: &mut egui::Ui) {
                     ui.label("Colour:");
                     ui.color_edit_button_rgb(&mut src.colour);
                 });
-                ui.add(egui::Slider::new(&mut src.intensity, 0.0..=12.0).text("Intensity"));
+                ui.add(egui::Slider::new(&mut src.intensity, 0.0..=120.0).text("Intensity"));
                 #[allow(clippy::match_wildcard_for_catch_all)]
                 match &mut src.kind {
                     LightKind::Point { range, .. } => {

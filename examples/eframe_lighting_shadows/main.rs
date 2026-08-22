@@ -329,6 +329,7 @@ impl App {
             1 => LightKind::Point {
                 position: self.point_position,
                 range: self.point_range,
+                radius: 0.1,
             },
             _ => LightKind::Spot {
                 position: self.spot_position,
@@ -336,7 +337,17 @@ impl App {
                 range: self.spot_range,
                 inner_angle: self.spot_inner_deg.to_radians(),
                 outer_angle: self.spot_outer_deg.to_radians(),
+                radius: 0.1,
             },
+        };
+        // The intensity slider is a normalised 0..1 brightness; scale it into the
+        // right unit for the selected kind. Directional is illuminance (used
+        // directly); point/spot are candela and fall off as 1/d^2, so they need a
+        // much larger number to read at the light's throw distance.
+        let intensity = match self.light_kind {
+            0 => self.light_intensity,
+            1 => self.light_intensity * 40.0,
+            _ => self.light_intensity * 120.0,
         };
         {
             let mut _t = LightingSettings::default();
@@ -344,16 +355,16 @@ impl App {
                 let mut _t = LightSource::default();
                 _t.kind = kind;
                 _t.colour = self.light_colour;
-                _t.intensity = self.light_intensity;
+                _t.intensity = intensity;
                 _t
             }];
-            _t.shadows_enabled = self.shadows_enabled;
-            _t.shadow_bias = self.shadow_bias;
-            _t.shadow_cascade_count = self.shadow_cascade_count;
-            _t.shadow_filter = self.shadow_filter;
-            _t.pcss_light_radius = self.pcss_light_radius;
-            _t.shadow_atlas_resolution = self.shadow_atlas_resolution;
-            _t.shadow_extent_override = if self.shadow_extent_enabled {
+            _t.shadows.enabled = self.shadows_enabled;
+            _t.shadows.bias = self.shadow_bias;
+            _t.shadows.cascade_count = self.shadow_cascade_count;
+            _t.shadows.filter = self.shadow_filter;
+            _t.shadows.pcss_light_radius = self.pcss_light_radius;
+            _t.shadows.atlas_resolution = self.shadow_atlas_resolution;
+            _t.shadows.extent_override = if self.shadow_extent_enabled {
                 Some(self.shadow_extent_value)
             } else {
                 None
@@ -625,9 +636,9 @@ impl eframe::App for App {
                 SceneFrame::from_surface_items(items),
             );
             fd.effects.lighting = self.build_lighting();
-            fd.effects.show_shadow_atlas = self.show_shadow_atlas;
-            fd.effects.atlas_viewer_corner = self.atlas_viewer_corner;
-            fd.effects.atlas_viewer_scale = self.atlas_viewer_scale;
+            fd.effects.debug.show_shadow_atlas = self.show_shadow_atlas;
+            fd.effects.debug.atlas_viewer_corner = self.atlas_viewer_corner;
+            fd.effects.debug.atlas_viewer_scale = self.atlas_viewer_scale;
 
             // Pixel inspector: on left-click, submit the clicked pixel for readback.
             // Convert from CSS pixels (egui) to physical pixels (what the shader writes).

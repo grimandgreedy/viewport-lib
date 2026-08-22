@@ -313,20 +313,22 @@ impl ViewportRenderer {
         ];
 
         // Upload tone map uniform into the per-viewport buffer.
-        let mode = match pp.tone_mapping {
+        let mode = match frame.effects.display.operator {
             crate::renderer::ToneMapping::Reinhard => 0u32,
             crate::renderer::ToneMapping::Aces => 1u32,
             crate::renderer::ToneMapping::KhronosNeutral => 2u32,
         };
         let tm_uniform = crate::resources::ToneMapUniform {
-            exposure: pp.exposure,
+            // Exposure is applied from the per-viewport exposure state buffer
+            // (binding 9), not this field; kept at 1.0 for layout stability.
+            exposure: 1.0,
             mode,
-            bloom_enabled: if pp.bloom { 1 } else { 0 },
+            bloom_enabled: if pp.bloom.enabled { 1 } else { 0 },
             ssao_enabled: if pp.ssao { 1 } else { 0 },
-            contact_shadows_enabled: if pp.contact_shadows { 1 } else { 0 },
-            edl_enabled: if pp.edl_enabled { 1 } else { 0 },
-            edl_radius: pp.edl_radius,
-            edl_strength: pp.edl_strength,
+            contact_shadows_enabled: if pp.contact_shadows.enabled { 1 } else { 0 },
+            edl_enabled: if pp.edl.enabled { 1 } else { 0 },
+            edl_radius: pp.edl.radius,
+            edl_strength: pp.edl.strength,
             background_colour: bg_colour,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
@@ -373,7 +375,7 @@ impl ViewportRenderer {
             }
 
             // Upload contact shadow uniform if needed.
-            if pp.contact_shadows {
+            if pp.contact_shadows.enabled {
                 let proj = frame.camera.render_camera.projection;
                 let inv_proj = proj.inverse();
                 let light_dir_world: glam::Vec3 =
@@ -402,9 +404,9 @@ impl ViewportRenderer {
                     light_dir_view: [light_dir_view.x, light_dir_view.y, light_dir_view.z, 0.0],
                     world_up_view: [world_up_view.x, world_up_view.y, world_up_view.z, 0.0],
                     params: [
-                        pp.contact_shadow_max_distance,
-                        pp.contact_shadow_steps as f32,
-                        pp.contact_shadow_thickness,
+                        pp.contact_shadows.max_distance,
+                        pp.contact_shadows.steps as f32,
+                        pp.contact_shadows.thickness,
                         0.0,
                     ],
                 };
@@ -416,27 +418,27 @@ impl ViewportRenderer {
             }
 
             // Upload bloom uniform if needed.
-            if pp.bloom {
+            if pp.bloom.enabled {
                 let bloom_u = crate::resources::BloomUniform {
-                    threshold: pp.bloom_threshold,
-                    intensity: pp.bloom_intensity,
+                    threshold: pp.bloom.threshold,
+                    intensity: pp.bloom.intensity,
                     horizontal: 0,
-                    max_brightness: pp.bloom_max_brightness,
+                    max_brightness: pp.bloom.max_brightness,
                 };
                 queue.write_buffer(&hdr.bloom_uniform_buf, 0, bytemuck::cast_slice(&[bloom_u]));
             }
         }
 
         // Upload DoF uniform when enabled.
-        if pp.dof_enabled {
+        if pp.dof.enabled {
             let (w, h) = {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 (hdr.scene_size[0] as f32, hdr.scene_size[1] as f32)
             };
             let dof_uniform = crate::resources::DofUniform {
-                focal_distance: pp.dof_focal_distance,
-                focal_range: pp.dof_focal_range,
-                max_blur_radius: pp.dof_max_blur_radius,
+                focal_distance: pp.dof.focal_distance,
+                focal_range: pp.dof.focal_range,
+                max_blur_radius: pp.dof.max_blur_radius,
                 near_plane: frame.camera.render_camera.near,
                 far_plane: frame.camera.render_camera.far,
                 viewport_width: w,
@@ -474,13 +476,13 @@ impl ViewportRenderer {
             self.resources.rebuild_tone_map_bind_group(
                 device,
                 hdr,
-                pp.bloom,
+                pp.bloom.enabled,
                 pp.ssao,
-                pp.contact_shadows,
+                pp.contact_shadows.enabled,
                 scene_items
                     .iter()
                     .any(|i| i.lic.is_some() && !i.settings.hidden),
-                pp.dof_enabled,
+                pp.dof.enabled,
                 use_foreground,
             );
         }
@@ -548,6 +550,7 @@ impl ViewportRenderer {
         self.hdr_outline_composite(&ctx, &mut encoder);
         self.hdr_foreground(&ctx, &mut encoder);
         self.hdr_post_effects(&ctx, &mut encoder);
+        self.hdr_exposure(&ctx, &mut encoder);
         self.hdr_tonemap_resolve(&ctx, &mut encoder);
         self.hdr_scene_overlays(&ctx, &mut encoder);
         self.hdr_final_overlay(&ctx, &mut encoder);
@@ -748,7 +751,8 @@ impl ViewportRenderer {
                         // hidden fragments are depth-rejected before shading.
                         let clipping_active = frame
                             .effects
-                            .clip_objects
+                            .clip
+                            .objects
                             .iter()
                             .any(|o| o.enabled && o.clip_geometry);
 
@@ -998,7 +1002,8 @@ impl ViewportRenderer {
                         // instanced path where the same check lives.
                         let clipping_active = frame
                             .effects
-                            .clip_objects
+                            .clip
+                            .objects
                             .iter()
                             .any(|o| o.enabled && o.clip_geometry);
                         // Only opaque excluded items are drawn in the scene pass; transparent
@@ -4022,7 +4027,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // Contact shadow pass.
         // -----------------------------------------------------------------------
-        if pp.contact_shadows && !throttle_effects {
+        if pp.contact_shadows.enabled && !throttle_effects {
             if let Some(cs_pipeline) = &self.resources.post.contact_shadow_pipeline {
                 let mut cs_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                     #[cfg(feature = "wgpu29")]
@@ -4050,7 +4055,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // Bloom passes.
         // -----------------------------------------------------------------------
-        if pp.bloom && !throttle_effects {
+        if pp.bloom.enabled && !throttle_effects {
             // Threshold pass: extract bright pixels into bloom_threshold_texture.
             if let Some(bloom_threshold_pipeline) = &self.resources.post.bloom_threshold_pipeline {
                 // The bloom slot begins on the threshold pass and ends on the
@@ -4162,7 +4167,7 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // Depth of field pass: HDR + depth -> dof_texture (when enabled).
         // -----------------------------------------------------------------------
-        if pp.dof_enabled && !throttle_effects {
+        if pp.dof.enabled && !throttle_effects {
             if let Some(dof_pipeline) = &self.resources.post.dof_pipeline {
                 let mut dof_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                     #[cfg(feature = "wgpu29")]
@@ -4186,6 +4191,75 @@ impl ViewportRenderer {
                 dof_pass.draw(0..3, 0..1);
             }
         }
+    }
+
+    /// Resolve the pre-tone-map exposure multiplier into the per-viewport
+    /// exposure state buffer, which the tone map reads (binding 9).
+    ///
+    /// Manual / PhysicalCamera compute the multiplier on the CPU and write the
+    /// buffer directly. Automatic writes the metering params and dispatches the
+    /// clear -> build -> resolve compute passes here, in the same submission,
+    /// before the tone map — so a single dirty render is correctly exposed on
+    /// its own frame (no CPU readback, no cross-frame dependency).
+    fn hdr_exposure(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
+        let frame = ctx.frame;
+        let queue = ctx.queue;
+        let vp_idx = ctx.vp_idx;
+        let exposure = frame.effects.display.exposure;
+        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+
+        // Manual / PhysicalCamera: write the exposure state buffer directly.
+        if let Some(mult) = exposure.manual_multiplier() {
+            let ev_used = exposure.base_ev100().unwrap_or(0.0) - exposure.compensation;
+            let state = crate::resources::gpu::exposure::ExposureState {
+                exposure: mult,
+                current_ev: ev_used,
+                target_ev: ev_used,
+                adapting: 0.0,
+            };
+            queue.write_buffer(
+                &slot_hdr.exposure_state_buf,
+                0,
+                bytemuck::cast_slice(&[state]),
+            );
+            return;
+        }
+
+        // Automatic: fill the metering params and dispatch the compute passes.
+        let auto = match exposure.mode {
+            crate::renderer::types::ExposureMode::Automatic(a) => a,
+            // `manual_multiplier()` returned `None` only for `Automatic`.
+            _ => return,
+        };
+        let [sw, sh] = slot_hdr.scene_size;
+        let range = crate::resources::gpu::exposure::LOG_LUM_MAX
+            - crate::resources::gpu::exposure::LOG_LUM_MIN;
+        let params = crate::resources::gpu::exposure::ExposureParams {
+            min_log_lum: crate::resources::gpu::exposure::LOG_LUM_MIN,
+            inv_log_lum_range: 1.0 / range,
+            log_lum_range: range,
+            k_factor: crate::renderer::types::METER_CALIBRATION_K,
+            min_ev: auto.min_ev,
+            max_ev: auto.max_ev.max(auto.min_ev),
+            compensation: exposure.compensation,
+            exposure_boost: crate::renderer::types::INTERIM_EXPOSURE_BOOST,
+            speed_up: auto.speed_up.max(0.0),
+            speed_down: auto.speed_down.max(0.0),
+            dt: auto.dt,
+            low_percent: auto.low_percent.clamp(0.0, 0.98),
+            high_percent: auto.high_percent.clamp(0.02, 1.0),
+            tex_width: sw as f32,
+            tex_height: sh as f32,
+            center_weight: auto.center_weight.clamp(0.0, 1.0),
+            adaptation: auto.adaptation.clamp(0.0, 1.0),
+            _pad: [0.0; 3],
+        };
+        self.resources
+            .exposure
+            .write_params(queue, &slot_hdr.exposure_params_buf, &params);
+        self.resources
+            .exposure
+            .dispatch(encoder, &slot_hdr.exposure_bind_group, sw, sh);
     }
 
     fn hdr_tonemap_resolve(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {

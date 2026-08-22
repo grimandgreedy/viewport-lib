@@ -102,13 +102,13 @@ fn two_bind_group_device_renders_without_validation_errors() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
 
     // LDR path.
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     let ldr_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(ldr_pixels.len(), 64 * 64 * 4);
 
     // HDR path: exercises the deform/OIT binds inside hdr_path.rs and the
     // full tonemap/bloom/SSAO/FXAA post chain.
-    frame.effects.post_process.enabled = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
     let hdr_pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(hdr_pixels.len(), 64 * 64 * 4);
 
@@ -145,7 +145,7 @@ fn per_object_items_select_distinct_object_data() {
     frame.camera.viewport_size = [128.0, 128.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
     let make = |x: f32, colour: [f32; 3]| {
         let mut it = SceneRenderItem::default();
@@ -224,12 +224,12 @@ fn renderer_fits_recommended_device_limits() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![opaque, transparent].into());
 
     // HDR path builds the clustered lit / OIT pipeline layouts.
-    frame.effects.post_process.enabled = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
     let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(hdr.len(), 64 * 64 * 4);
 
     // LDR path (its own mesh pipeline layout family).
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     let ldr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(ldr.len(), 64 * 64 * 4);
 }

@@ -28,6 +28,10 @@
 //   - Remove any local `SingleLight` and `Lights` struct definitions and
 //     `// #include "scene_lighting.wgsl"` near the top of the file instead.
 
+// 1/pi. The Lambert diffuse normalisation, shared by every lit path so Phong
+// and PBR reflect the same brightness for a given light.
+const INV_PI: f32 = 0.31830989;
+
 struct SingleLight {
     light_view_proj:   mat4x4<f32>,
     pos_or_dir:        vec3<f32>,
@@ -40,7 +44,7 @@ struct SingleLight {
     spot_direction:    vec3<f32>,
     point_shadow_slot: i32,
     point_shadow_near: f32,
-    _pad0:             f32,
+    radius:            f32,
     _pad1:             f32,
 };
 
@@ -219,9 +223,17 @@ fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
         ev.radiance = vec3<f32>(0.0);
         return ev;
     }
-    let falloff = clamp(1.0 - dist / light.range, 0.0, 1.0);
+    // Physical inverse-square falloff, clamped by the source radius so it does
+    // not blow up near the light (radius 0 clamps to a tiny epsilon, matching
+    // the path tracer's near-clamp). A quartic window fades it smoothly to zero
+    // at `range`; `range` bounds reach only, it does not scale brightness. This
+    // is the same formula the path tracer uses in raytrace.wgsl::direct_light.
+    let r2 = max(light.radius * light.radius, 1.0e-4);
+    let inv_sq = 1.0 / max(dist * dist, r2);
+    let win = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
+    let atten = inv_sq * win * win;
     if light.light_type == 1u {
-        ev.radiance = light.colour * light.intensity * falloff * falloff;
+        ev.radiance = light.colour * light.intensity * atten;
     } else {
         let spot_dir = normalize(light.spot_direction);
         let cos_angle = dot(-ev.l, spot_dir);
@@ -231,7 +243,7 @@ fn eval_light(light: SingleLight, world_pos: vec3<f32>) -> LightEval {
             (cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001),
             0.0, 1.0,
         );
-        ev.radiance = light.colour * light.intensity * falloff * falloff * cone_att;
+        ev.radiance = light.colour * light.intensity * atten * cone_att;
     }
     return ev;
 }
@@ -258,7 +270,9 @@ fn apply_scene_lighting(
         if !ev.in_range { continue; }
         let raw = dot(normal, ev.l);
         let n_dot_l = select(max(raw, 0.0), abs(raw), two_sided);
-        direct = direct + ev.radiance * n_dot_l;
+        // Lambert diffuse carries the 1/pi factor so this simple lit path
+        // matches the PBR and Phong diffuse energy for the same light.
+        direct = direct + ev.radiance * n_dot_l * INV_PI;
     }
     return base_colour * (ambient + direct);
 }

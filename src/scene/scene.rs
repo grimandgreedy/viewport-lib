@@ -280,15 +280,17 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
                 direction: rotated.into(),
             }
         }
-        LightKind::Point { range, .. } => LightKind::Point {
+        LightKind::Point { range, radius, .. } => LightKind::Point {
             position: translation.into(),
             range: *range,
+            radius: *radius,
         },
         LightKind::Spot {
             direction,
             range,
             inner_angle,
             outer_angle,
+            radius,
             ..
         } => {
             let rotated = world
@@ -300,6 +302,7 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
                 range: *range,
                 inner_angle: *inner_angle,
                 outer_angle: *outer_angle,
+                radius: *radius,
             }
         }
     };

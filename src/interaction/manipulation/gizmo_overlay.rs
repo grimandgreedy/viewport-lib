@@ -108,10 +108,17 @@ pub fn build_gizmo_overlays(
                     let b = space_orientation * b;
                     let c = centre_world + (a + b) * (PLANE_OFFSET * scale);
                     let s = PLANE_SIZE * scale;
-                    let corners = [c - a * s - b * s, c + a * s - b * s, c + a * s + b * s, c - a * s + b * s];
+                    let corners = [
+                        c - a * s - b * s,
+                        c + a * s - b * s,
+                        c + a * s + b * s,
+                        c - a * s + b * s,
+                    ];
                     let col = gizmo::plane_colour(axis, hovered);
                     let stroke = [col[0], col[1], col[2], 1.0];
-                    push_quad(&mut out, view_proj, viewport, corners, col, stroke, 1.0, 15_000);
+                    push_quad(
+                        &mut out, view_proj, viewport, corners, col, stroke, 1.0, 15_000,
+                    );
                 }
             }
             // Flat X-Y centre handle: drawn for both Translate and Scale.
@@ -123,7 +130,16 @@ pub fn build_gizmo_overlays(
                 centre_world + Vec3::new(-s, s, 0.0),
             ];
             let col = gizmo::axis_colour(GizmoAxis::Screen, hovered);
-            push_quad(&mut out, view_proj, viewport, corners, col, [1.0, 1.0, 1.0, 1.0], 1.0, 20_000);
+            push_quad(
+                &mut out,
+                view_proj,
+                viewport,
+                corners,
+                col,
+                [1.0, 1.0, 1.0, 1.0],
+                1.0,
+                20_000,
+            );
         }
     }
 }
@@ -170,7 +186,10 @@ fn basis(dir: Vec3) -> (Vec3, Vec3) {
 /// Screen pixels spanned by a world-space length `r` at `centre`, offset along
 /// `dir_unit`. Used to size radii (shaft, cone, ring tube) authored in world units.
 fn screen_len(vp: Mat4, size: [f32; 2], centre: Vec3, dir_unit: Vec3, r: f32) -> f32 {
-    match (project(vp, centre, size), project(vp, centre + dir_unit * r, size)) {
+    match (
+        project(vp, centre, size),
+        project(vp, centre + dir_unit * r, size),
+    ) {
         (Some((a, _)), Some((b, _))) => (b - a).length(),
         _ => 3.0,
     }
@@ -260,14 +279,18 @@ fn build_arrow(
     if shaft_draw.length() > 1.0 {
         let mid = (origin_px + shaft_end) * 0.5;
         out.shapes.push(
-            centred(OverlayShape::Capsule, mid, [shaft_draw.length(), shaft_thick])
-                .with_rotation(shaft_draw.y.atan2(shaft_draw.x))
-                .with_fill(OverlayFill::LinearGradient {
-                    start_colour: scale_rgb(colour, 1.2),
-                    end_colour: scale_rgb(colour, 0.65),
-                    angle: 0.0,
-                })
-                .with_z_order(z),
+            centred(
+                OverlayShape::Capsule,
+                mid,
+                [shaft_draw.length(), shaft_thick],
+            )
+            .with_rotation(shaft_draw.y.atan2(shaft_draw.x))
+            .with_fill(OverlayFill::LinearGradient {
+                start_colour: scale_rgb(colour, 1.2),
+                end_colour: scale_rgb(colour, 0.65),
+                angle: 0.0,
+            })
+            .with_z_order(z),
         );
     }
 
@@ -334,7 +357,11 @@ fn build_cube_tip(
     // camera. Draw brightest-facing last so it sits on top.
     let mut faces: Vec<([Vec3; 4], f32)> = Vec::new();
     for (n_axis, u, v) in [(dir, t, b), (t, dir, b), (b, dir, t)] {
-        let sign = if n_axis.dot(-forward) >= 0.0 { 1.0 } else { -1.0 };
+        let sign = if n_axis.dot(-forward) >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
         let normal = n_axis * sign;
         let fc = centre + normal * h;
         let corners = [
@@ -348,7 +375,16 @@ fn build_cube_tip(
     faces.sort_by(|a, b| a.1.total_cmp(&b.1));
     for (corners, facing) in faces {
         let bright = 0.5 + 0.5 * facing;
-        push_quad(out, vp, size, corners, scale_rgb(colour, bright), scale_rgb(colour, 0.4), 1.0, z);
+        push_quad(
+            out,
+            vp,
+            size,
+            corners,
+            scale_rgb(colour, bright),
+            scale_rgb(colour, 0.4),
+            1.0,
+            z,
+        );
     }
 }
 
@@ -423,7 +459,11 @@ mod tests {
             &mut polys,
         );
         // Three arrows contribute shaft + head shapes.
-        assert!(shapes.len() >= 3, "expected arrow shapes, got {}", shapes.len());
+        assert!(
+            shapes.len() >= 3,
+            "expected arrow shapes, got {}",
+            shapes.len()
+        );
         // Three plane quads + one centre handle are closed, filled polylines.
         assert_eq!(polys.len(), 4, "expected 3 plane handles + 1 centre quad");
         assert!(polys.iter().all(|p| p.closed && p.fill.is_some()));
@@ -448,7 +488,11 @@ mod tests {
         );
         // Cube tips (3 faces each) + the centre handle are polylines; no plane handles.
         assert!(!shapes.is_empty(), "scale arrows still emit shaft shapes");
-        assert!(polys.len() >= 3 * 3 + 1, "cube faces + centre handle, got {}", polys.len());
+        assert!(
+            polys.len() >= 3 * 3 + 1,
+            "cube faces + centre handle, got {}",
+            polys.len()
+        );
     }
 
     #[test]

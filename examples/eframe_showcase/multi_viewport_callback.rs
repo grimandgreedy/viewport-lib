@@ -4,7 +4,7 @@
 //! inside a single egui paint callback, splitting the callback rect into
 //! four equal quadrants at the pixel level.
 //!
-//! When `post_process.enabled` is true on the first frame, the HDR path runs:
+//! When `display.mode` is `PipelineMode::Hdr` on the first frame, the HDR path runs:
 //! each viewport is encoded into its own intermediate texture before the egui
 //! render pass, then blitted in `paint`. When post-processing is off, draw
 //! calls go directly into the egui render pass (LDR path).
@@ -40,7 +40,7 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
             }
             // HDR path: encode each viewport into its own intermediate texture and
             // return the command buffers for eframe to submit before the render pass.
-            if self.frames[0].effects.post_process.enabled {
+            if self.frames[0].effects.display.is_hdr() {
                 return self
                     .frames
                     .iter()
@@ -87,7 +87,7 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
                 (fx + hw, fy + hh, hw2, hh2),
             ];
 
-            let hdr = self.frames[0].effects.post_process.enabled;
+            let hdr = self.frames[0].effects.display.is_hdr();
 
             for (i, &(qx, qy, qw, qh)) in quads.iter().enumerate() {
                 if qw == 0 || qh == 0 {

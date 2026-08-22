@@ -128,10 +128,10 @@ fn bloom_glows_into_empty_background() {
         item.material = Material::from_colour([0.02, 0.02, 0.02]);
         item.material.emissive = [6.0, 6.0, 6.0];
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        frame.effects.post_process.enabled = true;
-        frame.effects.post_process.bloom = bloom;
-        frame.effects.post_process.bloom_threshold = 0.7;
-        frame.effects.post_process.bloom_intensity = 2.0;
+        frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+        frame.effects.post_process.bloom.enabled = bloom;
+        frame.effects.post_process.bloom.threshold = 0.7;
+        frame.effects.post_process.bloom.intensity = 2.0;
         renderer.render_offscreen(&device, &queue, &frame, size, size)
     };
 
@@ -304,8 +304,8 @@ fn foreground_item_survives_post_effects() {
 
     let mut frame = foreground_frame();
     frame.effects.post_process.ssao = true;
-    frame.effects.post_process.bloom = true;
-    frame.effects.post_process.dof_enabled = true;
+    frame.effects.post_process.bloom.enabled = true;
+    frame.effects.post_process.dof.enabled = true;
     let occluder = coloured_item(
         mesh_id,
         [0.1, 0.1, 0.9],
@@ -345,7 +345,7 @@ fn foreground_item_visible_on_ldr_path() {
         .unwrap();
 
     let mut frame = foreground_frame();
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     let occluder = coloured_item(
         mesh_id,
         [0.1, 0.1, 0.9],
@@ -391,7 +391,7 @@ fn foreground_item_ignores_scene_clip_planes() {
     clip.edge_colour = None;
 
     let mut frame = foreground_frame();
-    frame.effects.clip_objects.push(clip);
+    frame.effects.clip.objects.push(clip);
     let world = coloured_item(
         mesh_id,
         [0.1, 0.1, 0.9],
@@ -592,7 +592,11 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
     // large intensity saturates every lit pixel and the comparison is not
     // polluted by grazing-angle pixels that sit below the clamp.
     let mut render_at = |intensity: f32, hdr: bool, renderer: &mut ViewportRenderer| {
-        frame.effects.post_process.enabled = hdr;
+        frame.effects.display.mode = if hdr {
+            viewport_lib::PipelineMode::Hdr
+        } else {
+            viewport_lib::PipelineMode::Direct
+        };
         frame.effects.lighting.lights = Vec::new();
         frame.effects.lighting.hemisphere_intensity = intensity;
         renderer.render_offscreen(&device, &queue, &frame, 64, 64)
@@ -655,8 +659,8 @@ fn bloom_firefly_cap_bounds_blob_size() {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = true;
-    frame.effects.post_process.bloom = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+    frame.effects.post_process.bloom.enabled = true;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
@@ -672,10 +676,10 @@ fn bloom_firefly_cap_bounds_blob_size() {
             .count()
     };
 
-    frame.effects.post_process.bloom_max_brightness = f32::MAX;
+    frame.effects.post_process.bloom.max_brightness = f32::MAX;
     let uncapped = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
-    frame.effects.post_process.bloom_max_brightness = 4.0;
+    frame.effects.post_process.bloom.max_brightness = 4.0;
     let capped = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
     let (u, c) = (bright_pixels(&uncapped), bright_pixels(&capped));
@@ -688,4 +692,3 @@ fn bloom_firefly_cap_bounds_blob_size() {
         "capped bloom blob should stay small; got {c} bright pixels"
     );
 }
-

@@ -15,7 +15,17 @@ use ::winit::window::{Window, WindowAttributes, WindowId};
 use crate::interaction::input::adapters::from_winit;
 use crate::interaction::input::{ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
-use crate::{FrameData, OrbitCameraController, OverlayFrame};
+use crate::{ExposureMode, FrameData, OrbitCameraController, OverlayFrame};
+
+/// Auto-fill the auto-exposure `dt` from the frame time so smooth adaptation
+/// (`dt > 0`) works out of the box under the continuous-frame runner. Consumers
+/// that render only when dirty pass `dt = 0` themselves (the snap default) and
+/// never reach this path.
+fn auto_fill_exposure_dt(frame: &mut FrameData, dt: f32) {
+    if let ExposureMode::Automatic(ref mut auto) = frame.effects.display.exposure.mode {
+        auto.dt = dt;
+    }
+}
 
 /// When the runner asks for the next frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -633,6 +643,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                         for inject in injects {
                             inject(frame);
                         }
+                        auto_fill_exposure_dt(frame, dt);
                     });
                 } else {
                     state
@@ -642,6 +653,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                             for inject in injects {
                                 inject(frame);
                             }
+                            auto_fill_exposure_dt(frame, dt);
                         });
                 }
 

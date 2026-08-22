@@ -153,9 +153,12 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                 _t.kind = LightKind::Point {
                     position: [0.0, 3.0, 3.0],
                     range: 15.0,
+                    radius: 0.1,
                 };
                 _t.colour = [1.0, 0.9, 0.7];
-                _t.intensity = 2.0;
+                // Candela-scale: inverse-square falloff means intensity ~= E * d^2,
+                // so lighting spheres a few units away needs tens, not single digits.
+                _t.intensity = 30.0;
                 _t
             });
         }
@@ -168,9 +171,10 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     range: 20.0,
                     inner_angle: 0.25,
                     outer_angle: 0.45,
+                    radius: 0.1,
                 };
                 _t.colour = [0.8, 0.95, 1.0];
-                _t.intensity = 3.0;
+                _t.intensity = 70.0;
                 _t
             });
         }
@@ -211,7 +215,9 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                         // Intensity
                         ui.horizontal(|ui| {
                             ui.label("Intensity:");
-                            ui.add(egui::Slider::new(&mut src.intensity, 0.0..=10.0));
+                            // Wide range: directional reads in single digits (lux-like),
+                            // but point/spot need tens under inverse-square (candela-like).
+                            ui.add(egui::Slider::new(&mut src.intensity, 0.0..=100.0));
                         });
 
                         // Kind-specific params
@@ -228,7 +234,9 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                                     ui.add(egui::DragValue::new(&mut direction[2]).speed(0.02));
                                 });
                             }
-                            LightKind::Point { position, range } => {
+                            LightKind::Point {
+                                position, range, ..
+                            } => {
                                 ui.label("Position:");
                                 ui.horizontal(|ui| {
                                     ui.label("X:");
@@ -249,6 +257,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                                 range,
                                 inner_angle,
                                 outer_angle,
+                                ..
                             } => {
                                 ui.label("Position:");
                                 ui.horizontal(|ui| {

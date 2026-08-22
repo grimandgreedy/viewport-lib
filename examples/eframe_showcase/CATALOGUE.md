@@ -670,4 +670,26 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 **Sidebar:** Per-range materials toggle; body metallic slider; spin toggle.
 
+---
+
+## 57. Photometric Lighting  (`showcase_57_photometric_lighting.rs`)
+
+**Demos:** The light-authoring and camera side of the photometric pipeline, in one scene with three sub-tabs. **Units & Presets** authors lights in real units - directional in **lux** (`Lux`), bulbs in **lumens** -> candela (`Lumen`/`Candela`) - and picks a sky preset (full daylight down to full moon, a ~400,000x range) plus an optional indoor bulb; auto-exposure adapts every preset to mid-grey, or a fixed daylight camera exposes daylight and leaves dimmer presets dark. **Falloff** recedes a row of identical spheres from a punctual light so the physical inverse-square attenuation reads directly: `intensity`, `range` (reach, not brightness, windowed to zero and culled beyond), and `radius` (source size, near-clamp), with point/spot/directional selectable. **Exposure** views one lit scene under the three `ExposureMode`s - Manual EV, Physical camera (aperture/shutter/ISO through the camera triangle), and Automatic (GPU-metered histogram + adaptation) - with the resulting EV100 read out.
+
+**Uses:** `Lux` / `Candela` / `Lumen` and the `directional_lux` / `point_lumens` constructors, `ExposureSettings` / `ExposureMode` / `AutoExposure`, `LightKind::Point` / `Spot` / `Directional` (with `radius`), `LightingSettings`, `primitives::sphere`, `Material`, `Scene`.
+
+**Sidebar:** Sub-tab selector (Units & Presets / Falloff / Exposure); per-sub controls (sky and bulb presets + auto-exposure toggle; light type / intensity / range / radius / height / hemisphere fill; scene brightness / compensation / exposure mode + per-mode controls + EV readout).
+
+**Drift:** Interim neutral exposure (EV 0 maps to a `1.0` multiplier) and the abstract "scene brightness" in the Exposure sub are temporary until photometric units are pinned; the auto-exposure EV readout is GPU-metered (not surfaced in the panel).
+
+---
+
+## 58. Physically-Based Surfaces  (`showcase_58_physically_based_surfaces.rs`)
+
+**Demos:** How surfaces turn light into pixels, in two sub-tabs. **Shading Parity** puts a PBR row and a Blinn-Phong row of spheres under one directional light, sharing per-column roughness: because both carry the `albedo/pi` diffuse normalisation, the rows read at the same lightness column for column, so switching `shading_model` no longer changes brightness - only the highlight shape differs (Phong keeps its energy-bounded Blinn lobe). **Emissive & IBL** shows the two sources that carry luminance rather than illuminance: an emissive nits ladder (20 -> 20,000, glowing surfaces that bloom past the white point) and an image-based environment whose `EnvironmentSettings::intensity` is an absolute nits scale driving the sky, its ambient, and a chrome sphere's reflection, with auto-exposure re-balancing as either changes.
+
+**Uses:** `Material` with `ShadingModel::Pbr` / `Phong`, `Material::emissive` (nits), `EnvironmentSettings`, `upload_environment_map`, `ExposureSettings` / `AutoExposure`, `LightSource` / `directional_lux`, `LightingSettings`, `primitives::sphere`, `Scene`.
+
+**Sidebar:** Sub-tab selector (Shading Parity / Emissive & IBL); per-sub controls (light intensity / hemisphere fill / PBR metallic; emissive ladder readout + environment intensity + skybox toggle).
+
 **Drift:** None.

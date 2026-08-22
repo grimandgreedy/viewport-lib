@@ -143,7 +143,7 @@ fn submesh_materials_split_across_hdr_and_oit() {
     green.base_colour = [0.0, 1.0, 0.0];
     green.alpha_mode = AlphaMode::Blend;
     let mut frame = submesh_frame(mesh_id, Some(vec![red, green]));
-    frame.effects.post_process.enabled = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
     let pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert!(

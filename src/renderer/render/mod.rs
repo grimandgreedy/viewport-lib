@@ -367,7 +367,7 @@ impl ViewportRenderer {
     ///
     /// This is the HDR counterpart of
     /// [`prepare_ldr_dyn_res`](Self::prepare_ldr_dyn_res) for use when
-    /// `frame.effects.post_process.enabled` is `true`.
+    /// `frame.effects.display.mode` is `PipelineMode::Hdr`.
     ///
     /// Internally this method:
     /// 1. Calls [`prepare`](Self::prepare) to upload uniforms and run the shadow pass.
@@ -498,7 +498,7 @@ impl ViewportRenderer {
             }
         }
         // Shadow atlas viewer overlay.
-        if frame.effects.show_shadow_atlas {
+        if frame.effects.debug.show_shadow_atlas {
             render_pass.set_pipeline(&self.resources.shadow.atlas_viewer_pipeline);
             render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);
@@ -530,9 +530,9 @@ impl ViewportRenderer {
     /// Unified prepare step for the eframe `CallbackTrait::prepare` method.
     ///
     /// Replaces manual `prepare` + `prepare_ldr_dyn_res` or `prepare_hdr_callback`
-    /// calls. Dispatches internally based on `frame.effects.post_process.enabled`:
+    /// calls. Dispatches internally based on `frame.effects.display.mode`:
     ///
-    /// - HDR path (`post_process.enabled = true`): runs the full HDR pipeline (OIT,
+    /// - HDR path (`display.mode = PipelineMode::Hdr`): runs the full HDR pipeline (OIT,
     ///   EDL, tone-map) and returns the resulting `CommandBuffer` for eframe to
     ///   submit before the egui render pass.
     /// - LDR path: calls `prepare`, and if dynamic resolution is active, encodes the
@@ -546,7 +546,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        if frame.effects.post_process.enabled {
+        if frame.effects.display.is_hdr() {
             let cb = self.prepare_hdr_callback(device, queue, frame);
             vec![cb]
         } else {
@@ -575,7 +575,7 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) {
         let vp_idx = frame.camera.viewport_index;
-        if frame.effects.post_process.enabled {
+        if frame.effects.display.is_hdr() {
             if self
                 .viewport_slots
                 .get(vp_idx)
@@ -626,7 +626,7 @@ impl ViewportRenderer {
     /// High-level HDR render method. Handles the full post-processing pipeline:
     /// scene -> HDR texture -> (bloom) -> (SSAO) -> tone map -> output_view.
     ///
-    /// When `frame.post_process.enabled` is false, falls back to a simple LDR render
+    /// When `frame.effects.display.mode` is `PipelineMode::Direct`, falls back to a simple LDR render
     /// pass targeting `output_view` directly.
     ///
     /// Returns a `CommandBuffer` ready to submit.
@@ -772,7 +772,7 @@ impl ViewportRenderer {
             self.ts_period = queue.get_timestamp_period();
         }
 
-        let cmd_buf = if !frame.effects.post_process.enabled {
+        let cmd_buf = if !frame.effects.display.is_hdr() {
             self.render_frame_ldr(
                 device,
                 queue,

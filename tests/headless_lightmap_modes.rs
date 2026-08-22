@@ -106,6 +106,12 @@ fn lightmap_ao_mode_darkens_object() {
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
         frame.effects.lighting.lights = vec![];
+        // Modest ambient and a fixed neutral exposure so the AO multiply on the
+        // ambient term reads directly, independent of the library's photometric
+        // defaults (a large daylight hemisphere fill and auto-exposure, which
+        // would re-brighten the occluded box and mask the darkening).
+        frame.effects.lighting.hemisphere_intensity = 0.5;
+        frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
@@ -214,4 +220,3 @@ fn lightmap_set_clear_lifecycle() {
     );
     assert!(matches!(err, Err(ViewportError::StaleHandle { .. })));
 }
-

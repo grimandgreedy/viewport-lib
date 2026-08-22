@@ -348,8 +348,11 @@ pub struct SingleLightUniform {
     /// Used by the lit pass to map fragment distance back into the
     /// normalised [0, 1] depth that was written into the cubemap.
     pub point_shadow_near: f32, //  4 bytes, offset 128
+    /// Source radius (world units) for point/spot lights: clamps the
+    /// inverse-square falloff near the light and sizes a finite emitter.
+    pub radius: f32, //  4 bytes, offset 132
     /// Tail padding to reach 144-byte struct size.
-    pub _pad: [f32; 3], // 12 bytes, offset 132 : total 144
+    pub _pad: [f32; 2], //  8 bytes, offset 136 : total 144
 }
 
 /// GPU-side lights header uniform (binding 3 of group 0).

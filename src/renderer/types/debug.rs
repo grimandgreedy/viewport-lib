@@ -3,6 +3,7 @@
 /// Selects which intermediate quantity to display in a debug channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DebugQuantity {
     /// Constant black (0.0).
     #[default]
@@ -95,6 +96,7 @@ impl DebugQuantity {
 /// How the debug channel value is composited over the normal render.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DebugOutputMode {
     /// Fragment color is entirely replaced by the debug output.
     #[default]
@@ -116,6 +118,7 @@ pub enum DebugOutputMode {
 /// expect a one-off hitch on the frame the flag flips.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DebugVis {
     /// Whether debug visualization is active.
     pub active: bool,
@@ -184,6 +187,7 @@ impl DebugVis {
 /// Viewport corner where the shadow atlas viewer overlay is anchored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AtlasViewerCorner {
     /// Top-left corner.
     TopLeft,

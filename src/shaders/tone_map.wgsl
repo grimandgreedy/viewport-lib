@@ -35,6 +35,18 @@ struct ToneMapUniform {
 // shows, so they are skipped there.
 @group(0) @binding(8) var foreground_depth: texture_depth_2d;
 
+// Exposure state buffer (see exposure.wgsl / ExposureState in Rust). `exposure`
+// is the pre-tone-map linear multiplier, written CPU-side for manual/physical
+// exposure or by the auto-exposure resolve compute pass. Replaces the old
+// `ToneMapUniform.exposure` scalar so every exposure mode shares one path.
+struct ExposureState {
+    exposure:   f32,
+    current_ev: f32,
+    target_ev:  f32,
+    adapting:   f32,
+}
+@group(0) @binding(9) var<storage, read> exposure_state: ExposureState;
+
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
     @location(0)       uv:  vec2<f32>,
@@ -187,8 +199,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = colour * max(0.0, lic_factor);
     }
 
-    // Pre-tone-mapping exposure.
-    colour = colour * params.exposure;
+    // Pre-tone-mapping exposure (from the exposure state buffer).
+    colour = colour * exposure_state.exposure;
 
     // Tone mapping.
     if params.mode == 0u {

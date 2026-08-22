@@ -45,29 +45,31 @@ mod hidden_tests;
 mod lod_instance_tests;
 
 pub use self::types::{
-    AnimTrack, AtlasViewerCorner, BorderMode, CameraFrame, ClipObject, ClipShape,
-    ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode, DebugQuantity,
-    DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, EffectsFrame,
-    EmitterConfig, EnvironmentMap, ExternalInstancesItem, FilterMode, ForceField, ForegroundPass,
-    ForegroundProjection, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem,
-    GlyphItem, GlyphSetRefItem, GlyphType, GpuImplicitItem, GpuMarchingCubesJob,
-    GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
-    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
-    LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LineJoin, LoadingBarAnchor,
-    LoadingBarItem, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OverlayAnimation, OverlayAnimations,
-    OverlayEasing, OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem,
-    OverlayRectItem, OverlayShape, OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE,
-    ParticleMeshAlign, PathTrack, PickId, PointCloudItem, PointCloudRefItem, PointRenderMode,
-    PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera,
-    RepeatMode, RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
-    ScalarBarOrientation, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
-    SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer, SliceAxis,
-    SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
-    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, StrokePattern, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem,
-    TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem,
-    TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem,
+    AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode, CameraFrame, Candela,
+    ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind, ContactShadowSettings,
+    CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode,
+    DecalItem, DecalProjection, DisplaySettings, DofSettings, EdlSettings, EffectsFrame,
+    EmitterConfig, EnvironmentSettings, ExposureMode, ExposureReadback, ExposureSettings,
+    ExternalInstancesItem, FilterMode, ForceField, ForegroundPass, ForegroundProjection, FrameData,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType,
+    GpuImplicitItem, GpuMarchingCubesJob, GpuParticleSystemItem, GradientStop, GroundPlane,
+    GroundPlaneMode, ImageAnchor, ImageSliceItem, IndirectLightSource, InteractionFrame,
+    LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource,
+    LightingPosture, LightingSettings, LineCap, LineJoin, LoadingBarAnchor, LoadingBarItem, Lumen,
+    Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
+    OverlayFrame, OverlayImageItem, OverlayPolylineItem, OverlayRectItem, OverlayShape,
+    OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack,
+    PickId, PipelineMode, PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode,
+    PolylineCap, PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode,
+    RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
+    ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape,
+    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
+    SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
+    StrokePattern, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem,
+    TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem,
+    VelocityDist, ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem,
     VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
@@ -620,6 +622,13 @@ pub struct ViewportRenderer {
     /// render pass cannot host the cleared-depth foreground pass, so
     /// submitted foreground items are reported once instead of every frame.
     foreground_paint_to_warned: std::sync::atomic::AtomicBool,
+    /// One-shot latch: item-type plugins are HDR-only, so plugin items submitted
+    /// while the LDR pipeline (`PipelineMode::Direct`) is active are dropped and
+    /// reported once instead of silently.
+    ldr_plugin_items_warned: std::sync::atomic::AtomicBool,
+    /// One-shot latch: transparent volume meshes need the OIT pass, which only
+    /// exists in the HDR pipeline, so on the LDR pipeline they are reported once.
+    ldr_volume_transparency_warned: std::sync::atomic::AtomicBool,
     /// Snapshot of the written mask for the queries currently resolved into the
     /// staging buffer, carried alongside the delayed readback so the reader
     /// knows which slots are valid.
@@ -952,6 +961,8 @@ impl ViewportRenderer {
             frame_main_buffer_binds: std::sync::atomic::AtomicU32::new(0),
             frame_main_draw_commands: std::sync::atomic::AtomicU32::new(0),
             foreground_paint_to_warned: std::sync::atomic::AtomicBool::new(false),
+            ldr_plugin_items_warned: std::sync::atomic::AtomicBool::new(false),
+            ldr_volume_transparency_warned: std::sync::atomic::AtomicBool::new(false),
             ts_pending_mask: 0,
             degradation_tier: 0,
             degradation_shadows_skipped: false,
@@ -987,6 +998,57 @@ impl ViewportRenderer {
     /// `None` until a request has been served.
     pub fn cluster_stats(&self) -> Option<crate::resources::gpu::clustered::ClusterStats> {
         self.last_cluster_stats
+    }
+
+    /// Read back the current exposure state for a viewport (a blocking GPU
+    /// map). Under [`ExposureMode::Automatic`] this exposes the metered target
+    /// EV, the adapted EV, and whether adaptation is still settling, for a UI
+    /// readout or to decide whether to request another redraw while the
+    /// "eye" is still adjusting (`dt > 0`).
+    ///
+    /// Opt-in diagnostic: it copies a tiny buffer and blocks on a device poll,
+    /// so call it for UI, not in the hot path. Returns `None` for an unknown
+    /// viewport or before its HDR pipeline has produced a frame.
+    pub fn exposure_state(
+        &self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: ViewportId,
+    ) -> Option<crate::renderer::types::ExposureReadback> {
+        let slot = self.viewport_slots.get(id.0)?;
+        let hdr = slot.hdr.as_ref()?;
+        let size = std::mem::size_of::<crate::resources::gpu::exposure::ExposureState>() as u64;
+        let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("exposure_readback_staging"),
+            size,
+            usage: crate::gpu::BufferUsages::COPY_DST | crate::gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("exposure_readback_encoder"),
+        });
+        encoder.copy_buffer_to_buffer(&hdr.exposure_state_buf, 0, &staging, 0, size);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        slice.map_async(crate::gpu::MapMode::Read, |_| {});
+        let _ = device.poll(crate::gpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
+        });
+        let out = {
+            let data = slice.get_mapped_range();
+            let st: &crate::resources::gpu::exposure::ExposureState =
+                &bytemuck::cast_slice(&data)[0];
+            crate::renderer::types::ExposureReadback {
+                exposure: st.exposure,
+                current_ev: st.current_ev,
+                target_ev: st.target_ev,
+                adapting: st.adapting != 0.0,
+            }
+        };
+        staging.unmap();
+        Some(out)
     }
 
     /// Disable GPU-driven culling, reverting to the direct draw path.
@@ -2856,7 +2918,7 @@ impl ViewportRenderer {
             }
         }
         // Shadow atlas viewer overlay.
-        if frame.effects.show_shadow_atlas {
+        if frame.effects.debug.show_shadow_atlas {
             render_pass.set_pipeline(&self.resources.shadow.atlas_viewer_pipeline);
             render_pass.set_bind_group(0, &self.resources.shadow.atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);

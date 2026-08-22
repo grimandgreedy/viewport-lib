@@ -2,8 +2,12 @@
 
 ## [Unreleased]
 
-### Features
+Photometric lighting units land this cycle (directional in lux, point/spot in
+candela, emissive/IBL in nits, plus a physical-camera exposure model). Alongside
+them the per-frame effects configuration is regrouped by concern and the default
+lighting posture returns to a faithful "colour is data" baseline.
 
+### Features
 - **Submesh material ranges** - one mesh can draw with several materials.
   `MeshData::submeshes` partitions the index buffer into ranges;
   `SceneRenderItem::submesh_materials` (or `Scene::set_submesh_materials` on a
@@ -45,7 +49,6 @@
   path) encode markedly faster. Output is unchanged.
 
 ### Breaking changes
-
 - **`DeviceResources::update_gizmo_mesh` and `update_gizmo_uniform` are gone.**
   The transform gizmo no longer renders through a dedicated 3D pipeline. It is
   now generated as 2D overlay primitives each frame from
@@ -71,8 +74,51 @@
   the same fix. `ViewportRenderer::REQUIRED_STORAGE_BUFFERS_PER_STAGE` exposes
   the required count.
 
-### Fixes
+- **HDR display transform grouped under `effects.display`.** `effects.exposure`
+  moves to `effects.display.exposure`; `effects.post_process.tone_mapping` becomes
+  `effects.display.operator`; and the `effects.post_process.enabled` bool becomes
+  `effects.display.mode: PipelineMode` (`Hdr` | `Direct`). `PipelineMode::Hdr` is
+  the default and the only first-class pipeline; `Direct` is the constrained LDR
+  passthrough (host-owned passes / cheap inline), which drops all post effects,
+  OIT, the skybox, exposure, tone mapping, and item-type plugins.
+- **`PostProcessSettings` effects are nested.** `bloom*`, `dof_*`,
+  `contact_shadow*`, and `edl_*` become `bloom`, `dof`, `contact_shadows`, and
+  `edl` sub-structs (e.g. `post_process.bloom_threshold` ->
+  `post_process.bloom.threshold`, `post_process.dof_enabled` ->
+  `post_process.dof.enabled`). `ssao`, `fxaa`, and `ssaa_factor` stay flat.
+- **Shadow settings split out of `LightingSettings`.** The `shadow_*` fields group
+  into `lighting.shadows: ShadowSettings` and drop the prefix
+  (`lighting.shadow_filter` -> `lighting.shadows.filter`, `lighting.shadows_enabled`
+  -> `lighting.shadows.enabled`).
+- **Clip and debug fields grouped.** `effects.clip_objects` /
+  `effects.cap_fill_enabled` -> `effects.clip.objects` /
+  `effects.clip.cap_fill_enabled`; `effects.show_shadow_atlas` /
+  `atlas_viewer_*` -> `effects.debug.*`.
+- **`EnvironmentMap` renamed to `EnvironmentSettings`** (the texture handle already
+  lives in `EnvironmentMapId`).
+- **`ScatterSettings` is now scene-global** (`SceneEffects.scatter`), no longer on
+  `ViewportEffects`.
+- **Faithful default lighting posture.** The default `ShadingModel` is `Phong`
+  again, the default `ExposureSettings` is neutral `Manual { ev: 0 }`, and the
+  default light intensity and hemisphere fill are modest values that read at EV 0
+  ("colour is data"). Opt into the cinematic daylight look with
+  `EffectsFrame::with_posture(LightingPosture::PhysicalDaylight)` (see New). Photometric
+  magnitudes (`Lux`/`Candela`/`Lumen`) remain available and are unchanged.
+- **Punctual falloff is now physical inverse-square.** Point and spot lights use
+  `1/d^2` (clamped by source `radius`) with a Karis reach window instead of the old
+  `(1 - d/range)^2`, matching the path tracer. `range` is reach, not brightness;
+  `LightKind::Point`/`Spot` gain a `radius`. Point/spot lights authored against the
+  old curve need re-tuning.
+- **Config structs now derive `serde` uniformly** under the `serde` feature.
 
+### New
+- **`LightingPosture` + `EffectsFrame::with_posture` / `FrameData::with_posture`.**
+  One call sets `effects.lighting` and the exposure on `effects.display` as a
+  matched pair, so light magnitudes and the camera cannot disagree. `Faithful` (the
+  default) is nominal magnitudes at neutral exposure; `PhysicalDaylight` is
+  `LightingSettings::daylight()` + `ExposureSettings::automatic()`.
+
+### Fixes
 - **Scene captures could permanently strand a streaming consumer's mesh
   bindings** - `bake_light_probes`, `capture_equirect`, `capture_reflection_probe(s)`,
   and `bake_light_probe_volume` ran full internal render passes that advanced

@@ -432,6 +432,7 @@ impl App {
             1 => LightKind::Point {
                 position: self.point_position,
                 range: self.point_range,
+                radius: 0.1,
             },
             2 => LightKind::Spot {
                 position: self.spot_position,
@@ -439,18 +440,26 @@ impl App {
                 range: self.spot_range,
                 inner_angle: self.spot_inner_deg.to_radians(),
                 outer_angle: self.spot_outer_deg.to_radians(),
+                radius: 0.1,
             },
             _ => LightKind::Directional {
                 direction: self.dir_direction,
             },
         };
         light.colour = self.light_colour;
-        light.intensity = self.light_intensity;
+        // Normalised 0..1 slider scaled into the selected kind's unit: directional
+        // is illuminance (direct); point/spot are candela with 1/d^2 falloff, so
+        // they need a much larger number to read at the light's throw distance.
+        light.intensity = match self.light_kind {
+            1 => self.light_intensity * 40.0,
+            2 => self.light_intensity * 120.0,
+            _ => self.light_intensity,
+        };
         s.lights = vec![light];
-        s.shadows_enabled = self.shadows_enabled;
-        s.shadow_cascade_count = self.shadow_cascade_count;
-        s.shadow_filter = self.shadow_filter;
-        s.shadow_atlas_resolution = self.shadow_atlas_resolution;
+        s.shadows.enabled = self.shadows_enabled;
+        s.shadows.cascade_count = self.shadow_cascade_count;
+        s.shadows.filter = self.shadow_filter;
+        s.shadows.atlas_resolution = self.shadow_atlas_resolution;
         s.hemisphere_intensity = self.hemisphere_intensity;
         s
     }
@@ -764,7 +773,11 @@ impl eframe::App for App {
             fd.effects.lighting = self.build_lighting();
             fd.effects.compute_filter_items = filters;
             // HDR path (post-process + OIT transparency) vs LDR inline path.
-            fd.effects.post_process.enabled = self.hdr;
+            fd.effects.display.mode = if self.hdr {
+                viewport_lib::PipelineMode::Hdr
+            } else {
+                viewport_lib::PipelineMode::Direct
+            };
             fd.viewport.wireframe_mode = self.wireframe;
             fd.viewport.show_axes_indicator = true;
             fd.interaction.outline_selected = !self.selection.is_empty();

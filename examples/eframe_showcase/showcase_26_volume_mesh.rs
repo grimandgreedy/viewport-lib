@@ -1200,7 +1200,7 @@ pub(crate) fn vm_collect_scene_items(
 pub(crate) fn submit_vm_items(app: &mut App, fd: &mut FrameData) {
     if let Some(item) = app.vm_active_volume_item() {
         if item.transparency.is_some() {
-            fd.effects.post_process.enabled = true;
+            fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         }
         fd.scene.volume_meshes.push(item);
     }
@@ -1208,6 +1208,6 @@ pub(crate) fn submit_vm_items(app: &mut App, fd: &mut FrameData) {
 
 pub(crate) fn vm_configure_frame(app: &App, fd: &mut FrameData) {
     fd.viewport.wireframe_mode = app.vm_state.wireframe;
-    fd.effects.cap_fill_enabled = false;
-    fd.effects.clip_objects.extend(app.vm_clip_objects());
+    fd.effects.clip.cap_fill_enabled = false;
+    fd.effects.clip.objects.extend(app.vm_clip_objects());
 }

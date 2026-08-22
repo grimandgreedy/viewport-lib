@@ -35,7 +35,8 @@ impl ViewportRenderer {
         // cameras with scenes deeper than 20 units, since shadow coverage
         // capped at that distance and casters past it dropped out of every
         // cascade.
-        let (shadow_center, shadow_extent) = if let Some(extent) = lighting.shadow_extent_override {
+        let (shadow_center, shadow_extent) = if let Some(extent) = lighting.shadows.extent_override
+        {
             (glam::Vec3::ZERO, extent)
         } else {
             let camera_far = frame.camera.render_camera.far.max(1.0);
@@ -69,7 +70,9 @@ impl ViewportRenderer {
                     );
                     light_proj * light_view
                 }
-                LightKind::Point { position, range } => {
+                LightKind::Point {
+                    position, range, ..
+                } => {
                     let pos = glam::Vec3::from(*position);
                     let to_center = (shadow_center - pos).normalize();
                     let light_up = if to_center.z.abs() > 0.99 {
@@ -189,6 +192,10 @@ impl ViewportRenderer {
                 light.kind = crate::renderer::types::LightKind::Point {
                     position: centre,
                     range,
+                    // Soft emitter: a volume is not a point source, so give it a
+                    // radius tied to its size to keep the inverse-square falloff
+                    // from spiking right at the centre.
+                    radius: extent.max(0.1),
                 };
                 light.colour = colour;
                 light.intensity = intensity;
@@ -224,9 +231,14 @@ impl ViewportRenderer {
                     spot_direction: [0.0, -1.0, 0.0],
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
-                    _pad: [0.0; 3],
+                    radius: 0.0,
+                    _pad: [0.0; 2],
                 },
-                LightKind::Point { position, range } => SingleLightUniform {
+                LightKind::Point {
+                    position,
+                    range,
+                    radius,
+                } => SingleLightUniform {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
                     light_type: 1,
@@ -239,7 +251,8 @@ impl ViewportRenderer {
                     spot_direction: [0.0, -1.0, 0.0],
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
-                    _pad: [0.0; 3],
+                    radius: *radius,
+                    _pad: [0.0; 2],
                 },
                 LightKind::Spot {
                     position,
@@ -247,6 +260,7 @@ impl ViewportRenderer {
                     range,
                     inner_angle,
                     outer_angle,
+                    radius,
                 } => SingleLightUniform {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
@@ -260,7 +274,8 @@ impl ViewportRenderer {
                     spot_direction: *direction,
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
-                    _pad: [0.0; 3],
+                    radius: *radius,
+                    _pad: [0.0; 2],
                 },
             }
         }
@@ -294,7 +309,9 @@ impl ViewportRenderer {
             .into_iter()
             .filter(|l| match l.kind {
                 LightKind::Directional { .. } => true,
-                LightKind::Point { position, range } => {
+                LightKind::Point {
+                    position, range, ..
+                } => {
                     let keep = !cull_frustum.cull_sphere(glam::Vec3::from(position), range);
                     if !keep {
                         frustum_culled += 1;
@@ -352,7 +369,9 @@ impl ViewportRenderer {
                 .map(|(_, l)| {
                     let proximity = match l.kind {
                         LightKind::Directional { .. } => 1.0,
-                        LightKind::Point { position, range }
+                        LightKind::Point {
+                            position, range, ..
+                        }
                         | LightKind::Spot {
                             position, range, ..
                         } => {
@@ -389,9 +408,9 @@ impl ViewportRenderer {
         const POINT_SHADOW_NEAR: f32 = 0.1;
         let mut point_shadow_faces: Vec<PointShadowFace> = Vec::new();
         if matches!(
-            lighting.point_shadow_mode,
+            lighting.shadows.point_shadow_mode,
             crate::renderer::types::PointShadowMode::Cube
-        ) && lighting.shadows_enabled
+        ) && lighting.shadows.enabled
         {
             shadow.point_shadow_frame = shadow.point_shadow_frame.wrapping_add(1);
             shadow
@@ -411,7 +430,9 @@ impl ViewportRenderer {
                 .enumerate()
                 .filter(|(_, src)| src.cast_shadows)
                 .filter_map(|(i, src)| match src.kind {
-                    LightKind::Point { position, range } => {
+                    LightKind::Point {
+                        position, range, ..
+                    } => {
                         let pos = glam::Vec3::from(position);
                         let score = pos.distance(eye) / src.importance.max(0.001);
                         Some((i, pos, range, score))
@@ -497,8 +518,8 @@ impl ViewportRenderer {
         // Cascades are fit to frame.camera, not to any per-viewport camera, so
         // every split viewport shares one shadow atlas.
         // -------------------------------------------------------------------
-        let cascade_count = lighting.shadow_cascade_count.clamp(1, 4) as usize;
-        let atlas_res = lighting.shadow_atlas_resolution.max(64);
+        let cascade_count = lighting.shadows.cascade_count.clamp(1, 4) as usize;
+        let atlas_res = lighting.shadows.atlas_resolution.max(64);
         let tile_size = atlas_res / 2;
 
         let dist = frame.camera.render_camera.distance;
@@ -594,8 +615,8 @@ impl ViewportRenderer {
             shadow.last_cascade_count = effective_cascade_count as u32;
             shadow.last_cascade_splits = cascade_split_distances;
             shadow.last_shadow_extent = shadow_extent;
-            shadow.last_shadow_atlas_resolution = lighting.shadow_atlas_resolution.max(64);
-            shadow.last_contact_shadow_active = frame.effects.post_process.contact_shadows;
+            shadow.last_shadow_atlas_resolution = lighting.shadows.atlas_resolution.max(64);
+            shadow.last_contact_shadow_active = frame.effects.post_process.contact_shadows.enabled;
         }
 
         // Atlas tile layout (2x2 grid):
@@ -636,14 +657,14 @@ impl ViewportRenderer {
                 // through the atlas rects, which shrink when it is lowered.
                 atlas_size: crate::resources::SHADOW_ATLAS_SIZE as f32,
                 // Tier values match the dispatch in csm.wgsl.
-                shadow_filter: match lighting.shadow_filter {
+                shadow_filter: match lighting.shadows.filter {
                     ShadowFilter::Pcf => 0,
                     ShadowFilter::Pcss => 1,
                     ShadowFilter::Hard => 2,
                     ShadowFilter::PcfHigh => 3,
                     ShadowFilter::PcssFast => 4,
                 },
-                pcss_light_radius: lighting.pcss_light_radius,
+                pcss_light_radius: lighting.shadows.pcss_light_radius,
                 atlas_rects,
             };
             queue.write_buffer(
@@ -703,8 +724,8 @@ impl ViewportRenderer {
 
         let lights_uniform = LightsUniform {
             count: light_count,
-            shadow_bias: lighting.shadow_bias,
-            shadows_enabled: if lighting.shadows_enabled { 1 } else { 0 },
+            shadow_bias: lighting.shadows.bias,
+            shadows_enabled: if lighting.shadows.enabled { 1 } else { 0 },
             debug_vis_mode,
             sky_colour: lighting.sky_colour,
             hemisphere_intensity: lighting.hemisphere_intensity,
@@ -775,7 +796,9 @@ impl ViewportRenderer {
             let mut light_far = 0.0f32;
             for l in combined_lights.iter() {
                 let (position, range) = match l.kind {
-                    LightKind::Point { position, range } => (position, range),
+                    LightKind::Point {
+                        position, range, ..
+                    } => (position, range),
                     LightKind::Spot {
                         position, range, ..
                     } => (position, range),
@@ -850,7 +873,9 @@ impl ViewportRenderer {
                                 view_mat.transform_vector3(world_dir).normalize_or_zero();
                             (glam::Vec3::ZERO, f32::INFINITY, 0u32, view_dir, 1.0)
                         }
-                        LightKind::Point { position, range } => {
+                        LightKind::Point {
+                            position, range, ..
+                        } => {
                             let view_pos = view_mat.transform_point3(glam::Vec3::from(position));
                             (view_pos, range, 1u32, glam::Vec3::ZERO, 1.0)
                         }

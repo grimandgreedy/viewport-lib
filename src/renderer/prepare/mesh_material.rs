@@ -197,7 +197,7 @@ pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
             crate::scene::material::AlphaMode::Mask(_) => 1,
             _ => 0,
         },
-        emissive: m.emissive,
+        emissive: m.emissive_nits(),
     }
 }
 

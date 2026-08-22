@@ -561,7 +561,7 @@ pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
     if !app.clipvol_state.built {
         return;
     }
-    fd.effects.clip_objects.extend(app.make_clip_objects());
+    fd.effects.clip.objects.extend(app.make_clip_objects());
     if app.clipvol_state.scene_mode == SceneMode::Volume {
         if let Some(vol) = app.make_clipvol_volume_item() {
             fd.scene.volumes.push(vol);

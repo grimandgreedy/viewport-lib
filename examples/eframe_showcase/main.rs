@@ -74,6 +74,8 @@ mod showcase_53_vertex_colours;
 mod showcase_54_custom_shading;
 mod showcase_55_foreground_pass;
 mod showcase_56_submesh_materials;
+mod showcase_57_photometric_lighting;
+mod showcase_58_physically_based_surfaces;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -242,6 +244,10 @@ fn main() -> eframe::Result {
                 cs_state: showcase_54_custom_shading::CustomShadingState::default(),
                 fg_state: showcase_55_foreground_pass::ForegroundState::default(),
                 submesh_state: showcase_56_submesh_materials::SubmeshState::default(),
+                lighting_state: showcase_57_photometric_lighting::PhotometricLightingState::default(
+                ),
+                surfaces_state:
+                    showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -312,6 +318,8 @@ enum ShowcaseMode {
     CustomShading,
     Foreground,
     SubmeshMaterials,
+    PhotometricLighting,
+    PhysicallyBasedSurfaces,
 }
 
 impl ShowcaseMode {
@@ -373,6 +381,8 @@ impl ShowcaseMode {
             Self::CustomShading => "54: Custom Shading Plugins",
             Self::Foreground => "55: Foreground Composite Pass",
             Self::SubmeshMaterials => "56: Submesh Materials",
+            Self::PhotometricLighting => "57: Photometric Lighting",
+            Self::PhysicallyBasedSurfaces => "58: Physically-Based Surfaces",
         }
     }
 }
@@ -561,6 +571,12 @@ pub(crate) struct App {
     pub(crate) cs_state: showcase_54_custom_shading::CustomShadingState,
     pub(crate) fg_state: showcase_55_foreground_pass::ForegroundState,
     pub(crate) submesh_state: showcase_56_submesh_materials::SubmeshState,
+
+    // --- Showcase 57: Photometric Lighting (units/presets + falloff + exposure) ---
+    pub(crate) lighting_state: showcase_57_photometric_lighting::PhotometricLightingState,
+
+    // --- Showcase 58: Physically-Based Surfaces (shading parity + emissive/IBL) ---
+    pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -766,6 +782,8 @@ impl eframe::App for App {
                     ShowcaseMode::CustomShading,
                     ShowcaseMode::Foreground,
                     ShowcaseMode::SubmeshMaterials,
+                    ShowcaseMode::PhotometricLighting,
+                    ShowcaseMode::PhysicallyBasedSurfaces,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -1561,6 +1579,17 @@ impl eframe::App for App {
                 {
                     ctx.request_repaint();
                 }
+                // ----- Exposure (59): keep repainting so exposure-control changes
+                // take effect and auto-exposure adaptation runs. Exposure lives in
+                // `EffectsFrame`, not the scene, so it never dirties the scene; the
+                // renderer is on-demand, so without a repaint request a slider change
+                // is dropped until something else re-renders. Auto-exposure smoothing
+                // also needs continuous frames.
+                if self.mode == ShowcaseMode::PhotometricLighting
+                    || self.mode == ShowcaseMode::PhysicallyBasedSurfaces
+                {
+                    ctx.request_repaint();
+                }
 
                 // ----- Vertex colours (53): drive the animated grid and apply
                 // paint strokes. Both go through `update_vertex_colours`, an
@@ -1638,7 +1667,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 56] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 58] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1695,6 +1724,8 @@ impl App {
             ShowcaseMode::CustomShading,
             ShowcaseMode::Foreground,
             ShowcaseMode::SubmeshMaterials,
+            ShowcaseMode::PhotometricLighting,
+            ShowcaseMode::PhysicallyBasedSurfaces,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -1835,6 +1866,8 @@ impl App {
             ShowcaseMode::CustomShading => !self.cs_state.built,
             ShowcaseMode::Foreground => !self.fg_state.built,
             ShowcaseMode::SubmeshMaterials => !self.submesh_state.built,
+            ShowcaseMode::PhotometricLighting => !self.lighting_state.built(),
+            ShowcaseMode::PhysicallyBasedSurfaces => !self.surfaces_state.built(),
             ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
             _ => false,
         };
@@ -2388,6 +2421,13 @@ impl App {
                     ..Camera::default()
                 };
             }
+            ShowcaseMode::PhotometricLighting => {
+                // Builds the active sub-scene and frames the camera for it.
+                self.build_photometric_lighting_scene(renderer);
+            }
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                self.build_physically_based_surfaces_scene(renderer);
+            }
             _ => {}
         }
     }
@@ -2504,6 +2544,12 @@ impl App {
             ShowcaseMode::SubmeshMaterials => {
                 showcase_56_submesh_materials::controls_submesh(self, ui)
             }
+            ShowcaseMode::PhotometricLighting => {
+                showcase_57_photometric_lighting::controls_photometric_lighting(self, ui)
+            }
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                showcase_58_physically_based_surfaces::controls_physically_based_surfaces(self, ui)
+            }
         }
     }
 }
@@ -2546,7 +2592,11 @@ impl App {
                         _t.kind = LightKind::Point {
                             position: [5.0, 5.0, 5.0],
                             range: 30.0,
+                            radius: 0.1,
                         };
+                        // Candela-scale key light: inverse-square over ~8 units to
+                        // the origin objects needs a large intensity to read.
+                        _t.intensity = 150.0;
                         _t
                     }]
                 } else {
@@ -2657,9 +2707,10 @@ impl App {
                         _t.kind = LightKind::Point {
                             position: [3.0, 3.0, 3.0],
                             range: 15.0,
+                            radius: 0.1,
                         };
                         _t.colour = [1.0, 0.9, 0.7];
-                        _t.intensity = 2.0;
+                        _t.intensity = 20.0;
                         // Warm fill only. With two hard casters the shadows
                         // overlap as a two-tone shape with a seam; one key
                         // caster plus non-casting fill is the intended
@@ -2671,8 +2722,8 @@ impl App {
                 let lighting = {
                     let mut _t = LightingSettings::default();
                     _t.lights = lights;
-                    _t.shadows_enabled = true;
-                    _t.shadow_filter = if self.pp_state.shadow_pcss {
+                    _t.shadows.enabled = true;
+                    _t.shadows.filter = if self.pp_state.shadow_pcss {
                         ShadowFilter::Pcss
                     } else {
                         ShadowFilter::Pcf
@@ -2707,9 +2758,10 @@ impl App {
                             _t.kind = LightKind::Point {
                                 position: [3.0, 3.0, 3.0],
                                 range: 15.0,
+                                radius: 0.1,
                             };
                             _t.colour = [1.0, 0.97, 0.93];
-                            _t.intensity = 2.0;
+                            _t.intensity = 20.0;
                             // Fill light for the normal-map highlights; not a
                             // shadow caster, so the directional's shadow stays
                             // a single clean shape.
@@ -2717,7 +2769,7 @@ impl App {
                             _t
                         },
                     ];
-                    _t.shadows_enabled = true;
+                    _t.shadows.enabled = true;
                     _t.hemisphere_intensity = 0.4;
                     _t.sky_colour = [1.0, 1.0, 1.0];
                     _t.ground_colour = [1.0, 1.0, 1.0];
@@ -2739,9 +2791,9 @@ impl App {
                         _t.intensity = 2.0;
                         _t
                     }];
-                    _t.shadows_enabled = true;
-                    _t.shadow_cascade_count = self.shd_state.cascade_count;
-                    _t.shadow_filter = if self.shd_state.pcss_on {
+                    _t.shadows.enabled = true;
+                    _t.shadows.cascade_count = self.shd_state.cascade_count;
+                    _t.shadows.filter = if self.shd_state.pcss_on {
                         ShadowFilter::Pcss
                     } else {
                         ShadowFilter::Pcf
@@ -2958,7 +3010,7 @@ impl App {
                         _t.intensity = 1.5;
                         _t
                     }];
-                    _t.shadows_enabled = true;
+                    _t.shadows.enabled = true;
                     _t.hemisphere_intensity = 0.3;
                     _t.sky_colour = [1.0, 1.0, 1.0];
                     _t.ground_colour = [0.3, 0.3, 0.3];
@@ -3337,7 +3389,7 @@ impl App {
                 let lighting = {
                     let mut _t = LightingSettings::default();
                     _t.lights = vec![sun];
-                    _t.shadows_enabled = self.svol_state.shadows_enabled;
+                    _t.shadows.enabled = self.svol_state.shadows_enabled;
                     _t.sky_colour = self.svol_state.sky_colour;
                     _t.ground_colour = self.svol_state.ground_colour;
                     _t.hemisphere_intensity = self.svol_state.hemisphere_intensity;
@@ -3411,6 +3463,24 @@ impl App {
                     0,
                     0,
                 )
+            }
+            ShowcaseMode::PhotometricLighting => {
+                let items = self
+                    .lighting_state
+                    .scene_mut()
+                    .collect_render_items(&Selection::new());
+                let lighting = self.lighting_state.lighting();
+                let sg = self.lighting_state.scene().version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
+            }
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                let items = self
+                    .surfaces_state
+                    .scene_mut()
+                    .collect_render_items(&Selection::new());
+                let lighting = self.surfaces_state.lighting();
+                let sg = self.surfaces_state.scene().version();
+                (items, Some(BG_COLOUR), lighting, sg, 0)
             }
         };
 
@@ -3510,13 +3580,13 @@ impl App {
         if self.mode == ShowcaseMode::BackfacePolicy {
             adv_clip_objects.extend(self.sa_clip_objects());
         }
-        fd.effects.clip_objects = adv_clip_objects;
+        fd.effects.clip.objects = adv_clip_objects;
         if self.mode == ShowcaseMode::NormalMaps {
-            fd.effects.cap_fill_enabled = self.nm_state.cap_fill;
+            fd.effects.clip.cap_fill_enabled = self.nm_state.cap_fill;
         }
         // Showcase 24 exists to show back face policies : cap fill would hide them.
         if self.mode == ShowcaseMode::BackfacePolicy {
-            fd.effects.cap_fill_enabled = false;
+            fd.effects.clip.cap_fill_enabled = false;
         }
         if self.mode == ShowcaseMode::VolumeMesh {
             showcase_26_volume_mesh::vm_configure_frame(self, &mut fd);
@@ -3676,23 +3746,22 @@ impl App {
                 if self.pp_state.dof_enabled {
                     fd.effects.post_process = {
                         let mut _t = PostProcessSettings::default();
-                        _t.enabled = true;
-                        _t.dof_enabled = true;
-                        _t.dof_focal_distance = self.pp_state.dof_focal_dist;
-                        _t.dof_focal_range = self.pp_state.dof_focal_range;
-                        _t.dof_max_blur_radius = self.pp_state.dof_max_blur;
+                        _t.dof.enabled = true;
+                        _t.dof.focal_distance = self.pp_state.dof_focal_dist;
+                        _t.dof.focal_range = self.pp_state.dof_focal_range;
+                        _t.dof.max_blur_radius = self.pp_state.dof_max_blur;
                         _t
                     };
                 }
             }
             ShowcaseMode::Shadows => {
+                fd.effects.display.mode = viewport_lib::PipelineMode::Direct;
                 fd.effects.post_process = {
                     let mut _t = PostProcessSettings::default();
-                    _t.enabled = false;
-                    _t.contact_shadows = self.shd_state.contact_on;
-                    _t.contact_shadow_max_distance = 0.18;
-                    _t.contact_shadow_steps = 32;
-                    _t.contact_shadow_thickness = 0.04;
+                    _t.contact_shadows.enabled = self.shd_state.contact_on;
+                    _t.contact_shadows.max_distance = 0.18;
+                    _t.contact_shadows.steps = 32;
+                    _t.contact_shadows.thickness = 0.04;
                     _t
                 };
                 // Cap far plane for better cascade distribution, but track orbit
@@ -3703,11 +3772,7 @@ impl App {
                 fd.camera.render_camera = rc;
             }
             ShowcaseMode::NormalMaps => {
-                fd.effects.post_process = {
-                    let mut _t = PostProcessSettings::default();
-                    _t.enabled = false;
-                    _t
-                };
+                fd.effects.display.mode = viewport_lib::PipelineMode::Direct;
                 // Cap far plane for better cascade distribution, but track orbit
                 // distance so the scene doesn't disappear when zooming out.
                 let mut rc = RenderCamera::from_camera(&self.camera);
@@ -3734,25 +3799,48 @@ impl App {
                 if self.lights_state.edl_enabled {
                     fd.effects.post_process = {
                         let mut _t = PostProcessSettings::default();
-                        _t.enabled = true;
-                        _t.edl_enabled = true;
-                        _t.edl_radius = self.lights_state.edl_radius;
-                        _t.edl_strength = self.lights_state.edl_strength;
+                        _t.edl.enabled = true;
+                        _t.edl.radius = self.lights_state.edl_radius;
+                        _t.edl.strength = self.lights_state.edl_strength;
                         _t
                     };
+                }
+            }
+            ShowcaseMode::PhotometricLighting => {
+                // Drive the exposure model from the active sub's controls. The HDR
+                // pipeline stays enabled (default) so the tone map / exposure
+                // buffer path runs.
+                fd.effects.display.exposure = self.lighting_state.exposure_settings();
+                let mut rc = RenderCamera::from_camera(&self.camera);
+                rc.far = (self.camera.distance * 3.0).max(60.0);
+                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                fd.camera.render_camera = rc;
+            }
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                // The Emissive & IBL sub drives exposure and an environment; the
+                // Parity sub leaves the frame default.
+                if let Some(exp) = self.surfaces_state.exposure_override() {
+                    fd.effects.display.exposure = exp;
+                }
+                if let Some(env) = self.surfaces_state.environment() {
+                    fd.effects.environment = Some(env);
+                    let mut rc = RenderCamera::from_camera(&self.camera);
+                    rc.far = (self.camera.distance * 3.0).max(60.0);
+                    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+                    fd.camera.render_camera = rc;
                 }
             }
             ShowcaseMode::BackfacePolicy => {}
             // Decals require the full HDR pipeline so the decal pass (which reads
             // scene depth as a texture) runs via render_frame_internal.
             ShowcaseMode::Decals => {
-                fd.effects.post_process.enabled = true;
+                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
             }
             // HiZ occlusion culling builds its depth pyramid in the HDR scene
             // pass, so the HDR pipeline must be active when occlusion is on.
             ShowcaseMode::Performance => {
                 if self.perf_state.occlusion_culling {
-                    fd.effects.post_process.enabled = true;
+                    fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
                 }
             }
             ShowcaseMode::Foreground => {
@@ -3776,7 +3864,7 @@ impl App {
             // Enable HDR callback path so the renderer owns the encoder and can
             // run backdrop blur passes.
             if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
-                fd.effects.post_process.enabled = true;
+                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
             }
             fd.overlays.shapes = shapes;
             fd.overlays.labels = labels;
@@ -3844,7 +3932,7 @@ impl App {
 
         // Surface LIC render items (Showcase 38) : submitted every frame when built.
         // LIC compositing happens inside the tone-map pass, so the HDR pipeline
-        // must be active (post_process.enabled = true).
+        // must be active (display.mode = PipelineMode::Hdr).
         if self.mode == ShowcaseMode::SurfaceLIC && self.lic_state.built {
             showcase_38_surface_lic::submit_lic_items(self, &mut fd);
             let has_lic =
@@ -3854,7 +3942,7 @@ impl App {
                     false
                 };
             if has_lic {
-                fd.effects.post_process.enabled = true;
+                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
             }
         }
 

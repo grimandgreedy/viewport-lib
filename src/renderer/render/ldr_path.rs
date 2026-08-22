@@ -17,6 +17,32 @@ impl ViewportRenderer {
         w: u32,
         h: u32,
     ) -> crate::gpu::CommandBuffer {
+        // The LDR pipeline has no post chain: item-type plugins and the OIT pass
+        // (needed for transparent volume meshes) only exist on the HDR path.
+        // Report each dropped feature once instead of silently omitting it.
+        use std::sync::atomic::Ordering::Relaxed;
+        if !frame.scene.plugin_items.is_empty() && !self.ldr_plugin_items_warned.swap(true, Relaxed)
+        {
+            tracing::warn!(
+                "item-type plugin items are not drawn on the LDR pipeline \
+                 (PipelineMode::Direct): the plugin paint dispatch only runs in the HDR \
+                 pipeline. Set effects.display.mode = PipelineMode::Hdr to render them."
+            );
+        }
+        if frame
+            .scene
+            .volume_meshes
+            .iter()
+            .any(|m| m.transparency.is_some())
+            && !self.ldr_volume_transparency_warned.swap(true, Relaxed)
+        {
+            tracing::warn!(
+                "transparent volume meshes are not drawn on the LDR pipeline \
+                 (PipelineMode::Direct): they require the OIT pass, which only exists in \
+                 the HDR pipeline. Set effects.display.mode = PipelineMode::Hdr."
+            );
+        }
+
         // LDR fallback. When dynamic resolution is active and render_scale < 1.0,
         // draw into a scaled intermediate texture and upscale-blit to output_view.
         // Otherwise render directly to output_view.

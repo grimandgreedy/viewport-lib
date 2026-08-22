@@ -732,10 +732,9 @@ fn render_swarm(
     ]);
     frame.effects.lighting = LightingSettings::default();
     let mut post = PostProcessSettings::default();
-    post.enabled = true;
-    post.bloom = true;
-    post.bloom_threshold = 1.0;
-    post.bloom_intensity = 0.2;
+    post.bloom.enabled = true;
+    post.bloom.threshold = 1.0;
+    post.bloom.intensity = 0.2;
     frame.effects.post_process = post;
 
     // The full HDR pipeline into Bevy's texture, then submit on Bevy's queue.

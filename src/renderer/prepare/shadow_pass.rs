@@ -48,7 +48,7 @@ impl ViewportRenderer {
         // When skipping the shadow pass (budget pressure or empty scene), clear the
         // atlas to max depth so that stale values from a previous frame or a previous
         // showcase don't produce phantom shadows.
-        if lighting.shadows_enabled && (skip_shadows || scene_items.is_empty()) {
+        if lighting.shadows.enabled && (skip_shadows || scene_items.is_empty()) {
             let mut enc = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                 label: Some("shadow_clear_encoder"),
             });
@@ -75,7 +75,7 @@ impl ViewportRenderer {
         // shadows; the shader skips its CSM sample entirely (the atlas uniform
         // carries cascade_count 0), so the atlas needs neither rendering nor a
         // clear.
-        if lighting.shadows_enabled
+        if lighting.shadows.enabled
             && !scene_items.is_empty()
             && !skip_shadows
             && light.effective_cascade_count > 0
@@ -1040,7 +1040,7 @@ impl ViewportRenderer {
         // via `shadow_point_pipeline`. Per-face culling uses the standard
         // CPU frustum from the face's view-projection.
         // ----------------------------------------------------------------
-        if lighting.shadows_enabled
+        if lighting.shadows.enabled
             && !scene_items.is_empty()
             && !light.point_shadow_faces.is_empty()
         {
@@ -1244,7 +1244,7 @@ impl ViewportRenderer {
             }
         }
 
-        if shadow_instrument && lighting.shadows_enabled {
+        if shadow_instrument && lighting.shadows.enabled {
             // Force the just-submitted shadow work to finish so the measured time
             // reflects shadow GPU execution rather than landing later at present.
             // Other work submitted before this point in prepare is minor, so this

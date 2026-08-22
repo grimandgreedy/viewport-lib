@@ -1673,7 +1673,7 @@ pub(crate) fn sprite_lighting(app: &App) -> LightingSettings {
             // scene-graph light is not duplicated. Shadows follow the demo's
             // `receive_shadows` toggle.
             settings.lights = vec![];
-            settings.shadows_enabled = app.sprite_state.lit_receive_shadows;
+            settings.shadows.enabled = app.sprite_state.lit_receive_shadows;
             settings.hemisphere_intensity = 0.35;
             settings.sky_colour = [0.65, 0.72, 0.85];
             settings.ground_colour = [0.18, 0.16, 0.14];
@@ -1686,7 +1686,7 @@ pub(crate) fn sprite_lighting(app: &App) -> LightingSettings {
             light.colour = [1.0, 1.0, 1.0];
             light.intensity = 0.8;
             settings.lights = vec![light];
-            settings.shadows_enabled = false;
+            settings.shadows.enabled = false;
             settings.hemisphere_intensity = 0.4;
             settings.sky_colour = [0.85, 0.9, 1.0];
             settings.ground_colour = [0.4, 0.4, 0.5];

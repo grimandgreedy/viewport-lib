@@ -526,7 +526,7 @@ impl ViewportRenderer {
         self.volume_gpu_data.clear();
         if !frame.scene.volumes.is_empty() {
             resources.ensure_volume_pipeline(device);
-            let clip_objects_for_vol = &frame.effects.clip_objects;
+            let clip_objects_for_vol = &frame.effects.clip.objects;
             // Under budget pressure with allow_volume_quality_reduction, double the
             // step size (half the sample count) to reduce GPU raymarch cost.
             let vol_step_multiplier = if self.degradation_volume_quality_reduced {

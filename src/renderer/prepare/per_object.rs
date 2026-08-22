@@ -136,7 +136,7 @@ pub(super) fn build_object_uniform(
                 0
             }
         },
-        emissive: m.emissive,
+        emissive: m.emissive_nits(),
         use_flat: cm.use_flat,
         alpha_mode: match m.alpha_mode {
             crate::scene::material::AlphaMode::Opaque => 0,
@@ -933,12 +933,13 @@ impl ViewportRenderer {
         // that pass's formats and pipelines instead of being disabled. The
         // HDR pipelines build on the first HDR frame, so frame one records
         // nothing and the bundle starts on frame two.
-        let hdr = frame.effects.post_process.enabled;
+        let hdr = frame.effects.display.is_hdr();
         // Clip geometry needs the discarding pipeline (its clip test is a
         // discard); with it active the whole bundle keeps discards.
         let clipping_active = frame
             .effects
-            .clip_objects
+            .clip
+            .objects
             .iter()
             .any(|o| o.enabled && o.clip_geometry);
         let plan = 'plan: {
