@@ -339,6 +339,7 @@ pub const POINT_SHADOW_FACE_SIZE: u32 = 1024;
 /// the tap count is a whole-scene cost multiplier on shadowed frames.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ShadowFilter {
     /// One hardware-compare tap (2x2 bilinear). Crisp edges; the cheapest
     /// tier.
@@ -368,13 +369,10 @@ pub enum ShadowFilter {
 /// moved to per-object [`Material`] structs.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LightingSettings {
     /// Active light sources (max 8). Default: one directional light.
     pub lights: Vec<LightSource>,
-    /// Constant NDC depth bias subtracted from the receiver comparison depth. Default: 0.0.
-    pub shadow_bias: f32,
-    /// Whether shadow maps are computed and sampled. Default: true.
-    pub shadows_enabled: bool,
     /// Sky colour for hemisphere ambient. Default [0.8, 0.9, 1.0].
     pub sky_colour: [f32; 3],
     /// Ground colour for hemisphere ambient. Default [0.5, 0.55, 0.6].
@@ -385,40 +383,64 @@ pub struct LightingSettings {
     /// than pitch black; scale it with your key light. (This term is a provisional
     /// ambient approximation until image-based lighting carries absolute nits.)
     pub hemisphere_intensity: f32,
-    /// Override the shadow frustum half-extent (world units). None = auto (20.0).
-    /// Tighter values improve shadow map texel density and reduce contact-shadow penumbra.
-    pub shadow_extent_override: Option<f32>,
-
-    /// Number of cascaded shadow map splits (1-4). Default: 4.
-    pub shadow_cascade_count: u32,
-    /// Shadow atlas resolution (width = height). Default: 4096.
-    /// Each cascade tile is `atlas_resolution / 2`.
-    pub shadow_atlas_resolution: u32,
-    /// Shadow filtering mode. Default: PCF.
-    pub shadow_filter: ShadowFilter,
-    /// PCSS light source radius in shadow-map UV space. Controls penumbra width. Default: 0.02.
-    pub pcss_light_radius: f32,
+    /// Shadow-map configuration (cascades, atlas, filtering, bias, ...).
+    pub shadows: ShadowSettings,
     /// Debug visualization configuration. Off by default (zero overhead when inactive).
     pub debug_vis: crate::renderer::types::debug::DebugVis,
-    /// Point-light shadow technique. Default: cubemap.
-    pub point_shadow_mode: PointShadowMode,
 }
 
 impl Default for LightingSettings {
     fn default() -> Self {
         Self {
             lights: vec![LightSource::default()],
-            shadow_bias: 0.0,
-            shadows_enabled: true,
             sky_colour: [0.8, 0.9, 1.0],
             ground_colour: [0.5, 0.55, 0.6],
             hemisphere_intensity: 1.5,
-            shadow_extent_override: None,
-            shadow_cascade_count: 4,
-            shadow_atlas_resolution: 4096,
-            shadow_filter: ShadowFilter::Pcf,
-            pcss_light_radius: 0.02,
+            shadows: ShadowSettings::default(),
             debug_vis: crate::renderer::types::debug::DebugVis::default(),
+        }
+    }
+}
+
+/// Shadow-map configuration, grouped on [`LightingSettings::shadows`].
+///
+/// Split out of [`LightingSettings`] so the shadow knobs travel as one unit; the
+/// field names drop the `shadow_` prefix they carried when they were flat
+/// (`lighting.shadow_filter` -> `lighting.shadows.filter`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ShadowSettings {
+    /// Whether shadow maps are computed and sampled. Default: true.
+    pub enabled: bool,
+    /// Constant NDC depth bias subtracted from the receiver comparison depth. Default: 0.0.
+    pub bias: f32,
+    /// Override the shadow frustum half-extent (world units). None = auto (20.0).
+    /// Tighter values improve shadow map texel density and reduce contact-shadow penumbra.
+    pub extent_override: Option<f32>,
+    /// Number of cascaded shadow map splits (1-4). Default: 4.
+    pub cascade_count: u32,
+    /// Shadow atlas resolution (width = height). Default: 4096.
+    /// Each cascade tile is `atlas_resolution / 2`.
+    pub atlas_resolution: u32,
+    /// Shadow filtering mode. Default: PCF.
+    pub filter: ShadowFilter,
+    /// PCSS light source radius in shadow-map UV space. Controls penumbra width. Default: 0.02.
+    pub pcss_light_radius: f32,
+    /// Point-light shadow technique. Default: cubemap.
+    pub point_shadow_mode: PointShadowMode,
+}
+
+impl Default for ShadowSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bias: 0.0,
+            extent_override: None,
+            cascade_count: 4,
+            atlas_resolution: 4096,
+            filter: ShadowFilter::Pcf,
+            pcss_light_radius: 0.02,
             point_shadow_mode: PointShadowMode::default(),
         }
     }

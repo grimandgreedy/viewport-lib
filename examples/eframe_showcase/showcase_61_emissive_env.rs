@@ -8,7 +8,7 @@
 //!   the bright ones blow past the white point and bloom - exactly how a real
 //!   emitter behaves relative to the exposed scene.
 //! - **Image-based lighting.** A gradient environment lights the scene and is
-//!   reflected by the chrome sphere. [`EnvironmentMap::intensity`] is an absolute
+//!   reflected by the chrome sphere. [`EnvironmentSettings::intensity`] is an absolute
 //!   nits scale: slide it and the sky, its ambient contribution, and the
 //!   reflection all brighten together, then the exposure re-balances.
 //!
@@ -19,8 +19,8 @@ use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
 use viewport_lib::{
-    AutoExposure, EnvironmentMap, ExposureMode, ExposureSettings, LightSource, LightingSettings,
-    Lux, Material, ViewportRenderer, scene::Scene,
+    AutoExposure, EnvironmentSettings, ExposureMode, ExposureSettings, LightSource,
+    LightingSettings, Lux, Material, ViewportRenderer, scene::Scene,
 };
 
 /// Fixed emissive ladder (hue, luminance in nits) - a 10x step each.
@@ -33,7 +33,7 @@ const EMITTERS: [([f32; 3], f32); 4] = [
 const COL_SPACING: f32 = 2.4;
 
 /// Equirectangular sky/ground gradient (RGBA f32), sky at the top row. The stored
-/// values are relative; [`EnvironmentMap::intensity`] scales them to nits.
+/// values are relative; [`EnvironmentSettings::intensity`] scales them to nits.
 fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
     let mut px = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
@@ -90,8 +90,8 @@ impl EmissiveEnvState {
         l
     }
 
-    pub(crate) fn environment(&self) -> EnvironmentMap {
-        EnvironmentMap {
+    pub(crate) fn environment(&self) -> EnvironmentSettings {
+        EnvironmentSettings {
             intensity: self.env_intensity,
             rotation: 0.0,
             show_skybox: self.show_skybox,

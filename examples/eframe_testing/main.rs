@@ -129,7 +129,7 @@ impl App {
             _t
         }];
         lighting.hemisphere_intensity = 0.4;
-        lighting.shadow_cascade_count = 4;
+        lighting.shadows.cascade_count = 4;
         lighting.shadows_enabled = true;
 
         Self {
@@ -245,14 +245,15 @@ impl eframe::App for App {
                 ui.separator();
 
                 ui.label("Cascade count");
-                let mut cc = self.lighting.shadow_cascade_count as i32;
+                let mut cc = self.lighting.shadows.cascade_count as i32;
                 if ui.add(egui::Slider::new(&mut cc, 1..=4)).changed() {
-                    self.lighting.shadow_cascade_count = cc as u32;
+                    self.lighting.shadows.cascade_count = cc as u32;
                 }
 
                 ui.label("Shadow bias");
                 ui.add(
-                    egui::Slider::new(&mut self.lighting.shadow_bias, 0.0..=0.01).logarithmic(true),
+                    egui::Slider::new(&mut self.lighting.shadows.bias, 0.0..=0.01)
+                        .logarithmic(true),
                 );
 
                 ui.checkbox(&mut self.lighting.shadows_enabled, "Shadows enabled");
@@ -294,7 +295,7 @@ impl eframe::App for App {
                 ui.label("Cascade splits (world depth)");
                 let shadow_far = (self.camera.distance * 3.0).max(10.0).min(eff_far);
                 let splits =
-                    cascade_splits(eff_near, shadow_far, self.lighting.shadow_cascade_count);
+                    cascade_splits(eff_near, shadow_far, self.lighting.shadows.cascade_count);
                 let mut prev = eff_near;
                 for (i, &s) in splits.iter().enumerate() {
                     ui.label(format!("  [{}] {:.2} .. {:.2}", i, prev, s));
@@ -308,7 +309,7 @@ impl eframe::App for App {
                     eprintln!("  camera distance: {:.2}", dist);
                     eprintln!("  near: {:.4}  shadow_far: {:.2}", eff_near, shadow_far);
                     let splits =
-                        cascade_splits(eff_near, shadow_far, self.lighting.shadow_cascade_count);
+                        cascade_splits(eff_near, shadow_far, self.lighting.shadows.cascade_count);
                     for (i, &s) in splits.iter().enumerate() {
                         let lo = if i == 0 { eff_near } else { splits[i - 1] };
                         eprintln!("  cascade[{}]: {:.3} .. {:.3}", i, lo, s);

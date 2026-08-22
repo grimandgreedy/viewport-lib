@@ -1,5 +1,6 @@
 /// Tone mapping operator used by the HDR pipeline.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ToneMapping {
     /// Reinhard tone mapping (simple, good for scenes without extreme HDR).
     Reinhard,
@@ -34,6 +35,7 @@ pub(crate) const METER_CALIBRATION_K: f32 = 12.5;
 /// same submission as the tone map, keeping a one-shot (dirty-only) render
 /// correctly exposed on its own frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ExposureMode {
     /// Manual EV100. `ev = 0.0` is the neutral default (a `1.0` multiplier
     /// during the interim; see [`INTERIM_EXPOSURE_BOOST`]). Higher EV darkens.
@@ -69,6 +71,7 @@ impl ExposureMode {
 /// frame (the default, correct for consumers that render only when dirty);
 /// `dt > 0` applies exponential smoothing (the "eye adjusting" look).
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AutoExposure {
     /// Lower clamp on the adapted EV100. Default: `-8.0`.
     pub min_ev: f32,
@@ -135,6 +138,7 @@ impl Default for AutoExposure {
 /// applied on top of every mode (positive brightens the image).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExposureSettings {
     /// How the base exposure multiplier is derived. Default:
     /// [`ExposureMode::NEUTRAL`] (`Manual { ev: 0.0 }`) - a fixed neutral exposure
@@ -266,6 +270,7 @@ pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
 /// meshes (`SceneFrame::transparent_volume_meshes`) require `Hdr`.
 // NOT #[non_exhaustive]: a closed, consumer-selected binary (cf. `ToneMapping`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PipelineMode {
     /// Full HDR pipeline: HDR render target, exposure, tone mapping, all post
     /// effects, OIT, skybox, and item-type plugins. The default.
@@ -284,6 +289,7 @@ pub enum PipelineMode {
 /// operator. Exposure and the operator are inert on [`PipelineMode::Direct`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DisplaySettings {
     /// Which render pipeline runs. Default: [`PipelineMode::Hdr`].
     pub mode: PipelineMode,
@@ -320,6 +326,7 @@ impl DisplaySettings {
 /// the viewport renders directly to the output surface and these are all ignored.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PostProcessSettings {
     /// Enable screen-space ambient occlusion.
     pub ssao: bool,

@@ -47,10 +47,10 @@ pub use self::types::{
     AnimTrack, AtlasViewerCorner, AutoExposure, BorderMode, CameraFrame, Candela, ClipObject,
     ClipShape, ComputeFilterItem, ComputeFilterKind, CylindricalFacing, DebugOutputMode,
     DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection,
-    DisplaySettings, EffectsFrame, EmitterConfig, EnvironmentMap, ExposureMode, ExposureReadback,
-    ExposureSettings, ExternalInstancesItem, FilterMode, ForceField, ForegroundPass,
-    ForegroundProjection, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem,
-    GlyphItem, GlyphSetRefItem, GlyphType, GpuImplicitItem, GpuMarchingCubesJob,
+    DisplaySettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode,
+    ExposureReadback, ExposureSettings, ExternalInstancesItem, FilterMode, ForceField,
+    ForegroundPass, ForegroundProjection, FrameData, GaussianSplatData, GaussianSplatId,
+    GaussianSplatItem, GlyphItem, GlyphSetRefItem, GlyphType, GpuImplicitItem, GpuMarchingCubesJob,
     GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem,
     IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
     LicOverlay, LightKind, LightSource, LightingSettings, LineCap, LineJoin, LoadingBarAnchor,
@@ -62,7 +62,7 @@ pub use self::types::{
     PolylineCap, PolylineItem, PolylineRefItem, PostProcessSettings, RenderCamera, RepeatMode,
     RibbonItem, RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation,
     ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ScreenImageItem, ShDegree, ShadowFilter, SliceAxis, SpawnShape, SpriteBlend,
+    ScreenImageItem, ShDegree, ShadowFilter, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
     SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
     SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern,
     SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
@@ -2842,7 +2842,7 @@ impl ViewportRenderer {
             }
         }
         // Shadow atlas viewer overlay.
-        if frame.effects.show_shadow_atlas {
+        if frame.effects.debug.show_shadow_atlas {
             render_pass.set_pipeline(&self.resources.shadow_atlas_viewer_pipeline);
             render_pass.set_bind_group(0, &self.resources.shadow_atlas_viewer_bg, &[]);
             render_pass.draw(0..6, 0..1);

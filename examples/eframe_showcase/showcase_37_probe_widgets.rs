@@ -521,7 +521,7 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
                 .push(state.probe.handle_glyphs(100, &widget_ctx));
         }
         PwSubMode::Sphere => {
-            fd.effects.clip_objects.push(state.sphere.clip_object());
+            fd.effects.clip.objects.push(state.sphere.clip_object());
             fd.scene.polylines.push(state.sphere.wireframe_item(0));
             fd.scene
                 .glyphs

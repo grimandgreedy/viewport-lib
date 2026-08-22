@@ -7,6 +7,7 @@
 /// The shape of a [`ClipObject`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ClipShape {
     /// Half-space plane : fragments where `dot(p, normal) + distance >= 0` are kept.
     Plane {
@@ -68,6 +69,7 @@ pub enum ClipShape {
 /// the renderer to vary the plane overlay appearance (brighter when hovered, tinted when active).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ClipObject {
     /// The clipping shape (plane, box, or sphere).
     pub shape: ClipShape,

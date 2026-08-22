@@ -318,7 +318,7 @@ macro_rules! emit_draw_calls {
                             // instance can discard this frame.
                             let clipping_active = frame
                                 .effects
-                                .clip_objects
+                                .clip.objects
                                 .iter()
                                 .any(|o| o.enabled && o.clip_geometry);
                             let nodiscard_pipes = (

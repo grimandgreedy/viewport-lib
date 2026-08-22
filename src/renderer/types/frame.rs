@@ -664,6 +664,7 @@ impl InteractionFrame {
 ///
 /// Ground plane rendering mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GroundPlaneMode {
     /// No ground plane rendered (default, zero overhead).
     #[default]
@@ -681,6 +682,7 @@ pub enum GroundPlaneMode {
 /// Renders a large horizontal plane at a configurable world-space Z height.
 /// Provides spatial grounding without explicit scene geometry.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GroundPlane {
     /// Rendering mode. Default: `None` (plane not drawn).
     pub mode: GroundPlaneMode,
@@ -716,7 +718,8 @@ impl Default for GroundPlane {
 /// map for PBR ambient lighting (irradiance + specular) and optionally renders
 /// it as the scene background (skybox).
 #[derive(Clone, Debug)]
-pub struct EnvironmentMap {
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EnvironmentSettings {
     /// Absolute luminance scale in **nits** applied to the sampled environment -
     /// both the IBL contribution (diffuse irradiance + specular reflections) and
     /// the skybox background, so the lit surfaces and the visible sky stay
@@ -739,7 +742,7 @@ pub struct EnvironmentMap {
     pub show_skybox: bool,
 }
 
-impl Default for EnvironmentMap {
+impl Default for EnvironmentSettings {
     fn default() -> Self {
         Self {
             intensity: 1.0,
@@ -879,11 +882,8 @@ pub struct EffectsFrame {
     pub lighting: LightingSettings,
     /// Participating-media (scatter-volume) quality settings.
     pub scatter: ScatterSettings,
-    /// Active clip objects (planes, boxes, spheres). Max 6 planes + 1 box/sphere.
-    /// Default: empty (no clipping).
-    pub clip_objects: Vec<ClipObject>,
-    /// Whether to render filled caps at clip plane cross-sections. Default: true.
-    pub cap_fill_enabled: bool,
+    /// Clip objects (planes/box/sphere) and cap-fill toggle. Default: no clipping.
+    pub clip: ClipSettings,
     /// Display transform: pipeline mode (HDR / Direct), exposure, and tone-map
     /// operator. Default: HDR pipeline, neutral manual EV 0, KhronosNeutral.
     pub display: DisplaySettings,
@@ -896,10 +896,59 @@ pub struct EffectsFrame {
     pub foreground: Option<ForegroundPass>,
     /// GPU compute filter items dispatched before the render pass.
     pub compute_filter_items: Vec<ComputeFilterItem>,
-    /// Optional environment map for IBL and skybox. Default: None.
-    pub environment: Option<EnvironmentMap>,
+    /// Optional environment settings for IBL and skybox. Default: None.
+    pub environment: Option<EnvironmentSettings>,
     /// Ground plane configuration. Default: mode = None (not drawn, zero overhead).
     pub ground_plane: GroundPlane,
+    /// Debug overlays (shadow-atlas viewer). Default: off.
+    pub debug: EffectsDebug,
+}
+
+impl Default for EffectsFrame {
+    fn default() -> Self {
+        Self {
+            lighting: LightingSettings::default(),
+            scatter: ScatterSettings::default(),
+            clip: ClipSettings::default(),
+            display: DisplaySettings::default(),
+            post_process: PostProcessSettings::default(),
+            foreground: None,
+            compute_filter_items: Vec::new(),
+            environment: None,
+            ground_plane: GroundPlane::default(),
+            debug: EffectsDebug::default(),
+        }
+    }
+}
+
+/// Clip geometry for one frame: active clip objects plus the cross-section
+/// cap-fill toggle. Grouped on [`EffectsFrame::clip`].
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ClipSettings {
+    /// Active clip objects (planes, boxes, spheres). Max 6 planes + 1 box/sphere.
+    /// Default: empty (no clipping).
+    pub objects: Vec<ClipObject>,
+    /// Whether to render filled caps at clip plane cross-sections. Default: true.
+    pub cap_fill_enabled: bool,
+}
+
+impl Default for ClipSettings {
+    fn default() -> Self {
+        Self {
+            objects: Vec::new(),
+            cap_fill_enabled: true,
+        }
+    }
+}
+
+/// Debug overlays for one frame. Grouped on [`EffectsFrame::debug`] to keep debug
+/// knobs out of the production effect fields.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EffectsDebug {
     /// Show the shadow depth atlas as a corner overlay. Default: false.
     pub show_shadow_atlas: bool,
     /// Corner where the atlas viewer is placed. Default: BottomRight.
@@ -908,19 +957,9 @@ pub struct EffectsFrame {
     pub atlas_viewer_scale: f32,
 }
 
-impl Default for EffectsFrame {
+impl Default for EffectsDebug {
     fn default() -> Self {
         Self {
-            lighting: LightingSettings::default(),
-            scatter: ScatterSettings::default(),
-            clip_objects: Vec::new(),
-            cap_fill_enabled: true,
-            display: DisplaySettings::default(),
-            post_process: PostProcessSettings::default(),
-            foreground: None,
-            compute_filter_items: Vec::new(),
-            environment: None,
-            ground_plane: GroundPlane::default(),
             show_shadow_atlas: false,
             atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner::BottomRight,
             atlas_viewer_scale: 0.3,
@@ -941,8 +980,10 @@ impl Default for EffectsFrame {
 pub struct SceneEffects<'a> {
     /// Per-frame lighting configuration (drives the shadow pass and light uniform).
     pub lighting: &'a LightingSettings,
-    /// Optional environment map for IBL and skybox.
-    pub environment: &'a Option<EnvironmentMap>,
+    /// Optional environment settings for IBL and skybox.
+    pub environment: &'a Option<EnvironmentSettings>,
+    /// Participating-media quality settings (scene-global).
+    pub scatter: &'a ScatterSettings,
     /// GPU compute filter items dispatched before the render pass.
     pub compute_filter_items: &'a [ComputeFilterItem],
 }
@@ -957,13 +998,8 @@ pub struct SceneEffects<'a> {
 /// Scene-global effects are passed once via [`SceneEffects`] in
 /// [`ViewportRenderer::prepare_scene`].
 pub struct ViewportEffects<'a> {
-    /// Participating-media quality settings (per-viewport for now; could
-    /// migrate scene-side later if the cost dictates).
-    pub scatter: &'a ScatterSettings,
-    /// Active clip objects (planes, boxes, spheres).
-    pub clip_objects: &'a [ClipObject],
-    /// Whether to render filled caps at clip plane cross-sections.
-    pub cap_fill_enabled: bool,
+    /// Clip objects and cap-fill toggle.
+    pub clip: &'a ClipSettings,
     /// Display transform: pipeline mode, exposure, tone-map operator.
     pub display: &'a DisplaySettings,
     /// Post-processing effects (bloom, SSAO, DOF, ...).
@@ -972,12 +1008,8 @@ pub struct ViewportEffects<'a> {
     pub foreground: &'a Option<ForegroundPass>,
     /// Ground plane configuration for this viewport.
     pub ground_plane: &'a GroundPlane,
-    /// Show the shadow depth atlas as a corner overlay.
-    pub show_shadow_atlas: bool,
-    /// Corner where the atlas viewer is placed.
-    pub atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner,
-    /// Atlas viewer size as a fraction of viewport width.
-    pub atlas_viewer_scale: f32,
+    /// Debug overlays (shadow-atlas viewer).
+    pub debug: &'a EffectsDebug,
 }
 
 impl EffectsFrame {
@@ -994,19 +1026,16 @@ impl EffectsFrame {
             SceneEffects {
                 lighting: &self.lighting,
                 environment: &self.environment,
+                scatter: &self.scatter,
                 compute_filter_items: &self.compute_filter_items,
             },
             ViewportEffects {
-                scatter: &self.scatter,
-                clip_objects: &self.clip_objects,
-                cap_fill_enabled: self.cap_fill_enabled,
+                clip: &self.clip,
                 display: &self.display,
                 post_process: &self.post_process,
                 foreground: &self.foreground,
                 ground_plane: &self.ground_plane,
-                show_shadow_atlas: self.show_shadow_atlas,
-                atlas_viewer_corner: self.atlas_viewer_corner,
-                atlas_viewer_scale: self.atlas_viewer_scale,
+                debug: &self.debug,
             },
         )
     }

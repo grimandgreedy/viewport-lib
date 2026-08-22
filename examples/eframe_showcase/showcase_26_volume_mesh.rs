@@ -1208,6 +1208,6 @@ pub(crate) fn submit_vm_items(app: &mut App, fd: &mut FrameData) {
 
 pub(crate) fn vm_configure_frame(app: &App, fd: &mut FrameData) {
     fd.viewport.wireframe_mode = app.vm_state.wireframe;
-    fd.effects.cap_fill_enabled = false;
-    fd.effects.clip_objects.extend(app.vm_clip_objects());
+    fd.effects.clip.cap_fill_enabled = false;
+    fd.effects.clip.objects.extend(app.vm_clip_objects());
 }

@@ -3668,13 +3668,13 @@ impl App {
         if self.mode == ShowcaseMode::BackfacePolicy {
             adv_clip_objects.extend(self.sa_clip_objects());
         }
-        fd.effects.clip_objects = adv_clip_objects;
+        fd.effects.clip.objects = adv_clip_objects;
         if self.mode == ShowcaseMode::NormalMaps {
-            fd.effects.cap_fill_enabled = self.nm_state.cap_fill;
+            fd.effects.clip.cap_fill_enabled = self.nm_state.cap_fill;
         }
         // Showcase 24 exists to show back face policies : cap fill would hide them.
         if self.mode == ShowcaseMode::BackfacePolicy {
-            fd.effects.cap_fill_enabled = false;
+            fd.effects.clip.cap_fill_enabled = false;
         }
         if self.mode == ShowcaseMode::VolumeMesh {
             showcase_26_volume_mesh::vm_configure_frame(self, &mut fd);

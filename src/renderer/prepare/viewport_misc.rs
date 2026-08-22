@@ -208,17 +208,17 @@ impl ViewportRenderer {
         viewport_fx: &ViewportEffects<'_>,
     ) {
         // Atlas blit uniform: compute NDC rect for the corner overlay.
-        if viewport_fx.show_shadow_atlas {
+        if viewport_fx.debug.show_shadow_atlas {
             let vw = frame.camera.viewport_size[0].max(1.0);
             let vh = frame.camera.viewport_size[1].max(1.0);
-            let scale = viewport_fx.atlas_viewer_scale.clamp(0.05, 1.0);
+            let scale = viewport_fx.debug.atlas_viewer_scale.clamp(0.05, 1.0);
             // Atlas is square. Width in NDC = scale * 2. Height preserves pixel aspect.
             let ndc_w = scale * 2.0;
             let ndc_h = ndc_w * (vw / vh);
             let margin_x = 20.0 / vw * 2.0;
             let margin_y = 20.0 / vh * 2.0;
             #[allow(unreachable_patterns)]
-            let rect = match viewport_fx.atlas_viewer_corner {
+            let rect = match viewport_fx.debug.atlas_viewer_corner {
                 crate::renderer::types::debug::AtlasViewerCorner::BottomRight => {
                     let xmax = 1.0 - margin_x;
                     let ymin = -1.0 + margin_y;

@@ -23,7 +23,8 @@ impl ViewportRenderer {
                 let mut clip_vols_uniform: ClipVolumesUniform = bytemuck::Zeroable::zeroed();
 
                 for obj in viewport_fx
-                    .clip_objects
+                    .clip
+                    .objects
                     .iter()
                     .filter(|o| o.enabled && o.clip_geometry)
                 {
@@ -1315,7 +1316,7 @@ impl ViewportRenderer {
         // Clip plane overlays : generated automatically from clip_objects with a colour set.
         let mut clip_plane_fill_buffers = Vec::new();
         let mut clip_plane_line_buffers = Vec::new();
-        for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
+        for obj in viewport_fx.clip.objects.iter().filter(|o| o.enabled) {
             // Skip if neither fill nor edge colour is set.
             if obj.colour.is_none() && obj.edge_colour.is_none() {
                 continue;
@@ -1456,8 +1457,8 @@ impl ViewportRenderer {
 
         // Cap geometry for section-view cross-section fill.
         let mut cap_buffers = Vec::new();
-        if viewport_fx.cap_fill_enabled {
-            for obj in viewport_fx.clip_objects.iter().filter(|o| o.enabled) {
+        if viewport_fx.clip.cap_fill_enabled {
+            for obj in viewport_fx.clip.objects.iter().filter(|o| o.enabled) {
                 if let ClipShape::Plane {
                     normal,
                     distance,

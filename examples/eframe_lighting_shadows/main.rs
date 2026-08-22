@@ -350,12 +350,12 @@ impl App {
                 _t
             }];
             _t.shadows_enabled = self.shadows_enabled;
-            _t.shadow_bias = self.shadow_bias;
+            _t.shadows.bias = self.shadow_bias;
             _t.shadow_cascade_count = self.shadow_cascade_count;
             _t.shadow_filter = self.shadow_filter;
-            _t.pcss_light_radius = self.pcss_light_radius;
-            _t.shadow_atlas_resolution = self.shadow_atlas_resolution;
-            _t.shadow_extent_override = if self.shadow_extent_enabled {
+            _t.shadows.pcss_light_radius = self.pcss_light_radius;
+            _t.shadows.atlas_resolution = self.shadow_atlas_resolution;
+            _t.shadows.extent_override = if self.shadow_extent_enabled {
                 Some(self.shadow_extent_value)
             } else {
                 None
@@ -627,9 +627,9 @@ impl eframe::App for App {
                 SceneFrame::from_surface_items(items),
             );
             fd.effects.lighting = self.build_lighting();
-            fd.effects.show_shadow_atlas = self.show_shadow_atlas;
-            fd.effects.atlas_viewer_corner = self.atlas_viewer_corner;
-            fd.effects.atlas_viewer_scale = self.atlas_viewer_scale;
+            fd.effects.debug.show_shadow_atlas = self.show_shadow_atlas;
+            fd.effects.debug.atlas_viewer_corner = self.atlas_viewer_corner;
+            fd.effects.debug.atlas_viewer_scale = self.atlas_viewer_scale;
 
             // Pixel inspector: on left-click, submit the clicked pixel for readback.
             // Convert from CSS pixels (egui) to physical pixels (what the shader writes).

@@ -157,5 +157,5 @@ pub fn reset_session(session: &mut ViewportInstance) {
     // are retained on the session, so reset them or one showcase's settings leak
     // into the next. Each showcase re-sets what it needs in `setup`.
     *session.viewport_frame_mut() = viewport_lib::ViewportFrame::default();
-    session.effects_mut().clip_objects.clear();
+    session.effects_mut().clip.objects.clear();
 }

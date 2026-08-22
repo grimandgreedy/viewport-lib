@@ -199,7 +199,7 @@ fn probe_example_scene() {
         };
         light.intensity = 4.0;
         frame.effects.lighting.lights = vec![light];
-        frame.effects.lighting.shadows_enabled = true;
+        frame.effects.lighting.shadows.enabled = true;
         frame.effects.lighting.hemisphere_intensity = hemi;
         frame.effects.display.exposure = ExposureSettings::automatic();
         frame.scene.surfaces = SurfaceSubmission::Flat(items.clone().into());

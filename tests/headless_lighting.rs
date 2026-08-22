@@ -1173,7 +1173,7 @@ fn environment_zones_select_the_second_zone() {
     frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0]);
     // IBL on, no direct or hemisphere light, so the matte sphere shows only the
     // selected environment's irradiance.
-    frame.effects.environment = Some(viewport_lib::EnvironmentMap {
+    frame.effects.environment = Some(viewport_lib::EnvironmentSettings {
         intensity: 1.0,
         rotation: 0.0,
         show_skybox: false,

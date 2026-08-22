@@ -30,7 +30,7 @@ fn clip_volumes_uniform_size() {
 #[test]
 fn frame_data_default_clip_objects_is_empty() {
     let frame = FrameData::default();
-    assert!(frame.effects.clip_objects.is_empty());
+    assert!(frame.effects.clip.objects.is_empty());
 }
 
 #[test]
@@ -45,12 +45,12 @@ fn clip_objects_construct_and_assign() {
         cap_colour: None,
         display_center: None,
     };
-    frame.effects.clip_objects.push(obj);
+    frame.effects.clip.objects.push(obj);
     assert!(matches!(
-        frame.effects.clip_objects[0].shape,
+        frame.effects.clip.objects[0].shape,
         ClipShape::Plane { .. }
     ));
-    frame.effects.clip_objects.clear();
+    frame.effects.clip.objects.clear();
 
     // Box variant
     let mut obj = ClipObject::default();
@@ -59,12 +59,12 @@ fn clip_objects_construct_and_assign() {
         half_extents: [0.5, 0.5, 0.5],
         orientation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     };
-    frame.effects.clip_objects.push(obj);
+    frame.effects.clip.objects.push(obj);
     assert!(matches!(
-        frame.effects.clip_objects[0].shape,
+        frame.effects.clip.objects[0].shape,
         ClipShape::Box { .. }
     ));
-    frame.effects.clip_objects.clear();
+    frame.effects.clip.objects.clear();
 
     // Sphere variant
     let mut obj = ClipObject::default();
@@ -72,14 +72,14 @@ fn clip_objects_construct_and_assign() {
         center: [0.0, 0.0, 0.0],
         radius: 2.5,
     };
-    frame.effects.clip_objects.push(obj);
+    frame.effects.clip.objects.push(obj);
     assert!(matches!(
-        frame.effects.clip_objects[0].shape,
+        frame.effects.clip.objects[0].shape,
         ClipShape::Sphere { .. }
     ));
-    frame.effects.clip_objects.clear();
+    frame.effects.clip.objects.clear();
 
-    assert!(frame.effects.clip_objects.is_empty());
+    assert!(frame.effects.clip.objects.is_empty());
 }
 
 #[test]

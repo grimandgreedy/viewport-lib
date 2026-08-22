@@ -450,9 +450,9 @@ impl App {
         light.intensity = self.light_intensity;
         s.lights = vec![light];
         s.shadows_enabled = self.shadows_enabled;
-        s.shadow_cascade_count = self.shadow_cascade_count;
-        s.shadow_filter = self.shadow_filter;
-        s.shadow_atlas_resolution = self.shadow_atlas_resolution;
+        s.shadows.cascade_count = self.shadow_cascade_count;
+        s.shadows.filter = self.shadow_filter;
+        s.shadows.atlas_resolution = self.shadow_atlas_resolution;
         s.hemisphere_intensity = self.hemisphere_intensity;
         s
     }

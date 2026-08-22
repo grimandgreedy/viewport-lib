@@ -125,11 +125,11 @@ fn main() {
             src.intensity = 0.8;
             src
         }];
-        l.shadows_enabled = shadows_on;
-        l.shadow_bias = 0.0;
-        l.shadow_cascade_count = 4;
-        l.shadow_filter = ShadowFilter::Pcf;
-        l.shadow_atlas_resolution = args.get(11).and_then(|s| s.parse().ok()).unwrap_or(4096);
+        l.shadows.enabled = shadows_on;
+        l.shadows.bias = 0.0;
+        l.shadows.cascade_count = 4;
+        l.shadows.filter = ShadowFilter::Pcf;
+        l.shadows.atlas_resolution = args.get(11).and_then(|s| s.parse().ok()).unwrap_or(4096);
         l.hemisphere_intensity = hemi;
         l.sky_colour = [0.8, 0.9, 1.0];
         l.ground_colour = [0.5, 0.55, 0.6];
@@ -246,9 +246,9 @@ fn main() {
         let shadows_on = !name.contains("noshadow");
         let hemi = if name.contains("nohemi") { 0.0 } else { 0.2 };
         fd.effects.lighting = build_lighting(dbg, shadows_on, hemi);
-        fd.effects.show_shadow_atlas = show_atlas;
-        fd.effects.atlas_viewer_corner = AtlasViewerCorner::BottomRight;
-        fd.effects.atlas_viewer_scale = 0.6;
+        fd.effects.debug.show_shadow_atlas = show_atlas;
+        fd.effects.debug.atlas_viewer_corner = AtlasViewerCorner::BottomRight;
+        fd.effects.debug.atlas_viewer_scale = 0.6;
 
         let cmds = renderer.pass().prepare(&device, &queue, &fd);
         queue.submit(cmds);

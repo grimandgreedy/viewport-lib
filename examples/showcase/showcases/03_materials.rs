@@ -111,10 +111,10 @@ impl MaterialsShowcase {
             let mut plane = ClipObject::plane([0.0, 1.0, 0.0], -row_y);
             plane.colour = None;
             plane.edge_colour = None;
-            effects.clip_objects = vec![plane];
-            effects.cap_fill_enabled = false;
+            effects.clip.objects = vec![plane];
+            effects.clip.cap_fill_enabled = false;
         } else {
-            effects.clip_objects.clear();
+            effects.clip.objects.clear();
         }
     }
 }

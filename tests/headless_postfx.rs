@@ -391,7 +391,7 @@ fn foreground_item_ignores_scene_clip_planes() {
     clip.edge_colour = None;
 
     let mut frame = foreground_frame();
-    frame.effects.clip_objects.push(clip);
+    frame.effects.clip.objects.push(clip);
     let world = coloured_item(
         mesh_id,
         [0.1, 0.1, 0.9],

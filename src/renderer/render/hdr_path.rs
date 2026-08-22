@@ -750,7 +750,8 @@ impl ViewportRenderer {
                         // hidden fragments are depth-rejected before shading.
                         let clipping_active = frame
                             .effects
-                            .clip_objects
+                            .clip
+                            .objects
                             .iter()
                             .any(|o| o.enabled && o.clip_geometry);
 
@@ -1000,7 +1001,8 @@ impl ViewportRenderer {
                         // instanced path where the same check lives.
                         let clipping_active = frame
                             .effects
-                            .clip_objects
+                            .clip
+                            .objects
                             .iter()
                             .any(|o| o.enabled && o.clip_geometry);
                         // Only opaque excluded items are drawn in the scene pass; transparent

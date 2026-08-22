@@ -936,7 +936,8 @@ impl ViewportRenderer {
         // discard); with it active the whole bundle keeps discards.
         let clipping_active = frame
             .effects
-            .clip_objects
+            .clip
+            .objects
             .iter()
             .any(|o| o.enabled && o.clip_geometry);
         let plan = 'plan: {

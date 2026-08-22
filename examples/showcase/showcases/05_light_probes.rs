@@ -33,8 +33,8 @@ use viewport_lib::resources::{
     LightProbe, LightProbeSet, LightmapData, LightmapMode, SHCoefficients, TextureId,
 };
 use viewport_lib::{
-    Aabb, BackfacePolicy, EnvironmentMap, EnvironmentMapId, EnvironmentZone, IndirectLightSource,
-    LightKind, LightSource, Material, MeshId, NodeId, primitives,
+    Aabb, BackfacePolicy, EnvironmentMapId, EnvironmentSettings, EnvironmentZone,
+    IndirectLightSource, LightKind, LightSource, Material, MeshId, NodeId, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -589,7 +589,7 @@ impl IndirectLightingShowcase {
         } else if self.mode == 1 {
             // Zone mode: enable the default environment (+ skybox), clear probes,
             // and reflect the zoned environments off polished metal spheres.
-            session.effects_mut().environment = Some(EnvironmentMap {
+            session.effects_mut().environment = Some(EnvironmentSettings {
                 intensity: 1.0,
                 rotation: 0.0,
                 show_skybox: true,
