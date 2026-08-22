@@ -154,7 +154,7 @@ impl Showcase for MaterialsShowcase {
         l.hemisphere_intensity = 0.25;
         l.sky_colour = [0.9, 0.95, 1.0];
         l.ground_colour = [0.24, 0.22, 0.20];
-        l.shadows_enabled = true;
+        l.shadows.enabled = true;
 
         // Set A (kinds): shading models, custom WGSL, textures, PBR, matcaps.
         let textures = build_textures(ctx);

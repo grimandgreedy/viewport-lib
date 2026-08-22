@@ -692,12 +692,12 @@ impl LightmapBakeShowcase {
                 l.hemisphere_intensity = 0.15;
                 l.sky_colour = [0.5, 0.54, 0.62];
                 l.ground_colour = [0.16, 0.16, 0.18];
-                l.shadows_enabled = true;
+                l.shadows.enabled = true;
                 l.shadows.extent_override = Some(13.0);
                 // Soft (PCSS) shadow with a wide penumbra, so the dynamic object's
                 // realtime shadow reads as a soft contact shadow that blends with the
                 // baked GI rather than a hard-edged blot on the curved baked heroes.
-                l.shadow_filter = ShadowFilter::Pcss;
+                l.shadows.filter = ShadowFilter::Pcss;
                 l.shadows.pcss_light_radius = 0.05;
             } else {
                 let mut key = LightSource::default();
@@ -720,7 +720,7 @@ impl LightmapBakeShowcase {
                 // showcases, so set it explicitly rather than assuming a prior
                 // showcase left it on. Fit the shadow frustum to this room (auto
                 // is 20, looser than the scene needs).
-                l.shadows_enabled = true;
+                l.shadows.enabled = true;
                 l.shadows.extent_override = Some(13.0);
             }
         }

@@ -62,7 +62,7 @@ impl ParityState {
 
         let mut l = LightingSettings::default();
         l.lights = vec![s];
-        l.shadows_enabled = false;
+        l.shadows.enabled = false;
         l.hemisphere_intensity = self.hemi_intensity;
         l.sky_colour = [0.7, 0.8, 1.0];
         l.ground_colour = [0.3, 0.3, 0.35];

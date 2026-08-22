@@ -4,7 +4,7 @@
 //! inside a single egui paint callback, splitting the callback rect into
 //! four equal quadrants at the pixel level.
 //!
-//! When `post_process.enabled` is true on the first frame, the HDR path runs:
+//! When `display.mode` is `PipelineMode::Hdr` on the first frame, the HDR path runs:
 //! each viewport is encoded into its own intermediate texture before the egui
 //! render pass, then blitted in `paint`. When post-processing is off, draw
 //! calls go directly into the egui render pass (LDR path).

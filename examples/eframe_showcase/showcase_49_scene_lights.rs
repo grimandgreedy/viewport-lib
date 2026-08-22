@@ -429,7 +429,7 @@ pub(crate) fn sl_collect(app: &mut App) -> (Vec<SceneRenderItem>, LightingSettin
     let items = app.sl_state.scene.collect_render_items(&Selection::new());
     let mut l = LightingSettings::default();
     l.lights = vec![];
-    l.shadows_enabled = false;
+    l.shadows.enabled = false;
     match app.sl_state.active_tab {
         SlTab::Basics => {
             l.hemisphere_intensity = app.sl_state.hemi_intensity;

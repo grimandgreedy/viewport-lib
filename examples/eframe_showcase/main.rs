@@ -2786,8 +2786,8 @@ impl App {
                 let lighting = {
                     let mut _t = LightingSettings::default();
                     _t.lights = lights;
-                    _t.shadows_enabled = true;
-                    _t.shadow_filter = if self.pp_state.shadow_pcss {
+                    _t.shadows.enabled = true;
+                    _t.shadows.filter = if self.pp_state.shadow_pcss {
                         ShadowFilter::Pcss
                     } else {
                         ShadowFilter::Pcf
@@ -2833,7 +2833,7 @@ impl App {
                             _t
                         },
                     ];
-                    _t.shadows_enabled = true;
+                    _t.shadows.enabled = true;
                     _t.hemisphere_intensity = 0.4;
                     _t.sky_colour = [1.0, 1.0, 1.0];
                     _t.ground_colour = [1.0, 1.0, 1.0];
@@ -2855,9 +2855,9 @@ impl App {
                         _t.intensity = 2.0;
                         _t
                     }];
-                    _t.shadows_enabled = true;
-                    _t.shadow_cascade_count = self.shd_state.cascade_count;
-                    _t.shadow_filter = if self.shd_state.pcss_on {
+                    _t.shadows.enabled = true;
+                    _t.shadows.cascade_count = self.shd_state.cascade_count;
+                    _t.shadows.filter = if self.shd_state.pcss_on {
                         ShadowFilter::Pcss
                     } else {
                         ShadowFilter::Pcf
@@ -3074,7 +3074,7 @@ impl App {
                         _t.intensity = 1.5;
                         _t
                     }];
-                    _t.shadows_enabled = true;
+                    _t.shadows.enabled = true;
                     _t.hemisphere_intensity = 0.3;
                     _t.sky_colour = [1.0, 1.0, 1.0];
                     _t.ground_colour = [0.3, 0.3, 0.3];
@@ -3453,7 +3453,7 @@ impl App {
                 let lighting = {
                     let mut _t = LightingSettings::default();
                     _t.lights = vec![sun];
-                    _t.shadows_enabled = self.svol_state.shadows_enabled;
+                    _t.shadows.enabled = self.svol_state.shadows_enabled;
                     _t.sky_colour = self.svol_state.sky_colour;
                     _t.ground_colour = self.svol_state.ground_colour;
                     _t.hemisphere_intensity = self.svol_state.hemisphere_intensity;
@@ -4021,7 +4021,7 @@ impl App {
 
         // Surface LIC render items (Showcase 38) : submitted every frame when built.
         // LIC compositing happens inside the tone-map pass, so the HDR pipeline
-        // must be active (post_process.enabled = true).
+        // must be active (display.mode = PipelineMode::Hdr).
         if self.mode == ShowcaseMode::SurfaceLIC && self.lic_state.built {
             showcase_38_surface_lic::submit_lic_items(self, &mut fd);
             let has_lic =

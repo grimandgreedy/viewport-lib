@@ -130,7 +130,7 @@ impl App {
         }];
         lighting.hemisphere_intensity = 0.4;
         lighting.shadows.cascade_count = 4;
-        lighting.shadows_enabled = true;
+        lighting.shadows.enabled = true;
 
         Self {
             camera: Camera {
@@ -256,7 +256,7 @@ impl eframe::App for App {
                         .logarithmic(true),
                 );
 
-                ui.checkbox(&mut self.lighting.shadows_enabled, "Shadows enabled");
+                ui.checkbox(&mut self.lighting.shadows.enabled, "Shadows enabled");
 
                 if ui
                     .checkbox(&mut self.show_hemisphere, "Hemisphere ambient")

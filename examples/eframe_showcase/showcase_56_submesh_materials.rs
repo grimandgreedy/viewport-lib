@@ -277,7 +277,7 @@ pub(crate) fn submesh_lighting() -> LightingSettings {
             l
         },
     ];
-    t.shadows_enabled = false;
+    t.shadows.enabled = false;
     t.hemisphere_intensity = 0.35;
     t
 }

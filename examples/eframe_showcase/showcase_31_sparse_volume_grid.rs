@@ -524,7 +524,7 @@ impl App {
             _t.sky_colour = [1.0, 1.0, 1.0];
             _t.ground_colour = [0.85, 0.85, 0.9];
             _t.lights = vec![];
-            _t.shadows_enabled = false;
+            _t.shadows.enabled = false;
             _t
         }
     }

@@ -172,7 +172,7 @@ impl PhotometricState {
 
         let mut l = LightingSettings::default();
         l.lights = lights;
-        l.shadows_enabled = true;
+        l.shadows.enabled = true;
         // A modest sky fill (~15% of the direct illuminance) so shadows stay
         // readable without washing the scene flat. Ambient is added without the
         // diffuse 1/pi, so the fraction here is smaller than it looks.

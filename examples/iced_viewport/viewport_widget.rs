@@ -198,7 +198,7 @@ impl shader::Primitive for ViewportPrimitive {
         frame_data.viewport.grid_z = -0.5;
         frame_data.viewport.show_axes_indicator = true;
 
-        // prepare_callback encodes HDR pre-pass work when post_process.enabled is true
+        // prepare_callback encodes HDR pre-pass work when display.mode is PipelineMode::Hdr
         // and returns a CommandBuffer that must be submitted before the render pass.
         let pre_cmds = pipeline.renderer.pass().prepare(device, queue, &frame_data);
         if !pre_cmds.is_empty() {

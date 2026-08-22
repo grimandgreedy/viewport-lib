@@ -349,10 +349,10 @@ impl App {
                 _t.intensity = self.light_intensity;
                 _t
             }];
-            _t.shadows_enabled = self.shadows_enabled;
+            _t.shadows.enabled = self.shadows_enabled;
             _t.shadows.bias = self.shadow_bias;
-            _t.shadow_cascade_count = self.shadow_cascade_count;
-            _t.shadow_filter = self.shadow_filter;
+            _t.shadows.cascade_count = self.shadow_cascade_count;
+            _t.shadows.filter = self.shadow_filter;
             _t.shadows.pcss_light_radius = self.pcss_light_radius;
             _t.shadows.atlas_resolution = self.shadow_atlas_resolution;
             _t.shadows.extent_override = if self.shadow_extent_enabled {

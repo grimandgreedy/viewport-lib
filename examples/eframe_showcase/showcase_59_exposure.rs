@@ -98,7 +98,7 @@ impl ExposureShowcaseState {
 
         let mut l = LightingSettings::default();
         l.lights = vec![s];
-        l.shadows_enabled = true;
+        l.shadows.enabled = true;
         // A little sky fill so shadows are dark but not pure black.
         l.hemisphere_intensity = 0.05;
         l.sky_colour = [0.6, 0.7, 0.9];

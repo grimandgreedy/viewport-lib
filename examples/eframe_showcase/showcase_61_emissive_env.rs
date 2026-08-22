@@ -85,7 +85,7 @@ impl EmissiveEnvState {
 
         let mut l = LightingSettings::default();
         l.lights = vec![sun];
-        l.shadows_enabled = true;
+        l.shadows.enabled = true;
         l.hemisphere_intensity = 0.0;
         l
     }

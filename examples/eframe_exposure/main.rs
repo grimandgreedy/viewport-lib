@@ -338,7 +338,7 @@ impl App {
 
         let mut l = LightingSettings::default();
         l.lights = vec![sun];
-        l.shadows_enabled = true;
+        l.shadows.enabled = true;
         // A softer sky fill so shadows aren't near-black: less extreme metering
         // swings when the camera points into shadow (closer to real ambient/GI).
         l.hemisphere_intensity = 0.15;
@@ -383,7 +383,7 @@ impl App {
 
         let mut l = LightingSettings::default();
         l.lights = lights;
-        l.shadows_enabled = true;
+        l.shadows.enabled = true;
         // ~15% sky fill (ambient carries no 1/pi, so the factor is smaller than
         // it looks); provisional until IBL carries nits.
         l.hemisphere_intensity = self.sky.illuminance().0 * 0.05;

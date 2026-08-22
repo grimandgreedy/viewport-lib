@@ -393,7 +393,7 @@ pub(crate) fn vcol_lighting() -> LightingSettings {
             l
         },
     ];
-    t.shadows_enabled = false;
+    t.shadows.enabled = false;
     t.hemisphere_intensity = 0.4;
     t.sky_colour = [0.95, 0.96, 1.0];
     t.ground_colour = [0.5, 0.5, 0.55];
