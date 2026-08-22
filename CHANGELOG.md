@@ -5,8 +5,7 @@
 Photometric lighting units land this cycle (directional in lux, point/spot in
 candela, emissive/IBL in nits, plus a physical-camera exposure model). Alongside
 them the per-frame effects configuration is regrouped by concern and the default
-lighting posture returns to a faithful "colour is data" baseline. See
-`MIGRATION.md` for the full field-move table and the light re-authoring notes.
+lighting posture returns to a faithful "colour is data" baseline.
 
 ### Breaking changes
 
