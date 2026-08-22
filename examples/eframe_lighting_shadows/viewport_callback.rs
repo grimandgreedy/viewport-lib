@@ -1,11 +1,16 @@
-use viewport_lib::{FrameData, ShadowDebugStats, ViewportRenderer};
+use viewport_lib::{ExposureReadback, FrameData, ShadowDebugStats, ViewportId, ViewportRenderer};
 
 pub struct ViewportCallback {
     pub frame: FrameData,
+    pub vp_id: ViewportId,
+    /// Whether to read back the metered EV this frame (auto-exposure only; the
+    /// readback does a blocking device poll, so it is gated).
+    pub read_exposure: bool,
     pub instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
     pub pixel_read_req: std::sync::Arc<std::sync::Mutex<Option<(u32, u32)>>>,
     pub pixel_read_res: std::sync::Arc<std::sync::Mutex<Option<[f32; 4]>>>,
     pub shadow_stats: std::sync::Arc<std::sync::Mutex<Option<ShadowDebugStats>>>,
+    pub exposure_readback: std::sync::Arc<std::sync::Mutex<Option<ExposureReadback>>>,
 }
 
 impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
@@ -37,6 +42,15 @@ impl eframe::egui_wgpu::CallbackTrait for ViewportCallback {
             }
             if let Ok(mut stats) = self.shadow_stats.lock() {
                 *stats = Some(renderer.shadow_debug_stats());
+            }
+            // Read back the GPU-metered EV for the auto-exposure readout. Gated by
+            // read_exposure since it does a blocking device poll.
+            if self.read_exposure {
+                if let Some(rb) = renderer.exposure_state(device, queue, self.vp_id) {
+                    if let Ok(mut slot) = self.exposure_readback.lock() {
+                        *slot = Some(rb);
+                    }
+                }
             }
             return cmds;
         }

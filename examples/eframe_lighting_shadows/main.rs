@@ -1,7 +1,15 @@
 //! Lighting and shadows test example using eframe / egui.
 //!
-//! Use the left panel to adjust all lighting and shadow settings.
-//! Switch between scene tabs at the top to test different material configurations.
+//! A bench for checking the lighting subsystem before a release. The left panel
+//! drives every lighting knob: the light source (authored in nominal units or
+//! real photometric lux/candela/lumens), hemisphere ambient, shadows, the HDR
+//! display transform (pipeline mode, exposure model, tone-map operator), and an
+//! image-based environment. Switch between scene tabs at the top to test
+//! different material configurations.
+//!
+//! The viewport renders through the HDR pipeline, so exposure and tone mapping
+//! apply here; the "Display & Exposure" section drives them and reads back the
+//! live EV (metered on the GPU under auto-exposure).
 //!
 //! Navigation:
 //!   Left drag / Middle drag   : orbit
@@ -12,16 +20,23 @@ mod viewport_callback;
 
 use eframe::egui;
 use viewport_lib::{
-    AtlasViewerCorner, BackfacePolicy, BuiltinMatcap, ButtonState, Camera, CameraFrame,
-    DebugOutputMode, DebugQuantity, DebugVis, FrameData, LightKind, LightSource, LightingSettings,
-    MatcapId, Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
-    ShadowDebugStats, ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, ButtonState, Camera,
+    CameraFrame, Candela, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
+    EnvironmentSettings, ExposureMode, ExposureReadback, ExposureSettings, FrameData, LightKind,
+    LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MeshId, OrbitCameraController,
+    PipelineMode, SceneFrame, SceneRenderItem, ScrollUnits, ShadowDebugStats, ShadowFilter,
+    ToneMapping, ViewportContext, ViewportEvent, ViewportId, ViewportRenderer, primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
 const PERCY_WIDTH: u32 = 2203;
 const PERCY_HEIGHT: u32 = 2009;
 const PERCY_RGBA: &[u8] = include_bytes!("../eframe_showcase/percy.rgba");
+
+// Equirectangular environment resolution. Small is fine: it feeds the IBL
+// prefilter (diffuse irradiance + a few specular mips), not a sharp backdrop.
+const ENV_W: u32 = 64;
+const ENV_H: u32 = 32;
 
 fn main() -> eframe::Result {
     eframe::run_native(
@@ -42,6 +57,12 @@ fn main() -> eframe::Result {
             let format = rs.target_format;
 
             let mut renderer = ViewportRenderer::new(device, format);
+
+            // Mint an explicit viewport id and tag every frame with it (see
+            // App::vp_id). The default single-viewport callback path uses slot 0
+            // implicitly; naming the slot lets `exposure_state` read back the EV
+            // for the same slot the frame renders into.
+            let vp_id = renderer.create_viewport(device);
 
             let (
                 m_ground,
@@ -107,6 +128,15 @@ fn main() -> eframe::Result {
                     .expect("percy texture");
             }
 
+            // Procedural sky/ground gradient for the IBL environment. Stored as
+            // relative radiance; EnvironmentSettings::intensity scales it to nits
+            // at render time, so the same map reads from near-black up to a bright
+            // daytime sky depending on the exposure regime under test.
+            let env = equirect_gradient([0.55, 0.70, 1.0], [0.30, 0.32, 0.34], ENV_W, ENV_H);
+            renderer
+                .upload_environment_map(device, queue, &env, ENV_W, ENV_H)
+                .expect("environment map");
+
             let matcap_clay = renderer.resources().builtin_matcap_id(BuiltinMatcap::Clay);
             let matcap_ceramic = renderer
                 .resources()
@@ -115,6 +145,7 @@ fn main() -> eframe::Result {
             rs.renderer.write().callback_resources.insert(renderer);
 
             Ok(Box::new(App::new(
+                vp_id,
                 m_ground,
                 m_sphere,
                 m_cube,
@@ -145,6 +176,10 @@ enum Tab {
 }
 
 struct App {
+    // Viewport slot this frame renders into (tagged on every CameraFrame). Named
+    // so exposure_state can read back the EV for the same slot.
+    vp_id: ViewportId,
+
     // Camera / input
     camera: Camera,
     controller: OrbitCameraController,
@@ -174,7 +209,24 @@ struct App {
     // Stored per-kind so switching kinds does not lose previously entered values.
     light_kind: u8, // 0 = Directional, 1 = Point, 2 = Spot
     light_colour: [f32; 3],
-    light_intensity: f32,
+    // Author intensity either in nominal units (the faithful "colour is data"
+    // scale, read directly at EV 0) or in real photometric units. The unit and
+    // slider range change with this toggle; the two regimes are what the exposure
+    // controls exist to reconcile.
+    photometric: bool,
+    // Nominal-mode magnitudes: directional is a plain multiplier (~pi reads as a
+    // lit surface at EV 0); point/spot are candela.
+    dir_nominal: f32,
+    point_candela: f32,
+    spot_candela: f32,
+    // Photometric-mode magnitudes: directional in lux, point/spot bulbs in lumens.
+    dir_lux: f32,
+    point_lumens: f32,
+    spot_lumens: f32,
+    // Per-light geometry / behaviour shared across kinds.
+    light_radius: f32, // point/spot source radius: near-clamp + penumbra size
+    light_importance: f32,
+    light_cast_shadows: bool,
     dir_direction: [f32; 3],
     point_position: [f32; 3],
     point_range: f32,
@@ -183,6 +235,26 @@ struct App {
     spot_range: f32,
     spot_inner_deg: f32,
     spot_outer_deg: f32,
+
+    // Display transform (HDR -> pixels): pipeline mode, exposure, tone map.
+    hdr_pipeline: bool, // true = Hdr (exposure + tonemap), false = Direct passthrough
+    exposure_mode: u8,  // 0 = Manual, 1 = Physical camera, 2 = Automatic
+    manual_ev: f32,
+    aperture: f32,
+    shutter_denom: f32,
+    iso: f32,
+    auto: AutoExposure,
+    exposure_compensation: f32,
+    tone_mapping: ToneMapping,
+    // Live EV read back from the GPU (Some once the first HDR frame has run).
+    exposure_readback: std::sync::Arc<std::sync::Mutex<Option<ExposureReadback>>>,
+    last_exposure: Option<ExposureReadback>,
+
+    // Image-based environment (IBL + skybox).
+    env_enabled: bool,
+    env_intensity: f32, // absolute nits scale applied to the stored gradient
+    env_rotation: f32,
+    env_show_skybox: bool,
 
     // Shadow settings
     shadows_enabled: bool,
@@ -237,6 +309,7 @@ struct App {
 impl App {
     #[allow(clippy::too_many_arguments)]
     fn new(
+        vp_id: ViewportId,
         m_ground: MeshId,
         m_sphere: MeshId,
         m_cube: MeshId,
@@ -253,6 +326,7 @@ impl App {
         matcap_ceramic: MatcapId,
     ) -> Self {
         Self {
+            vp_id,
             camera: Camera {
                 distance: 18.0,
                 ..Camera::default()
@@ -278,7 +352,17 @@ impl App {
             // Match showcase_27 defaults: a known-problematic setup useful for reproducing bugs.
             light_kind: 0,
             light_colour: [1.0, 0.97, 0.90],
-            light_intensity: 0.8,
+            // Nominal by default: the faithful "colour is data" regime at EV 0.
+            photometric: false,
+            dir_nominal: std::f32::consts::PI,
+            point_candela: 40.0,
+            spot_candela: 120.0,
+            dir_lux: Lux::OVERCAST.0,
+            point_lumens: Lumen::INCANDESCENT_100W.0,
+            spot_lumens: Lumen::INCANDESCENT_100W.0,
+            light_radius: 0.1,
+            light_importance: 1.0,
+            light_cast_shadows: true,
             dir_direction: [0.3, 0.5, 0.8],
             point_position: [0.0, 0.0, 5.0],
             point_range: 20.0,
@@ -287,6 +371,23 @@ impl App {
             spot_range: 20.0,
             spot_inner_deg: 15.0,
             spot_outer_deg: 25.0,
+            // Display / exposure: neutral by default so the faithful lighting
+            // reads as authored (HDR pipeline, manual EV 0, KhronosNeutral).
+            hdr_pipeline: true,
+            exposure_mode: 0,
+            manual_ev: 0.0,
+            aperture: 16.0,
+            shutter_denom: 125.0,
+            iso: 100.0,
+            auto: AutoExposure::default(),
+            exposure_compensation: 0.0,
+            tone_mapping: ToneMapping::KhronosNeutral,
+            exposure_readback: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            last_exposure: None,
+            env_enabled: false,
+            env_intensity: 4_000.0,
+            env_rotation: 0.0,
+            env_show_skybox: true,
             shadows_enabled: true,
             shadow_bias: 0.0,
             shadow_cascade_count: 4,
@@ -321,43 +422,63 @@ impl App {
         }
     }
 
+    /// Build the single light from the panel state, using the typed photometric
+    /// constructors so the intensity carries the right unit (lux for directional,
+    /// candela for point/spot). Nominal mode sets a plain magnitude instead.
+    fn build_light_source(&self) -> LightSource {
+        let inner = self.spot_inner_deg.to_radians();
+        let outer = self.spot_outer_deg.to_radians();
+        let mut light = match (self.light_kind, self.photometric) {
+            (0, false) => {
+                let mut l = LightSource::default();
+                l.kind = LightKind::Directional {
+                    direction: self.dir_direction,
+                };
+                l.intensity = self.dir_nominal;
+                l
+            }
+            (0, true) => LightSource::directional_lux(self.dir_direction, Lux(self.dir_lux)),
+            (1, false) => LightSource::point_candela(
+                self.point_position,
+                Candela(self.point_candela),
+                self.point_range,
+                self.light_radius,
+            ),
+            (1, true) => LightSource::point_lumens(
+                self.point_position,
+                Lumen(self.point_lumens),
+                self.point_range,
+                self.light_radius,
+            ),
+            (_, false) => LightSource::spot_candela(
+                self.spot_position,
+                self.spot_direction,
+                Candela(self.spot_candela),
+                self.spot_range,
+                inner,
+                outer,
+                self.light_radius,
+            ),
+            (_, true) => LightSource::spot_lumens(
+                self.spot_position,
+                self.spot_direction,
+                Lumen(self.spot_lumens),
+                self.spot_range,
+                inner,
+                outer,
+                self.light_radius,
+            ),
+        };
+        light.colour = self.light_colour;
+        light.importance = self.light_importance;
+        light.cast_shadows = self.light_cast_shadows;
+        light
+    }
+
     fn build_lighting(&self) -> LightingSettings {
-        let kind = match self.light_kind {
-            0 => LightKind::Directional {
-                direction: self.dir_direction,
-            },
-            1 => LightKind::Point {
-                position: self.point_position,
-                range: self.point_range,
-                radius: 0.1,
-            },
-            _ => LightKind::Spot {
-                position: self.spot_position,
-                direction: self.spot_direction,
-                range: self.spot_range,
-                inner_angle: self.spot_inner_deg.to_radians(),
-                outer_angle: self.spot_outer_deg.to_radians(),
-                radius: 0.1,
-            },
-        };
-        // The intensity slider is a normalised 0..1 brightness; scale it into the
-        // right unit for the selected kind. Directional is illuminance (used
-        // directly); point/spot are candela and fall off as 1/d^2, so they need a
-        // much larger number to read at the light's throw distance.
-        let intensity = match self.light_kind {
-            0 => self.light_intensity,
-            1 => self.light_intensity * 40.0,
-            _ => self.light_intensity * 120.0,
-        };
         {
             let mut _t = LightingSettings::default();
-            _t.lights = vec![{
-                let mut _t = LightSource::default();
-                _t.kind = kind;
-                _t.colour = self.light_colour;
-                _t.intensity = intensity;
-                _t
-            }];
+            _t.lights = vec![self.build_light_source()];
             _t.shadows.enabled = self.shadows_enabled;
             _t.shadows.bias = self.shadow_bias;
             _t.shadows.cascade_count = self.shadow_cascade_count;
@@ -391,6 +512,68 @@ impl App {
             };
             _t
         }
+    }
+
+    /// Exposure settings from the panel. `dt` feeds auto-exposure smoothing.
+    fn build_exposure(&self, dt: f32) -> ExposureSettings {
+        let mode = match self.exposure_mode {
+            0 => ExposureMode::Manual { ev: self.manual_ev },
+            1 => ExposureMode::PhysicalCamera {
+                aperture: self.aperture,
+                shutter: 1.0 / self.shutter_denom.max(1.0),
+                iso: self.iso.max(1.0),
+            },
+            _ => {
+                let mut auto = self.auto;
+                auto.dt = dt;
+                ExposureMode::Automatic(auto)
+            }
+        };
+        ExposureSettings::from_mode(mode).with_compensation(self.exposure_compensation)
+    }
+
+    /// Display transform from the panel: pipeline mode, exposure, tone map.
+    fn build_display(&self, dt: f32) -> DisplaySettings {
+        let mut d = DisplaySettings::default();
+        d.mode = if self.hdr_pipeline {
+            PipelineMode::Hdr
+        } else {
+            PipelineMode::Direct
+        };
+        d.exposure = self.build_exposure(dt);
+        d.operator = self.tone_mapping;
+        d
+    }
+
+    /// Environment settings, or `None` when the IBL environment is disabled.
+    fn build_environment(&self) -> Option<EnvironmentSettings> {
+        self.env_enabled.then(|| EnvironmentSettings {
+            intensity: self.env_intensity,
+            rotation: self.env_rotation,
+            show_skybox: self.env_show_skybox,
+        })
+    }
+
+    /// The EV the panel controls imply, for the readout. `Manual`/`Physical` are
+    /// known here; `Automatic` is metered on the GPU, so its value comes from the
+    /// exposure readback (`last_exposure`) instead.
+    fn panel_ev(&self) -> Option<f32> {
+        match self.exposure_mode {
+            0 => Some(self.manual_ev),
+            1 => {
+                let n = self.aperture;
+                let t = 1.0 / self.shutter_denom.max(1.0);
+                let iso = self.iso.max(1.0);
+                Some((n * n / t).log2() + (100.0 / iso).log2())
+            }
+            _ => None,
+        }
+    }
+
+    /// True while the exposure model needs a live GPU EV readback (Automatic
+    /// only). Gates the blocking `exposure_state` poll to when it is useful.
+    fn wants_exposure_readback(&self) -> bool {
+        self.hdr_pipeline && self.exposure_mode == 2
     }
 
     /// Force a lit material to the shading model selected by the PBR toggle.
@@ -630,15 +813,35 @@ impl eframe::App for App {
                 Tab::Materials => self.build_materials_items(),
             };
 
+            // Frame time for auto-exposure smoothing. Exposure lives outside the
+            // scene, so a control change would not dirty anything: request a
+            // repaint every frame while auto-exposure is active so it keeps
+            // metering and adapting.
+            let dt = ctx.input(|i| i.stable_dt).min(0.1);
+            if self.wants_exposure_readback() {
+                ctx.request_repaint();
+            }
+
             let ppp = ui.ctx().pixels_per_point();
             let mut fd = FrameData::new(
-                CameraFrame::from_camera(&self.camera, [w, h]).with_pixels_per_point(ppp),
+                CameraFrame::from_camera(&self.camera, [w, h])
+                    .with_pixels_per_point(ppp)
+                    .with_viewport_id(self.vp_id),
                 SceneFrame::from_surface_items(items),
             );
             fd.effects.lighting = self.build_lighting();
+            fd.effects.display = self.build_display(dt);
+            fd.effects.environment = self.build_environment();
             fd.effects.debug.show_shadow_atlas = self.show_shadow_atlas;
             fd.effects.debug.atlas_viewer_corner = self.atlas_viewer_corner;
             fd.effects.debug.atlas_viewer_scale = self.atlas_viewer_scale;
+
+            // Collect the exposure readback from the previous frame's callback.
+            if let Ok(mut rb) = self.exposure_readback.lock() {
+                if let Some(v) = rb.take() {
+                    self.last_exposure = Some(v);
+                }
+            }
 
             // Pixel inspector: on left-click, submit the clicked pixel for readback.
             // Convert from CSS pixels (egui) to physical pixels (what the shader writes).
@@ -668,10 +871,13 @@ impl eframe::App for App {
                     rect,
                     viewport_callback::ViewportCallback {
                         frame: fd,
+                        vp_id: self.vp_id,
+                        read_exposure: self.wants_exposure_readback(),
                         instancing_status: self.instancing_status.clone(),
                         pixel_read_req: self.pixel_read_req.clone(),
                         pixel_read_res: self.pixel_read_res.clone(),
                         shadow_stats: self.shadow_stats.clone(),
+                        exposure_readback: self.exposure_readback.clone(),
                     },
                 ));
 
@@ -713,6 +919,20 @@ impl App {
         ui.heading("Lighting");
         ui.separator();
 
+        // Posture presets: set light magnitudes and the matching exposure together
+        // (the pairing `EffectsFrame::with_posture` guarantees), seeded into the
+        // panel state so the individual controls stay authoritative afterwards.
+        ui.horizontal(|ui| {
+            ui.label("Posture:");
+            if ui.button("Faithful").clicked() {
+                self.apply_posture_faithful();
+            }
+            if ui.button("Physical daylight").clicked() {
+                self.apply_posture_daylight();
+            }
+        });
+        ui.add_space(4.0);
+
         // Light source
         egui::CollapsingHeader::new("Light Source")
             .default_open(true)
@@ -733,6 +953,10 @@ impl App {
                         ui.label("Position:");
                         ui_vec3(ui, &mut self.point_position, 0.1);
                         ui.add(egui::Slider::new(&mut self.point_range, 1.0..=100.0).text("Range"));
+                        ui.add(
+                            egui::Slider::new(&mut self.light_radius, 0.0..=2.0)
+                                .text("Source radius"),
+                        );
                     }
                     _ => {
                         ui.label("Position:");
@@ -740,6 +964,10 @@ impl App {
                         ui.label("Direction:");
                         ui_vec3(ui, &mut self.spot_direction, 0.01);
                         ui.add(egui::Slider::new(&mut self.spot_range, 1.0..=100.0).text("Range"));
+                        ui.add(
+                            egui::Slider::new(&mut self.light_radius, 0.0..=2.0)
+                                .text("Source radius"),
+                        );
                         ui.add(
                             egui::Slider::new(&mut self.spot_inner_deg, 1.0..=89.0)
                                 .text("Inner angle"),
@@ -758,7 +986,51 @@ impl App {
                     ui.label("Colour:");
                     ui.color_edit_button_rgb(&mut self.light_colour);
                 });
-                ui.add(egui::Slider::new(&mut self.light_intensity, 0.0..=1.0).text("Intensity"));
+
+                ui.add_space(4.0);
+                ui.checkbox(&mut self.photometric, "Photometric units");
+                // Intensity in the unit that matches the kind and mode. Nominal is
+                // the faithful scale (reads at EV 0); photometric is real lux for
+                // directional and lumens for point/spot bulbs.
+                match (self.light_kind, self.photometric) {
+                    (0, false) => {
+                        ui.add(
+                            egui::Slider::new(&mut self.dir_nominal, 0.0..=8.0).text("Intensity"),
+                        );
+                    }
+                    (0, true) => {
+                        ui.add(
+                            egui::Slider::new(&mut self.dir_lux, 1.0..=120_000.0)
+                                .logarithmic(true)
+                                .text("Illuminance (lux)"),
+                        );
+                    }
+                    (1, false) | (2, false) => {
+                        let v = if self.light_kind == 1 {
+                            &mut self.point_candela
+                        } else {
+                            &mut self.spot_candela
+                        };
+                        ui.add(egui::Slider::new(v, 0.0..=2_000.0).text("Intensity (cd)"));
+                    }
+                    (1, true) | (2, true) => {
+                        let v = if self.light_kind == 1 {
+                            &mut self.point_lumens
+                        } else {
+                            &mut self.spot_lumens
+                        };
+                        ui.add(
+                            egui::Slider::new(v, 1.0..=10_000.0)
+                                .logarithmic(true)
+                                .text("Flux (lumens)"),
+                        );
+                    }
+                    _ => {}
+                }
+
+                ui.add_space(4.0);
+                ui.add(egui::Slider::new(&mut self.light_importance, 0.0..=4.0).text("Importance"));
+                ui.checkbox(&mut self.light_cast_shadows, "Cast shadows");
             });
 
         ui.add_space(4.0);
@@ -767,8 +1039,11 @@ impl App {
         egui::CollapsingHeader::new("Hemisphere Ambient")
             .default_open(true)
             .show(ui, |ui| {
+                // Same linear scale as the key light. Small in the nominal regime;
+                // thousands under photometric daylight (double-click to type).
                 ui.add(
-                    egui::Slider::new(&mut self.hemisphere_intensity, 0.0..=2.0).text("Intensity"),
+                    egui::Slider::new(&mut self.hemisphere_intensity, 0.0..=20_000.0)
+                        .text("Intensity"),
                 );
                 ui.horizontal(|ui| {
                     ui.label("Sky:   ");
@@ -779,6 +1054,14 @@ impl App {
                     ui.color_edit_button_rgb(&mut self.ground_colour);
                 });
             });
+
+        ui.add_space(4.0);
+
+        self.ui_display_exposure(ui);
+
+        ui.add_space(4.0);
+
+        self.ui_environment(ui);
 
         ui.add_space(4.0);
 
@@ -1121,6 +1404,156 @@ impl App {
                 }
             });
     }
+
+    fn ui_display_exposure(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Display & Exposure")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label("Pipeline:");
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.hdr_pipeline, true, "HDR");
+                    ui.radio_value(&mut self.hdr_pipeline, false, "Direct");
+                });
+                if !self.hdr_pipeline {
+                    ui.label("Direct passthrough: exposure, tone map, and post");
+                    ui.label("effects are skipped.");
+                    return;
+                }
+
+                ui.add_space(4.0);
+                ui.label("Exposure mode:");
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.exposure_mode, 0, "Manual");
+                    ui.radio_value(&mut self.exposure_mode, 1, "Physical");
+                    ui.radio_value(&mut self.exposure_mode, 2, "Auto");
+                });
+
+                match self.exposure_mode {
+                    0 => {
+                        ui.add(egui::Slider::new(&mut self.manual_ev, -6.0..=16.0).text("EV100"));
+                    }
+                    1 => {
+                        ui.add(
+                            egui::Slider::new(&mut self.aperture, 1.0..=22.0).text("Aperture f/"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.shutter_denom, 4.0..=4000.0)
+                                .logarithmic(true)
+                                .text("Shutter 1/s"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.iso, 50.0..=6400.0)
+                                .logarithmic(true)
+                                .text("ISO"),
+                        );
+                    }
+                    _ => {
+                        ui.add(
+                            egui::Slider::new(&mut self.auto.adaptation, 0.0..=1.0)
+                                .text("Adaptation"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.auto.min_ev, -10.0..=6.0).text("EV min"),
+                        );
+                        ui.add(egui::Slider::new(&mut self.auto.max_ev, 4.0..=20.0).text("EV max"));
+                        ui.add(
+                            egui::Slider::new(&mut self.auto.speed_up, 0.1..=10.0).text("Speed up"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.auto.speed_down, 0.1..=10.0)
+                                .text("Speed down"),
+                        );
+                    }
+                }
+
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Slider::new(&mut self.exposure_compensation, -3.0..=3.0)
+                        .text("Compensation"),
+                );
+
+                ui.add_space(4.0);
+                ui.label("Tone map:");
+                ui.horizontal_wrapped(|ui| {
+                    ui.radio_value(
+                        &mut self.tone_mapping,
+                        ToneMapping::KhronosNeutral,
+                        "Khronos",
+                    );
+                    ui.radio_value(&mut self.tone_mapping, ToneMapping::Aces, "ACES");
+                    ui.radio_value(&mut self.tone_mapping, ToneMapping::Reinhard, "Reinhard");
+                });
+
+                ui.add_space(4.0);
+                // EV readout: known in-app for Manual/Physical; metered on the GPU
+                // for Automatic, read back via exposure_state.
+                match self.panel_ev() {
+                    Some(ev) => {
+                        ui.label(format!("EV100: {:.2}", ev - self.exposure_compensation));
+                    }
+                    None => match self.last_exposure {
+                        Some(rb) => {
+                            let settling = if rb.adapting { " (adapting)" } else { "" };
+                            ui.label(format!(
+                                "EV100: {:.2} -> {:.2}{}",
+                                rb.current_ev, rb.target_ev, settling
+                            ));
+                        }
+                        None => {
+                            ui.label("EV100: metering...");
+                        }
+                    },
+                }
+            });
+    }
+
+    fn ui_environment(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Environment (IBL)")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.checkbox(&mut self.env_enabled, "Enabled");
+                if self.env_enabled {
+                    // Absolute nits: near-black at ~1 under photometric exposure,
+                    // thousands for a daytime sky. Double-click to type a value.
+                    ui.add(
+                        egui::Slider::new(&mut self.env_intensity, 0.0..=20_000.0)
+                            .text("Intensity (nits)"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut self.env_rotation, 0.0..=std::f32::consts::TAU)
+                            .text("Rotation"),
+                    );
+                    ui.checkbox(&mut self.env_show_skybox, "Show skybox");
+                }
+            });
+    }
+
+    /// Faithful posture: nominal magnitudes at neutral EV 0 ("colour is data").
+    /// Mirrors `LightingPosture::Faithful` into the panel state.
+    fn apply_posture_faithful(&mut self) {
+        self.photometric = false;
+        self.dir_nominal = std::f32::consts::PI;
+        self.hemisphere_intensity = 1.5;
+        self.hdr_pipeline = true;
+        self.exposure_mode = 0;
+        self.manual_ev = 0.0;
+        self.exposure_compensation = 0.0;
+        self.tone_mapping = ToneMapping::KhronosNeutral;
+    }
+
+    /// Physical-daylight posture: real daylight lux mapped down by auto-exposure.
+    /// Mirrors `LightingPosture::PhysicalDaylight` into the panel state.
+    fn apply_posture_daylight(&mut self) {
+        self.photometric = true;
+        self.dir_lux = Lux::FULL_DAYLIGHT.0;
+        // Clear-sky fill proportional to the daylight key (see LightingSettings::daylight).
+        self.hemisphere_intensity = 8_000.0;
+        self.hdr_pipeline = true;
+        self.exposure_mode = 2;
+        self.auto = AutoExposure::default();
+        self.exposure_compensation = 0.0;
+        self.tone_mapping = ToneMapping::KhronosNeutral;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,6 +1660,23 @@ fn ui_vec3(ui: &mut egui::Ui, v: &mut [f32; 3], speed: f64) {
         ui.add(egui::DragValue::new(&mut v[1]).speed(speed).prefix("y: "));
         ui.add(egui::DragValue::new(&mut v[2]).speed(speed).prefix("z: "));
     });
+}
+
+/// Equirectangular sky/ground gradient (RGBA f32), sky at the top row. Values are
+/// relative radiance; `EnvironmentSettings::intensity` scales them to nits.
+fn equirect_gradient(sky: [f32; 3], ground: [f32; 3], w: u32, h: u32) -> Vec<f32> {
+    let mut px = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        let v = y as f32 / (h - 1).max(1) as f32;
+        let t = v * v * (3.0 - 2.0 * v); // soft horizon
+        for _x in 0..w {
+            px.push(sky[0] + (ground[0] - sky[0]) * t);
+            px.push(sky[1] + (ground[1] - sky[1]) * t);
+            px.push(sky[2] + (ground[2] - sky[2]) * t);
+            px.push(1.0);
+        }
+    }
+    px
 }
 
 /// Display label for an AtlasViewerCorner variant.
