@@ -659,3 +659,15 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 **Sidebar:** Play/pause fly-around and restart; DoF enable, auto-rack focus, focal distance/range/max-blur; projection override with FOV and near sliders; unlit foreground toggle; cube spin speed.
 
 **Drift:** None.
+
+---
+
+## 56. Submesh Materials  (`showcase_56_submesh_materials.rs`, ~290 lines)
+
+**Demos:** One mesh drawn with several materials via submesh ranges. A rocket is assembled into a single vertex/index buffer from five primitive parts (cylinder body, cone nose, tail ring, three fins, sphere canopy), each triangle tagged with a material id, and `MeshData::sort_triangles_into_submeshes` sorts the triangles into contiguous ranges (the three fins share one id and merge into a single range). The scene item carries one material per range through `SceneRenderItem::submesh_materials`: PBR metal with a live metallic slider, red plastic, a checkerboard albedo texture, and an alpha-blend glass canopy whose translucency comes from the albedo texture's alpha, so the glass range draws through the transparent pass while the rest of the mesh stays opaque. Toggling per-range materials off clears the field and the same mesh falls back to the item's single material.
+
+**Uses:** `MeshData::submeshes`, `MeshData::sort_triangles_into_submeshes`, `SceneRenderItem::submesh_materials`, `SubmeshRange`, `AlphaMode::Blend`, `upload_texture`, `primitives::{cylinder, cone, cuboid_unwrapped, sphere}`.
+
+**Sidebar:** Per-range materials toggle; body metallic slider; spin toggle.
+
+**Drift:** None.
