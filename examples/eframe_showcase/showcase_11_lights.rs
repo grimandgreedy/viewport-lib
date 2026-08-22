@@ -156,7 +156,9 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     radius: 0.1,
                 };
                 _t.colour = [1.0, 0.9, 0.7];
-                _t.intensity = 2.0;
+                // Candela-scale: inverse-square falloff means intensity ~= E * d^2,
+                // so lighting spheres a few units away needs tens, not single digits.
+                _t.intensity = 30.0;
                 _t
             });
         }
@@ -172,7 +174,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     radius: 0.1,
                 };
                 _t.colour = [0.8, 0.95, 1.0];
-                _t.intensity = 3.0;
+                _t.intensity = 70.0;
                 _t
             });
         }
@@ -213,7 +215,9 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                         // Intensity
                         ui.horizontal(|ui| {
                             ui.label("Intensity:");
-                            ui.add(egui::Slider::new(&mut src.intensity, 0.0..=10.0));
+                            // Wide range: directional reads in single digits (lux-like),
+                            // but point/spot need tens under inverse-square (candela-like).
+                            ui.add(egui::Slider::new(&mut src.intensity, 0.0..=100.0));
                         });
 
                         // Kind-specific params

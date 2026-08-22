@@ -2589,6 +2589,9 @@ impl App {
                             range: 30.0,
                             radius: 0.1,
                         };
+                        // Candela-scale key light: inverse-square over ~8 units to
+                        // the origin objects needs a large intensity to read.
+                        _t.intensity = 150.0;
                         _t
                     }]
                 } else {
@@ -2702,7 +2705,7 @@ impl App {
                             radius: 0.1,
                         };
                         _t.colour = [1.0, 0.9, 0.7];
-                        _t.intensity = 2.0;
+                        _t.intensity = 20.0;
                         // Warm fill only. With two hard casters the shadows
                         // overlap as a two-tone shape with a seam; one key
                         // caster plus non-casting fill is the intended
@@ -2753,7 +2756,7 @@ impl App {
                                 radius: 0.1,
                             };
                             _t.colour = [1.0, 0.97, 0.93];
-                            _t.intensity = 2.0;
+                            _t.intensity = 20.0;
                             // Fill light for the normal-map highlights; not a
                             // shadow caster, so the directional's shadow stays
                             // a single clean shape.

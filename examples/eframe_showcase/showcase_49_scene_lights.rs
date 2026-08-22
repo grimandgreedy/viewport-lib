@@ -74,7 +74,9 @@ fn default_lights() -> [LightSource; 3] {
             radius: 0.1,
         };
         s.colour = [1.0, 0.6, 0.2];
-        s.intensity = 5.0;
+        // Candela-scale under inverse-square: intensity ~= E * d^2 for spheres a
+        // few units from the orbiting light.
+        s.intensity = 40.0;
         s
     };
     let spot = {
@@ -88,7 +90,7 @@ fn default_lights() -> [LightSource; 3] {
             radius: 0.1,
         };
         s.colour = [0.4, 0.7, 1.0];
-        s.intensity = 6.0;
+        s.intensity = 80.0;
         s
     };
     let dir = {
@@ -569,7 +571,7 @@ fn controls_basics(app: &mut App, ui: &mut egui::Ui) {
                     ui.label("Colour:");
                     ui.color_edit_button_rgb(&mut src.colour);
                 });
-                ui.add(egui::Slider::new(&mut src.intensity, 0.0..=12.0).text("Intensity"));
+                ui.add(egui::Slider::new(&mut src.intensity, 0.0..=120.0).text("Intensity"));
                 #[allow(clippy::match_wildcard_for_catch_all)]
                 match &mut src.kind {
                     LightKind::Point { range, .. } => {

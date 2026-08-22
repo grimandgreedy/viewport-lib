@@ -340,13 +340,22 @@ impl App {
                 radius: 0.1,
             },
         };
+        // The intensity slider is a normalised 0..1 brightness; scale it into the
+        // right unit for the selected kind. Directional is illuminance (used
+        // directly); point/spot are candela and fall off as 1/d^2, so they need a
+        // much larger number to read at the light's throw distance.
+        let intensity = match self.light_kind {
+            0 => self.light_intensity,
+            1 => self.light_intensity * 40.0,
+            _ => self.light_intensity * 120.0,
+        };
         {
             let mut _t = LightingSettings::default();
             _t.lights = vec![{
                 let mut _t = LightSource::default();
                 _t.kind = kind;
                 _t.colour = self.light_colour;
-                _t.intensity = self.light_intensity;
+                _t.intensity = intensity;
                 _t
             }];
             _t.shadows.enabled = self.shadows_enabled;

@@ -447,7 +447,14 @@ impl App {
             },
         };
         light.colour = self.light_colour;
-        light.intensity = self.light_intensity;
+        // Normalised 0..1 slider scaled into the selected kind's unit: directional
+        // is illuminance (direct); point/spot are candela with 1/d^2 falloff, so
+        // they need a much larger number to read at the light's throw distance.
+        light.intensity = match self.light_kind {
+            1 => self.light_intensity * 40.0,
+            2 => self.light_intensity * 120.0,
+            _ => self.light_intensity,
+        };
         s.lights = vec![light];
         s.shadows.enabled = self.shadows_enabled;
         s.shadows.cascade_count = self.shadow_cascade_count;
