@@ -3834,7 +3834,6 @@ impl App {
                 if self.pp_state.dof_enabled {
                     fd.effects.post_process = {
                         let mut _t = PostProcessSettings::default();
-                        _t.enabled = true;
                         _t.dof_enabled = true;
                         _t.dof_focal_distance = self.pp_state.dof_focal_dist;
                         _t.dof_focal_range = self.pp_state.dof_focal_range;
@@ -3844,9 +3843,9 @@ impl App {
                 }
             }
             ShowcaseMode::Shadows => {
+                fd.effects.display.mode = viewport_lib::PipelineMode::Direct;
                 fd.effects.post_process = {
                     let mut _t = PostProcessSettings::default();
-                    _t.enabled = false;
                     _t.contact_shadows = self.shd_state.contact_on;
                     _t.contact_shadow_max_distance = 0.18;
                     _t.contact_shadow_steps = 32;
@@ -3861,11 +3860,7 @@ impl App {
                 fd.camera.render_camera = rc;
             }
             ShowcaseMode::NormalMaps => {
-                fd.effects.post_process = {
-                    let mut _t = PostProcessSettings::default();
-                    _t.enabled = false;
-                    _t
-                };
+                fd.effects.display.mode = viewport_lib::PipelineMode::Direct;
                 // Cap far plane for better cascade distribution, but track orbit
                 // distance so the scene doesn't disappear when zooming out.
                 let mut rc = RenderCamera::from_camera(&self.camera);
@@ -3892,7 +3887,6 @@ impl App {
                 if self.lights_state.edl_enabled {
                     fd.effects.post_process = {
                         let mut _t = PostProcessSettings::default();
-                        _t.enabled = true;
                         _t.edl_enabled = true;
                         _t.edl_radius = self.lights_state.edl_radius;
                         _t.edl_strength = self.lights_state.edl_strength;
@@ -3904,21 +3898,21 @@ impl App {
                 // Drive the exposure model from the showcase controls. The HDR
                 // pipeline stays enabled (default) so the tone map / exposure
                 // buffer path runs.
-                fd.effects.exposure = self.exposure_state.settings();
+                fd.effects.display.exposure = self.exposure_state.settings();
                 let mut rc = RenderCamera::from_camera(&self.camera);
                 rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
             }
             ShowcaseMode::Photometric => {
-                fd.effects.exposure = self.photometric_state.settings();
+                fd.effects.display.exposure = self.photometric_state.settings();
                 let mut rc = RenderCamera::from_camera(&self.camera);
                 rc.far = (self.camera.distance * 3.0).max(60.0);
                 rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
                 fd.camera.render_camera = rc;
             }
             ShowcaseMode::EmissiveEnv => {
-                fd.effects.exposure = self.emissive_env_state.exposure();
+                fd.effects.display.exposure = self.emissive_env_state.exposure();
                 fd.effects.environment = Some(self.emissive_env_state.environment());
                 let mut rc = RenderCamera::from_camera(&self.camera);
                 rc.far = (self.camera.distance * 3.0).max(60.0);
@@ -3929,13 +3923,13 @@ impl App {
             // Decals require the full HDR pipeline so the decal pass (which reads
             // scene depth as a texture) runs via render_frame_internal.
             ShowcaseMode::Decals => {
-                fd.effects.post_process.enabled = true;
+                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
             }
             // HiZ occlusion culling builds its depth pyramid in the HDR scene
             // pass, so the HDR pipeline must be active when occlusion is on.
             ShowcaseMode::Performance => {
                 if self.perf_state.occlusion_culling {
-                    fd.effects.post_process.enabled = true;
+                    fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
                 }
             }
             ShowcaseMode::Foreground => {
@@ -3959,7 +3953,7 @@ impl App {
             // Enable HDR callback path so the renderer owns the encoder and can
             // run backdrop blur passes.
             if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
-                fd.effects.post_process.enabled = true;
+                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
             }
             fd.overlays.shapes = shapes;
             fd.overlays.labels = labels;
@@ -4037,7 +4031,7 @@ impl App {
                     false
                 };
             if has_lic {
-                fd.effects.post_process.enabled = true;
+                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
             }
         }
 

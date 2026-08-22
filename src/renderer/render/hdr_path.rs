@@ -313,7 +313,7 @@ impl ViewportRenderer {
         ];
 
         // Upload tone map uniform into the per-viewport buffer.
-        let mode = match pp.tone_mapping {
+        let mode = match frame.effects.display.operator {
             crate::renderer::ToneMapping::Reinhard => 0u32,
             crate::renderer::ToneMapping::Aces => 1u32,
             crate::renderer::ToneMapping::KhronosNeutral => 2u32,
@@ -4103,7 +4103,7 @@ impl ViewportRenderer {
         let frame = ctx.frame;
         let queue = ctx.queue;
         let vp_idx = ctx.vp_idx;
-        let exposure = frame.effects.exposure;
+        let exposure = frame.effects.display.exposure;
         let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
 
         // Manual / PhysicalCamera: write the exposure state buffer directly.

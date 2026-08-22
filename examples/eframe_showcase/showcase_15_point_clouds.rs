@@ -367,7 +367,6 @@ pub(crate) fn submit_pc_items(app: &mut App, fd: &mut FrameData) {
     if app.pc_state.ssao_enabled {
         fd.effects.post_process = {
             let mut _t = PostProcessSettings::default();
-            _t.enabled = true;
             _t.ssao = true;
             _t
         };

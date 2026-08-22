@@ -151,7 +151,6 @@ impl AppState {
         fd.effects.lighting = LightingSettings::default();
         fd.effects.post_process = {
             let mut _t = PostProcessSettings::default();
-            _t.enabled = true;
             _t.bloom = true;
             _t
         };

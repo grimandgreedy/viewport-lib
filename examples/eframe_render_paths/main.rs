@@ -766,7 +766,11 @@ impl eframe::App for App {
             fd.effects.lighting = self.build_lighting();
             fd.effects.compute_filter_items = filters;
             // HDR path (post-process + OIT transparency) vs LDR inline path.
-            fd.effects.post_process.enabled = self.hdr;
+            fd.effects.display.mode = if self.hdr {
+                viewport_lib::PipelineMode::Hdr
+            } else {
+                viewport_lib::PipelineMode::Direct
+            };
             fd.viewport.wireframe_mode = self.wireframe;
             fd.viewport.show_axes_indicator = true;
             fd.interaction.outline_selected = !self.selection.is_empty();

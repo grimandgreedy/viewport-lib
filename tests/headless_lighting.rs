@@ -51,7 +51,7 @@ fn capture_hdr_preserves_values_above_one() {
 
     // Snapshot the fields capture_hdr overrides, to prove they are restored.
     let orig_viewport_size = frame.camera.viewport_size;
-    let orig_pp_enabled = frame.effects.post_process.enabled;
+    let orig_pp_enabled = frame.effects.display.mode;
 
     let mut face_cam = RenderCamera::from_camera(&cam);
     face_cam.aspect = 1.0;
@@ -73,7 +73,7 @@ fn capture_hdr_preserves_values_above_one() {
 
     // The override snapshot must be restored: the caller's frame is unchanged.
     assert_eq!(frame.camera.viewport_size, orig_viewport_size);
-    assert_eq!(frame.effects.post_process.enabled, orig_pp_enabled);
+    assert_eq!(frame.effects.display.mode, orig_pp_enabled);
 }
 
 /// A directional (dominant-direction) lightmap must make a normal-mapped surface
@@ -1199,4 +1199,3 @@ fn environment_zones_select_the_second_zone() {
          garbage a stride mismatch produces (r {r})"
     );
 }
-

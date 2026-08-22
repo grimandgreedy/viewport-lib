@@ -5,7 +5,7 @@
 //! host that owns the swapchain view (winit, iced), and
 //! [`prepare`](ViewportInstance::prepare) + [`paint`](ViewportInstance::paint) for
 //! a host that only hands you a render pass (eframe). HDR versus LDR is dispatched
-//! internally by the underlying paths off `effects.post_process.enabled`; the
+//! internally by the underlying paths off `effects.display.mode`; the
 //! caller never chooses a method by path.
 
 use super::ViewportInstance;

@@ -732,7 +732,6 @@ fn render_swarm(
     ]);
     frame.effects.lighting = LightingSettings::default();
     let mut post = PostProcessSettings::default();
-    post.enabled = true;
     post.bloom = true;
     post.bloom_threshold = 1.0;
     post.bloom_intensity = 0.2;

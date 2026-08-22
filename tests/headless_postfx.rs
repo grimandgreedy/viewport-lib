@@ -128,7 +128,7 @@ fn bloom_glows_into_empty_background() {
         item.material = Material::from_colour([0.02, 0.02, 0.02]);
         item.material.emissive = [6.0, 6.0, 6.0];
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        frame.effects.post_process.enabled = true;
+        frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         frame.effects.post_process.bloom = bloom;
         frame.effects.post_process.bloom_threshold = 0.7;
         frame.effects.post_process.bloom_intensity = 2.0;
@@ -345,7 +345,7 @@ fn foreground_item_visible_on_ldr_path() {
         .unwrap();
 
     let mut frame = foreground_frame();
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
     let occluder = coloured_item(
         mesh_id,
         [0.1, 0.1, 0.9],
@@ -592,7 +592,11 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
     // large intensity saturates every lit pixel and the comparison is not
     // polluted by grazing-angle pixels that sit below the clamp.
     let mut render_at = |intensity: f32, hdr: bool, renderer: &mut ViewportRenderer| {
-        frame.effects.post_process.enabled = hdr;
+        frame.effects.display.mode = if hdr {
+            viewport_lib::PipelineMode::Hdr
+        } else {
+            viewport_lib::PipelineMode::Direct
+        };
         frame.effects.lighting.lights = Vec::new();
         frame.effects.lighting.hemisphere_intensity = intensity;
         renderer.render_offscreen(&device, &queue, &frame, 64, 64)
@@ -655,7 +659,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
     frame.effects.post_process.bloom = true;
 
     let mut item = SceneRenderItem::default();
@@ -688,4 +692,3 @@ fn bloom_firefly_cap_bounds_blob_size() {
         "capped bloom blob should stay small; got {c} bright pixels"
     );
 }
-

@@ -177,9 +177,15 @@ impl FrameData {
         self
     }
 
+    /// Override the display transform (pipeline mode, exposure, tone-map operator).
+    pub fn with_display(mut self, display: DisplaySettings) -> Self {
+        self.effects.display = display;
+        self
+    }
+
     /// Override the exposure settings (manual EV, physical camera, or auto).
     pub fn with_exposure(mut self, exposure: ExposureSettings) -> Self {
-        self.effects.exposure = exposure;
+        self.effects.display.exposure = exposure;
         self
     }
 

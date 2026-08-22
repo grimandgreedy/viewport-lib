@@ -1200,7 +1200,7 @@ pub(crate) fn vm_collect_scene_items(
 pub(crate) fn submit_vm_items(app: &mut App, fd: &mut FrameData) {
     if let Some(item) = app.vm_active_volume_item() {
         if item.transparency.is_some() {
-            fd.effects.post_process.enabled = true;
+            fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         }
         fd.scene.volume_meshes.push(item);
     }

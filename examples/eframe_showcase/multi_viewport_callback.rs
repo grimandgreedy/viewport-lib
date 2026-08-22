@@ -40,7 +40,7 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
             }
             // HDR path: encode each viewport into its own intermediate texture and
             // return the command buffers for eframe to submit before the render pass.
-            if self.frames[0].effects.post_process.enabled {
+            if self.frames[0].effects.display.is_hdr() {
                 return self
                     .frames
                     .iter()
@@ -87,7 +87,7 @@ impl eframe::egui_wgpu::CallbackTrait for MultiViewportCallback {
                 (fx + hw, fy + hh, hw2, hh2),
             ];
 
-            let hdr = self.frames[0].effects.post_process.enabled;
+            let hdr = self.frames[0].effects.display.is_hdr();
 
             for (i, &(qx, qy, qw, qh)) in quads.iter().enumerate() {
                 if qw == 0 || qh == 0 {

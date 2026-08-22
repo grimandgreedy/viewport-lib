@@ -108,7 +108,7 @@ impl ViewportRenderer {
             // On the HDR path the lit term may exceed 1.0; bound it at f16 max
             // so the Rgba16Float target stays finite. The LDR path keeps the
             // historical [0, 1] clamp.
-            if frame.effects.post_process.enabled {
+            if frame.effects.display.is_hdr() {
                 camera_uniform.lit_clamp = 65504.0;
             }
             // Write to shared buffer for legacy single-viewport callers.

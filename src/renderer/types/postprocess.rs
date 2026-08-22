@@ -137,11 +137,12 @@ impl Default for AutoExposure {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExposureSettings {
     /// How the base exposure multiplier is derived. Default:
-    /// [`ExposureMode::Automatic`] - lights are authored in physical photometric
-    /// units (lux/candela), whose magnitudes only read correctly once exposure
-    /// maps them down, so the default adapts to the scene rather than clipping to
-    /// white. Set [`ExposureMode::Manual`] or [`ExposureMode::PhysicalCamera`] for
-    /// a fixed exposure.
+    /// [`ExposureMode::NEUTRAL`] (`Manual { ev: 0.0 }`) - a fixed neutral exposure
+    /// that passes linear radiance straight through, so the faithful default
+    /// lighting reads as authored ("colour is data"). Switch to
+    /// [`ExposureMode::Automatic`] (e.g. via [`ExposureSettings::automatic`]) or
+    /// [`ExposureMode::PhysicalCamera`] when authoring real photometric magnitudes
+    /// that need mapping down.
     pub mode: ExposureMode,
     /// Exposure compensation in stops, applied on top of `mode`. Positive
     /// values brighten the image (lower the effective EV). Default: `0.0`.
@@ -151,7 +152,7 @@ pub struct ExposureSettings {
 impl Default for ExposureSettings {
     fn default() -> Self {
         Self {
-            mode: ExposureMode::Automatic(AutoExposure::default()),
+            mode: ExposureMode::NEUTRAL,
             compensation: 0.0,
         }
     }
@@ -255,24 +256,71 @@ pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
     INTERIM_EXPOSURE_BOOST / max_lum
 }
 
-/// Post-processing settings for the HDR render pipeline.
+/// Which render pipeline turns scene geometry into display pixels.
 ///
-/// Passed via `EffectsFrame::post_process` each frame. When `enabled` is
-/// `false`, the viewport renders directly to the output surface and all other
-/// fields are ignored. The `render()` and `render_viewport()` entry points
-/// support both paths; the `paint_to` / `paint_viewport_to` entry points are
-/// always LDR regardless of this setting.
+/// `Hdr` is the only first-class path; `Direct` is a constrained fallback for
+/// host-owned render passes (`paint_to` / `paint_viewport`, which always use it)
+/// and cheap inline rendering. `Direct` omits the HDR target and therefore
+/// exposure, tone mapping, every post effect, OIT (so transparency is
+/// order-dependent), the skybox, and item-type plugins. Transparent volume
+/// meshes (`SceneFrame::transparent_volume_meshes`) require `Hdr`.
+// NOT #[non_exhaustive]: a closed, consumer-selected binary (cf. `ToneMapping`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PipelineMode {
+    /// Full HDR pipeline: HDR render target, exposure, tone mapping, all post
+    /// effects, OIT, skybox, and item-type plugins. The default.
+    #[default]
+    Hdr,
+    /// Constrained LDR passthrough: draw directly to the output surface with no
+    /// post chain. Everything the HDR pipeline adds is skipped.
+    Direct,
+}
+
+/// The display transform: how linear HDR radiance becomes display pixels.
 ///
-/// Transparent volume meshes (`SceneFrame::transparent_volume_meshes`) require
-/// `enabled = true` -- they are rendered via the OIT pass which only exists in
-/// the HDR pipeline.
+/// Passed via [`EffectsFrame::display`](crate::EffectsFrame). Groups the three
+/// controls of the HDR-to-display stage - the [`PipelineMode`] switch, the
+/// [`ExposureSettings`] applied before tone mapping, and the [`ToneMapping`]
+/// operator. Exposure and the operator are inert on [`PipelineMode::Direct`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DisplaySettings {
+    /// Which render pipeline runs. Default: [`PipelineMode::Hdr`].
+    pub mode: PipelineMode,
+    /// Exposure model applied to linear radiance before tone mapping. Default:
+    /// neutral ([`ExposureMode::NEUTRAL`]).
+    pub exposure: ExposureSettings,
+    /// Tone-map operator mapping exposed HDR radiance into display range.
+    /// Default: [`ToneMapping::KhronosNeutral`].
+    pub operator: ToneMapping,
+}
+
+impl Default for DisplaySettings {
+    fn default() -> Self {
+        Self {
+            mode: PipelineMode::Hdr,
+            exposure: ExposureSettings::default(),
+            operator: ToneMapping::default(),
+        }
+    }
+}
+
+impl DisplaySettings {
+    /// True when the full HDR pipeline is active (i.e. not [`PipelineMode::Direct`]).
+    pub fn is_hdr(&self) -> bool {
+        matches!(self.mode, PipelineMode::Hdr)
+    }
+}
+
+/// Post-processing effects for the HDR render pipeline.
+///
+/// Passed via `EffectsFrame::post_process` each frame. Every effect here requires
+/// the HDR pipeline ([`PipelineMode::Hdr`], set on
+/// [`EffectsFrame::display`](crate::EffectsFrame)); on [`PipelineMode::Direct`]
+/// the viewport renders directly to the output surface and these are all ignored.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PostProcessSettings {
-    /// Enable the HDR render target and tone mapping pipeline. Default: `true`.
-    pub enabled: bool,
-    /// Tone mapping operator. Default: `KhronosNeutral`.
-    pub tone_mapping: ToneMapping,
     /// Enable screen-space ambient occlusion.
     pub ssao: bool,
     /// Enable bloom.
@@ -332,8 +380,6 @@ pub struct PostProcessSettings {
 impl Default for PostProcessSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
-            tone_mapping: ToneMapping::KhronosNeutral,
             ssao: false,
             bloom: false,
             bloom_threshold: 1.0,

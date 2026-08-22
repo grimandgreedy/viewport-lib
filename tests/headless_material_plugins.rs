@@ -80,7 +80,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
@@ -138,7 +138,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     transparent.model =
         glam::Mat4::from_translation(glam::Vec3::new(1.5, 0.0, 0.0)).to_cols_array_2d();
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item, transparent].into());
-    frame.effects.post_process.enabled = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
     let hdr = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
     assert_eq!(hdr.len(), 64 * 64 * 4);
 }
@@ -202,7 +202,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
@@ -267,7 +267,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = plain_id;
@@ -353,7 +353,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
@@ -445,4 +445,3 @@ fn example_reference_plugins_register() {
         .register_material_plugin(&device, &surface_detail_plugin::ParallaxPlugin)
         .expect("parallax plugin registers");
 }
-

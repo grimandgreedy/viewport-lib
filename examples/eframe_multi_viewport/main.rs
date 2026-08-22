@@ -633,7 +633,7 @@ impl eframe::App for App {
                         SceneFrame::from_surface_items(scene_items.clone()),
                     );
                     fd.effects.lighting = LightingSettings::default();
-                    fd.effects.post_process.enabled = true;
+                    fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
                     fd.viewport.show_grid = true;
                     fd.viewport.show_axes_indicator = true;
                     fd.interaction.outline_selected = has_selection;

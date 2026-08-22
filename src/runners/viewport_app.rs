@@ -22,7 +22,7 @@ use crate::{ExposureMode, FrameData, OrbitCameraController, OverlayFrame};
 /// that render only when dirty pass `dt = 0` themselves (the snap default) and
 /// never reach this path.
 fn auto_fill_exposure_dt(frame: &mut FrameData, dt: f32) {
-    if let ExposureMode::Automatic(ref mut auto) = frame.effects.exposure.mode {
+    if let ExposureMode::Automatic(ref mut auto) = frame.effects.display.exposure.mode {
         auto.dt = dt;
     }
 }

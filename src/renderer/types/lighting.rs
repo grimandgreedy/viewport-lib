@@ -168,10 +168,10 @@ pub struct LightSource {
     /// Prefer the typed constructors ([`LightSource::directional_lux`],
     /// [`LightSource::point_candela`], [`LightSource::point_lumens`],
     /// [`LightSource::spot_candela`], [`LightSource::spot_lumens`]) over setting
-    /// this field directly. Default: [`Lux::FULL_DAYLIGHT`] (100,000 lux), which
-    /// only reads correctly under an exposure that maps daylight down - the
-    /// default [`ExposureSettings`](crate::ExposureSettings) is automatic for
-    /// exactly this reason.
+    /// this field directly. Default: a modest key light (`~pi`) that reads as a
+    /// plain lit surface at neutral exposure (EV 0), not a physical daylight
+    /// magnitude. Real photometric values ([`Lux::FULL_DAYLIGHT`] and friends)
+    /// are an opt-in paired with auto or physical exposure.
     pub intensity: f32,
     /// Importance hint used by the renderer when more lights are pushed
     /// than fit under the per-frame cap. Higher values are kept; lower
@@ -203,10 +203,13 @@ impl Default for LightSource {
                 direction: [0.4, 0.3, 1.5],
             },
             colour: [1.0, 1.0, 1.0],
-            // A physical daylight sun in lux. Reads as pure white unless exposure
-            // maps it down, so the default exposure is automatic (see
-            // `ExposureSettings::default`).
-            intensity: Lux::FULL_DAYLIGHT.0,
+            // Faithful default: a modest key light, not a physical daylight
+            // magnitude. With the energy-normalised (albedo/pi) diffuse, an
+            // illuminance of ~pi reproduces the classic `albedo * intensity` look
+            // at neutral exposure (EV 0), so a surface reads as its own colour
+            // ("colour is data"). Physical lux/candela values are an opt-in paired
+            // with auto or physical exposure.
+            intensity: core::f32::consts::PI,
             importance: 1.0,
             cast_shadows: true,
         }
@@ -374,14 +377,13 @@ pub struct LightingSettings {
     pub shadows_enabled: bool,
     /// Sky colour for hemisphere ambient. Default [0.8, 0.9, 1.0].
     pub sky_colour: [f32; 3],
-    /// Ground colour for hemisphere ambient. Default [0.3, 0.2, 0.1].
+    /// Ground colour for hemisphere ambient. Default [0.5, 0.55, 0.6].
     pub ground_colour: [f32; 3],
     /// Hemisphere (sky/ground) ambient fill, in the same linear scale as the
-    /// lights' lux/candela. `0.0` disables it. The default approximates a clear
-    /// daytime sky's fill under [`Lux::FULL_DAYLIGHT`] so shadowed surfaces stay
-    /// readable rather than pitch black; scale it with your key light. (This term
-    /// is a provisional ambient approximation until image-based lighting carries
-    /// absolute nits.)
+    /// lights' lux/candela. `0.0` disables it. The default is a modest fill
+    /// (~half the default key light) so shadowed surfaces stay readable rather
+    /// than pitch black; scale it with your key light. (This term is a provisional
+    /// ambient approximation until image-based lighting carries absolute nits.)
     pub hemisphere_intensity: f32,
     /// Override the shadow frustum half-extent (world units). None = auto (20.0).
     /// Tighter values improve shadow map texel density and reduce contact-shadow penumbra.
@@ -410,7 +412,7 @@ impl Default for LightingSettings {
             shadows_enabled: true,
             sky_colour: [0.8, 0.9, 1.0],
             ground_colour: [0.5, 0.55, 0.6],
-            hemisphere_intensity: 8_000.0,
+            hemisphere_intensity: 1.5,
             shadow_extent_override: None,
             shadow_cascade_count: 4,
             shadow_atlas_resolution: 4096,
@@ -418,6 +420,32 @@ impl Default for LightingSettings {
             pcss_light_radius: 0.02,
             debug_vis: crate::renderer::types::debug::DebugVis::default(),
             point_shadow_mode: PointShadowMode::default(),
+        }
+    }
+}
+
+impl LightingSettings {
+    /// A physically-scaled daylight preset: a [`Lux::FULL_DAYLIGHT`] sun with a
+    /// proportional sky fill. These are real photometric magnitudes and clip to
+    /// white under the neutral default exposure, so pair this with an exposure
+    /// that maps daylight down - typically [`ExposureSettings::automatic`] (or a
+    /// [`ExposureSettings::physical`] daylight camera):
+    ///
+    /// ```no_run
+    /// # use viewport_lib::{EffectsFrame, LightingSettings, ExposureSettings};
+    /// let mut effects = EffectsFrame::default();
+    /// effects.lighting = LightingSettings::daylight();
+    /// effects.display.exposure = ExposureSettings::automatic();
+    /// ```
+    pub fn daylight() -> Self {
+        let mut sun = LightSource::default();
+        sun.intensity = Lux::FULL_DAYLIGHT.0;
+        Self {
+            lights: vec![sun],
+            // Clear-sky fill proportional to the daylight key (~8% of the sun),
+            // so shadowed surfaces stay readable once exposure maps the scene down.
+            hemisphere_intensity: 8_000.0,
+            ..Self::default()
         }
     }
 }

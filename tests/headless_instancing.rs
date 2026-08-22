@@ -66,7 +66,7 @@ fn position_override_takes_effect_through_render_path() {
     // Pin a fixed neutral exposure and a modest single light so the red plane
     // tone-maps to a clear saturated red, independent of the library's
     // photometric default lighting (daylight lux + auto-exposure).
-    frame.effects.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
     frame.effects.lighting.lights = vec![{
         let mut s = LightSource::default();
         s.intensity = 1.0;
@@ -502,7 +502,7 @@ fn position_override_slice_reads_correct_pool_window() {
     // Pin a fixed neutral exposure and a modest single light so the red plane
     // tone-maps to a clear saturated red, independent of the library's
     // photometric default lighting (daylight lux + auto-exposure).
-    frame.effects.exposure = viewport_lib::ExposureSettings::manual(0.0);
+    frame.effects.display.exposure = viewport_lib::ExposureSettings::manual(0.0);
     frame.effects.lighting.lights = vec![{
         let mut s = LightSource::default();
         s.intensity = 1.0;
@@ -606,7 +606,7 @@ fn occlusion_culling_render_path_runs() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     // HiZ is built in the HDR scene pass, so post-processing must be on.
-    frame.effects.post_process.enabled = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
     // A column of boxes along the view direction (Z-up world, camera looks down
     // -Z by default here): a big near box and several smaller ones behind it.
@@ -688,7 +688,7 @@ fn occlusion_large_viewport_no_dispatch_overflow() {
     frame.camera.viewport_size = [dim as f32, dim as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
     let mut items = Vec::new();
     for i in 0..4 {
@@ -738,7 +738,7 @@ fn occlusion_culling_ldr_path_runs() {
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
     // LDR path: post-processing OFF (this is the path the fix targets).
-    frame.effects.post_process.enabled = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
 
     let mut items = Vec::new();
     for i in 0..8 {
@@ -804,7 +804,7 @@ fn lod_culled_per_object_item_is_not_drawn() {
     frame.camera.viewport_size = [64.0, 64.0];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.effects.post_process.enabled = true;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
     // A single non-instanced (per-object) LOD item filling the view centre. The
     // DifferentColour back-face policy is what forces it onto the per-object path.

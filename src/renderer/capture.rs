@@ -115,7 +115,7 @@ impl ViewportRenderer {
         let saved_camera = std::mem::replace(&mut frame.camera.render_camera, camera);
         let saved_viewport_size = frame.camera.viewport_size;
         let saved_ppp = frame.camera.pixels_per_point;
-        let saved_pp_enabled = frame.effects.post_process.enabled;
+        let saved_display_mode = frame.effects.display.mode;
         let saved_ssaa = frame.effects.post_process.ssaa_factor;
         let saved_scale = self.current_render_scale;
 
@@ -135,7 +135,7 @@ impl ViewportRenderer {
         // hdr_texture is exactly `size` x `size` and reads back one-to-one.
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.camera.pixels_per_point = 1.0;
-        frame.effects.post_process.enabled = true;
+        frame.effects.display.mode = crate::renderer::types::PipelineMode::Hdr;
         frame.effects.post_process.ssaa_factor = 1;
         self.current_render_scale = 1.0;
 
@@ -174,7 +174,7 @@ impl ViewportRenderer {
         frame.camera.render_camera = saved_camera;
         frame.camera.viewport_size = saved_viewport_size;
         frame.camera.pixels_per_point = saved_ppp;
-        frame.effects.post_process.enabled = saved_pp_enabled;
+        frame.effects.display.mode = saved_display_mode;
         frame.effects.post_process.ssaa_factor = saved_ssaa;
         self.current_render_scale = saved_scale;
         self.render_mode = saved_render_mode;
@@ -1308,7 +1308,7 @@ mod tests {
 
         let mut fd = empty_frame();
         // Route through the HDR path so the opaque plugin paint dispatch runs.
-        fd.effects.post_process.enabled = true;
+        fd.effects.display.mode = crate::renderer::types::PipelineMode::Hdr;
         fd.scene.submit_plugin_items(
             "mock",
             MockItems {

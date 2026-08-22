@@ -931,7 +931,7 @@ impl ViewportRenderer {
         // that pass's formats and pipelines instead of being disabled. The
         // HDR pipelines build on the first HDR frame, so frame one records
         // nothing and the bundle starts on frame two.
-        let hdr = frame.effects.post_process.enabled;
+        let hdr = frame.effects.display.is_hdr();
         // Clip geometry needs the discarding pipeline (its clip test is a
         // discard); with it active the whole bundle keeps discards.
         let clipping_active = frame

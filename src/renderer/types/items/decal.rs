@@ -140,7 +140,7 @@ pub enum DecalAnimation {
 /// when set, or taken from the albedo colour otherwise. The contribution is
 /// always additive regardless of blend mode, so `emissive = 0.0` (default) has
 /// no visible effect. Values above 1.0 are meaningful in HDR: they bloom under
-/// tone-mapping when `post_process.enabled = true`.
+/// tone-mapping when `display.mode = PipelineMode::Hdr`.
 ///
 /// # Soft edges (D7)
 ///

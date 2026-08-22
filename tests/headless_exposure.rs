@@ -54,7 +54,7 @@ fn lit_frame(size: u32, mesh: MeshId, intensity: f32, exposure: ExposureSettings
     // No hemisphere ambient: metering is driven purely by the direct light so
     // the two intensities separate cleanly under a fixed exposure.
     frame.effects.lighting.hemisphere_intensity = 0.0;
-    frame.effects.exposure = exposure;
+    frame.effects.display.exposure = exposure;
 
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh;
@@ -138,7 +138,12 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
         renderer.render_offscreen(
             &device,
             &queue,
-            &lit_frame(size, mesh, i, ExposureSettings::from_mode(ExposureMode::Automatic(a))),
+            &lit_frame(
+                size,
+                mesh,
+                i,
+                ExposureSettings::from_mode(ExposureMode::Automatic(a)),
+            ),
             size,
             size,
         )
@@ -161,11 +166,23 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
     // deliberately does NOT fully equalise them - the brighter scene stays
     // brighter. ---
     let auto_dark_l = centre_luma(
-        &renderer.render_offscreen(&device, &queue, &lit_frame(size, mesh, dark_i, ExposureSettings::automatic()), size, size),
+        &renderer.render_offscreen(
+            &device,
+            &queue,
+            &lit_frame(size, mesh, dark_i, ExposureSettings::automatic()),
+            size,
+            size,
+        ),
         size,
     );
     let auto_bright_l = centre_luma(
-        &renderer.render_offscreen(&device, &queue, &lit_frame(size, mesh, bright_i, ExposureSettings::automatic()), size, size),
+        &renderer.render_offscreen(
+            &device,
+            &queue,
+            &lit_frame(size, mesh, bright_i, ExposureSettings::automatic()),
+            size,
+            size,
+        ),
         size,
     );
     for (label, l) in [("dark", auto_dark_l), ("bright", auto_bright_l)] {

@@ -525,7 +525,7 @@ impl eframe::App for App {
                 };
                 let eff = self.session.effects_mut();
                 eff.lighting = lighting;
-                eff.exposure = exposure;
+                eff.display.exposure = exposure;
 
                 self.session.update_orbit(&mut self.orbit);
 

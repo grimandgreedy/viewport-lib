@@ -884,11 +884,12 @@ pub struct EffectsFrame {
     pub clip_objects: Vec<ClipObject>,
     /// Whether to render filled caps at clip plane cross-sections. Default: true.
     pub cap_fill_enabled: bool,
-    /// Post-processing settings. Default: enabled (HDR pipeline active, all effects off).
+    /// Display transform: pipeline mode (HDR / Direct), exposure, and tone-map
+    /// operator. Default: HDR pipeline, neutral manual EV 0, KhronosNeutral.
+    pub display: DisplaySettings,
+    /// Post-processing effects (bloom, SSAO, DOF, ...). Default: all off. Every
+    /// effect requires `display.mode == PipelineMode::Hdr`.
     pub post_process: PostProcessSettings,
-    /// Physical-camera exposure (manual EV, physical camera, or auto-exposure).
-    /// Default: neutral manual EV 0.
-    pub exposure: ExposureSettings,
     /// Foreground pass configuration (projection override). Default: None.
     /// The pass itself is driven by `SceneFrame::foreground_items`; this only
     /// carries pass-wide settings.
@@ -914,8 +915,8 @@ impl Default for EffectsFrame {
             scatter: ScatterSettings::default(),
             clip_objects: Vec::new(),
             cap_fill_enabled: true,
+            display: DisplaySettings::default(),
             post_process: PostProcessSettings::default(),
-            exposure: ExposureSettings::default(),
             foreground: None,
             compute_filter_items: Vec::new(),
             environment: None,
@@ -963,10 +964,10 @@ pub struct ViewportEffects<'a> {
     pub clip_objects: &'a [ClipObject],
     /// Whether to render filled caps at clip plane cross-sections.
     pub cap_fill_enabled: bool,
-    /// Optional post-processing settings (tone mapping, bloom, SSAO).
+    /// Display transform: pipeline mode, exposure, tone-map operator.
+    pub display: &'a DisplaySettings,
+    /// Post-processing effects (bloom, SSAO, DOF, ...).
     pub post_process: &'a PostProcessSettings,
-    /// Physical-camera exposure settings.
-    pub exposure: &'a ExposureSettings,
     /// Foreground pass configuration (projection override).
     pub foreground: &'a Option<ForegroundPass>,
     /// Ground plane configuration for this viewport.
@@ -999,8 +1000,8 @@ impl EffectsFrame {
                 scatter: &self.scatter,
                 clip_objects: &self.clip_objects,
                 cap_fill_enabled: self.cap_fill_enabled,
+                display: &self.display,
                 post_process: &self.post_process,
-                exposure: &self.exposure,
                 foreground: &self.foreground,
                 ground_plane: &self.ground_plane,
                 show_shadow_atlas: self.show_shadow_atlas,
