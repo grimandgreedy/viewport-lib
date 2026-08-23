@@ -161,30 +161,30 @@ fn auto_exposure_equalises_bright_and_dark_scenes() {
         "full adaptation did not equalise: dark {full_dark_l} vs bright {full_bright_l}"
     );
 
-    // --- Automatic at the default strength (adaptation = 0.5): partial, eye-like
-    // compensation. It pulls the two scenes much closer than fixed exposure, but
-    // deliberately does NOT fully equalise them - the brighter scene stays
-    // brighter. ---
-    let auto_dark_l = centre_luma(
-        &renderer.render_offscreen(
+    // --- Automatic at partial strength (adaptation = 0.5): eye-like compensation.
+    // It pulls the two scenes much closer than fixed exposure, but deliberately
+    // does NOT fully equalise them - the brighter scene stays brighter. The library
+    // default is now full adaptation (1.0), so 0.5 is set explicitly here. ---
+    let mut partial = |i: f32| {
+        let a = AutoExposure {
+            adaptation: 0.5,
+            ..AutoExposure::default()
+        };
+        renderer.render_offscreen(
             &device,
             &queue,
-            &lit_frame(size, mesh, dark_i, ExposureSettings::automatic()),
+            &lit_frame(
+                size,
+                mesh,
+                i,
+                ExposureSettings::from_mode(ExposureMode::Automatic(a)),
+            ),
             size,
             size,
-        ),
-        size,
-    );
-    let auto_bright_l = centre_luma(
-        &renderer.render_offscreen(
-            &device,
-            &queue,
-            &lit_frame(size, mesh, bright_i, ExposureSettings::automatic()),
-            size,
-            size,
-        ),
-        size,
-    );
+        )
+    };
+    let auto_dark_l = centre_luma(&partial(dark_i), size);
+    let auto_bright_l = centre_luma(&partial(bright_i), size);
     for (label, l) in [("dark", auto_dark_l), ("bright", auto_bright_l)] {
         assert!(
             l > 40.0 && l < 240.0 * 3.0,

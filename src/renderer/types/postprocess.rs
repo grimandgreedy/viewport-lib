@@ -106,12 +106,14 @@ pub struct AutoExposure {
     /// exposure and framing barely moves it. Default: `0.85`.
     pub center_weight: f32,
     /// Adaptation strength in `[0, 1]`: how fully the exposure follows the
-    /// metered scene. `1` is full auto-exposure (drives the metered value to
-    /// middle grey; maximally sensitive to what the camera frames). `0` holds a
-    /// fixed exposure. Values below `1` are more eye-like - a dim view stays
-    /// somewhat dim rather than being lifted to grey - and proportionally shrink
-    /// framing-driven brightness swings (orbit, zoom onto a bright/dark object,
-    /// the flare when facing a dimly-lit surface). Default: `0.5`.
+    /// metered scene. `1` (the default) is full auto-exposure, driving the metered
+    /// value to middle grey so the scene is correctly exposed regardless of its
+    /// magnitude. `0` holds a fixed exposure. The correction is scaled from a
+    /// neutral (EV 0) anchor, so values below `1` leave scenes far from EV 0
+    /// permanently under-corrected: a real-daylight scene at `0.5` stays several
+    /// stops overexposed. Lower it only for near-neutral lighting where you want a
+    /// touch of brightness constancy and smaller framing-driven swings (orbit,
+    /// zoom onto a bright/dark object). Default: `1.0`.
     pub adaptation: f32,
 }
 
@@ -126,7 +128,7 @@ impl Default for AutoExposure {
             low_percent: 0.65,
             high_percent: 0.95,
             center_weight: 0.85,
-            adaptation: 0.5,
+            adaptation: 1.0,
         }
     }
 }
